@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import '../models/entrega.dart';
 import '../services/whatsapp_service.dart';
+import '../utils/rota_texto.dart';
 import 'criar_romaneio_page.dart';
 
 class RomaneiosPage extends StatefulWidget {
@@ -342,6 +343,19 @@ class _RomaneiosPageState extends State<RomaneiosPage> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _copiarRotaRomaneio(romaneio, dataService),
+                    icon: const Icon(Icons.copy),
+                    label: const Text('COPIAR ROTA (WHATSAPP)'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.greenAccent,
+                      side: const BorderSide(color: Colors.greenAccent),
+                    ),
+                  ),
+                ),
                 if (romaneio.status == StatusRomaneio.emPreparacao) ...[
                   const SizedBox(height: 12),
                   SizedBox(
@@ -578,6 +592,64 @@ class _RomaneiosPageState extends State<RomaneiosPage> {
         );
       }
     }
+  }
+
+  /// Monta o texto da rota deste romaneio e copia para a área de
+  /// transferência, para o operador colar no WhatsApp do motoboy.
+  Future<void> _copiarRotaRomaneio(
+    Romaneio romaneio,
+    DataService dataService,
+  ) async {
+    final pedidos = romaneio.entregaIds
+        .map((id) => dataService.pedidos.where((p) => p.id == id).firstOrNull)
+        .whereType<Pedido>()
+        .toList();
+
+    if (pedidos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nenhum pedido neste romaneio para copiar.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    final itens = pedidos.map((p) {
+      final entregue = romaneio.pedidosEntregues.contains(p.id);
+      final endereco = (p.deliveryInfo != null &&
+              p.deliveryInfo!.enderecoCompleto.trim().isNotEmpty)
+          ? p.deliveryInfo!.enderecoCompleto
+          : p.clienteEndereco;
+      return RotaItemTexto(
+        numero: p.numero,
+        cliente: p.clienteNome,
+        telefone: p.clienteTelefone,
+        endereco: endereco,
+        valor: p.totalGeral,
+        pago: p.totalmenteRecebido,
+        entregue: entregue,
+        observacao: p.observacoes,
+      );
+    }).toList();
+
+    final texto = RotaTexto.montar(
+      titulo: 'ROTA DE ENTREGA - ${romaneio.numero}',
+      motorista: romaneio.motoristaNome,
+      data: romaneio.dataCriacao,
+      itens: itens,
+      observacoes: romaneio.observacoes,
+    );
+
+    await RotaTexto.copiar(texto);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Rota copiada! Agora é só colar no WhatsApp do motoboy.'),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   void _iniciarEntregaRomaneio(Romaneio romaneio, DataService dataService) {

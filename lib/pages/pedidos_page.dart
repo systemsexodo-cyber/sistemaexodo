@@ -73,7 +73,7 @@ class _PedidosPageState extends State<PedidosPage> {
         backgroundColor: Colors.transparent,
         appBar: AppBar(
           title: const Text('Pedidos'),
-          centerTitle: true,
+          centerTitle: MediaQuery.of(context).size.width >= 700,
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: Navigator.canPop(context)

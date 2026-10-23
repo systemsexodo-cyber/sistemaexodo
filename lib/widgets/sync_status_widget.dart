@@ -472,6 +472,14 @@ class SyncStatusWidget extends StatelessWidget {
             final relogioErrado = clockService.relogioErrado;
             final relogioCritico = clockService.relogioCritico;
 
+            // No celular os chips com texto (BANCO LOCAL / SINCRONIZANDO) mais o
+            // refresh ocupam quase toda a largura do AppBar. Como este widget é
+            // usado nas AÇÕES da barra de várias telas internas, o excesso
+            // empurrava os chips por cima do título e da seta de voltar — a seta
+            // ficava coberta e não dava para clicar. Em tela estreita mostramos
+            // só os ícones (o Tooltip continua explicando cada um).
+            final compacto = MediaQuery.sizeOf(context).width < 700;
+
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -484,7 +492,10 @@ class SyncStatusWidget extends StatelessWidget {
                       borderRadius: BorderRadius.circular(20),
                       child: Container(
                         margin: const EdgeInsets.symmetric(vertical: 8),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: compacto ? 6 : 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: (relogioCritico ? Colors.red : Colors.orange).withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(20),
@@ -493,21 +504,24 @@ class SyncStatusWidget extends StatelessWidget {
                           ),
                         ),
                         child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
                               relogioCritico ? Icons.warning_amber_rounded : Icons.schedule,
                               color: relogioCritico ? Colors.redAccent : Colors.orange,
                               size: 14,
                             ),
-                            const SizedBox(width: 5),
-                            Text(
-                              relogioCritico ? 'RELÓGIO CRÍTICO' : 'Relógio errado',
-                              style: TextStyle(
-                                color: relogioCritico ? Colors.redAccent : Colors.orange,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
+                            if (!compacto) ...[
+                              const SizedBox(width: 5),
+                              Text(
+                                relogioCritico ? 'RELÓGIO CRÍTICO' : 'Relógio errado',
+                                style: TextStyle(
+                                  color: relogioCritico ? Colors.redAccent : Colors.orange,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -530,7 +544,10 @@ class SyncStatusWidget extends StatelessWidget {
                     borderRadius: BorderRadius.circular(20),
                     child: Container(
                       margin: const EdgeInsets.symmetric(vertical: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compacto ? 6 : 10,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: (falhaBancoLocal
                                 ? Colors.red
@@ -558,25 +575,27 @@ class SyncStatusWidget extends StatelessWidget {
                                     : Colors.tealAccent),
                             size: 14,
                           ),
-                          const SizedBox(width: 5),
-                          Text(
-                            falhaBancoLocal
-                                ? rotuloBancoLocal
-                                : (localVazio
-                                    ? 'LOCAL VAZIO'
-                                    : (atendeuBancoLocal
-                                        ? 'BANCO LOCAL'
-                                        : 'LOCAL...')),
-                            style: TextStyle(
-                              color: falhaBancoLocal
-                                  ? Colors.redAccent
+                          if (!compacto) ...[
+                            const SizedBox(width: 5),
+                            Text(
+                              falhaBancoLocal
+                                  ? rotuloBancoLocal
                                   : (localVazio
-                                      ? Colors.blueGrey.shade100
-                                      : Colors.tealAccent),
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
+                                      ? 'LOCAL VAZIO'
+                                      : (atendeuBancoLocal
+                                          ? 'BANCO LOCAL'
+                                          : 'LOCAL...')),
+                              style: TextStyle(
+                                color: falhaBancoLocal
+                                    ? Colors.redAccent
+                                    : (localVazio
+                                        ? Colors.blueGrey.shade100
+                                        : Colors.tealAccent),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -599,7 +618,10 @@ class SyncStatusWidget extends StatelessWidget {
                     borderRadius: BorderRadius.circular(20),
                     child: Container(
                       margin: const EdgeInsets.symmetric(vertical: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compacto ? 6 : 12,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: isOffline 
                             ? Colors.orange.withValues(alpha: 0.1) 
@@ -618,6 +640,7 @@ class SyncStatusWidget extends StatelessWidget {
                                     : null)),
                       ),
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           if (!isOffline && service.syncEmAndamento)
                             const SizedBox(
@@ -644,27 +667,29 @@ class SyncStatusWidget extends StatelessWidget {
                                           : (service.ultimaSincronizacaoSucesso != null ? Colors.green : Colors.grey))),
                               size: 16,
                             ),
-                          const SizedBox(width: 8),
-                          Text(
-                            isOffline 
-                                ? 'NUVEM PAUSADA' 
-                                : (temErro 
-                                    ? 'Erro na sincronização' 
-                                    : (temConflitos 
-                                        ? 'Conflitos (${service.conflitosCount})' 
-                                        : service.getSyncStatusText)),
-                            style: TextStyle(
-                              color: isOffline 
-                                  ? Colors.orangeAccent 
+                          if (!compacto) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              isOffline 
+                                  ? 'NUVEM PAUSADA' 
                                   : (temErro 
-                                      ? Colors.redAccent 
+                                      ? 'Erro na sincronização' 
                                       : (temConflitos 
-                                          ? Colors.amberAccent 
-                                          : (Theme.of(context).brightness == Brightness.dark ? Colors.white.withValues(alpha: 0.6) : Colors.black87))),
-                              fontSize: 10,
-                              fontWeight: isOffline || temErro || temConflitos ? FontWeight.bold : FontWeight.normal,
+                                          ? 'Conflitos (${service.conflitosCount})' 
+                                          : service.getSyncStatusText)),
+                              style: TextStyle(
+                                color: isOffline 
+                                    ? Colors.orangeAccent 
+                                    : (temErro 
+                                        ? Colors.redAccent 
+                                        : (temConflitos 
+                                            ? Colors.amberAccent 
+                                            : (Theme.of(context).brightness == Brightness.dark ? Colors.white.withValues(alpha: 0.6) : Colors.black87))),
+                                fontSize: 10,
+                                fontWeight: isOffline || temErro || temConflitos ? FontWeight.bold : FontWeight.normal,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -673,10 +698,15 @@ class SyncStatusWidget extends StatelessWidget {
                 IconButton(
                   icon: Icon(
                     Icons.refresh, 
-                    size: 20,
+                    size: compacto ? 18 : 20,
                     color: temErro ? Colors.redAccent : (Theme.of(context).brightness == Brightness.dark ? Colors.white70 : Colors.black87),
                   ),
                   tooltip: 'Tentar sincronizar novamente',
+                  visualDensity: compacto ? VisualDensity.compact : null,
+                  padding: compacto ? EdgeInsets.zero : null,
+                  constraints: compacto
+                      ? const BoxConstraints(minWidth: 36, minHeight: 36)
+                      : null,
                   onPressed: () => service.forceSync(),
                 ),
               ],

@@ -1458,7 +1458,13 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 (ehDuplicidade(erroAtual) ||
                     ehDuplicidade(novaNfce.chaveAcesso) ||
                     ehDuplicidade(nfce.vendaNumero))) {
-              final proximoValido = dataService.getProximoNumeroNfce(serie: serieNota);
+              // Reemissão por duplicidade: usa o caminho ATÔMICO (bloco na
+              // nuvem) — foi justamente a numeração compartilhada que causou a
+              // duplicidade. Sem nuvem, cai no cálculo local.
+              final numeroAtomicoReemissao =
+                  await dataService.reservarProximoNumeroNfce(serie: serieNota);
+              final proximoValido = numeroAtomicoReemissao ??
+                  dataService.getProximoNumeroNfce(serie: serieNota);
               mensagensDuplicidade.add(
                 'Nota ${nfce.vendaNumero ?? nfce.numero}: duplicidade na SEFAZ → reemitindo com nº $proximoValido',
               );

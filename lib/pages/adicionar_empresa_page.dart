@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
@@ -19,6 +20,7 @@ import '../models/forma_pagamento_custom.dart';
 import '../theme.dart';
 import '../services/data_service.dart';
 import '../services/whatsapp_service.dart';
+import '../widgets/licenca_offline_card.dart';
 import 'package:sistema_exodo_novo/pages/whatsapp_gerenciamento_page.dart';
 
 /// Página para adicionar ou editar uma empresa
@@ -101,6 +103,12 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   bool _mostrarDialogoImpressora = false;
   String _impressoraSelecionada = ''; // Última impressora escolhida (padrão)
 
+  // Impressão automática ao concluir/salvar a venda.
+  // - cupom: imprime o cupom não fiscal (80mm) sozinho, sem clicar em "Imprimir".
+  // - produção: imprime as vias de produção (cozinha/bar) dos departamentos.
+  bool _imprimirCupomAoSalvar = false;
+  bool _imprimirProducaoAoSalvar = true;
+
   Color _corPrimaria = Colors.blueAccent;
   Color _corSecundaria = Colors.blue;
 
@@ -140,6 +148,13 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     if (widget.empresa != null) {
       _preencherCampos(widget.empresa!);
     }
+    // Empresa nova: já nasce com uma licença pronta para entregar ao cliente.
+    if (_codigoLiberacaoOffline.trim().isEmpty) {
+      _codigoLiberacaoOffline = Empresa.gerarCodigoLiberacaoOffline();
+    }
+    // O campo de dias é editado sem setState; o cartão da licença mostra o
+    // número atual, então precisa ser avisado.
+    _limiteDiasOfflineController.addListener(_atualizarDiasOfflineNaTela);
   }
 
   void _preencherCampos(Empresa empresa) {
@@ -251,6 +266,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         empresa.configuracoes?['mostrarDialogoImpressora'] ?? false;
     _impressoraSelecionada =
         (empresa.configuracoes?['impressoraSelecionada'] as String?) ?? '';
+    _imprimirCupomAoSalvar =
+        empresa.configuracoes?['imprimirCupomAoSalvar'] ?? false;
+    _imprimirProducaoAoSalvar =
+        empresa.configuracoes?['imprimirProducaoAoSalvar'] ?? true;
     if (_impressoraSelecionada.isEmpty) {
       ImpressaoService.getUltimaImpressora(empresaId: empresa.id).then((val) {
         if (val != null && val.isNotEmpty && mounted) {
@@ -325,6 +344,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
     // Configurações de Senha do Administrador e Segurança
     _senhaAdminController.text = empresa.configuracoes?['senha_admin'] ?? '';
+    _limiteDiasOfflineController.text =
+        (empresa.configuracoes?['limite_dias_offline'] ??
+                Empresa.limiteDiasOfflinePadrao)
+            .toString();
+    // Normaliza já no carregamento: o código mostrado/copiado aqui é o mesmo
+    // que a tela de bloqueio compara (maiúsculas) e o mesmo que será salvo.
+    _codigoLiberacaoOffline = Empresa.normalizarCodigoLiberacaoOffline(
+      empresa.configuracoes?['codigo_liberacao_offline']?.toString(),
+    );
     _exigirSenhaAlterarPedido =
         empresa.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
     _exigirSenhaCancelarPedido =
@@ -347,6 +375,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
   // Senha do Administrador e Segurança
   final _senhaAdminController = TextEditingController();
+
+  // Licença offline: dias tolerados sem internet (configurável por empresa)
+  final _limiteDiasOfflineController = TextEditingController();
+
+  /// Licença offline da empresa: o código que o suporte entrega ao cliente.
+  /// Fica visível nesta tela (antes só aparecia uma vez, no cadastro) e é
+  /// salvo em `configuracoes['codigo_liberacao_offline']`.
+  String _codigoLiberacaoOffline = '';
   bool _exigirSenhaAlterarPedido = false;
   bool _exigirSenhaCancelarPedido = false;
 
@@ -386,6 +422,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _nfceMargemDireitaController.dispose();
     _nfceFonteEscalaController.dispose();
     _senhaAdminController.dispose();
+    _limiteDiasOfflineController.dispose();
 
     super.dispose();
   }
@@ -545,6 +582,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'mostrarEnderecoCupom': _mostrarEnderecoCupom,
           'mostrarDialogoImpressora': _mostrarDialogoImpressora,
           'impressoraSelecionada': _impressoraSelecionada,
+          'imprimirCupomAoSalvar': _imprimirCupomAoSalvar,
+          'imprimirProducaoAoSalvar': _imprimirProducaoAoSalvar,
 
           'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty
               ? null
@@ -566,11 +605,17 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'nuvemAtiva': _nuvemAtiva,
 
           'reservar_estoque_pedidos': _reservarEstoquePedidos,
+          'limite_dias_offline':
+              int.tryParse(_limiteDiasOfflineController.text.trim()) ??
+              Empresa.limiteDiasOfflinePadrao,
           'perfis_preco': _configPerfisPreco,
           'pagamentos': _pagamentosConfig,
           'formas_pagamento_custom': _formasPagamentoCustom
               .map((f) => f.toMap())
               .toList(),
+
+          'codigo_liberacao_offline':
+              Empresa.normalizarCodigoLiberacaoOffline(_codigoLiberacaoOffline),
         },
       );
 
@@ -686,6 +731,45 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       // de pagamento, taxas da maquininha etc. — parecem não ter sido salvas.
       if (dataService.empresaAtual?.id == empresa.id) {
         dataService.setEmpresaAtual(empresa);
+      }
+
+      if (mounted &&
+          (widget.empresa == null ||
+              widget.empresa!.configuracoes?['codigo_liberacao_offline'] == null)) {
+        final codigoGerado =
+            empresa.configuracoes?['codigo_liberacao_offline']?.toString() ?? '';
+        if (codigoGerado.isNotEmpty) {
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Codigo de Liberacao Offline'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Anote/envie este codigo ao cliente. Ele sera solicitado '
+                    'quando o sistema ficar mais de ${empresa.limiteDiasOffline} dias sem internet:',
+                  ),
+                  const SizedBox(height: 12),
+                  SelectableText(
+                    codigoGerado,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
       }
 
       if (mounted && fecharTela) {
@@ -1233,6 +1317,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 ),
               const SizedBox(height: 8),
               _buildTextField(
+                controller: _limiteDiasOfflineController,
+                label: 'Dias tolerados sem internet (licença offline)',
+                icon: Icons.timer_outlined,
+                hintText: '${Empresa.limiteDiasOfflinePadrao}',
+                keyboardType: TextInputType.number,
+                helperText:
+                    'Depois desse número de dias sem validar online, o sistema '
+                    'pede o Código de Liberação Offline. Padrão: '
+                    '${Empresa.limiteDiasOfflinePadrao} dias.',
+              ),
+              _buildLicencaOfflineCard(),
+              _buildTextField(
                 controller: _emailContabilidadeController,
                 label: 'E-mail do Contador (Contabilidade)',
                 icon: Icons.alternate_email,
@@ -1331,6 +1427,46 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 onChanged: (value) =>
                     setState(() => _mostrarDialogoImpressora = value),
                 activeColor: Colors.blueAccent,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                title: const Text(
+                  'Imprimir Cupom Automaticamente ao Finalizar a Venda',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Ao concluir/finalizar a venda, o cupom não fiscal (80mm) é impresso sozinho, sem precisar clicar em "Imprimir".',
+                  style: TextStyle(color: Colors.white60, fontSize: 11),
+                ),
+                value: _imprimirCupomAoSalvar,
+                onChanged: (value) =>
+                    setState(() => _imprimirCupomAoSalvar = value),
+                activeColor: Colors.green,
+                secondary: const Icon(
+                  Icons.receipt_long,
+                  color: Colors.greenAccent,
+                ),
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                title: const Text(
+                  'Imprimir Tickets de Produção ao Finalizar a Venda',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Ao concluir a venda, imprime as vias de produção (cozinha/bar) conforme o departamento/impressora de cada produto.',
+                  style: TextStyle(color: Colors.white60, fontSize: 11),
+                ),
+                value: _imprimirProducaoAoSalvar,
+                onChanged: (value) =>
+                    setState(() => _imprimirProducaoAoSalvar = value),
+                activeColor: Colors.orange,
+                secondary: const Icon(
+                  Icons.restaurant,
+                  color: Colors.orangeAccent,
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
               const SizedBox(height: 8),
@@ -3473,6 +3609,54 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Mantém o texto "será exigido depois de N dias" do cartão da licença em
+  /// sincronia com o campo de dias, que é editado sem setState.
+  void _atualizarDiasOfflineNaTela() {
+    if (mounted) setState(() {});
+  }
+
+  void _copiarCodigoOffline() {
+    Clipboard.setData(ClipboardData(text: _codigoLiberacaoOffline));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Código copiado. Envie ao cliente.'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  void _gerarNovoCodigoOffline() {
+    final novo = Empresa.gerarCodigoLiberacaoOffline();
+    setState(() {
+      _codigoLiberacaoOffline = novo;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Novo código: $novo — toque em SALVAR para ele passar a valer.',
+        ),
+        backgroundColor: Colors.orange.shade800,
+        duration: const Duration(seconds: 6),
+      ),
+    );
+  }
+
+  /// Cartão da licença offline (widget em `lib/widgets/licenca_offline_card.dart`):
+  /// mostra o código que o suporte entrega ao cliente e permite copiar/gerar
+  /// outro. É esse valor que a tela de bloqueio compara quando o cliente passa
+  /// do limite de dias sem internet.
+  Widget _buildLicencaOfflineCard() {
+    return LicencaOfflineCard(
+      codigo: _codigoLiberacaoOffline,
+      limiteDiasOffline:
+          int.tryParse(_limiteDiasOfflineController.text.trim()) ??
+          Empresa.limiteDiasOfflinePadrao,
+      limitePadrao: Empresa.limiteDiasOfflinePadrao,
+      onCopiar: _copiarCodigoOffline,
+      onGerarNovo: _gerarNovoCodigoOffline,
     );
   }
 

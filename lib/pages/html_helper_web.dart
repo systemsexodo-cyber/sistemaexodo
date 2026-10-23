@@ -1,4 +1,5 @@
 // Helper para hard refresh no Web
+import 'dart:async';
 import 'dart:html' as html;
 import 'package:flutter/foundation.dart';
 
@@ -58,6 +59,43 @@ void updateUrl(String path, {bool replace = false}) {
 
 /// Stream de foco da janela no navegador
 Stream<dynamic> get onWindowFocus => html.window.onFocus;
+
+/// Emite quando a página volta a ficar VISÍVEL para o usuário.
+///
+/// `onWindowFocus` só dispara quando a JANELA do navegador ganha foco — trocar
+/// de aba (ou restaurar a janela minimizada) não dispara nada. Isso importa
+/// porque o navegador estrangula os timers de páginas escondidas: o pulso de
+/// 10 s do site passa a rodar ~1× por minuto. Sem este stream, quem alterava
+/// algo no app Windows e voltava para a aba do portal esperava o timer
+/// estrangulado (até 60 s) para ver a mudança.
+///
+/// Reúne os três eventos que indicam "o usuário voltou":
+/// `visibilitychange` (troca de aba), `pageshow` (volta do bfcache) e
+/// `focus` (janela restaurada).
+Stream<dynamic> get onWindowVisible {
+  final controlador = StreamController<dynamic>.broadcast();
+  final assinaturas = <StreamSubscription<dynamic>>[];
+
+  void notificar(Object? evento) {
+    if (!controlador.isClosed) controlador.add(evento ?? DateTime.now());
+  }
+
+  assinaturas.add(
+    html.document.onVisibilityChange.listen((evento) {
+      if (html.document.visibilityState == 'visible') notificar(evento);
+    }),
+  );
+  assinaturas.add(html.window.onPageShow.listen(notificar));
+  assinaturas.add(html.window.onFocus.listen(notificar));
+
+  controlador.onCancel = () {
+    for (final assinatura in assinaturas) {
+      assinatura.cancel();
+    }
+  };
+
+  return controlador.stream;
+}
 
 /// Toca áudio no navegador
 void playAudio(String assetPath, {double volume = 1.0}) {

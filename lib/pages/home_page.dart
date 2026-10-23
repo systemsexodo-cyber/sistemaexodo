@@ -9,6 +9,8 @@ import 'package:sistema_exodo_novo/clientes_page.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
 import 'package:sistema_exodo_novo/pages/configuracao_lan_page.dart';
+import 'package:sistema_exodo_novo/pages/configuracao_servidor_page.dart';
+import 'package:sistema_exodo_novo/services/config_servidor_mobile.dart';
 import 'package:sistema_exodo_novo/widgets/permission_widget.dart';
 import 'package:sistema_exodo_novo/models/permissao.dart';
 import 'package:sistema_exodo_novo/widgets/tela_access_widget.dart';
@@ -22,6 +24,7 @@ import 'estoques_page.dart';
 import 'pedidos_page.dart';
 import 'venda_direta_page.dart';
 import 'entrada_mercadorias_page.dart';
+import 'pedidos_compra_page.dart';
 import 'contas_pagar_page.dart';
 import 'contas_receber_page.dart';
 import 'agenda_contas_page.dart';
@@ -67,7 +70,9 @@ import 'nfe_page.dart';
 import 'bloqueio_mensalidade_page.dart';
 import '../models/empresa.dart';
 // Import condicional para Web
-import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
+import 'html_helper_stub.dart'
+    if (dart.library.html) 'html_helper_web.dart'
+    as html_helper;
 
 class HomePage extends StatefulWidget {
   final String? initialPage;
@@ -81,8 +86,18 @@ class _HomePageState extends State<HomePage> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
   List<String>? _customOrder;
-  bool _isReordering = false;
+  // Modo "Personalizar layout": libera arrastar/soltar os botões da Home.
+  bool _editandoLayout = false;
   bool? _wasOffline;
+
+  /// Largura (lógica) abaixo da qual a tela é tratada como "celular".
+  /// A partir daqui os botões ficam maiores, as ações do topo migram para o
+  /// menu "⋮" e aparece a barra de navegação inferior.
+  static const double _larguraCelular = 700;
+
+  /// True quando a tela é estreita (celular em retrato).
+  bool _ehCelular(BuildContext context) =>
+      MediaQuery.sizeOf(context).width < _larguraCelular;
 
   // Lista mestre de itens do menu (conforme estão hoje no grid)
   late final List<Map<String, dynamic>> _menuItems;
@@ -132,7 +147,8 @@ class _HomePageState extends State<HomePage> {
         'subtitle': 'Loja, Depósito e transferências',
         'icon': Icons.warehouse_outlined,
         'color': Colors.tealAccent,
-        'tela': TelaSistema.produtos, // reutiliza permissão de produtos por simplicidade
+        'tela': TelaSistema
+            .produtos, // reutiliza permissão de produtos por simplicidade
         'page': (BuildContext context) => const EstoquesPage(),
       },
       {
@@ -141,7 +157,8 @@ class _HomePageState extends State<HomePage> {
         'subtitle': 'Perfis Tributários',
         'icon': Icons.gavel,
         'color': Colors.amberAccent,
-        'tela': TelaSistema.produtos, // reutiliza permissão de produtos por simplicidade
+        'tela': TelaSistema
+            .produtos, // reutiliza permissão de produtos por simplicidade
         'page': (BuildContext context) => const CadastroPerfisTributariosPage(),
       },
       {
@@ -178,6 +195,15 @@ class _HomePageState extends State<HomePage> {
         'color': const Color(0xFFE91E63),
         'tela': TelaSistema.entradaMercadorias,
         'page': (BuildContext context) => const EntradaMercadoriasPage(),
+      },
+      {
+        'id': 'pedidos_compra',
+        'title': 'Pedidos de Compra',
+        'subtitle': 'Compras e recebimentos',
+        'icon': Icons.shopping_cart_checkout,
+        'color': const Color(0xFF00897B),
+        'tela': TelaSistema.estoque,
+        'page': (BuildContext context) => const PedidosCompraPage(),
       },
       {
         'id': 'caixa',
@@ -290,10 +316,19 @@ class _HomePageState extends State<HomePage> {
     ];
   }
 
+  /// Chave onde a ordem personalizada dos botões da Home fica salva.
+  static const String _chaveOrdemBotoes = 'home_button_order';
+
+  /// Lê a ordem personalizada dos botões salva NESTE computador.
+  ///
+  /// Usa `salvar`/`carregar` (configuração genérica) e não `carregarLista`:
+  /// `carregarLista` procura nas tabelas de DADOS (produtos, clientes...) e
+  /// nunca encontraria esta configuração — no Desktop a ordem nunca voltava.
   Future<void> _carregarOrdem() async {
     final dataService = Provider.of<DataService>(context, listen: false);
-    final savedOrder = await dataService.storage.carregarLista('home_button_order');
-    if (savedOrder.isNotEmpty) {
+    final savedOrder = await dataService.storage.carregar(_chaveOrdemBotoes);
+    if (!mounted) return;
+    if (savedOrder is List && savedOrder.isNotEmpty) {
       setState(() {
         _customOrder = savedOrder.map((e) => e.toString()).toList();
       });
@@ -301,27 +336,60 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _salvarOrdem() async {
-    if (_customOrder == null) return;
     final dataService = Provider.of<DataService>(context, listen: false);
-    await dataService.storage.salvar('home_button_order', _customOrder);
+    // Sem ordem personalizada: apaga o que estava salvo para voltar ao padrão.
+    if (_customOrder == null || _customOrder!.isEmpty) {
+      await dataService.storage.remover(_chaveOrdemBotoes);
+      return;
+    }
+    await dataService.storage.salvar(_chaveOrdemBotoes, _customOrder);
   }
 
+  /// Aplica a ordem personalizada sobre a lista mestre, SEM alterar `_menuItems`.
+  /// Botões novos (que ainda não estavam salvos) entram no fim.
   List<Map<String, dynamic>> get _orderedMenuItems {
-    if (_customOrder == null || _customOrder!.isEmpty) return _menuItems;
-    
-    // Ordenar baseado no customOrder, mantendo novos itens no final se surgirem
-    List<Map<String, dynamic>> ordered = [];
-    for (var id in _customOrder!) {
-      final item = _menuItems.where((i) => i['id'] == id).firstOrNull;
-      if (item != null) ordered.add(item);
+    final ordered = <Map<String, dynamic>>[];
+    if (_customOrder != null) {
+      for (final id in _customOrder!) {
+        if (ordered.any((i) => i['id'] == id)) continue;
+        for (final item in _menuItems) {
+          if (item['id'] == id) {
+            ordered.add(item);
+            break;
+          }
+        }
+      }
     }
-    
-    for (var item in _menuItems) {
+    for (final item in _menuItems) {
       if (!ordered.any((i) => i['id'] == item['id'])) {
         ordered.add(item);
       }
     }
     return ordered;
+  }
+
+  /// Move um botão de [fromIndex] para [toIndex] e salva a nova ordem.
+  void _reordenar(int fromIndex, int toIndex) {
+    final items = _orderedMenuItems;
+    if (fromIndex == toIndex) return;
+    if (fromIndex < 0 || fromIndex >= items.length) return;
+    if (toIndex < 0 || toIndex >= items.length) return;
+    setState(() {
+      final movido = items.removeAt(fromIndex);
+      items.insert(toIndex, movido);
+      _customOrder = items.map((i) => i['id'] as String).toList();
+    });
+    _salvarOrdem();
+  }
+
+  /// Volta o menu para a ordem original de fábrica.
+  void _resetarOrdem() {
+    setState(() => _customOrder = null);
+    _salvarOrdem();
+  }
+
+  void _alternarModoLayout() {
+    setState(() => _editandoLayout = !_editandoLayout);
   }
 
   void _fazerHardRefresh(BuildContext context) {
@@ -339,10 +407,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 Icon(Icons.refresh, color: Colors.blueAccent),
                 SizedBox(width: 12),
-                Text(
-                  'Hard Refresh',
-                  style: TextStyle(color: Colors.white),
-                ),
+                Text('Hard Refresh', style: TextStyle(color: Colors.white)),
               ],
             ),
             content: const Text(
@@ -386,7 +451,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _fazerLogout(BuildContext context) async {
     final authService = Provider.of<AuthService>(context, listen: false);
-    
+
     // Mostrar diálogo de confirmação
     final confirmar = await showDialog<bool>(
       context: context,
@@ -417,7 +482,7 @@ class _HomePageState extends State<HomePage> {
 
     if (confirmar == true) {
       await authService.logout();
-      
+
       if (context.mounted) {
         // Redirecionamento forçado e absoluto limpando todo o histórico
         Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
@@ -468,7 +533,9 @@ class _HomePageState extends State<HomePage> {
         // voltar e a seta parecia morta. Aqui navegamos de verdade para a seleção,
         // do mesmo jeito que a tela de bloqueio de mensalidade já faz.
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()),
+          MaterialPageRoute(
+            builder: (context) => const SelecionarEmpresaPage(),
+          ),
           (route) => false,
         );
       },
@@ -495,13 +562,15 @@ class _HomePageState extends State<HomePage> {
       cor = Colors.amber;
       icone = Icons.priority_high;
       rotulo = 'SEM CAIXA';
-      dica = 'Este computador ainda não tem nome de caixa: sem nome, dois PCs '
+      dica =
+          'Este computador ainda não tem nome de caixa: sem nome, dois PCs '
           'podem emitir o mesmo número de venda. Clique para nomear.';
     } else if (outras.isNotEmpty) {
       cor = Colors.redAccent;
       icone = Icons.error_outline;
       rotulo = 'CAIXA $nome (repetido)';
-      dica = 'O nome "$nome" também está em uso em '
+      dica =
+          'O nome "$nome" também está em uso em '
           '${IdentidadeCaixa.listarMaquinas(outras)}. Dois caixas com o mesmo '
           'nome podem gerar número de venda repetido. Clique para trocar o nome '
           'deste computador.';
@@ -509,7 +578,8 @@ class _HomePageState extends State<HomePage> {
       cor = Colors.greenAccent;
       icone = Icons.point_of_sale;
       rotulo = 'CAIXA $nome';
-      dica = 'Este computador é o caixa "$nome": as vendas saem numeradas como '
+      dica =
+          'Este computador é o caixa "$nome": as vendas saem numeradas como '
           '$nome-0001. Clique para alterar.';
     }
 
@@ -560,15 +630,21 @@ class _HomePageState extends State<HomePage> {
     dataService.responsavelAtivo = usuarioLogado?.email ?? usuarioLogado?.nome;
 
     final empresaAtual = dataService.empresaAtual ?? authService.empresaAtual;
-    final isMaster = usuarioLogado?.isMaster == true || usuarioLogado?.email.toLowerCase() == 'user';
+    final isMaster =
+        usuarioLogado?.isMaster == true ||
+        usuarioLogado?.email.toLowerCase() == 'user';
+
+    // Layout de celular: telas estreitas ganham botões maiores, barra inferior
+    // de navegação e as ações do topo recolhidas no menu "⋮".
+    final bool ehCelular = _ehCelular(context);
 
     if (empresaAtual != null) {
       final motivo = empresaAtual.verificarMotivoBloqueio(
         ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
         ultimaDataExecucao: dataService.ultimaDataExecucao,
-        limiteDiasOffline: 5,
       );
-      if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+      if (motivo != MotivoBloqueioEmpresa.nenhum &&
+          !dataService.liberacaoProvisoriaAtiva) {
         return BloqueioMensalidadePage(
           configs: empresaAtual.configuracoes ?? {},
           motivoBloqueio: motivo,
@@ -590,6 +666,7 @@ class _HomePageState extends State<HomePage> {
     return AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
+        bottomNavigationBar: ehCelular ? _buildBottomNav(context) : null,
         appBar: AppBar(
           // Sem seta automática: o Flutter criaria uma sozinho porque a Home foi
           // empilhada por cima da seleção de empresas.
@@ -607,7 +684,10 @@ class _HomePageState extends State<HomePage> {
                   onTap: _mostrarNovidadesDaVersao,
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.08),
                       borderRadius: BorderRadius.circular(8),
@@ -625,7 +705,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-              if (empresaAtual != null) ...[
+              if (!ehCelular && empresaAtual != null) ...[
                 const SizedBox(width: 8),
                 // FLEXIBLE: sem isto o chip da empresa (que tem largura própria,
                 // até 280 px) não encolhe, e em janela estreita o Row do título
@@ -636,7 +716,9 @@ class _HomePageState extends State<HomePage> {
                     message: 'Clique para copiar o ID completo da empresa',
                     child: GestureDetector(
                       onTap: () async {
-                        await Clipboard.setData(ClipboardData(text: empresaAtual.id));
+                        await Clipboard.setData(
+                          ClipboardData(text: empresaAtual.id),
+                        );
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -649,11 +731,16 @@ class _HomePageState extends State<HomePage> {
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 280),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.orangeAccent.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.orangeAccent.withOpacity(0.25)),
+                            border: Border.all(
+                              color: Colors.orangeAccent.withOpacity(0.25),
+                            ),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -670,7 +757,11 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ),
                               const SizedBox(width: 4),
-                              Icon(Icons.copy_rounded, size: 12, color: Colors.orangeAccent.withOpacity(0.8)),
+                              Icon(
+                                Icons.copy_rounded,
+                                size: 12,
+                                color: Colors.orangeAccent.withOpacity(0.8),
+                              ),
                             ],
                           ),
                         ),
@@ -679,343 +770,538 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ],
-              // Nome DESTE caixa, fixo aqui no topo: é o que o operador olha
-              // para saber em qual máquina está (e o aviso quando o nome está
-              // repetido em outra). Fica no topo, e não em cada tela, porque é
-              // configuração por computador.
-              _buildChipDoCaixa(dataService),
+              // Nome DESTE caixa: no celular fica no menu overflow para não colidir
+              // nem sobrepor o botão de voltar ou o logo na barra superior.
+              if (!ehCelular) _buildChipDoCaixa(dataService),
             ],
           ), // Restaurado 'ê' conforme pedido
-          centerTitle: true,
+          centerTitle: !ehCelular,
           actions: [
             const SyncStatusWidget(),
 
+            // No celular as ações do topo não cabem: elas migram para o menu
+            // "⋮" (ver _buildMobileOverflowMenu).
+            if (ehCelular) _buildMobileOverflowMenu(context),
+
             // ========= BOTÕES DE TESTE (TEMPORÁRIOS) - APENAS USUÁRIO MASTER =========
-            Consumer<AuthService>(
-              builder: (context, auth, _) {
-                final isMaster = auth.usuarioAtual?.isMaster == true || auth.usuarioAtual?.email == 'user';
-                if (!isMaster) return const SizedBox.shrink();
+            if (!ehCelular)
+              Consumer<AuthService>(
+                builder: (context, auth, _) {
+                  final isMaster =
+                      auth.usuarioAtual?.isMaster == true ||
+                      auth.usuarioAtual?.email == 'user';
+                  if (!isMaster) return const SizedBox.shrink();
 
-                // Rolagem horizontal: são vários botões e em janelas estreitas
-                // eles passam da largura disponível na barra.
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                  children: [
-                    _buildCapsuleActionButton(
-                      icon: Icons.delete_sweep,
-                      label: 'Limpar Local',
-                      color: Colors.redAccent,
-                      tooltip: 'Apaga a base local DESTA empresa (a nuvem fica intacta)',
-                      onTap: () async {
-                        final dataService = Provider.of<DataService>(context, listen: false);
-                        final messenger = ScaffoldMessenger.of(context);
-                        // A empresa ABERTA nesta tela é o alvo da limpeza. Passamos o
-                        // id e o nome daqui para o serviço conferir e limpar só ela.
-                        final empresaAberta = dataService.empresaAtual;
-                        final empresaNome = empresaAberta?.nomeExibicao ?? 'empresa atual';
-
-                        final confirmar = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            backgroundColor: const Color(0xFF1E1E2E),
-                            title: const Text('🗑️ Limpar a base local?', style: TextStyle(color: Colors.white)),
-                            content: Text(
-                              'Isso apaga do SEU COMPUTADOR os dados da empresa "$empresaNome" '
-                              '(produtos, clientes, pedidos, vendas, caixa...).\n\n'
-                              '✅ A NUVEM NÃO é afetada.\n\n'
-                              'Depois use "Puxar Nuvem" para baixar tudo de novo, limpo, da nuvem.\n\n'
-                              '⚠️ Dados criados aqui que ainda não foram sincronizados serão perdidos.',
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Sim, Limpar Local', style: TextStyle(color: Colors.redAccent)),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirmar != true) return;
-
-                        try {
-                          final resultado = await dataService.resetLocalCacheOnly(
-                            empresaId: empresaAberta?.id,
-                            empresaNome: empresaAberta?.nomeExibicao,
-                          );
-                          messenger.showSnackBar(SnackBar(
-                            content: Text(
-                              resultado.total == 0
-                                  ? '🗑️ Nenhum registro local encontrado para "$empresaNome". '
-                                      'Outras empresas: ${resultado.linhasDeOutrasEmpresas} registro(s) intactos. '
-                                      'A nuvem ficou intacta.'
-                                  : '🗑️ Local de "$empresaNome" limpo: ${resultado.total} registro(s) em '
-                                      '${resultado.tabelas} tabela(s). Outras empresas: '
-                                      '${resultado.linhasDeOutrasEmpresas} registro(s) intactos. '
-                                      'A nuvem ficou intacta — agora use "Puxar Nuvem".',
-                            ),
-                          ));
-                        } catch (e) {
-                          messenger.showSnackBar(SnackBar(
-                            content: Text('❌ Erro ao limpar o local: $e'),
-                            backgroundColor: Colors.red,
-                          ));
-                        }
-                      },
-                    ),
-                    _buildCapsuleActionButton(
-                      icon: Icons.download_for_offline,
-                      label: 'Puxar Nuvem',
-                      color: Colors.greenAccent,
-                      tooltip: 'TESTE: Puxar da Nuvem Agora',
-                      onTap: () async {
-                        final dataService = Provider.of<DataService>(context, listen: false);
-                        final confirmar = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            backgroundColor: const Color(0xFF1E1E2E),
-                            title: const Text('⬇️ Puxar Dados da Nuvem?', style: TextStyle(color: Colors.white)),
-                            content: const Text(
-                              'Atenção! Isso vai apagar o cache local do seu computador para baixar uma versão limpa da nuvem.\n\n'
-                              '⚠️ Se você tiver dados criados offline (vendas, clientes, pedidos) que ainda não foram sincronizados para a nuvem, ELES SERÃO PERDIDOS.\n\n'
-                              'Certifique-se de estar conectado à internet antes de prosseguir.',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Sim, Puxar', style: TextStyle(color: Colors.greenAccent)),
-                              ),
-                            ],
-                          ),
-                        );
-
-                        if (confirmar == true) {
-                          try {
-                            await dataService.recarregarTudoDoSupabase();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('✅ Dados puxados da nuvem! ${dataService.produtos.length} produtos, ${dataService.clientes.length} clientes.'))
+                  // Rolagem horizontal: são vários botões e em janelas estreitas
+                  // eles passam da largura disponível na barra.
+                  return SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildCapsuleActionButton(
+                          icon: Icons.delete_sweep,
+                          label: 'Limpar Local',
+                          color: Colors.redAccent,
+                          tooltip:
+                              'Apaga a base local DESTA empresa (a nuvem fica intacta)',
+                          onTap: () async {
+                            final dataService = Provider.of<DataService>(
+                              context,
+                              listen: false,
                             );
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('❌ Erro ao puxar da nuvem: $e'))
-                            );
-                          }
-                        }
-                      },
-                    ),
-                    _buildCapsuleActionButton(
-                      icon: Icons.fact_check_outlined,
-                      label: 'Conferir',
-                      color: Colors.lightBlueAccent,
-                      tooltip: 'Conferir Local × Nuvem, empresa por empresa (só leitura)',
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) {
-                              final empresa = Provider.of<DataService>(context,
-                                      listen: false)
-                                  .empresaAtual;
-                              return ConferenciaLocalNuvemPage(
-                                empresaAberta: empresa?.nomeExibicao,
-                                empresaAbertaId: empresa?.id,
-                              );
-                            },
-                          ),
-                        );
-                      },
-                    ),
-                    _buildCapsuleActionButton(
-                      icon: Icons.lan_outlined,
-                      label: 'Rede LAN',
-                      color: Colors.tealAccent,
-                      tooltip:
-                          'Ligar os dois PCs da loja direto pela rede local '
-                          '(funciona até sem internet). Configuração toda aqui.',
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const ConfiguracaoLanPage(),
-                          ),
-                        );
-                      },
-                    ),
-                    _buildCapsuleActionButton(
-                      icon: Icons.medical_services,
-                      label: 'Restaurar Nuvem',
-                      color: Colors.cyanAccent,
-                      tooltip: '🚑 RESTAURAR: Enviar dados locais → Nuvem',
-                      onTap: () async {
-                        final dataService = Provider.of<DataService>(context, listen: false);
-                        final confirmar = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            backgroundColor: const Color(0xFF1E1E2E),
-                            title: const Text('🚑 Restaurar Dados na Nuvem?', style: TextStyle(color: Colors.white)),
-                            content: const Text('Isso vai enviar os dados que estão no SEU COMPUTADOR para a nuvem.\n\nUse isso para recuperar dados apagados acidentalmente.', style: TextStyle(color: Colors.white70)),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
-                              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sim, Restaurar', style: TextStyle(color: Colors.cyan))),
-                            ],
-                          ),
-                        );
-                        if (confirmar == true) {
-                          try {
-                            await dataService.restaurarLocalParaNuvem();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('🚑 Dados restaurados na nuvem com sucesso!'))
-                            );
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('❌ Erro ao restaurar: $e'))
-                            );
-                          }
-                        }
-                      },
-                    ),
-                    _buildCapsuleActionButton(
-                      icon: Icons.cloud_off,
-                      label: 'Zerar Nuvem',
-                      color: Colors.amberAccent,
-                      tooltip: 'Zerar Nuvem desta Empresa (CUIDADO)',
-                      onTap: () async {
-                        final dataService = Provider.of<DataService>(context, listen: false);
-                        final empresaNome = dataService.empresaAtual?.nomeExibicao ?? 'empresa atual';
+                            final messenger = ScaffoldMessenger.of(context);
+                            // A empresa ABERTA nesta tela é o alvo da limpeza. Passamos o
+                            // id e o nome daqui para o serviço conferir e limpar só ela.
+                            final empresaAberta = dataService.empresaAtual;
+                            final empresaNome =
+                                empresaAberta?.nomeExibicao ?? 'empresa atual';
 
-                        // Contar o que existe na nuvem APENAS para esta empresa (só leitura)
-                        Map<String, int> contagens = {};
-                        try {
-                          contagens = await dataService.contarDadosDaEmpresa();
-                        } catch (_) {}
-
-                        final tabelasComDados = contagens.entries.where((e) => e.value > 0).toList();
-                        final total = tabelasComDados.fold<int>(0, (soma, e) => soma + e.value);
-
-                        // Mostrar diálogo de confirmação extra com nome e contagem
-                        final confirmar = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            backgroundColor: const Color(0xFF1E1E2E),
-                            title: const Text('⚠️ APAGAR NUVEM?', style: TextStyle(color: Colors.white)),
-                            content: SingleChildScrollView(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Isso vai apagar APENAS os dados da empresa "$empresaNome" no servidor. Tem certeza?',
-                                    style: const TextStyle(color: Colors.white70),
+                            final confirmar = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: const Color(0xFF1E1E2E),
+                                title: const Text(
+                                  '🗑️ Limpar a base local?',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                                content: Text(
+                                  'Isso apaga do SEU COMPUTADOR os dados da empresa "$empresaNome" '
+                                  '(produtos, clientes, pedidos, vendas, caixa...).\n\n'
+                                  '✅ A NUVEM NÃO é afetada.\n\n'
+                                  'Depois use "Puxar Nuvem" para baixar tudo de novo, limpo, da nuvem.\n\n'
+                                  '⚠️ Dados criados aqui que ainda não foram sincronizados serão perdidos.',
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text(
+                                      'Cancelar',
+                                      style: TextStyle(color: Colors.white54),
+                                    ),
                                   ),
-                                  const SizedBox(height: 12),
-                                  if (tabelasComDados.isEmpty)
-                                    const Text(
-                                      'Nenhum registro encontrado na nuvem para esta empresa.',
-                                      style: TextStyle(color: Colors.white38, fontSize: 12),
-                                    )
-                                  else ...[
-                                    const Text('Serão apagados na nuvem:',
-                                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 6),
-                                    ...tabelasComDados.map((e) => Text(
-                                          '  • ${e.key}: ${e.value} registro(s)',
-                                          style: const TextStyle(color: Colors.white60, fontSize: 12),
-                                        )),
-                                    const SizedBox(height: 6),
-                                    Text('Total: $total registro(s)',
-                                        style: const TextStyle(color: Colors.amberAccent, fontSize: 12)),
-                                  ],
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text(
+                                      'Sim, Limpar Local',
+                                      style: TextStyle(color: Colors.redAccent),
+                                    ),
+                                  ),
                                 ],
                               ),
-                            ),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Não', style: TextStyle(color: Colors.white54))),
-                              TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim, Apagar Tudo', style: TextStyle(color: Colors.red))),
-                            ],
-                          )
-                        );
+                            );
+                            if (confirmar != true) return;
 
-                        if (confirmar == true) {
-                          try {
-                            final removidos = await dataService.deletarTudoNoSupabaseDestaEmpresa();
-                            final qtd = removidos.values.fold<int>(0, (soma, v) => soma + v);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('🔥 Nuvem limpada! $qtd registro(s) removidos da empresa atual.'))
+                            try {
+                              final resultado = await dataService
+                                  .resetLocalCacheOnly(
+                                    empresaId: empresaAberta?.id,
+                                    empresaNome: empresaAberta?.nomeExibicao,
+                                  );
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    resultado.total == 0
+                                        ? '🗑️ Nenhum registro local encontrado para "$empresaNome". '
+                                              'Outras empresas: ${resultado.linhasDeOutrasEmpresas} registro(s) intactos. '
+                                              'A nuvem ficou intacta.'
+                                        : '🗑️ Local de "$empresaNome" limpo: ${resultado.total} registro(s) em '
+                                              '${resultado.tabelas} tabela(s). Outras empresas: '
+                                              '${resultado.linhasDeOutrasEmpresas} registro(s) intactos. '
+                                              'A nuvem ficou intacta — agora use "Puxar Nuvem".',
+                                  ),
+                                ),
+                              );
+                            } catch (e) {
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text('❌ Erro ao limpar o local: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                        _buildCapsuleActionButton(
+                          icon: Icons.download_for_offline,
+                          label: 'Puxar Nuvem',
+                          color: Colors.greenAccent,
+                          tooltip: 'TESTE: Puxar da Nuvem Agora',
+                          onTap: () async {
+                            final dataService = Provider.of<DataService>(
+                              context,
+                              listen: false,
                             );
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('❌ $e'), backgroundColor: Colors.red.shade900)
+                            final confirmar = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: const Color(0xFF1E1E2E),
+                                title: const Text(
+                                  '⬇️ Puxar Dados da Nuvem?',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                                content: const Text(
+                                  'Atenção! Isso vai apagar o cache local do seu computador para baixar uma versão limpa da nuvem.\n\n'
+                                  '⚠️ Se você tiver dados criados offline (vendas, clientes, pedidos) que ainda não foram sincronizados para a nuvem, ELES SERÃO PERDIDOS.\n\n'
+                                  'Certifique-se de estar conectado à internet antes de prosseguir.',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text(
+                                      'Cancelar',
+                                      style: TextStyle(color: Colors.white54),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text(
+                                      'Sim, Puxar',
+                                      style: TextStyle(
+                                        color: Colors.greenAccent,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             );
-                          }
-                        }
-                      },
+
+                            if (confirmar == true) {
+                              try {
+                                await dataService.recarregarTudoDoSupabase();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      '✅ Dados puxados da nuvem! ${dataService.produtos.length} produtos, ${dataService.clientes.length} clientes.',
+                                    ),
+                                  ),
+                                );
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      '❌ Erro ao puxar da nuvem: $e',
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                        _buildCapsuleActionButton(
+                          icon: Icons.fact_check_outlined,
+                          label: 'Conferir',
+                          color: Colors.lightBlueAccent,
+                          tooltip:
+                              'Conferir Local × Nuvem, empresa por empresa (só leitura)',
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) {
+                                  final empresa = Provider.of<DataService>(
+                                    context,
+                                    listen: false,
+                                  ).empresaAtual;
+                                  return ConferenciaLocalNuvemPage(
+                                    empresaAberta: empresa?.nomeExibicao,
+                                    empresaAbertaId: empresa?.id,
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                        _buildCapsuleActionButton(
+                          icon: Icons.lan_outlined,
+                          label: 'Rede LAN',
+                          color: Colors.tealAccent,
+                          tooltip:
+                              'Ligar os dois PCs da loja direto pela rede local '
+                              '(funciona até sem internet). Configuração toda aqui.',
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const ConfiguracaoLanPage(),
+                              ),
+                            );
+                          },
+                        ),
+                        if (ConfigServidorMobile.aplicavel)
+                          _buildCapsuleActionButton(
+                            icon: Icons.dns_outlined,
+                            label: 'Servidor',
+                            color: Colors.lightBlueAccent,
+                            tooltip:
+                                'Endereço do computador desta loja (IP e porta do '
+                                'banco). Use quando trocar o PC ou o IP mudar.',
+                            onTap: () async {
+                              final mudou = await Navigator.push<bool>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      const ConfiguracaoServidorPage(),
+                                ),
+                              );
+                              if (mudou == true && context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Endereço salvo. Se o sistema não conectar, '
+                                      'feche e abra o app.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                        _buildCapsuleActionButton(
+                          icon: Icons.medical_services,
+                          label: 'Restaurar Nuvem',
+                          color: Colors.cyanAccent,
+                          tooltip: '🚑 RESTAURAR: Enviar dados locais → Nuvem',
+                          onTap: () async {
+                            final dataService = Provider.of<DataService>(
+                              context,
+                              listen: false,
+                            );
+                            final confirmar = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: const Color(0xFF1E1E2E),
+                                title: const Text(
+                                  '🚑 Restaurar Dados na Nuvem?',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                                content: const Text(
+                                  'Isso vai enviar os dados que estão no SEU COMPUTADOR para a nuvem.\n\nUse isso para recuperar dados apagados acidentalmente.',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text(
+                                      'Cancelar',
+                                      style: TextStyle(color: Colors.white54),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text(
+                                      'Sim, Restaurar',
+                                      style: TextStyle(color: Colors.cyan),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmar == true) {
+                              try {
+                                await dataService.restaurarLocalParaNuvem();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      '🚑 Dados restaurados na nuvem com sucesso!',
+                                    ),
+                                  ),
+                                );
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('❌ Erro ao restaurar: $e'),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                        _buildCapsuleActionButton(
+                          icon: Icons.cloud_off,
+                          label: 'Zerar Nuvem',
+                          color: Colors.amberAccent,
+                          tooltip: 'Zerar Nuvem desta Empresa (CUIDADO)',
+                          onTap: () async {
+                            final dataService = Provider.of<DataService>(
+                              context,
+                              listen: false,
+                            );
+                            final empresaNome =
+                                dataService.empresaAtual?.nomeExibicao ??
+                                'empresa atual';
+
+                            // Contar o que existe na nuvem APENAS para esta empresa (só leitura)
+                            Map<String, int> contagens = {};
+                            try {
+                              contagens = await dataService
+                                  .contarDadosDaEmpresa();
+                            } catch (_) {}
+
+                            final tabelasComDados = contagens.entries
+                                .where((e) => e.value > 0)
+                                .toList();
+                            final total = tabelasComDados.fold<int>(
+                              0,
+                              (soma, e) => soma + e.value,
+                            );
+
+                            // Mostrar diálogo de confirmação extra com nome e contagem
+                            final confirmar = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                backgroundColor: const Color(0xFF1E1E2E),
+                                title: const Text(
+                                  '⚠️ APAGAR NUVEM?',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                                content: SingleChildScrollView(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Isso vai apagar APENAS os dados da empresa "$empresaNome" no servidor. Tem certeza?',
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      if (tabelasComDados.isEmpty)
+                                        const Text(
+                                          'Nenhum registro encontrado na nuvem para esta empresa.',
+                                          style: TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 12,
+                                          ),
+                                        )
+                                      else ...[
+                                        const Text(
+                                          'Serão apagados na nuvem:',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        ...tabelasComDados.map(
+                                          (e) => Text(
+                                            '  • ${e.key}: ${e.value} registro(s)',
+                                            style: const TextStyle(
+                                              color: Colors.white60,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          'Total: $total registro(s)',
+                                          style: const TextStyle(
+                                            color: Colors.amberAccent,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: const Text(
+                                      'Não',
+                                      style: TextStyle(color: Colors.white54),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: const Text(
+                                      'Sim, Apagar Tudo',
+                                      style: TextStyle(color: Colors.red),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+
+                            if (confirmar == true) {
+                              try {
+                                final removidos = await dataService
+                                    .deletarTudoNoSupabaseDestaEmpresa();
+                                final qtd = removidos.values.fold<int>(
+                                  0,
+                                  (soma, v) => soma + v,
+                                );
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      '🔥 Nuvem limpada! $qtd registro(s) removidos da empresa atual.',
+                                    ),
+                                  ),
+                                );
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('❌ $e'),
+                                    backgroundColor: Colors.red.shade900,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                      ],
                     ),
-                  ],
-                  ),
-                );
-              },
-            ),
+                  );
+                },
+              ),
             // ===============================================
 
-            // Botão de Reordenar (Feedback Visual)
-            if (_customOrder != null)
+            // ---- Personalizar layout da Home (arrastar os botões) ----
+            // Entra/sai do modo edição. Só faz sentido na página do menu (0).
+            if (!ehCelular && _currentPage == 0 && !_editandoLayout)
               IconButton(
-                icon: const Icon(Icons.restore, color: Colors.orangeAccent),
-                tooltip: 'Votar Ordem Padrão',
-                onPressed: () {
-                  setState(() {
-                    _customOrder = null;
-                  });
-                  _salvarOrdem();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Ordem dos botões resetada para o padrão')),
+                icon: const Icon(
+                  Icons.dashboard_customize_outlined,
+                  color: Colors.tealAccent,
+                ),
+                tooltip:
+                    'Personalizar layout — arraste os botões como preferir',
+                onPressed: _alternarModoLayout,
+              ),
+            if (_editandoLayout) ...[
+              if (_customOrder != null)
+                IconButton(
+                  icon: const Icon(Icons.restore, color: Colors.orangeAccent),
+                  tooltip: 'Restaurar a ordem padrão dos botões',
+                  onPressed: () {
+                    _resetarOrdem();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Ordem dos botões restaurada para o padrão',
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              TextButton.icon(
+                onPressed: _alternarModoLayout,
+                icon: const Icon(Icons.check_circle, color: Colors.greenAccent),
+                label: const Text(
+                  'Concluir',
+                  style: TextStyle(
+                    color: Colors.greenAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+
+            // Botão de Troca de Tema
+            if (!ehCelular)
+              Consumer<ThemeService>(
+                builder: (context, themeService, _) {
+                  return IconButton(
+                    icon: Icon(
+                      themeService.getThemeIcon(themeService.currentTheme),
+                      color: Colors.blueAccent,
+                    ),
+                    tooltip: 'Trocar Tema Visual',
+                    onPressed: () => _mostrarSeletorTema(context, themeService),
                   );
                 },
               ),
 
-            // Botão de Troca de Tema
-            Consumer<ThemeService>(
-              builder: (context, themeService, _) {
-                return IconButton(
-                  icon: Icon(themeService.getThemeIcon(themeService.currentTheme), color: Colors.blueAccent),
-                  tooltip: 'Trocar Tema Visual',
-                  onPressed: () => _mostrarSeletorTema(context, themeService),
-                );
-              },
-            ),
-
-
-
-            IconButton(
-              icon: Icon(
-                _currentPage == 0 ? Icons.dashboard : Icons.home,
-                color: _currentPage == 0 ? const Color(0xFFFF6B35) : Colors.white70,
+            if (!ehCelular)
+              IconButton(
+                icon: Icon(
+                  _currentPage == 0 ? Icons.dashboard : Icons.home,
+                  color: _currentPage == 0
+                      ? const Color(0xFFFF6B35)
+                      : Colors.white70,
+                ),
+                tooltip: _currentPage == 0
+                    ? 'Arraste para direita ou clique para Dashboard'
+                    : 'Voltar para Home',
+                onPressed: () {
+                  if (_currentPage == 0) {
+                    _pageController.nextPage(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                    );
+                  } else {
+                    _pageController.previousPage(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                    );
+                  }
+                },
               ),
-              tooltip: _currentPage == 0 ? 'Arraste para direita ou clique para Dashboard' : 'Voltar para Home',
-              onPressed: () {
-                if (_currentPage == 0) {
-                  _pageController.nextPage(
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                  );
-                } else {
-                  _pageController.previousPage(
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                  );
-                }
-              },
-            ),
-            if (_currentPage == 1)
+            if (!ehCelular && _currentPage == 1)
               IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Atualizar Dashboard',
@@ -1024,71 +1310,82 @@ class _HomePageState extends State<HomePage> {
                   setState(() {});
                 },
               ),
-            PermissionWidget(
-              permissao: TipoPermissao.financeiroVisualizar,
-              child: IconButton(
-                icon: const Icon(Icons.calendar_today, color: Colors.blue),
-                tooltip: 'Agenda de Contas',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const AgendaContasPage()),
-                  );
-                },
-              ),
-            ),
-            PermissionWidget(
-              permissao: TipoPermissao.financeiroVisualizar,
-              child: IconButton(
-                icon: const Icon(Icons.payment, color: Colors.red),
-                tooltip: 'Contas a Pagar',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const ContasPagarPage()),
-                  );
-                },
-              ),
-            ),
-            // Botão de Gerenciar Permissões - apenas para usuário master ou "user"
-            Builder(
-              builder: (context) {
-                final authService = Provider.of<AuthService>(context);
-                final usuarioAtual = authService.usuarioAtual;
-                
-                // Só mostra se for master ou "user"
-                final podeGerenciar = usuarioAtual != null && 
-                    (usuarioAtual.isMaster || usuarioAtual.email.toLowerCase() == 'user');
-                
-                if (!podeGerenciar) {
-                  return const SizedBox.shrink();
-                }
-                
-                final isUser = usuarioAtual.email.toLowerCase() == 'user';
-                
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-
-                    IconButton(
-                      icon: Icon(
-                        Icons.security,
-                        color: isUser ? Colors.blue : Colors.amber,
+            if (!ehCelular)
+              PermissionWidget(
+                permissao: TipoPermissao.financeiroVisualizar,
+                child: IconButton(
+                  icon: const Icon(Icons.calendar_today, color: Colors.blue),
+                  tooltip: 'Agenda de Contas',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AgendaContasPage(),
                       ),
-                      tooltip: isUser 
-                          ? 'Gerenciar Permissoes (User - Todas as Empresas)'
-                          : 'Gerenciar Permissoes (Master - Todas as Empresas)',
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const GerenciarPermissoesPage()),
-                        );
-                      },
-                    ),
-                  ],
-                );
-              },
-            ),
+                    );
+                  },
+                ),
+              ),
+            if (!ehCelular)
+              PermissionWidget(
+                permissao: TipoPermissao.financeiroVisualizar,
+                child: IconButton(
+                  icon: const Icon(Icons.payment, color: Colors.red),
+                  tooltip: 'Contas a Pagar',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ContasPagarPage(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            // Botão de Gerenciar Permissões - apenas para usuário master ou "user"
+            if (!ehCelular)
+              Builder(
+                builder: (context) {
+                  final authService = Provider.of<AuthService>(context);
+                  final usuarioAtual = authService.usuarioAtual;
+
+                  // Só mostra se for master ou "user"
+                  final podeGerenciar =
+                      usuarioAtual != null &&
+                      (usuarioAtual.isMaster ||
+                          usuarioAtual.email.toLowerCase() == 'user');
+
+                  if (!podeGerenciar) {
+                    return const SizedBox.shrink();
+                  }
+
+                  final isUser = usuarioAtual.email.toLowerCase() == 'user';
+
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          Icons.security,
+                          color: isUser ? Colors.blue : Colors.amber,
+                        ),
+                        tooltip: isUser
+                            ? 'Gerenciar Permissoes (User - Todas as Empresas)'
+                            : 'Gerenciar Permissoes (Master - Todas as Empresas)',
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const GerenciarPermissoesPage(),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  );
+                },
+              ),
             if (kIsWeb)
               IconButton(
                 icon: const Icon(Icons.refresh),
@@ -1097,57 +1394,68 @@ class _HomePageState extends State<HomePage> {
               ),
             // Identificação DESTE caixa (numeração das vendas: CX1-0001).
             // Fica no topo do app porque é config por computador, não por empresa.
-            Builder(
-              builder: (context) {
-                final dataService = Provider.of<DataService>(context);
-                final nomeCaixa = dataService.nomeDoCaixa;
-                return IconButton(
-                  icon: Badge(
-                    isLabelVisible: nomeCaixa.isEmpty,
-                    backgroundColor: Colors.amber,
-                    label: const Icon(Icons.priority_high, size: 12),
-                    child: const Icon(Icons.point_of_sale, color: Colors.greenAccent),
-                  ),
-                  tooltip: nomeCaixa.isEmpty
-                      ? 'Identificação deste caixa (sem nome: risco de número repetido entre PCs)'
-                      : 'Identificação deste caixa (vendas numeradas como $nomeCaixa-0001)',
-                  onPressed: () => mostrarDialogoIdentidadeDoCaixa(context, dataService),
-                );
-              },
-            ),
-            // Botão Configuração da Empresa (Atalho Rápido)
-            Builder(
-              builder: (context) {
-                final authService = Provider.of<AuthService>(context);
-                final dataService = Provider.of<DataService>(context);
-                final usuarioAtual = authService.usuarioAtual;
-                
-                final podeAcessar = usuarioAtual != null && 
-                    (usuarioAtual.email.toLowerCase() == 'user' || usuarioAtual.isMaster);
-                
-                if (!podeAcessar || dataService.empresaAtual == null) {
-                  return const SizedBox.shrink();
-                }
-
-                return IconButton(
-                  icon: const Icon(Icons.business, color: Colors.amber),
-                  tooltip: 'Configurações de Impressão e Empresa',
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => AdicionarEmpresaPage(empresa: dataService.empresaAtual),
+            if (!ehCelular)
+              Builder(
+                builder: (context) {
+                  final dataService = Provider.of<DataService>(context);
+                  final nomeCaixa = dataService.nomeDoCaixa;
+                  return IconButton(
+                    icon: Badge(
+                      isLabelVisible: nomeCaixa.isEmpty,
+                      backgroundColor: Colors.amber,
+                      label: const Icon(Icons.priority_high, size: 12),
+                      child: const Icon(
+                        Icons.point_of_sale,
+                        color: Colors.greenAccent,
                       ),
-                    );
-                  },
-                );
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.logout),
-              tooltip: 'Sair do sistema',
-              onPressed: () => _fazerLogout(context),
-            ),
+                    ),
+                    tooltip: nomeCaixa.isEmpty
+                        ? 'Identificação deste caixa (sem nome: risco de número repetido entre PCs)'
+                        : 'Identificação deste caixa (vendas numeradas como $nomeCaixa-0001)',
+                    onPressed: () =>
+                        mostrarDialogoIdentidadeDoCaixa(context, dataService),
+                  );
+                },
+              ),
+            // Botão Configuração da Empresa (Atalho Rápido)
+            if (!ehCelular)
+              Builder(
+                builder: (context) {
+                  final authService = Provider.of<AuthService>(context);
+                  final dataService = Provider.of<DataService>(context);
+                  final usuarioAtual = authService.usuarioAtual;
+
+                  final podeAcessar =
+                      usuarioAtual != null &&
+                      (usuarioAtual.email.toLowerCase() == 'user' ||
+                          usuarioAtual.isMaster);
+
+                  if (!podeAcessar || dataService.empresaAtual == null) {
+                    return const SizedBox.shrink();
+                  }
+
+                  return IconButton(
+                    icon: const Icon(Icons.business, color: Colors.amber),
+                    tooltip: 'Configurações de Impressão e Empresa',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => AdicionarEmpresaPage(
+                            empresa: dataService.empresaAtual,
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            if (!ehCelular)
+              IconButton(
+                icon: const Icon(Icons.logout),
+                tooltip: 'Sair do sistema',
+                onPressed: () => _fazerLogout(context),
+              ),
           ],
         ),
         body: PageView(
@@ -1163,9 +1471,14 @@ class _HomePageState extends State<HomePage> {
             // Página 0: Home (menu principal)
             SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.only(left: 24, right: 24, top: 0, bottom: 24),
+              padding: EdgeInsets.only(
+                left: ehCelular ? 16 : 24,
+                right: ehCelular ? 16 : 24,
+                top: 0,
+                bottom: 24,
+              ),
               child: Transform.translate(
-                offset: const Offset(0, -20),
+                offset: Offset(0, ehCelular ? 0 : -20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -1185,21 +1498,32 @@ class _HomePageState extends State<HomePage> {
                         }
                         return Container(
                           margin: const EdgeInsets.only(bottom: 16),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.orangeAccent.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orangeAccent.withOpacity(0.45)),
+                            border: Border.all(
+                              color: Colors.orangeAccent.withOpacity(0.45),
+                            ),
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent),
+                              const Icon(
+                                Icons.warning_amber_rounded,
+                                color: Colors.orangeAccent,
+                              ),
                               const SizedBox(width: 10),
                               const Expanded(
                                 child: Text(
                                   'Base local vazia (Limpar Local feito). Nada é recarregado '
                                   'automaticamente — clique em "Puxar Nuvem" para baixar tudo de novo.',
-                                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                                  style: TextStyle(
+                                    color: Colors.orangeAccent,
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ),
                             ],
@@ -1227,30 +1551,34 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _inicializarMenu();
     _carregarOrdem();
-    
+
     // Escutar alterações de conectividade no DataService para exibir alerta offline
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
         final dataService = Provider.of<DataService>(context, listen: false);
         _wasOffline = dataService.isOffline;
         dataService.addListener(_onDataServiceChanged);
-        
+
         // Se já inicializar offline, exibir o alerta imediatamente
         if (dataService.isOffline) {
           _mostrarAlertaOffline();
         }
       } catch (e) {
-        debugPrint('>>> [HomePage] Erro ao registrar listener de conectividade: $e');
+        debugPrint(
+          '>>> [HomePage] Erro ao registrar listener de conectividade: $e',
+        );
       }
     });
-    
+
     // Verificar se o Sincronizador e o Bridge estão rodando e tentar iniciá-los se for Desktop Windows
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!kIsWeb && Platform.isWindows) {
         // 1. Verificar Sincronizador Nuvem
-        final syncRunning = await SincronizadorManagerService.isSincronizadorRunning();
+        final syncRunning =
+            await SincronizadorManagerService.isSincronizadorRunning();
         if (!syncRunning) {
-          final syncStarted = await SincronizadorManagerService.startSincronizador();
+          final syncStarted =
+              await SincronizadorManagerService.startSincronizador();
           if (!syncStarted && mounted) {
             _mostrarAlertaSincronizadorFechado();
           }
@@ -1282,7 +1610,9 @@ class _HomePageState extends State<HomePage> {
     });
 
     // Se temos uma página inicial via URL, navegar para ela após o build
-    if (widget.initialPage != null && widget.initialPage != 'home' && widget.initialPage != '') {
+    if (widget.initialPage != null &&
+        widget.initialPage != 'home' &&
+        widget.initialPage != '') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _navegarParaPaginaInicial(widget.initialPage!);
       });
@@ -1293,11 +1623,13 @@ class _HomePageState extends State<HomePage> {
   void didUpdateWidget(HomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Se a página inicial mudar via URL (ex: navegação back/forward no browser)
-    if (widget.initialPage != oldWidget.initialPage && 
-        widget.initialPage != null && 
-        widget.initialPage != 'home' && 
+    if (widget.initialPage != oldWidget.initialPage &&
+        widget.initialPage != null &&
+        widget.initialPage != 'home' &&
         widget.initialPage != '') {
-      debugPrint('>>> [HomePage] Rota mudou via Widget Update: ${widget.initialPage}');
+      debugPrint(
+        '>>> [HomePage] Rota mudou via Widget Update: ${widget.initialPage}',
+      );
       _navegarParaPaginaInicial(widget.initialPage!);
     }
   }
@@ -1307,62 +1639,165 @@ class _HomePageState extends State<HomePage> {
     String? urlPath;
 
     switch (route) {
-      case 'clientes': page = const ClientesPage(); urlPath = '/clientes'; break;
-      case 'produtos': page = ProdutosPage(); urlPath = '/produtos'; break;
+      case 'clientes':
+        page = const ClientesPage();
+        urlPath = '/clientes';
+        break;
+      case 'produtos':
+        page = ProdutosPage();
+        urlPath = '/produtos';
+        break;
       case 'servico':
-      case 'servicos': page = ServicosPage(); urlPath = '/servicos'; break;
-      case 'pedidos': page = const PedidosPage(); urlPath = '/pedidos'; break;
-      case 'venda-direta': 
-      case 'pdv': page = VendaDiretaPage(); urlPath = '/pdv'; break;
-      case 'entrada-mercadorias': page = const EntradaMercadoriasPage(); urlPath = '/entrada-mercadorias'; break;
-      case 'contas-pagar': page = const ContasPagarPage(); urlPath = '/contas-pagar'; break;
-      case 'agenda-contas': page = const AgendaContasPage(); urlPath = '/agenda-contas'; break;
-      case 'cozinha-bar': page = const CozinhaBarPage(); urlPath = '/cozinha-bar'; break;
-      case 'monitor-producao': page = const MonitorProducaoPage(); urlPath = '/monitor-producao'; break;
-      case 'departamentos': page = const CadastroDepartamentosPage(); urlPath = '/departamentos'; break;
-      case 'estoques': page = const EstoquesPage(); urlPath = '/estoques'; break;
-      case 'mesas': page = CozinhaMesasFuncionarioPage(); urlPath = '/mesas'; break;
-      case 'links-vendedores': page = const GerenciarLinksVendedoresPage(); urlPath = '/links-vendedores'; break;
-      case 'vendedor-dashboard': page = const VendedorDashboardPage(); urlPath = '/vendedor-dashboard'; break;
-      case 'funcionarios': page = const FuncionariosPage(); urlPath = '/funcionarios'; break;
-      case 'personalizar-loja': page = const PersonalizarLojaPage(); urlPath = '/personalizar-loja'; break;
-      case 'agenda-pet': page = AgendaServicosPage(); urlPath = '/agenda-pet'; break;
-      case 'gerenciar-imagens': page = const GerenciarImagensPage(); urlPath = '/gerenciar-imagens'; break;
-      case 'caixa': page = const CaixaPage(); urlPath = '/caixa'; break;
-      case 'comissoes': page = const ComissoesPage(); urlPath = '/comissoes'; break;
-      case 'entregas': page = const EntregasPage(); urlPath = '/entregas'; break;
-      case 'romaneios': page = const RomaneiosPage(); urlPath = '/romaneios'; break;
-      case 'motoboys': page = const MotoristasPage(); urlPath = '/motoboys'; break;
-      case 'empresas': page = const EmpresasPage(); urlPath = '/empresas'; break;
-      case 'taxas-entrega': page = const TaxasEntregaPage(); urlPath = '/taxas-entrega'; break;
-      case 'gerenciar-permissoes': page = const GerenciarPermissoesPage(); urlPath = '/gerenciar-permissoes'; break;
-      case 'historico-vendas': page = const HistoricoVendasPage(); urlPath = '/historico-vendas'; break;
-      case 'historico-operacoes': page = const HistoricoOperacoesPage(); urlPath = '/historico-operacoes'; break;
-      case 'gerenciar-usuarios': 
-        final empresa = Provider.of<DataService>(context, listen: false).empresaAtual;
+      case 'servicos':
+        page = ServicosPage();
+        urlPath = '/servicos';
+        break;
+      case 'pedidos':
+        page = const PedidosPage();
+        urlPath = '/pedidos';
+        break;
+      case 'venda-direta':
+      case 'pdv':
+        page = VendaDiretaPage();
+        urlPath = '/pdv';
+        break;
+      case 'entrada-mercadorias':
+        page = const EntradaMercadoriasPage();
+        urlPath = '/entrada-mercadorias';
+        break;
+      case 'pedidos-compra':
+      case 'pedidos_compra':
+        page = const PedidosCompraPage();
+        urlPath = '/pedidos-compra';
+        break;
+      case 'contas-pagar':
+        page = const ContasPagarPage();
+        urlPath = '/contas-pagar';
+        break;
+      case 'agenda-contas':
+        page = const AgendaContasPage();
+        urlPath = '/agenda-contas';
+        break;
+      case 'cozinha-bar':
+        page = const CozinhaBarPage();
+        urlPath = '/cozinha-bar';
+        break;
+      case 'monitor-producao':
+        page = const MonitorProducaoPage();
+        urlPath = '/monitor-producao';
+        break;
+      case 'departamentos':
+        page = const CadastroDepartamentosPage();
+        urlPath = '/departamentos';
+        break;
+      case 'estoques':
+        page = const EstoquesPage();
+        urlPath = '/estoques';
+        break;
+      case 'mesas':
+        page = CozinhaMesasFuncionarioPage();
+        urlPath = '/mesas';
+        break;
+      case 'links-vendedores':
+        page = const GerenciarLinksVendedoresPage();
+        urlPath = '/links-vendedores';
+        break;
+      case 'vendedor-dashboard':
+        page = const VendedorDashboardPage();
+        urlPath = '/vendedor-dashboard';
+        break;
+      case 'funcionarios':
+        page = const FuncionariosPage();
+        urlPath = '/funcionarios';
+        break;
+      case 'personalizar-loja':
+        page = const PersonalizarLojaPage();
+        urlPath = '/personalizar-loja';
+        break;
+      case 'agenda-pet':
+        page = AgendaServicosPage();
+        urlPath = '/agenda-pet';
+        break;
+      case 'gerenciar-imagens':
+        page = const GerenciarImagensPage();
+        urlPath = '/gerenciar-imagens';
+        break;
+      case 'caixa':
+        page = const CaixaPage();
+        urlPath = '/caixa';
+        break;
+      case 'comissoes':
+        page = const ComissoesPage();
+        urlPath = '/comissoes';
+        break;
+      case 'entregas':
+        page = const EntregasPage();
+        urlPath = '/entregas';
+        break;
+      case 'romaneios':
+        page = const RomaneiosPage();
+        urlPath = '/romaneios';
+        break;
+      case 'motoboys':
+        page = const MotoristasPage();
+        urlPath = '/motoboys';
+        break;
+      case 'empresas':
+        page = const EmpresasPage();
+        urlPath = '/empresas';
+        break;
+      case 'taxas-entrega':
+        page = const TaxasEntregaPage();
+        urlPath = '/taxas-entrega';
+        break;
+      case 'gerenciar-permissoes':
+        page = const GerenciarPermissoesPage();
+        urlPath = '/gerenciar-permissoes';
+        break;
+      case 'historico-vendas':
+        page = const HistoricoVendasPage();
+        urlPath = '/historico-vendas';
+        break;
+      case 'historico-operacoes':
+        page = const HistoricoOperacoesPage();
+        urlPath = '/historico-operacoes';
+        break;
+      case 'gerenciar-usuarios':
+        final empresa = Provider.of<DataService>(
+          context,
+          listen: false,
+        ).empresaAtual;
         if (empresa != null) {
           page = GerenciarUsuariosPage(empresa: empresa);
         }
-        urlPath = '/gerenciar-usuarios'; 
+        urlPath = '/gerenciar-usuarios';
         break;
-      case 'trocas-devolucoes': page = const TrocasDevolucoesBuscarPage(); urlPath = '/trocas-devolucoes'; break;
-      case 'configuracoes-agenda': page = const ConfiguracoesAgendaPage(); urlPath = '/configuracoes-agenda'; break;
-      case 'whatsapp': page = const WhatsAppGerenciamentoPage(); urlPath = '/whatsapp'; break;
+      case 'trocas-devolucoes':
+        page = const TrocasDevolucoesBuscarPage();
+        urlPath = '/trocas-devolucoes';
+        break;
+      case 'configuracoes-agenda':
+        page = const ConfiguracoesAgendaPage();
+        urlPath = '/configuracoes-agenda';
+        break;
+      case 'whatsapp':
+        page = const WhatsAppGerenciamentoPage();
+        urlPath = '/whatsapp';
+        break;
     }
 
     if (page != null) {
       debugPrint('>>> [HomePage] Navegação automática para: $route');
-      
+
       // Se for Web, garantir que o link original seja mantido/atualizado
       if (kIsWeb && urlPath != null) {
-         html_helper.updateUrl(urlPath, replace: true);
+        html_helper.updateUrl(urlPath, replace: true);
       }
 
       // Usar push mas verificar se já não estamos nela
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => page!),
-      ).then((_) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => page!)).then((
+        _,
+      ) {
         // Ao voltar, garante que a URL volte para home (/)
         if (kIsWeb) {
           html_helper.updateUrl('/');
@@ -1381,8 +1816,21 @@ class _HomePageState extends State<HomePage> {
           children: [
             Icon(Icons.palette_outlined, color: Colors.blueAccent, size: 40),
             SizedBox(height: 12),
-            Text('Escolha o Visual', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            Text('Selecione uma paleta para o sistema', style: TextStyle(color: Colors.white54, fontSize: 13, fontWeight: FontWeight.normal)),
+            Text(
+              'Escolha o Visual',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              'Selecione uma paleta para o sistema',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 13,
+                fontWeight: FontWeight.normal,
+              ),
+            ),
           ],
         ),
         content: SizedBox(
@@ -1394,20 +1842,47 @@ class _HomePageState extends State<HomePage> {
             itemBuilder: (context, index) {
               final type = AppThemeType.values[index];
               final isSelected = themeService.currentTheme == type;
-              
-              final config = themeService.getThemeConfig(Colors.blue, Colors.blueGrey);
-              
+
+              final config = themeService.getThemeConfig(
+                Colors.blue,
+                Colors.blueGrey,
+              );
+
               // Cores estáticas para o preview para evitar recursão ou complexidade desnecessária no loop
               Color prim, sec, bg;
               bool isLight = false;
-              
-              if (type == AppThemeType.purple) { prim = const Color(0xFF6200EE); sec = const Color(0xFF9575CD); bg = const Color(0xFF0F0E17); }
-              else if (type == AppThemeType.ocean) { prim = const Color(0xFF00BFA5); sec = const Color(0xFF01579B); bg = const Color(0xFF010B13); }
-              else if (type == AppThemeType.emerald) { prim = const Color(0xFF43A047); sec = const Color(0xFFC0CA33); bg = const Color(0xFF0A140B); }
-              else if (type == AppThemeType.snow) { prim = const Color(0xFF2196F3); sec = const Color(0xFF64B5F6); bg = const Color(0xFFF8F9FA); isLight = true; }
-              else if (type == AppThemeType.sand) { prim = const Color(0xFF795548); sec = const Color(0xFFA1887F); bg = const Color(0xFFF5F5F0); isLight = true; }
-              else if (type == AppThemeType.diamond) { prim = const Color(0xFF1976D2); sec = const Color(0xFF0D47A1); bg = const Color(0xFF010A1A); }
-              else { prim = Colors.blue; sec = Colors.blueGrey; bg = const Color(0xFF10151B); }
+
+              if (type == AppThemeType.purple) {
+                prim = const Color(0xFF6200EE);
+                sec = const Color(0xFF9575CD);
+                bg = const Color(0xFF0F0E17);
+              } else if (type == AppThemeType.ocean) {
+                prim = const Color(0xFF00BFA5);
+                sec = const Color(0xFF01579B);
+                bg = const Color(0xFF010B13);
+              } else if (type == AppThemeType.emerald) {
+                prim = const Color(0xFF43A047);
+                sec = const Color(0xFFC0CA33);
+                bg = const Color(0xFF0A140B);
+              } else if (type == AppThemeType.snow) {
+                prim = const Color(0xFF2196F3);
+                sec = const Color(0xFF64B5F6);
+                bg = const Color(0xFFF8F9FA);
+                isLight = true;
+              } else if (type == AppThemeType.sand) {
+                prim = const Color(0xFF795548);
+                sec = const Color(0xFFA1887F);
+                bg = const Color(0xFFF5F5F0);
+                isLight = true;
+              } else if (type == AppThemeType.diamond) {
+                prim = const Color(0xFF1976D2);
+                sec = const Color(0xFF0D47A1);
+                bg = const Color(0xFF010A1A);
+              } else {
+                prim = Colors.blue;
+                sec = Colors.blueGrey;
+                bg = const Color(0xFF10151B);
+              }
 
               return InkWell(
                 onTap: () {
@@ -1418,9 +1893,14 @@ class _HomePageState extends State<HomePage> {
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: isSelected ? Colors.blueAccent.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+                    color: isSelected
+                        ? Colors.blueAccent.withOpacity(0.1)
+                        : Colors.white.withOpacity(0.05),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: isSelected ? Colors.blueAccent : Colors.white10, width: 2),
+                    border: Border.all(
+                      color: isSelected ? Colors.blueAccent : Colors.white10,
+                      width: 2,
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -1430,9 +1910,15 @@ class _HomePageState extends State<HomePage> {
                         decoration: BoxDecoration(
                           gradient: LinearGradient(colors: [bg, prim, sec]),
                           borderRadius: BorderRadius.circular(12),
-                          border: isLight ? Border.all(color: Colors.black12) : null,
+                          border: isLight
+                              ? Border.all(color: Colors.black12)
+                              : null,
                         ),
-                        child: Icon(themeService.getThemeIcon(type), color: isLight ? Colors.black54 : Colors.white70, size: 24),
+                        child: Icon(
+                          themeService.getThemeIcon(type),
+                          color: isLight ? Colors.black54 : Colors.white70,
+                          size: 24,
+                        ),
                       ),
                       const SizedBox(width: 16),
                       Expanded(
@@ -1441,16 +1927,30 @@ class _HomePageState extends State<HomePage> {
                           children: [
                             Text(
                               themeService.getThemeName(type),
-                              style: TextStyle(color: isSelected ? Colors.blueAccent : Colors.white, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                color: isSelected
+                                    ? Colors.blueAccent
+                                    : Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                             Text(
-                              isLight ? 'Claro / Minimalista' : 'Escuro / Moderno',
-                              style: TextStyle(color: Colors.white54, fontSize: 10),
+                              isLight
+                                  ? 'Claro / Minimalista'
+                                  : 'Escuro / Moderno',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 10,
+                              ),
                             ),
                           ],
                         ),
                       ),
-                      if (isSelected) const Icon(Icons.check_circle, color: Colors.blueAccent),
+                      if (isSelected)
+                        const Icon(
+                          Icons.check_circle,
+                          color: Colors.blueAccent,
+                        ),
                     ],
                   ),
                 ),
@@ -1470,7 +1970,7 @@ class _HomePageState extends State<HomePage> {
       final dataService = Provider.of<DataService>(context, listen: false);
       final isOffline = dataService.isOffline;
       final erroSync = dataService.ultimoErroSync;
-      
+
       if (_wasOffline == null) {
         _wasOffline = isOffline;
         if (isOffline) {
@@ -1550,7 +2050,8 @@ class _HomePageState extends State<HomePage> {
 
   void _mostrarAlertaErroSync(String erro) {
     if (!mounted) return;
-    _mostrarAlertaSeguro((ctx) => AlertDialog(
+    _mostrarAlertaSeguro(
+      (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
@@ -1562,7 +2063,11 @@ class _HomePageState extends State<HomePage> {
             SizedBox(width: 12),
             Text(
               'Erro na Sincronização',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
           ],
         ),
@@ -1574,7 +2079,11 @@ class _HomePageState extends State<HomePage> {
               children: [
                 const Text(
                   'Ocorreu uma falha ao tentar sincronizar os dados com a nuvem:',
-                  style: TextStyle(color: Colors.white70, height: 1.4, fontSize: 15),
+                  style: TextStyle(
+                    color: Colors.white70,
+                    height: 1.4,
+                    fontSize: 15,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Container(
@@ -1583,7 +2092,9 @@ class _HomePageState extends State<HomePage> {
                   decoration: BoxDecoration(
                     color: Colors.redAccent.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                    border: Border.all(
+                      color: Colors.redAccent.withOpacity(0.3),
+                    ),
                   ),
                   child: Text(
                     erro,
@@ -1642,7 +2153,11 @@ class _HomePageState extends State<HomePage> {
             SizedBox(width: 12),
             Text(
               'Nuvem pausada',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
           ],
         ),
@@ -1689,11 +2204,19 @@ class _HomePageState extends State<HomePage> {
         ),
         title: const Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 28),
+            Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.orangeAccent,
+              size: 28,
+            ),
             SizedBox(width: 12),
             Text(
               'Emissor NFC-e Fechado',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
           ],
         ),
@@ -1742,9 +2265,7 @@ class _HomePageState extends State<HomePage> {
             ),
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                'Fechar',
-              ),
+              child: Text('Fechar'),
             ),
           ),
         ],
@@ -1768,14 +2289,22 @@ class _HomePageState extends State<HomePage> {
             SizedBox(width: 12),
             Text(
               'Sincronizador Não Instalado',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
           ],
         ),
         content: Text(
           'O Emissor local NFC-e (Bridge) não foi localizado no caminho padrão.\n\n'
           '${BridgeManagerService.getInstallationInstructions()}',
-          style: const TextStyle(color: Colors.white70, height: 1.4, fontSize: 13),
+          style: const TextStyle(
+            color: Colors.white70,
+            height: 1.4,
+            fontSize: 13,
+          ),
         ),
         actions: [
           TextButton(
@@ -1817,7 +2346,11 @@ class _HomePageState extends State<HomePage> {
             SizedBox(width: 12),
             Text(
               'Sincronizador Fechado',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
           ],
         ),
@@ -1831,11 +2364,14 @@ class _HomePageState extends State<HomePage> {
           TextButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              final started = await SincronizadorManagerService.startSincronizador();
+              final started =
+                  await SincronizadorManagerService.startSincronizador();
               if (started && mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('✅ Sincronizador de Nuvem iniciado com sucesso!'),
+                    content: Text(
+                      '✅ Sincronizador de Nuvem iniciado com sucesso!',
+                    ),
                     backgroundColor: Colors.green,
                   ),
                 );
@@ -1866,9 +2402,7 @@ class _HomePageState extends State<HomePage> {
             ),
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                'Fechar',
-              ),
+              child: Text('Fechar'),
             ),
           ),
         ],
@@ -1887,7 +2421,10 @@ class _HomePageState extends State<HomePage> {
             Expanded(
               child: Text(
                 'Nuvem voltou! Sincronizando automaticamente o que ficou pendente...',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -1895,9 +2432,7 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: Colors.green,
         duration: const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
@@ -1910,6 +2445,413 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
     _pageController.dispose();
     super.dispose();
+  }
+
+  /// Abre uma página por push (usado pelos atalhos da barra inferior).
+  Future<void> _abrirPagina(Widget page) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+  }
+
+  /// Barra de navegação inferior — aparece só no celular.
+  ///
+  /// Dá acesso rápido às áreas mais usadas (Início, Painel, PDV, Clientes) e ao
+  /// "Mais", que abre o menu completo em folha, com todos os botões da Home.
+  Widget _buildBottomNav(BuildContext context) {
+    const double altura = 70;
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF12161C),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.08))),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.45),
+            blurRadius: 14,
+            offset: const Offset(0, -3),
+          ),
+        ],
+      ),
+      child: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: Colors.transparent,
+          indicatorColor: const Color(0xFFFF6B35).withOpacity(0.18),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final sel = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 11,
+              fontWeight: sel ? FontWeight.bold : FontWeight.w500,
+              color: sel ? const Color(0xFFFF6B35) : Colors.white60,
+            );
+          }),
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final sel = states.contains(WidgetState.selected);
+            return IconThemeData(
+              color: sel ? const Color(0xFFFF6B35) : Colors.white60,
+              size: 26,
+            );
+          }),
+        ),
+        child: NavigationBar(
+          height: altura,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          selectedIndex: _currentPage.clamp(0, 1),
+          onDestinationSelected: (index) {
+            switch (index) {
+              case 0:
+                _pageController.animateToPage(
+                  0,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                );
+                break;
+              case 1:
+                _pageController.animateToPage(
+                  1,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                );
+                break;
+              case 2:
+                _abrirPagina(VendaDiretaPage());
+                break;
+              case 3:
+                _abrirPagina(const ClientesPage());
+                break;
+              case 4:
+                _abrirMenuMais();
+                break;
+            }
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.grid_view_rounded),
+              selectedIcon: Icon(Icons.grid_view_rounded),
+              label: 'Início',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.insights_outlined),
+              selectedIcon: Icon(Icons.insights),
+              label: 'Painel',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.point_of_sale_outlined),
+              selectedIcon: Icon(Icons.point_of_sale),
+              label: 'PDV',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.people_outline),
+              selectedIcon: Icon(Icons.people),
+              label: 'Clientes',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.apps),
+              selectedIcon: Icon(Icons.apps),
+              label: 'Mais',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Folha inferior com TODOS os itens do menu (para o botão "Mais").
+  Future<void> _abrirMenuMais() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF12161C),
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.72,
+          minChildSize: 0.4,
+          maxChildSize: 0.95,
+          builder: (ctx, scrollController) {
+            final itens = _orderedMenuItems;
+            return Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.apps, color: Color(0xFFFF6B35), size: 22),
+                      SizedBox(width: 10),
+                      Text(
+                        'Menu completo',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                    itemCount: itens.length,
+                    itemBuilder: (ctx, i) =>
+                        _buildSheetTile(sheetContext, itens[i]),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Item da folha "Mais": respeita as mesmas travas de tela e permissão do
+  /// grid da Home, para não mostrar atalho que o usuário não pode abrir.
+  Widget _buildSheetTile(BuildContext sheetContext, Map<String, dynamic> item) {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuario = authService.usuarioAtual;
+
+    if (item['tela'] != null) {
+      if (!TelaAccessHelper.podeAcessarTela(
+        usuario,
+        authService.empresaAtual,
+        item['tela'] as TelaSistema,
+      )) {
+        return const SizedBox.shrink();
+      }
+    }
+    if (item['permissao'] != null) {
+      if (!PermissionHelper.temPermissao(
+        usuario,
+        item['permissao'] as TipoPermissao,
+      )) {
+        return const SizedBox.shrink();
+      }
+    }
+
+    final Color cor = item['color'] as Color;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Material(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            final page = item['page'](context) as Widget;
+            Navigator.of(sheetContext).pop();
+            Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: cor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: cor.withOpacity(0.35)),
+                  ),
+                  child: Icon(item['icon'] as IconData, color: cor, size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item['title'] as String,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (item['subtitle'] != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          item['subtitle'] as String,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.4)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Menu "⋮" do topo no celular: guarda as ações que não cabem na AppBar.
+  Widget _buildMobileOverflowMenu(BuildContext context) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuario = authService.usuarioAtual;
+    final isMaster =
+        usuario?.isMaster == true || usuario?.email.toLowerCase() == 'user';
+    final podeGerirEmpresa =
+        usuario != null &&
+        (usuario.isAdmin ||
+            usuario.isMaster ||
+            usuario.isGerente ||
+            usuario.email.toLowerCase() == 'user');
+    final podeFinanceiro = PermissionHelper.temPermissao(
+      usuario,
+      TipoPermissao.financeiroVisualizar,
+    );
+
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert),
+      tooltip: 'Mais opções',
+      color: const Color(0xFF1E1E2E),
+      position: PopupMenuPosition.under,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      onSelected: (value) {
+        switch (value) {
+          case 'inicio':
+            _pageController.animateToPage(
+              0,
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOut,
+            );
+            break;
+          case 'dashboard':
+            _pageController.animateToPage(
+              1,
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOut,
+            );
+            break;
+          case 'caixa':
+            mostrarDialogoIdentidadeDoCaixa(context, dataService);
+            break;
+          case 'empresa':
+            final empresa = dataService.empresaAtual;
+            if (empresa != null) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AdicionarEmpresaPage(empresa: empresa),
+                ),
+              );
+            }
+            break;
+          case 'permissoes':
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const GerenciarPermissoesPage(),
+              ),
+            );
+            break;
+          case 'tema':
+            _mostrarSeletorTema(
+              context,
+              Provider.of<ThemeService>(context, listen: false),
+            );
+            break;
+          case 'personalizar':
+            _alternarModoLayout();
+            break;
+          case 'agenda':
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AgendaContasPage()),
+            );
+            break;
+          case 'contas_pagar':
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ContasPagarPage()),
+            );
+            break;
+          case 'sair':
+            _fazerLogout(context);
+            break;
+        }
+      },
+      itemBuilder: (context) => <PopupMenuEntry<String>>[
+        _menuItem(
+          'inicio',
+          Icons.home_rounded,
+          'Início',
+          selecionado: _currentPage == 0,
+        ),
+        _menuItem(
+          'dashboard',
+          Icons.insights,
+          'Painel / Dashboard',
+          selecionado: _currentPage == 1,
+        ),
+        const PopupMenuDivider(),
+        _menuItem('caixa', Icons.point_of_sale, 'Identificação do caixa'),
+        if (podeFinanceiro)
+          _menuItem('agenda', Icons.calendar_today, 'Agenda de contas'),
+        if (podeFinanceiro)
+          _menuItem('contas_pagar', Icons.payment, 'Contas a pagar'),
+        if (podeGerirEmpresa)
+          _menuItem('empresa', Icons.business, 'Configurações da empresa'),
+        if (isMaster)
+          _menuItem('permissoes', Icons.security, 'Gerenciar permissões'),
+        _menuItem(
+          'personalizar',
+          Icons.dashboard_customize_outlined,
+          'Personalizar layout',
+        ),
+        _menuItem('tema', Icons.palette_outlined, 'Trocar tema'),
+        const PopupMenuDivider(),
+        _menuItem(
+          'sair',
+          Icons.logout,
+          'Sair do sistema',
+          cor: Colors.redAccent,
+        ),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(
+    String value,
+    IconData icon,
+    String label, {
+    bool selecionado = false,
+    Color? cor,
+  }) {
+    final Color corIcone =
+        cor ?? (selecionado ? const Color(0xFFFF6B35) : Colors.white70);
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: corIcone),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: cor ?? Colors.white,
+                fontSize: 14,
+                fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ),
+          if (selecionado)
+            const Icon(Icons.check, size: 16, color: Color(0xFFFF6B35)),
+        ],
+      ),
+    );
   }
 
   Widget _buildCapsuleActionButton({
@@ -1931,10 +2873,14 @@ class _HomePageState extends State<HomePage> {
               duration: const Duration(milliseconds: 200),
               margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
               decoration: BoxDecoration(
-                color: isHovered ? color.withOpacity(0.18) : color.withOpacity(0.08),
+                color: isHovered
+                    ? color.withOpacity(0.18)
+                    : color.withOpacity(0.08),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: isHovered ? color.withOpacity(0.5) : color.withOpacity(0.2),
+                  color: isHovered
+                      ? color.withOpacity(0.5)
+                      : color.withOpacity(0.2),
                   width: 1.2,
                 ),
                 boxShadow: isHovered
@@ -1943,7 +2889,7 @@ class _HomePageState extends State<HomePage> {
                           color: color.withOpacity(0.15),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
-                        )
+                        ),
                       ]
                     : [],
               ),
@@ -1953,7 +2899,10 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(20),
                   onTap: onTap,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1982,27 +2931,31 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildNavigationGrid(BuildContext context) {
     final items = _orderedMenuItems;
-    
+
     return Column(
       children: [
-        // Instrução rápida se estiver em modo de reordenação (pc)
-        if (_isReordering)
+        // Faixa de instrução do modo "Personalizar layout".
+        if (_editandoLayout)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
+                color: Colors.tealAccent.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                border: Border.all(color: Colors.tealAccent.withOpacity(0.35)),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.blue, size: 20),
+                  Icon(
+                    Icons.touch_app_outlined,
+                    color: Colors.tealAccent,
+                    size: 20,
+                  ),
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      "Pressione e segure para arrastar os botões. Clique em 'Concluir' no topo para salvar.",
+                      "Modo personalizar: arraste os botões para a posição que achar melhor e clique em 'Concluir' no topo para salvar.",
                       style: TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ),
@@ -2011,8 +2964,8 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
 
-        // Grid com ReorderableWrap (simulado via ReorderableListView em grid se possível, ou Wrap customizado)
-        // Para simplificar e garantir estabilidade sem pacotes externos, usaremos uma estratégia de troca
+        // Grade de 2 colunas. Cada botão é, ao mesmo tempo, um alvo de soltura
+        // (DragTarget) e uma fonte de arraste (Draggable/LongPressDraggable).
         LayoutBuilder(
           builder: (context, constraints) {
             final double width = constraints.maxWidth;
@@ -2022,46 +2975,18 @@ class _HomePageState extends State<HomePage> {
             return Wrap(
               spacing: spacing,
               runSpacing: spacing,
-              children: List.generate(items.length, (index) {
-                final item = items[index];
-                
-                return DragTarget<int>(
-                  onWillAccept: (data) => data != index,
-                  onAccept: (fromIndex) {
-                    setState(() {
-                      final movedItem = items.removeAt(fromIndex);
-                      items.insert(index, movedItem);
-                      _customOrder = items.map((i) => i['id'] as String).toList();
-                    });
-                    _salvarOrdem();
-                  },
-                  builder: (context, candidateData, rejectedData) {
-                    return LongPressDraggable<int>(
-                      data: index,
-                      feedback: SizedBox(
-                        width: itemWidth,
-                        child: Opacity(
-                          opacity: 0.8,
-                          child: _buildItemWidget(context, item, isFullWidth: false, dragFeedback: true),
-                        ),
-                      ),
-                      childWhenDragging: SizedBox(
-                        width: itemWidth,
-                        child: Opacity(
-                          opacity: 0.1,
-                          child: _buildItemWidget(context, item, isFullWidth: false),
-                        ),
-                      ),
-                      onDragStarted: () => setState(() => _isReordering = true),
-                      onDragEnd: (_) => setState(() => _isReordering = false),
-                      child: SizedBox(
-                        width: itemWidth,
-                        child: _buildItemWidget(context, item, isFullWidth: false),
-                      ),
-                    );
-                  },
-                );
-              }),
+              children: List.generate(
+                items.length,
+                (index) => SizedBox(
+                  width: itemWidth,
+                  child: _buildDraggableItem(
+                    context,
+                    items[index],
+                    index,
+                    itemWidth,
+                  ),
+                ),
+              ),
             );
           },
         ),
@@ -2069,7 +2994,75 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildItemWidget(BuildContext context, Map<String, dynamic> item, {bool isFullWidth = false, bool dragFeedback = false}) {
+  /// Constrói um botão da Home que pode ser arrastado e recebido em outra
+  /// posição. No modo "Personalizar layout" o arraste começa imediatamente
+  /// (mouse/toque); fora dele, continua funcionando com pressão longa.
+  Widget _buildDraggableItem(
+    BuildContext context,
+    Map<String, dynamic> item,
+    int index,
+    double itemWidth,
+  ) {
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (details) => details.data != index,
+      onAcceptWithDetails: (details) => _reordenar(details.data, index),
+      builder: (context, candidateData, rejectedData) {
+        final destacado = candidateData.isNotEmpty;
+
+        final Widget visual = AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: destacado
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.tealAccent, width: 2),
+                )
+              : null,
+          child: _buildItemWidget(context, item, isEditMode: _editandoLayout),
+        );
+
+        final Widget feedback = SizedBox(
+          width: itemWidth,
+          child: Opacity(
+            opacity: 0.85,
+            child: _buildItemWidget(
+              context,
+              item,
+              dragFeedback: true,
+              isEditMode: _editandoLayout,
+            ),
+          ),
+        );
+
+        if (_editandoLayout) {
+          // Modo edição: arraste imediato + cursor de "agarrar".
+          return Draggable<int>(
+            data: index,
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            feedback: feedback,
+            childWhenDragging: Opacity(opacity: 0.25, child: visual),
+            child: MouseRegion(cursor: SystemMouseCursors.grab, child: visual),
+          );
+        }
+
+        // Fora do modo edição: mantém o arraste por pressão longa, útil no
+        // celular/tablet sem precisar entrar no modo edição.
+        return LongPressDraggable<int>(
+          data: index,
+          feedback: feedback,
+          childWhenDragging: Opacity(opacity: 0.25, child: visual),
+          child: visual,
+        );
+      },
+    );
+  }
+
+  Widget _buildItemWidget(
+    BuildContext context,
+    Map<String, dynamic> item, {
+    bool isFullWidth = false,
+    bool dragFeedback = false,
+    bool isEditMode = false,
+  }) {
     Widget content = _buildNavButton(
       context,
       title: item['title'],
@@ -2079,12 +3072,13 @@ class _HomePageState extends State<HomePage> {
       page: item['page'](context),
       isFullWidth: isFullWidth,
       isDragging: dragFeedback,
+      isEditMode: isEditMode,
     );
 
     if (item['tela'] != null) {
       content = TelaAccessWidget(tela: item['tela'], child: content);
     }
-    
+
     if (item['permissao'] != null) {
       content = PermissionWidget(permissao: item['permissao'], child: content);
     }
@@ -2101,16 +3095,20 @@ class _HomePageState extends State<HomePage> {
     required Widget page,
     bool isFullWidth = false,
     bool isDragging = false,
+    bool isEditMode = false,
   }) {
-    // Tamanhos reduzidos para economizar espaço
-    final iconSize = isFullWidth ? 48.0 : 28.0;
-    final iconPadding = isFullWidth ? 20.0 : 12.0;
-    final titleFontSize = isFullWidth ? 24.0 : 15.0;
-    final subtitleFontSize = isFullWidth ? 14.0 : 11.0;
-    final containerPadding = isFullWidth ? 24.0 : 14.0;
-    final spacing = isFullWidth ? 16.0 : 12.0;
+    // No celular os botões ficam maiores (alvo de toque confortável); no
+    // desktop mantêm os tamanhos compactos de sempre.
+    final bool celular = _ehCelular(context);
+    final iconSize = celular ? 30.0 : (isFullWidth ? 48.0 : 28.0);
+    final iconPadding = celular ? 13.0 : (isFullWidth ? 20.0 : 12.0);
+    final titleFontSize = celular ? 15.5 : (isFullWidth ? 24.0 : 15.0);
+    final subtitleFontSize = celular ? 12.0 : (isFullWidth ? 14.0 : 11.0);
+    final containerPadding = celular ? 16.0 : (isFullWidth ? 24.0 : 14.0);
+    final spacing = celular ? 14.0 : (isFullWidth ? 16.0 : 12.0);
 
     bool isHovered = false;
+    bool isPressed = false;
 
     return StatefulBuilder(
       builder: (context, setState) {
@@ -2119,51 +3117,92 @@ class _HomePageState extends State<HomePage> {
           onExit: (_) => setState(() => isHovered = false),
           cursor: SystemMouseCursors.click,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
+            duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
+            // No celular garante área de toque alta o suficiente (mín. 100 px).
+            constraints: BoxConstraints(minHeight: celular ? 100 : 0),
             transform: Matrix4.identity()
-              ..translate(isHovered ? 4.0 : 0.0, isHovered ? -2.0 : 0.0) // Leve movimento
-              ..scale(isDragging ? 1.05 : (isHovered ? 1.02 : 1.0)),
+              ..translate(
+                isHovered ? 4.0 : 0.0,
+                isHovered ? -2.0 : 0.0,
+              ) // Leve movimento
+              ..scale(
+                isDragging
+                    ? 1.05
+                    : (isPressed ? 0.96 : (isHovered ? 1.02 : 1.0)),
+              ),
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: () async {
-                  // Sincronizar URL se estiver no Web
-                  String? urlPath;
-                  if (page is ClientesPage) urlPath = '/clientes';
-                  else if (page is ProdutosPage) urlPath = '/produtos';
-                  else if (page is ServicosPage) urlPath = '/servicos';
-                  else if (page is PedidosPage) urlPath = '/pedidos';
-                  else if (page is VendaDiretaPage) urlPath = '/pdv';
-                  else if (page is EntradaMercadoriasPage) urlPath = '/entrada-mercadorias';
-                  else if (page is ContasPagarPage) urlPath = '/contas-pagar';
-                  else if (page is AgendaContasPage) urlPath = '/agenda-contas';
-                  else if (page is CozinhaBarPage) urlPath = '/cozinha-bar';
-                  else if (page is MonitorProducaoPage) urlPath = '/monitor-producao';
-                  else if (page is CozinhaMesasFuncionarioPage) urlPath = '/mesas';
-                  else if (page is GerenciarLinksVendedoresPage) urlPath = '/links-vendedores';
-                  else if (page is VendedorDashboardPage) urlPath = '/vendedor-dashboard';
-                  else if (page is FuncionariosPage) urlPath = '/funcionarios';
-                  else if (page is PersonalizarLojaPage) urlPath = '/personalizar-loja';
-                  else if (page is AgendaServicosPage) urlPath = '/agenda-pet';
-                  else if (page is GerenciarImagensPage) urlPath = '/gerenciar-imagens';
-                  else if (page is TrocasDevolucoesBuscarPage) urlPath = '/trocas-devolucoes';
-                  else if (page is HistoricoVendasPage) urlPath = '/historico-vendas';
-
-                  if (kIsWeb && urlPath != null) {
-                    html_helper.updateUrl(urlPath);
-                  }
-
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => page),
-                  );
-
-                  // Ao retornar, volta a URL para a home (/)
-                  if (kIsWeb) {
-                     html_helper.updateUrl('/');
-                  }
+                // Feedback de "pressionado": encolhe levemente o botão enquanto
+                // o dedo está na tela (reforça que o toque registrou).
+                onHighlightChanged: (v) {
+                  if (v != isPressed) setState(() => isPressed = v);
                 },
+                splashColor: color.withOpacity(0.15),
+                highlightColor: color.withOpacity(0.08),
+                // No modo "Personalizar layout" o toque NÃO navega: o botão
+                // serve só para ser arrastado até a posição desejada.
+                onTap: isEditMode
+                    ? null
+                    : () async {
+                        // Sincronizar URL se estiver no Web
+                        String? urlPath;
+                        if (page is ClientesPage)
+                          urlPath = '/clientes';
+                        else if (page is ProdutosPage)
+                          urlPath = '/produtos';
+                        else if (page is ServicosPage)
+                          urlPath = '/servicos';
+                        else if (page is PedidosPage)
+                          urlPath = '/pedidos';
+                        else if (page is VendaDiretaPage)
+                          urlPath = '/pdv';
+                        else if (page is EntradaMercadoriasPage)
+                          urlPath = '/entrada-mercadorias';
+                        else if (page is PedidosCompraPage)
+                          urlPath = '/pedidos-compra';
+                        else if (page is ContasPagarPage)
+                          urlPath = '/contas-pagar';
+                        else if (page is AgendaContasPage)
+                          urlPath = '/agenda-contas';
+                        else if (page is CozinhaBarPage)
+                          urlPath = '/cozinha-bar';
+                        else if (page is MonitorProducaoPage)
+                          urlPath = '/monitor-producao';
+                        else if (page is CozinhaMesasFuncionarioPage)
+                          urlPath = '/mesas';
+                        else if (page is GerenciarLinksVendedoresPage)
+                          urlPath = '/links-vendedores';
+                        else if (page is VendedorDashboardPage)
+                          urlPath = '/vendedor-dashboard';
+                        else if (page is FuncionariosPage)
+                          urlPath = '/funcionarios';
+                        else if (page is PersonalizarLojaPage)
+                          urlPath = '/personalizar-loja';
+                        else if (page is AgendaServicosPage)
+                          urlPath = '/agenda-pet';
+                        else if (page is GerenciarImagensPage)
+                          urlPath = '/gerenciar-imagens';
+                        else if (page is TrocasDevolucoesBuscarPage)
+                          urlPath = '/trocas-devolucoes';
+                        else if (page is HistoricoVendasPage)
+                          urlPath = '/historico-vendas';
+
+                        if (kIsWeb && urlPath != null) {
+                          html_helper.updateUrl(urlPath);
+                        }
+
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => page),
+                        );
+
+                        // Ao retornar, volta a URL para a home (/)
+                        if (kIsWeb) {
+                          html_helper.updateUrl('/');
+                        }
+                      },
                 borderRadius: BorderRadius.circular(16),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 250),
@@ -2173,18 +3212,26 @@ class _HomePageState extends State<HomePage> {
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        (isHovered ? color.withOpacity(0.15) : const Color(0xFF1E1E2E).withOpacity(0.9)),
-                        (isHovered ? const Color(0xFF1E1E2E).withOpacity(0.95) : const Color(0xFF161625).withOpacity(0.95)),
+                        (isHovered
+                            ? color.withOpacity(0.15)
+                            : const Color(0xFF1E1E2E).withOpacity(0.9)),
+                        (isHovered
+                            ? const Color(0xFF1E1E2E).withOpacity(0.95)
+                            : const Color(0xFF161625).withOpacity(0.95)),
                       ],
                     ),
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
-                      color: isHovered ? color : color.withOpacity(0.2),
-                      width: isHovered ? 2.0 : 1.0,
+                      color: isEditMode
+                          ? Colors.tealAccent.withOpacity(0.6)
+                          : (isHovered ? color : color.withOpacity(0.2)),
+                      width: isEditMode ? 2.0 : (isHovered ? 2.0 : 1.0),
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: isHovered ? color.withOpacity(0.2) : color.withOpacity(0.05),
+                        color: isHovered
+                            ? color.withOpacity(0.2)
+                            : color.withOpacity(0.05),
                         blurRadius: isHovered ? 15 : 10,
                         spreadRadius: isHovered ? 2 : 1,
                       ),
@@ -2196,21 +3243,21 @@ class _HomePageState extends State<HomePage> {
                         duration: const Duration(milliseconds: 250),
                         padding: EdgeInsets.all(iconPadding),
                         decoration: BoxDecoration(
-                          color: isHovered ? color.withOpacity(0.2) : color.withOpacity(0.1),
+                          color: isHovered
+                              ? color.withOpacity(0.2)
+                              : color.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(12),
-                          boxShadow: isHovered ? [
-                            BoxShadow(
-                              color: color.withOpacity(0.3),
-                              blurRadius: 8,
-                              spreadRadius: 0,
-                            )
-                          ] : [],
+                          boxShadow: isHovered
+                              ? [
+                                  BoxShadow(
+                                    color: color.withOpacity(0.3),
+                                    blurRadius: 8,
+                                    spreadRadius: 0,
+                                  ),
+                                ]
+                              : [],
                         ),
-                        child: Icon(
-                          icon,
-                          size: iconSize,
-                          color: color,
-                        ),
+                        child: Icon(icon, size: iconSize, color: color),
                       ),
                       SizedBox(width: spacing),
                       Expanded(
@@ -2232,7 +3279,9 @@ class _HomePageState extends State<HomePage> {
                                 subtitle,
                                 style: TextStyle(
                                   fontSize: subtitleFontSize,
-                                  color: isHovered ? Colors.white.withOpacity(0.8) : Colors.white.withOpacity(0.5),
+                                  color: isHovered
+                                      ? Colors.white.withOpacity(0.8)
+                                      : Colors.white.withOpacity(0.5),
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -2243,11 +3292,15 @@ class _HomePageState extends State<HomePage> {
                       ),
                       AnimatedOpacity(
                         duration: const Duration(milliseconds: 250),
-                        opacity: isHovered ? 1.0 : 0.2,
+                        opacity: isEditMode ? 1.0 : (isHovered ? 1.0 : 0.2),
                         child: Icon(
-                          Icons.chevron_right,
-                          size: 18,
-                          color: isHovered ? color : Colors.white,
+                          isEditMode
+                              ? Icons.drag_indicator
+                              : Icons.chevron_right,
+                          size: isEditMode ? 24 : 18,
+                          color: isEditMode
+                              ? Colors.tealAccent
+                              : (isHovered ? color : Colors.white),
                         ),
                       ),
                     ],

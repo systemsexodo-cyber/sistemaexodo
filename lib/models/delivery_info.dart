@@ -107,6 +107,10 @@ class DeliveryInfo {
     DateTime? dataPedido,
     String? observacoes,
     String? previsaoEntrega,
+    /// Zera [dataEntrega] (desfazer uma entrega concluída).
+    ///
+    /// Existe porque `copyWith` não consegue gravar null por parâmetro.
+    bool limparDataEntrega = false,
   }) {
     return DeliveryInfo(
       id: id ?? this.id,
@@ -123,7 +127,7 @@ class DeliveryInfo {
       motoristaId: motoristaId ?? this.motoristaId,
       motoristaNome: motoristaNome ?? this.motoristaNome,
       dataSaida: dataSaida ?? this.dataSaida,
-      dataEntrega: dataEntrega ?? this.dataEntrega,
+      dataEntrega: limparDataEntrega ? null : (dataEntrega ?? this.dataEntrega),
       dataPedido: dataPedido ?? this.dataPedido,
       observacoes: observacoes ?? this.observacoes,
       previsaoEntrega: previsaoEntrega ?? this.previsaoEntrega,

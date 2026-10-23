@@ -6,15 +6,41 @@ import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
-import 'package:supabase_flutter/supabase_flutter.dart' show FileOptions, BucketOptions, SupabaseClient;
-import '../supabase_config.dart';
 import 'data_service.dart';
 import 'database_service.dart';
 import 'env_config.dart';
+import 'neon_client.dart';
+import 'neon_config.dart';
+import 'neon_storage.dart';
 import 'process_utils.dart';
 import 'supabase_service.dart';
 import '../pages/html_helper_stub.dart'
     if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
+
+/// Dados de conexão do banco da NUVEM usado pelo `psql`/`pg_dump`.
+///
+/// O Neon é o provedor PRINCIPAL; o Supabase (Session pooler IPv4) fica de
+/// SEGUNDO PLANO, usado só quando não há credenciais do Neon. Ver
+/// [BackupRestoreService._resolverConexaoNuvem].
+class _ConexaoNuvem {
+  const _ConexaoNuvem({
+    required this.provedor,
+    required this.host,
+    required this.porta,
+    required this.usuario,
+    required this.senha,
+    required this.banco,
+  });
+
+  final String provedor;
+  final String host;
+  final int porta;
+  final String usuario;
+  final String senha;
+  final String banco;
+
+  bool get configurada => host.isNotEmpty && senha.isNotEmpty;
+}
 
 /// Serviço para gerenciar Backup e Restauração por empresa
 /// 
@@ -26,18 +52,17 @@ class BackupRestoreService {
 
   BackupRestoreService(this._dataService);
 
-  /// Cliente de STORAGE com a chave service_role (passa por cima do RLS).
-  /// O cliente principal (Supabase.instance.client) usa o token do usuário
-  /// logado — e os buckets de backup/dump podem não ter políticas de RLS para
-  /// o papel 'authenticated', o que causa erro 42501 ("row-level security") no
-  /// upload. Com a chave service_role (sem sessão), buckets e arquivos são
-  /// acessados livremente — é a MESMA chave que o app já usa para sincronizar
-  /// as tabelas (ver supabase_config.dart).
-  SupabaseClient? _storageAdmin;
-  SupabaseClient get _storageAdminClient => _storageAdmin ??= SupabaseClient(
-    SupabaseConfig.url,
-    SupabaseConfig.anonKey,
-  );
+  /// Cliente de STORAGE da nuvem.
+  ///
+  /// No Supabase havia uma segunda instância de `SupabaseClient` só para o
+  /// storage "administrativo" (`service_role`), porque os buckets de
+  /// backup/dump não tinham política de RLS para o papel `authenticated` e o
+  /// upload voltava com 42501.
+  ///
+  /// No Neon esse motivo não existe: o Object Storage é S3, a autorização é
+  /// pela credencial (SigV4) e não há RLS. Então basta o mesmo cliente da
+  /// nuvem — `NeonClient.instance`.
+  NeonClient get _storageAdminClient => NeonClient.instance;
 
   // ============================================================
   // BACKUP - Exportar dados da empresa para JSON
@@ -468,6 +493,7 @@ class BackupRestoreService {
       'vendas_balcao', 'trocas_devolucoes', 'estoque_historico',
       'lotes_produto', 'aberturas_caixa', 'fechamentos_caixa',
       'agendamentos_servico', 'notas_entrada', 'funcionarios',
+      'pedidos_compra',
       'taxas_entrega', 'contas_pagar', 'nfces', 'nfes',
       'sangrias_caixa', 'suprimentos_caixa', 'links_vendedores',
       'comissoes_vendedores', 'romaneios', 'mesas_comandas',
@@ -1534,12 +1560,13 @@ ORDER BY c.relname;
       p.join(_pastaBackupEmpresaNuvem, empresaId);
 
   /// Tira uma fotografia dos dados DESTA EMPRESA direto do banco da NUVEM
-  /// (Supabase) e grava um `.sql` em `C:\ExodoBackups\nuvem\empresas\<id>`.
+  /// (Neon principal; Supabase como reserva) e grava um `.sql` em
+  /// `C:\ExodoBackups\nuvem\empresas\<id>`.
   ///
   /// Por que isso é diferente do backup por empresa que já existe: aquele é
   /// gerado a partir do banco LOCAL e depois arquivado na nuvem. Se o que está
   /// errado for justamente o local (ou se o local estiver desatualizado), ele não
-  /// serve para reverter a nuvem. Esta foto é do estado real do Supabase.
+  /// serve para reverter a nuvem. Esta foto é do estado real da nuvem.
   ///
   /// Só lê: nunca altera o banco da nuvem.
   Future<(bool, String, String?)> criarBackupSqlDaEmpresaNaNuvem({
@@ -1559,15 +1586,16 @@ ORDER BY c.relname;
       return (false, 'Empresa não selecionada', null);
     }
 
-    final host = EnvConfig.supabasePoolerHost.trim();
-    final porta = EnvConfig.supabasePoolerPort;
-    final usuario = EnvConfig.supabasePoolerUser;
-    final senha = EnvConfig.supabasePoolerPassword;
+    final nuvem = _resolverConexaoNuvem();
+    final host = nuvem.host;
+    final porta = nuvem.porta;
+    final usuario = nuvem.usuario;
+    final senha = nuvem.senha;
     if (host.isEmpty) {
-      return (false, 'Conexão do banco da nuvem não configurada (SUPABASE_POOLER_HOST no .env).', null);
+      return (false, 'Conexão do banco da nuvem não configurada (Neon .env.neon ou SUPABASE_POOLER_HOST no .env).', null);
     }
     if (senha.isEmpty) {
-      return (false, 'Senha do banco da nuvem não configurada (SUPABASE_POOLER_PASSWORD no .env).', null);
+      return (false, 'Senha do banco da nuvem não configurada (Neon .env.neon ou SUPABASE_POOLER_PASSWORD no .env).', null);
     }
 
     try {
@@ -1582,7 +1610,7 @@ ORDER BY c.relname;
         porta: porta,
         usuario: usuario,
         senha: senha,
-        banco: EnvConfig.supabaseDbNameFinal,
+        banco: nuvem.banco,
       );
 
       final teste = await _executarPsql(
@@ -1593,7 +1621,7 @@ ORDER BY c.relname;
       );
       if (teste.exitCode != 0) {
         final err = (teste.stderr as String? ?? '').trim();
-        return (false, _mensagemErroConexaoNuvem(err, host, porta, usuario), null);
+        return (false, _mensagemErroConexaoNuvem(err, host, porta, usuario, provedor: nuvem.provedor), null);
       }
 
       var nomeEmpresa = await _nomeDaEmpresa(idEmpresa);
@@ -1629,13 +1657,13 @@ ORDER BY c.relname;
 
       onProgress?.call('Lendo os dados de $nomeEmpresa na nuvem...');
       final (ok, msg, tabelas, linhas) = await _gerarScriptSqlDaEmpresa(
-        banco: EnvConfig.supabaseDbNameFinal,
+        banco: nuvem.banco,
         empresaId: idEmpresa,
         nomeEmpresa: nomeEmpresa,
         caminho: caminho,
         argsConexao: argsNuvem,
         ambienteConexao: ambienteNuvem,
-        origem: 'NUVEM (Supabase)',
+        origem: 'NUVEM (${nuvem.provedor})',
       );
       if (!ok) return (false, msg, null);
 
@@ -1655,7 +1683,7 @@ ORDER BY c.relname;
 
   /// Aplica um `.sql` (foto da nuvem, de UMA empresa) de volta no banco DA NUVEM.
   ///
-  /// É a única operação desta tela que altera o banco do Supabase para uma
+  /// É a única operação desta tela que altera o banco da nuvem para uma
   /// empresa só. Antes de aplicar, tira automaticamente uma nova foto dessa
   /// empresa e guarda em `C:\ExodoBackups\nuvem\empresas\<id>` — se o arquivo
   /// aplicado for o errado, a foto anterior permite voltar.
@@ -1710,12 +1738,13 @@ ORDER BY c.relname;
       );
     }
 
-    final host = EnvConfig.supabasePoolerHost.trim();
-    final porta = EnvConfig.supabasePoolerPort;
-    final usuario = EnvConfig.supabasePoolerUser;
-    final senha = EnvConfig.supabasePoolerPassword;
+    final nuvem = _resolverConexaoNuvem();
+    final host = nuvem.host;
+    final porta = nuvem.porta;
+    final usuario = nuvem.usuario;
+    final senha = nuvem.senha;
     if (host.isEmpty || senha.isEmpty) {
-      return (false, 'Conexão do banco da nuvem não configurada no .env.', null);
+      return (false, 'Conexão do banco da nuvem não configurada (Neon .env.neon ou SUPABASE_POOLER_* no .env).', null);
     }
 
     try {
@@ -1751,7 +1780,7 @@ ORDER BY c.relname;
         porta: porta,
         usuario: usuario,
         senha: senha,
-        banco: EnvConfig.supabaseDbNameFinal,
+        banco: nuvem.banco,
       );
 
       // 2. Aplicar o arquivo (o próprio script apaga e recarrega só esta empresa).
@@ -2789,7 +2818,7 @@ ORDER BY c.relname;
   }
 
   // ============================================================
-  // BACKUP DO BANCO INTEIRO DA NUVEM (Supabase PostgreSQL)
+  // BACKUP DO BANCO INTEIRO DA NUVEM (Postgres: Neon/Supabase)
   // ============================================================
 
   /// Pasta local onde ficam os backups do banco da nuvem.
@@ -2798,19 +2827,21 @@ ORDER BY c.relname;
   /// Quantos backups do banco da nuvem são mantidos no disco.
   static const int _maxBackupsNuvemLocais = 30;
 
-  /// Gera um backup COMPLETO do banco da NUVEM (Supabase) — todas as empresas,
-  /// todo o banco `postgres` — salvando o arquivo no computador.
+  /// Gera um backup COMPLETO do banco da NUVEM (Neon principal; Supabase como
+  /// reserva) — todas as empresas, todo o banco — salvando o arquivo no
+  /// computador.
   ///
   /// Usa o `pg_dump` quando ele é compatível com a versão do servidor da nuvem e,
-  /// quando não é (caso do pg_dump 16.4 contra o Supabase 17), cai
+  /// quando não é (ex.: pg_dump 16.4 contra o Postgres 18 do Neon), cai
   /// automaticamente para [criarBackupSqlBancoNuvem], que gera um `.sql`
   /// completo pelo `psql`.
   ///
-  /// Usa a conexão pelo POOLER (IPv4): a conexão direta do Supabase
+  /// No Supabase (reserva) usa a conexão pelo POOLER (IPv4): a conexão direta
   /// (db.<ref>.supabase.co) só responde em IPv6 e não funciona em muitas máquinas.
+  /// No Neon, a conexão vem do `DATABASE_URL` do `.env.neon`.
   ///
   /// Os parâmetros de conexão existem para permitir testar/redirecionar a
-  /// conexão; em uso normal tudo vem do .env.
+  /// conexão; em uso normal tudo vem do `.env`/`.env.neon`.
   /// Retorna (sucesso, mensagem, caminho do arquivo).
   Future<(bool, String, String?)> criarBackupBancoNuvem({
     String? destinoArquivo,
@@ -2825,32 +2856,32 @@ ORDER BY c.relname;
       return (false, 'Backup do banco da nuvem não está disponível na versão Web.', null);
     }
 
-    final hostFinal = (host ?? EnvConfig.supabasePoolerHost).trim();
+    final nuvem = _resolverConexaoNuvem();
+    final hostFinal = (host ?? nuvem.host).trim();
     if (hostFinal.isEmpty) {
       return (
         false,
         'Conexão do banco da nuvem não configurada.\n\n'
-        'A conexão DIRETA do Supabase (db.<ref>.supabase.co) só funciona em IPv6, por '
-        'isso o backup usa o "Session pooler" (IPv4).\n\n'
-        'Confira no arquivo .env:\n'
+        'No Neon, confira o arquivo .env.neon (DATABASE_URL). O Supabase (reserva) usa '
+        'o "Session pooler" (IPv4):\n'
         'SUPABASE_POOLER_HOST=aws-1-us-west-2.pooler.supabase.com\n'
         'SUPABASE_POOLER_PASSWORD=senha_do_banco',
         null,
       );
     }
 
-    final portaFinal = porta ?? EnvConfig.supabasePoolerPort;
-    final usuarioFinal = usuario ?? EnvConfig.supabasePoolerUser;
-    final senhaFinal = senha ?? EnvConfig.supabasePoolerPassword;
-    final bancoFinal = banco ?? EnvConfig.supabaseDbNameFinal;
+    final portaFinal = porta ?? nuvem.porta;
+    final usuarioFinal = usuario ?? nuvem.usuario;
+    final senhaFinal = senha ?? nuvem.senha;
+    final bancoFinal = banco ?? nuvem.banco;
 
     if (senhaFinal.isEmpty) {
       return (
         false,
         'Senha do banco da nuvem não configurada.\n\n'
-        'Coloque no .env a senha do BANCO do Supabase (a mesma de "Database password", '
-        'no painel do projeto):\n\n'
-        'SUPABASE_POOLER_PASSWORD=sua_senha\n\n'
+        'No Neon, confira a senha em DATABASE_URL (.env.neon). No Supabase (reserva), '
+        'use a senha do BANCO (a mesma de "Database password", no painel do projeto) em '
+        'SUPABASE_POOLER_PASSWORD.\n\n'
         'Atenção: as chaves de API que começam com "sb_secret_" NÃO são a senha do banco.',
         null,
       );
@@ -2885,7 +2916,7 @@ ORDER BY c.relname;
       if (versaoResult.exitCode != 0) {
         final err = (versaoResult.stderr as String? ?? '').trim();
         debugPrint('>>> [BackupRestore] ❌ Falha ao conectar no banco da nuvem: $err');
-        return (false, _mensagemErroConexaoNuvem(err, hostFinal, portaFinal, usuarioFinal), null);
+        return (false, _mensagemErroConexaoNuvem(err, hostFinal, portaFinal, usuarioFinal, provedor: nuvem.provedor), null);
       }
 
       final versaoServidor = int.tryParse(
@@ -3056,20 +3087,22 @@ ORDER BY c.relname;
     }
 
     // 2. Conexão com o banco da nuvem
-    final host = EnvConfig.supabasePoolerHost.trim();
-    final senha = EnvConfig.supabasePoolerPassword.trim();
+    final nuvem = _resolverConexaoNuvem();
+    final host = nuvem.host;
+    final senha = nuvem.senha;
     if (host.isEmpty || senha.isEmpty) {
       log('');
       log('⚠️ Conexão com o banco da nuvem não configurada.');
-      log('   No arquivo .env, preencha (a senha é a do BANCO, em Supabase → Project Settings → Database):');
+      log('   No Neon, confira DATABASE_URL no arquivo .env.neon.');
+      log('   No Supabase (reserva), preencha no .env (a senha é a do BANCO):');
       log('   SUPABASE_POOLER_HOST=aws-1-us-west-2.pooler.supabase.com');
       log('   SUPABASE_POOLER_PASSWORD=senha_do_banco');
       return (false, logs);
     }
 
-    final porta = EnvConfig.supabasePoolerPort;
-    final usuario = EnvConfig.supabasePoolerUser;
-    final banco = EnvConfig.supabaseDbNameFinal;
+    final porta = nuvem.porta;
+    final usuario = nuvem.usuario;
+    final banco = nuvem.banco;
     final (argsNuvem, ambienteNuvem) = _conexaoPsqlNuvem(
       host: host,
       porta: porta,
@@ -3086,7 +3119,7 @@ ORDER BY c.relname;
       relacoesNuvem = await _lerRelacoes(psqlPath, argsNuvem, ambienteNuvem);
     } catch (e) {
       final erro = e.toString().replaceFirst('Exception: ', '');
-      log('❌ Não foi possível ler o banco da nuvem: ${_mensagemErroConexaoNuvem(erro, host, porta, usuario)}');
+      log('❌ Não foi possível ler o banco da nuvem: ${_mensagemErroConexaoNuvem(erro, host, porta, usuario, provedor: nuvem.provedor)}');
       return (false, logs);
     }
     // A mesma conta usada pelo painel "Saúde dos Bancos": os dois sentidos, as
@@ -4650,22 +4683,22 @@ WHERE n.nspname = 'public' AND c.relname = '$nome';
     }
   }
 
-  /// Argumentos e ambiente do psql para o banco da NUVEM, a partir do `.env`
-  /// (as mesmas variáveis do backup da nuvem). Lança [StateError] com uma
-  /// mensagem legível quando não estiver configurado.
+  /// Argumentos e ambiente do psql para o banco da NUVEM (Neon principal,
+  /// Supabase como reserva). Lança [StateError] com uma mensagem legível quando
+  /// não estiver configurado.
   (List<String>, Map<String, String>) _conexaoNuvemDoEnv() {
-    final host = EnvConfig.supabasePoolerHost.trim();
-    final senha = EnvConfig.supabasePoolerPassword.trim();
-    if (host.isEmpty || senha.isEmpty) {
-      throw StateError('Conexão com o banco da nuvem não configurada no .env '
-          '(SUPABASE_POOLER_HOST / SUPABASE_POOLER_PASSWORD).');
+    final nuvem = _resolverConexaoNuvem();
+    if (nuvem.host.isEmpty || nuvem.senha.isEmpty) {
+      throw StateError('Conexão com o banco da nuvem não configurada '
+          '(Neon: DATABASE_URL no .env.neon; Supabase: SUPABASE_POOLER_HOST / '
+          'SUPABASE_POOLER_PASSWORD no .env).');
     }
     return _conexaoPsqlNuvem(
-      host: host,
-      porta: EnvConfig.supabasePoolerPort,
-      usuario: EnvConfig.supabasePoolerUser,
-      senha: senha,
-      banco: EnvConfig.supabaseDbNameFinal,
+      host: nuvem.host,
+      porta: nuvem.porta,
+      usuario: nuvem.usuario,
+      senha: nuvem.senha,
+      banco: nuvem.banco,
     );
   }
 
@@ -5146,6 +5179,71 @@ ORDER BY c.relname, a.attnum;
     return (args, ambiente);
   }
 
+  /// Resolve a conexão do banco da NUVEM com o Neon como provedor PRINCIPAL e
+  /// o Supabase (Session pooler IPv4) como SEGUNDO PLANO.
+  ///
+  /// O Neon é preferido sempre que houver uma `DATABASE_URL` no `.env.neon`
+  /// (a conexão direta/unpooled vem antes da pooled); a string é convertida em
+  /// host/porta/usuário/senha/banco por [_conexaoDeUrl]. Sem Neon, cai para as
+  /// variáveis `SUPABASE_POOLER_*` do `.env`.
+  _ConexaoNuvem _resolverConexaoNuvem() {
+    for (final url in <String>[
+      NeonConfig.databaseUrlUnpooled,
+      NeonConfig.databaseUrl,
+    ]) {
+      final conexao = _conexaoDeUrl(url, provedor: 'Neon');
+      if (conexao != null && conexao.configurada) return conexao;
+    }
+
+    return _ConexaoNuvem(
+      provedor: 'Supabase',
+      host: EnvConfig.supabasePoolerHost.trim(),
+      porta: EnvConfig.supabasePoolerPort,
+      usuario: EnvConfig.supabasePoolerUser,
+      senha: EnvConfig.supabasePoolerPassword.trim(),
+      banco: EnvConfig.supabaseDbNameFinal,
+    );
+  }
+
+  /// Converte uma string de conexão do Postgres
+  /// (`postgresql://usuario:senha@host:porta/banco?params`) em [_ConexaoNuvem].
+  ///
+  /// Retorna `null` quando a URL é vazia ou não tem host utilizável. O nome do
+  /// banco cai para `neondb` (padrão do Neon) quando ausente na URL.
+  _ConexaoNuvem? _conexaoDeUrl(String url, {required String provedor}) {
+    final texto = url.trim();
+    if (texto.isEmpty) return null;
+    try {
+      final uri = Uri.parse(texto);
+      final host = uri.host.trim();
+      if (host.isEmpty) return null;
+
+      final userInfo = uri.userInfo;
+      final separador = userInfo.indexOf(':');
+      final usuario = Uri.decodeComponent(
+          separador == -1 ? userInfo : userInfo.substring(0, separador));
+      final senha = separador == -1
+          ? ''
+          : Uri.decodeComponent(userInfo.substring(separador + 1));
+
+      final banco = uri.pathSegments.isNotEmpty && uri.pathSegments.first.isNotEmpty
+          ? uri.pathSegments.first
+          : 'neondb';
+
+      return _ConexaoNuvem(
+        provedor: provedor,
+        host: host,
+        porta: uri.hasPort ? uri.port : 5432,
+        usuario: usuario,
+        senha: senha,
+        banco: banco,
+      );
+    } catch (e) {
+      debugPrint('>>> [BackupRestore] ⚠️ URL de conexão da nuvem inválida ($provedor): $e');
+      return null;
+    }
+  }
+
   /// Versão MAIOR de um executável do PostgreSQL (ex.: `pg_dump ... 16.4` → 16).
   Future<int?> _versaoMaiorExecutavel(String caminho) async {
     try {
@@ -5162,25 +5260,31 @@ ORDER BY c.relname, a.attnum;
   }
 
   /// Converte o stderr de uma falha de conexão com a nuvem em uma mensagem
-  /// clara para o usuário.
+  /// clara para o usuário. [provedor] (Neon/Supabase) é incluído para orientar
+  /// onde conferir as credenciais.
   String _mensagemErroConexaoNuvem(
     String stderr,
     String host,
     int porta,
-    String usuario,
-  ) {
+    String usuario, {
+    String provedor = '',
+  }) {
+    final sufixo = provedor.isEmpty ? '' : ' (provedor: $provedor)';
     final s = stderr.toLowerCase();
     if (s.contains('translate host') || s.contains('name or service not known') || s.contains('traduzir')) {
-      return 'Não foi possível resolver o host "$host". Confira SUPABASE_POOLER_HOST no .env.';
+      return 'Não foi possível resolver o host "$host"$sufixo. Confira a conexão da nuvem '
+          '(Neon: DATABASE_URL no .env.neon; Supabase: SUPABASE_POOLER_HOST no .env).';
     }
     if (s.contains('tenant/user') && s.contains('not found')) {
-      return 'Usuário/região incorretos no pooler ("$usuario" em "$host").\n\n'
-          'Confira SUPABASE_POOLER_HOST (ex.: aws-1-us-west-2.pooler.supabase.com) e SUPABASE_POOLER_USER no .env.';
+      return 'Usuário/região incorretos ("$usuario" em "$host")$sufixo.\n\n'
+          'No Supabase (reserva), confira SUPABASE_POOLER_HOST '
+          '(ex.: aws-1-us-west-2.pooler.supabase.com) e SUPABASE_POOLER_USER no .env.';
     }
     if (s.contains('authentication failed') || s.contains('password authentication') || s.contains('autentica')) {
-      return 'Falha de autenticação no banco da nuvem.\n\n'
-          'A senha em SUPABASE_POOLER_PASSWORD precisa ser a senha do BANCO do Supabase '
-          '(a mesma de "Database password", no painel do projeto).\n\n'
+      return 'Falha de autenticação no banco da nuvem$sufixo.\n\n'
+          'No Neon, confira a senha em DATABASE_URL (.env.neon). No Supabase (reserva), a '
+          'senha em SUPABASE_POOLER_PASSWORD é a do BANCO (a mesma de "Database password", '
+          'no painel do projeto).\n\n'
           'Atenção: as chaves de API que começam com "sb_secret_" NÃO são a senha do banco.';
     }
     if (s.contains('timeout') || s.contains('connection refused') || s.contains('could not connect') || s.contains('recus')) {
@@ -5327,15 +5431,15 @@ BEGIN
 END $$;
 ''';
 
-  /// Gera um backup PostgreSQL (.sql) COMPLETO do banco da NUVEM (Supabase):
-  /// TODAS as tabelas do schema `public` com TODOS os registros, de TODAS as
-  /// empresas.
+  /// Gera um backup PostgreSQL (.sql) COMPLETO do banco da NUVEM (Neon
+  /// principal; Supabase como reserva): TODAS as tabelas do schema `public` com
+  /// TODOS os registros, de TODAS as empresas.
   ///
   /// É usado quando o `pg_dump` do computador é mais antigo que o servidor da
-  /// nuvem — o que é o caso comum, já que o Supabase está na versão 17 e o
-  /// PostgreSQL que acompanha o app na 16 —, situação em que o `pg_dump` se
-  /// recusa a rodar ("aborting because of server version mismatch"). O `psql`
-  /// não tem essa limitação.
+  /// nuvem — o que é o caso comum, já que o Neon está na versão 18 (e o Supabase
+  /// na 17) e o PostgreSQL que acompanha o app na 16 —, situação em que o
+  /// `pg_dump` se recusa a rodar ("aborting because of server version mismatch").
+  /// O `psql` não tem essa limitação.
   ///
   /// Retorna (sucesso, mensagem, caminho do arquivo).
   Future<(bool, String, String?)> criarBackupSqlBancoNuvem({
@@ -5351,17 +5455,19 @@ END $$;
       return (false, 'Backup do banco da nuvem não está disponível na versão Web.', null);
     }
 
-    final hostFinal = (host ?? EnvConfig.supabasePoolerHost).trim();
-    final portaFinal = porta ?? EnvConfig.supabasePoolerPort;
-    final usuarioFinal = usuario ?? EnvConfig.supabasePoolerUser;
-    final senhaFinal = senha ?? EnvConfig.supabasePoolerPassword;
-    final bancoFinal = banco ?? EnvConfig.supabaseDbNameFinal;
+    final nuvem = _resolverConexaoNuvem();
+    final hostFinal = (host ?? nuvem.host).trim();
+    final portaFinal = porta ?? nuvem.porta;
+    final usuarioFinal = usuario ?? nuvem.usuario;
+    final senhaFinal = senha ?? nuvem.senha;
+    final bancoFinal = banco ?? nuvem.banco;
 
     if (hostFinal.isEmpty || senhaFinal.isEmpty) {
       return (
         false,
         'Conexão do banco da nuvem não configurada.\n\n'
-        'Confira no .env: SUPABASE_POOLER_HOST e SUPABASE_POOLER_PASSWORD.',
+        'No Neon, confira DATABASE_URL no .env.neon. No Supabase (reserva), confira '
+        'SUPABASE_POOLER_HOST e SUPABASE_POOLER_PASSWORD no .env.',
         null,
       );
     }
@@ -6245,7 +6351,7 @@ END $$;
   // ============================================================
 
   /// Baixa um backup completo da nuvem e o restaura no banco da própria
-  /// nuvem (Supabase PostgreSQL via pooler).
+  /// nuvem (Neon principal; Supabase como reserva).
   ///
   /// Antes e depois da restauração, conta linhas de cada tabela para gerar
   /// um relatório claro do que mudou.
@@ -6273,20 +6379,22 @@ END $$;
       return (false, 'Caminho inválido — só backups completos podem ser restaurados na nuvem.', null);
     }
     if (!SupabaseService.isAvailable) {
-      return (false, 'Supabase indisponível.', null);
+      return (false, 'Nuvem indisponível.', null);
     }
 
-    final hostFinal = (host ?? EnvConfig.supabasePoolerHost).trim();
-    final portaFinal = porta ?? EnvConfig.supabasePoolerPort;
-    final usuarioFinal = usuario ?? EnvConfig.supabasePoolerUser;
-    final senhaFinal = senha ?? EnvConfig.supabasePoolerPassword;
-    final bancoFinal = banco ?? EnvConfig.supabaseDbNameFinal;
+    final nuvem = _resolverConexaoNuvem();
+    final hostFinal = (host ?? nuvem.host).trim();
+    final portaFinal = porta ?? nuvem.porta;
+    final usuarioFinal = usuario ?? nuvem.usuario;
+    final senhaFinal = senha ?? nuvem.senha;
+    final bancoFinal = banco ?? nuvem.banco;
 
     if (hostFinal.isEmpty || senhaFinal.isEmpty) {
       return (
         false,
         'Conexão do banco da nuvem não configurada.\n'
-        'Confira SUPABASE_POOLER_HOST e SUPABASE_POOLER_PASSWORD no .env.',
+        'No Neon, confira DATABASE_URL no .env.neon. No Supabase (reserva), confira '
+        'SUPABASE_POOLER_HOST e SUPABASE_POOLER_PASSWORD no .env.',
         null,
       );
     }
@@ -6348,7 +6456,7 @@ END $$;
         debugPrint('>>> [BackupRestore] ❌ Erro na restauração (exitCode ${resultado.exitCode}): $stderr');
         return (
           false,
-          'Erro ao restaurar no banco da nuvem: ${_mensagemErroConexaoNuvem(stderr, hostFinal, portaFinal, usuarioFinal)}',
+          'Erro ao restaurar no banco da nuvem: ${_mensagemErroConexaoNuvem(stderr, hostFinal, portaFinal, usuarioFinal, provedor: nuvem.provedor)}',
           null,
         );
       }

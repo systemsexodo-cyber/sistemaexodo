@@ -878,11 +878,11 @@ class _PdvPageState extends State<PdvPage> {
                       ),
                   ],
                 ),
-          centerTitle: true,
+          centerTitle: MediaQuery.of(context).size.width >= 700,
           backgroundColor: Colors.transparent,
           elevation: 0,
           actions: [
-            if (kIsWeb)
+            if (kIsWeb && MediaQuery.of(context).size.width >= 600)
               IconButton(
                 onPressed: () => _toggleTelaCheia(),
                 icon: Icon(
@@ -8942,6 +8942,14 @@ class _PdvPageState extends State<PdvPage> {
       final empresa = authService.empresaAtual ?? dataService.empresaAtual;
       if (empresa == null) {
         debugPrint('>>> [Producao PDV] ❌ Empresa é null, abortando impressão');
+        return;
+      }
+
+      // Respeita a configuração "Imprimir Tickets de Produção ao Finalizar a
+      // Venda" (Configurações da Empresa > Impressão). Padrão LIGADO.
+      if (empresa.configuracoes?['imprimirProducaoAoSalvar'] == false) {
+        debugPrint('>>> [Producao PDV] Impressão de produção desativada nas '
+            'configurações da empresa. Nada a imprimir.');
         return;
       }
 

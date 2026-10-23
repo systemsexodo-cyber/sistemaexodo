@@ -108,6 +108,13 @@ class _EntregasPageState extends State<EntregasPage>
               },
             ),
 
+            // Otimizar rota para o boy selecionado
+            IconButton(
+              icon: const Icon(Icons.route),
+              tooltip: 'Otimizar rota do boy selecionado',
+              onPressed: () => _otimizarRotaBoy(context, dataService),
+            ),
+
             // Busca
             IconButton(
               icon: const Icon(Icons.search),
@@ -779,6 +786,42 @@ class _EntregasPageState extends State<EntregasPage>
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+  Future<void> _otimizarRotaBoy(BuildContext context, DataService dataService) async {
+    if (_motoristaFiltro == null || _motoristaFiltro!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecione um motoboy no filtro primeiro'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    final enderecos = <String>[];
+    for (final e in dataService.entregas) {
+      if (e.motoristaId == _motoristaFiltro &&
+          (e.status == StatusEntrega.aguardando ||
+           e.status == StatusEntrega.romaneioCriado ||
+           e.status == StatusEntrega.emEntrega) &&
+          e.enderecoEntrega.isNotEmpty) {
+        enderecos.add(e.enderecoEntrega);
+      }
+    }
+    if (enderecos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nenhum endereço pendente para este boy'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    final path = enderecos.map((e) => Uri.encodeComponent(e)).join('/');
+    final url = Uri.parse('https://www.google.com/maps/dir//$path');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível abrir o Google Maps'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   List<Entrega> _filtrarEntregas(List<Entrega> entregas) {

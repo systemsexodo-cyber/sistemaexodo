@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-Sincronizador Bidirecional Otimizado: PostgreSQL Local <-> Supabase
+Sincronizador Bidirecional Otimizado: PostgreSQL Local <-> Nuvem (Neon)
 
-UPLOAD:   Registros com _sincronizado_nuvem=FALSE → envia ao Supabase → marca TRUE
-DOWNLOAD: Registros no Supabase atualizados após última sync → upsert local → marca TRUE
+A nuvem ativa e o Neon (Data API + Neon Auth); o Supabase fica como reserva.
+Force o provedor com NUVEM_PROVEDOR=neon|supabase no .env.
+
+UPLOAD:   Registros com _sincronizado_nuvem=FALSE → envia a nuvem → marca TRUE
+DOWNLOAD: Registros na nuvem atualizados após última sync → upsert local → marca TRUE
 """
 import argparse
+import base64
 import json
 import os
 import platform
@@ -13,9 +17,11 @@ import re
 import select
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 
@@ -43,7 +49,177 @@ def _em_cooldown(tabela):
 def _marcar_cooldown(tabela):
     """Marca a tabela para ser ignorada nos próximos ciclos."""
     _tabelas_404_cooldown[tabela] = datetime.now(timezone.utc)
-    print_log(f"[SYNC] ⏸️ Tabela '{tabela}' marcada em cooldown por {COOLDOWN_SEGUNDOS}s (ausente no Supabase)", Colors.CYAN)
+    print_log(f"[SYNC] ⏸️ Tabela '{tabela}' marcada em cooldown por {COOLDOWN_SEGUNDOS}s (ausente na nuvem)", Colors.CYAN)
+
+
+def _limpar_record_id(valor):
+    """Remove aspas externas que versões antigas gravaram no `record_id`.
+
+    Algumas linhas de `_exodo_sync_log` ficaram com o id serializado como JSON
+    (ex.: '"1776189162648_4847_545190924"'). Sem limpar, o filtro `id=in.(...)`
+    enviado ao PostgREST saía com aspas DOBRADAS e a nuvem respondia 400
+    (PGRST100); além disso, o SELECT local por `id` não achava a linha, então o
+    registro nunca subia. Devolve o id sem as aspas (ou o valor original).
+    """
+    if valor is None:
+        return None
+    texto = str(valor).strip()
+    if len(texto) >= 2 and texto[0] == '"' and texto[-1] == '"':
+        return texto[1:-1]
+    return texto
+
+
+def _candidatos_record_id(valor):
+    """Grafias de id aceitas para localizar um registro: o valor REAL e a variante
+    sem aspas externas.
+
+    Dois históricos convivem nesta fila:
+
+    1. Ids do catálogo legado que CONTÊM aspas como parte do valor (ex.:
+       '"[#491c0]"' — confirmado em 5641 dos 7233 produtos). Para esses, limpar
+       aspas destrói o id: o SELECT local não achava a linha, nada era enviado e
+       o log era apagado mesmo assim — a edição do usuário sumia sem nenhum erro
+       no log. É a causa de "edito no Windows e não aparece no site".
+    2. Linhas antigas gravadas como JSON (ex.: '"1776189162648_4847_545190924"'),
+       onde as aspas são de serialização e o id real é o valor limpo.
+
+    Buscar as DUAS grafias atende os dois casos sem precisar saber qual é o certo.
+    """
+    if valor is None:
+        return ()
+    texto = str(valor)
+    limpo = _limpar_record_id(texto)
+    if limpo == texto:
+        return (texto,)
+    return (texto, limpo)
+
+
+def _instante_canonico(valor):
+    """Normaliza um valor de data/hora para um instante (ISO UTC), ou None.
+
+    O MESMO momento chega em formatos diferentes: o banco local grava
+    'AAAA-MM-DD HH:MM:SS.ffffff-03:00' e a nuvem devolve
+    'AAAA-MM-DDTHH:MM:SS.ffffff+00:00'. A checagem de conflito comparava isso
+    como TEXTO, então TODA linha com data virava conflito falso e o sync nunca
+    convergia. Devolve o instante canônico quando o valor é data reconhecível e
+    None quando não é (aí o chamador usa a comparação de texto normal).
+    """
+    if isinstance(valor, datetime):
+        dt = valor
+    elif isinstance(valor, str):
+        texto = valor.strip()
+        # Só tenta quando o texto PARECE uma data ISO (posições 4 e 7 com '-').
+        if len(texto) < 10 or texto[4:5] != '-' or texto[7:8] != '-':
+            return None
+        try:
+            dt = datetime.fromisoformat(
+                texto.replace('Z', '+00:00').replace(' ', 'T', 1))
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        # Sem fuso: assume UTC (a nuvem grava em UTC).
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _decimal_canonico(valor):
+    """Valor numérico normalizado (Decimal) ou None quando não é número.
+
+    O MESMO número chega como `10` (nuvem/JSON) e `10.0` (local/Decimal). A
+    comparação antiga usava `str(10) != str(10.0)` e transformava uma edição
+    idêntica em conflito — foi assim que 81 pedidos ficaram parqueados e
+    deixaram de receber as alterações feitas no site.
+    """
+    if isinstance(valor, bool):
+        return None
+    if isinstance(valor, (int, float, Decimal)):
+        try:
+            return Decimal(str(valor)).normalize()
+        except Exception:
+            return None
+    if isinstance(valor, str):
+        texto = valor.strip()
+        if not texto:
+            return None
+        try:
+            return Decimal(texto).normalize()
+        except Exception:
+            return None
+    return None
+
+
+def _normalizar_json(valor):
+    """Estrutura JSON comparável: ignora ordem de chaves e 10 vs 10.0."""
+    if isinstance(valor, dict):
+        return {str(k): _normalizar_json(v) for k, v in sorted(valor.items())}
+    if isinstance(valor, (list, tuple)):
+        return [_normalizar_json(v) for v in valor]
+    numero = _decimal_canonico(valor)
+    if numero is not None:
+        return f'#num:{numero}'
+    return valor
+
+
+def _valores_equivalentes(a, b):
+    """Os dois valores representam o MESMO dado?
+
+    Compara datas por instante (formatos diferentes do mesmo momento) e
+    números pelo valor (10 == 10.0). Texto e JSON caem na comparação
+    estrutural normal. Usado na detecção de conflito e na limpeza dos
+    conflitos antigos que já não representam diferença nenhuma.
+    """
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    instante_a = _instante_canonico(a)
+    instante_b = _instante_canonico(b)
+    if instante_a is not None and instante_b is not None:
+        return instante_a == instante_b
+    numero_a = _decimal_canonico(a)
+    numero_b = _decimal_canonico(b)
+    if numero_a is not None and numero_b is not None:
+        return numero_a == numero_b
+    if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
+        try:
+            return json.dumps(_normalizar_json(a), sort_keys=True,
+                              default=str) == json.dumps(
+                                  _normalizar_json(b), sort_keys=True,
+                                  default=str)
+        except Exception:
+            return a == b
+    return str(a) == str(b)
+
+
+def _pg_in_list(valores):
+    """Monta a lista de um filtro `col=in.(...)` no formato do PostgREST.
+
+    Valores com vírgula, parênteses, aspas ou barra invertida precisam ir entre
+    aspas duplas e, DENTRO delas, `\\` vira `\\\\` e `"` vira `\\"`. Havia ids
+    locais antigos com aspas embutidas (ex.: '..._saida_"123"') que, sem esse
+    escape, faziam a nuvem responder 400 (PGRST100) e abortavam a consulta
+    inteira. Aplicar o escape é inócuo para ids normais (não têm esses
+    caracteres).
+    """
+    itens = []
+    for valor in valores:
+        texto = '' if valor is None else str(valor)
+        # 1) Escapa para a sintaxe de string do PostgREST (dentro de "...").
+        texto = texto.replace('\\', '\\\\').replace('"', '\\"')
+        # 2) Percent-encoda o que quebra o TRANSPORTE da URL e que o `requests`
+        #    deixa passar cru. O `#` é o pior: ele inicia o "fragmento" e TUDO
+        #    depois dele é descartado ANTES de chegar à nuvem — o filtro
+        #    chegava truncado e virava 400 (PGRST100). Vários ids de estoque
+        #    antigos têm `#` no meio (ex.: '1790520715460_"[#491c0]"'). O '%'
+        #    vai primeiro para não ser recodificado pelos itens seguintes.
+        for bruto, encodado in (('%', '%25'), ('#', '%23'), ('&', '%26'),
+                                ('+', '%2B'), (';', '%3B'), ('?', '%3F'),
+                                (' ', '%20')):
+            texto = texto.replace(bruto, encodado)
+        itens.append(f'"{texto}"')
+    return ",".join(itens)
 
 
 # ─── Bloqueio da nuvem (401 / 402 / 403) ───────────────────────────────
@@ -138,24 +314,191 @@ class Colors:
     BOLD    = '\033[1m'
 
 
-def print_log(msg, color=Colors.RESET):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # Nunca deixar print_log quebrar o ciclo por problemas de encoding do console
-    try:
-        print(f"[{timestamp}] {color}{msg}{Colors.RESET}")
-    except Exception:
-        try:
-            print(f"[{timestamp}] {msg}")
-        except Exception:
-            pass
+# ─────────────────────────────────────────────────────────────────────────────
+# Log em disco: retenção (padrão 7 dias) e anti-repetição
+# ─────────────────────────────────────────────────────────────────────────────
+# O sincronizador grava uma linha por evento em `sincronizador.log`. Quando o
+# par da LAN fica fora do ar, a MESMA mensagem de erro volta a cada poucos
+# segundos e o arquivo cresce sem limite (chegou a 73 MB em 2 dias, deixando a
+# opção "Ver Logs" pesada). Duas medidas mantêm o arquivo leve:
+#   1. mensagens IDÊNTICAS em sequência são agrupadas (uma linha por janela);
+#   2. o arquivo é podado para os últimos `LOG_RETENCAO_DIAS` dias e, no máximo,
+#      `LOG_TAMANHO_MAX_MB` MB.
+# Tudo ajustável pelo .env: LOG_RETENCAO_DIAS, LOG_TAMANHO_MAX_MB,
+# LOG_REPETIDO_SEGUNDOS e LOG_PODA_INTERVALO_MINUTOS.
+LOG_RETENCAO_DIAS = 7
+LOG_TAMANHO_MAX_MB = 10
+LOG_REPETIDO_SEGUNDOS = 60
+LOG_PODA_INTERVALO_MINUTOS = 10
+
+_LOG_DATA_RE = re.compile(r'^\[(\d{4}-\d{2}-\d{2})[ T]\d{2}:\d{2}:\d{2}\]')
+_log_trava = threading.RLock()
+_log_caminho_cache = None
+_log_ultima_poda = 0.0
+# texto da mensagem -> [timestamp da última gravação, repetições suprimidas]
+# Chave por texto (e não só a última): a falha da LAN se intercala com as
+# mensagens do ciclo, então precisa ser agrupada mesmo com outras no meio.
+_log_repeticoes = {}
+
+
+def _log_caminho():
+    """Caminho do `sincronizador.log` (pasta do script ou do executável)."""
+    global _log_caminho_cache
+    if _log_caminho_cache:
+        return _log_caminho_cache
     try:
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-        log_path = os.path.join(base_dir, "sincronizador.log")
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] {msg}\n")
+    except Exception:
+        base_dir = os.getcwd()
+    # LOG_ARQUIVO permite podar/apontar o log de OUTRA instalação (ex.: o
+    # SincronizadorNuvem instalado em C:\SistemaExodo) sem copiar o script.
+    caminho_env = (os.getenv('LOG_ARQUIVO') or '').strip()
+    if caminho_env:
+        _log_caminho_cache = os.path.abspath(os.path.expanduser(caminho_env))
+    else:
+        _log_caminho_cache = os.path.join(base_dir, "sincronizador.log")
+    return _log_caminho_cache
+
+
+def _log_config_int(nome, padrao):
+    """Lê um ajuste inteiro do .env; cai no padrão em qualquer problema."""
+    try:
+        valor = os.getenv(nome)
+        if valor is None or str(valor).strip() == '':
+            return padrao
+        return int(float(str(valor).strip()))
+    except Exception:
+        return padrao
+
+
+def podar_log(forcar=False):
+    """Mantém no `sincronizador.log` só os últimos N dias e o teto de tamanho.
+
+    Roda no máximo uma vez a cada `LOG_PODA_INTERVALO_MINUTOS` (salvo `forcar`).
+    Nunca levanta exceção: o log não pode derrubar a sincronização.
+    Devolve o tamanho final em bytes (ou None se nada foi feito).
+    """
+    global _log_ultima_poda
+    agora = time.time()
+    caminho = _log_caminho()
+    dias = max(1, _log_config_int('LOG_RETENCAO_DIAS', LOG_RETENCAO_DIAS))
+    teto_mb = max(1, _log_config_int('LOG_TAMANHO_MAX_MB', LOG_TAMANHO_MAX_MB))
+    intervalo = max(0, _log_config_int('LOG_PODA_INTERVALO_MINUTOS',
+                                       LOG_PODA_INTERVALO_MINUTOS)) * 60
+
+    with _log_trava:
+        if not forcar and intervalo and agora - _log_ultima_poda < intervalo:
+            return None
+        _log_ultima_poda = agora
+        tmp = caminho + ".podando"
+        tmp2 = caminho + ".podando2"
+        try:
+            if not os.path.exists(caminho):
+                return None
+            tamanho = os.path.getsize(caminho)
+            if tamanho <= 256 * 1024:
+                return tamanho
+
+            # Poda até 90% do teto: sobra folga para os próximos registros e o
+            # arquivo não fica sendo reescrito a cada linha ao encostar no limite.
+            limite_bytes = max(64 * 1024, int(teto_mb * 1024 * 1024 * 0.9))
+            limite_data = (datetime.now() - timedelta(days=dias)).replace(
+                hour=0, minute=0, second=0, microsecond=0)
+
+            # 1ª passada: mantém só as linhas dentro da janela de dias. Linhas
+            # sem data (continuação/quebra) seguem a decisão da última linha.
+            manter = True
+            with open(caminho, 'r', encoding='utf-8', errors='replace') as origem, \
+                    open(tmp, 'w', encoding='utf-8', newline='') as destino:
+                for linha in origem:
+                    casou = _LOG_DATA_RE.match(linha)
+                    if casou:
+                        try:
+                            data_linha = datetime.strptime(casou.group(1), '%Y-%m-%d')
+                            manter = data_linha >= limite_data
+                        except Exception:
+                            manter = True
+                    if manter:
+                        destino.write(linha)
+            os.replace(tmp, caminho)
+
+            # 2ª passada: se ainda passou do teto (muito evento em pouco tempo),
+            # guarda só o fim do arquivo, começando numa linha inteira.
+            if os.path.getsize(caminho) > limite_bytes:
+                with open(caminho, 'rb') as origem:
+                    origem.seek(max(0, os.path.getsize(caminho) - limite_bytes))
+                    dados = origem.read().decode('utf-8', 'replace')
+                corte = dados.find('\n')
+                dados = '' if corte < 0 else dados[corte + 1:]
+                with open(tmp2, 'w', encoding='utf-8', newline='') as destino:
+                    destino.write(dados)
+                os.replace(tmp2, caminho)
+
+            return os.path.getsize(caminho)
+        except Exception:
+            for resto in (tmp, tmp2):
+                try:
+                    if os.path.exists(resto):
+                        os.remove(resto)
+                except Exception:
+                    pass
+            return None
+
+
+def print_log(msg, color=Colors.RESET):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    texto = str(msg)
+    # Nunca deixar print_log quebrar o ciclo por problemas de encoding do console
+    try:
+        print(f"[{timestamp}] {color}{texto}{Colors.RESET}")
+    except Exception:
+        try:
+            print(f"[{timestamp}] {texto}")
+        except Exception:
+            pass
+    try:
+        janela = _log_config_int('LOG_REPETIDO_SEGUNDOS', LOG_REPETIDO_SEGUNDOS)
+        agora = time.time()
+        linhas = []
+        with _log_trava:
+            registro = _log_repeticoes.get(texto)
+            # Mesma mensagem de novo, dentro da janela: conta e não grava.
+            if (janela > 0 and registro
+                    and agora - registro[0] < janela):
+                registro[1] += 1
+                return
+            # Fecha a contagem de mensagens que pararam de repetir (janela
+            # vencida e ainda havia repetições suprimidas): registra 1 linha
+            # com o total e zera, para não perder a informação.
+            if janela > 0:
+                for chave, valor in list(_log_repeticoes.items()):
+                    if chave == texto:
+                        continue
+                    if valor[1] and agora - valor[0] >= janela:
+                        linhas.append(f"[{timestamp}] (mensagem repetida "
+                                      f"{valor[1]}x) {chave}")
+                        valor[0] = agora
+                        valor[1] = 0
+            if registro and registro[1]:
+                linhas.append(f"[{timestamp}] (mensagem repetida {registro[1]}x) "
+                              f"{texto}")
+            _log_repeticoes[texto] = [agora, 0]
+            linhas.append(f"[{timestamp}] {texto}")
+            # Evita crescer sem limite quando muitas mensagens diferentes passam
+            # mais de uma janela sem repetir.
+            if len(_log_repeticoes) > 200:
+                for chave in [k for k, v in _log_repeticoes.items()
+                              if agora - v[0] > janela * 2]:
+                    _log_repeticoes.pop(chave, None)
+        with open(_log_caminho(), "a", encoding="utf-8") as f:
+            f.write("\n".join(linhas) + "\n")
+    except Exception:
+        pass
+    try:
+        podar_log()
     except Exception:
         pass
 
@@ -203,6 +546,14 @@ _VALORES_LIGADOS = ('1', 'true', 'sim', 'on', 'yes')
 TABELAS_GLOBAIS = {'empresas', 'usuarios'}
 
 _EPOCH = "1970-01-01T00:00:00+00:00"
+
+# Idade mínima do cursor para que o safeguard de "tabela vazia" volte o cursor
+# para epoch (full download). Sem este piso, todo ciclo rebaixava a tabela
+# inteira para toda tabela que é vazia LOCAL e também vazia na nuvem para esta
+# empresa — a resposta vem vazia, mas o reset+re-scan a cada ciclo é tráfego
+# inútil e foi uma das fontes de egress. Só vale a pena forçar o full download
+# quando o cursor é realmente antigo (ex.: banco local apagado/desinstalado).
+_IDADE_MINIMA_CURSOR_PARA_FULL_DOWNLOAD = timedelta(hours=6)
 
 
 def ler_cache_dados(conn, chave):
@@ -419,6 +770,12 @@ _supabase_schema_cache = None
 _colunas_e_tipos_cache = {}
 _http_session = None
 
+# Colunas reais do Postgres do Neon ({tabela: set(colunas)}). A Data API do Neon
+# NAO publica o OpenAPI que o PostgREST do Supabase expunha (responde 404), entao
+# no Neon as colunas sao lidas direto do proprio banco (information_schema).
+_colunas_nuvem_postgres_cache = None
+_colunas_nuvem_falha_ate = 0.0
+
 def get_http_session():
     """Garante uma única sessão HTTP persistente com Keep-Alive e pooling de conexões."""
     global _http_session
@@ -455,15 +812,177 @@ def get_tabela_prioridade(table_name):
     return TABELA_PRIORIDADES.get(table_name, 2)
 
 
-def testar_conexao_supabase(supabase_url):
-    """Verifica de forma rápida e silenciosa se o Supabase está acessível."""
+# ─────────────────────────────────────────────────────────────────────────────
+# NUVEM: NEON (principal) e SUPABASE (reserva)
+# ─────────────────────────────────────────────────────────────────────────────
+# O sistema passou a usar o Neon como nuvem. A Data API do Neon fala o MESMO
+# protocolo do PostgREST do Supabase (o sufixo /rest/v1 e identico), entao o que
+# muda e so a origem e o token:
+#   * Neon     -> NEON_DATA_API_URL + token anonimo do Neon Auth (JWT temporario);
+#   * Supabase -> SUPABASE_URL + SUPABASE_ANON_KEY/SERVICE_ROLE_KEY.
+#
+# O Neon tem PRIORIDADE. O Supabase fica de SEGUNDO PLANO: e usado quando as
+# credenciais do Neon nao existem (ou quando NUVEM_PROVEDOR=supabase for definido
+# no .env, para voltar atras sem mexer no codigo).
+NUVEM_PROVEDOR = None          # 'neon' | 'supabase' (o que esta em uso agora)
+_nuvem_base = None             # URL SEM o sufixo /rest/v1
+_nuvem_token = {'valor': None, 'exp': 0.0}
+_nuvem_token_lock = threading.Lock()
+
+
+def _ler_arquivo_env(caminho):
+    """Le um .env simples para um dict {chave: valor} (sem tocar o ambiente)."""
+    valores = {}
     try:
-        session = get_http_session()
-        # HEAD request leve com timeout tolerante de 5 segundos
-        session.head(supabase_url.rstrip('/'), timeout=5.0)
+        with open(caminho, 'r', encoding='utf-8-sig', errors='replace') as f:
+            for linha in f:
+                linha = linha.strip()
+                if not linha or linha.startswith('#') or '=' not in linha:
+                    continue
+                chave, _, valor = linha.partition('=')
+                chave = chave.strip()
+                valor = valor.strip()
+                if len(valor) >= 2 and valor[0] == valor[-1] and valor[0] in ('"', "'"):
+                    valor = valor[1:-1]
+                valores[chave] = valor
+    except Exception:
+        pass
+    return valores
+
+
+def carregar_arquivos_env(base_dir=None):
+    """Carrega o `.env` e o `.env.neon` (o `.env` vence em nomes repetidos).
+
+    O `.env.neon` traz as credenciais do Neon. A chave DATABASE_URL de la e
+    copiada para NEON_DATABASE_URL, para NAO sobrescrever a DATABASE_URL do
+    `.env` (que aponta para o banco LOCAL).
+    """
+    pastas = []
+    if base_dir:
+        pastas.append(base_dir)
+    try:
+        pastas.append(os.getcwd())
+    except Exception:
+        pass
+    pastas.append(os.path.dirname(os.path.abspath(__file__)))
+
+    for pasta in pastas:
+        try:
+            load_dotenv(os.path.join(pasta, '.env'), override=False)
+        except Exception:
+            pass
+
+    for pasta in pastas:
+        caminho = os.path.join(pasta, '.env.neon')
+        if not os.path.exists(caminho):
+            continue
+        valores = _ler_arquivo_env(caminho)
+        for chave, valor in valores.items():
+            if chave == 'DATABASE_URL':
+                os.environ.setdefault('NEON_DATABASE_URL', valor)
+            elif chave == 'DATABASE_URL_UNPOOLED':
+                os.environ.setdefault('NEON_DATABASE_URL_UNPOOLED', valor)
+            else:
+                os.environ.setdefault(chave, valor)
+        break
+
+
+def _exp_do_jwt(token):
+    """Le a claim 'exp' de um JWT (sem validar assinatura). None se nao der."""
+    try:
+        payload = token.split('.')[1]
+        payload += '=' * (-len(payload) % 4)
+        dados = json.loads(base64.urlsafe_b64decode(payload.encode('ascii')))
+        exp = dados.get('exp')
+        return float(exp) if exp else None
+    except Exception:
+        return None
+
+
+def _normalizar_base_neon(url):
+    """Base do Neon SEM o sufixo /rest/v1 (o codigo o acrescenta depois)."""
+    base = (url or '').strip().rstrip('/')
+    if base.endswith('/rest/v1'):
+        base = base[:-len('/rest/v1')]
+    return base
+
+
+def _obter_token_neon():
+    """Token anonimo do Neon Auth. A Data API do Neon so aceita JWT."""
+    base = (os.getenv('NEON_AUTH_BASE_URL') or '').strip()
+    if not base:
+        raise RuntimeError('NEON_AUTH_BASE_URL ausente (veja o .env.neon)')
+    agora = time.time()
+    if _nuvem_token['valor'] and _nuvem_token['exp'] - 120 > agora:
+        return _nuvem_token['valor']
+    with _nuvem_token_lock:
+        if _nuvem_token['valor'] and _nuvem_token['exp'] - 120 > agora:
+            return _nuvem_token['valor']
+        resp = get_http_session().get(
+            f"{base.rstrip('/')}/token/anonymous", timeout=20)
+        resp.raise_for_status()
+        token = (resp.json() or {}).get('token') or ''
+        if not token:
+            raise RuntimeError(
+                f'Neon Auth respondeu sem token: {resp.text[:200]}')
+        _nuvem_token['valor'] = token
+        _nuvem_token['exp'] = _exp_do_jwt(token) or (agora + 3000)
+        print_log('[NUVEM] Token do Neon Auth renovado.', Colors.CYAN)
+    return _nuvem_token['valor']
+
+
+def resolver_nuvem():
+    """Resolve a nuvem ATIVA e devolve (provedor, base_url, api_key).
+
+    Neon tem prioridade; o Supabase e a reserva. A base NAO inclui /rest/v1
+    (o codigo abaixo acrescenta esse sufixo). Para forcar, use no .env:
+        NUVEM_PROVEDOR=neon      (padrao quando ha NEON_DATA_API_URL)
+        NUVEM_PROVEDOR=supabase  (volta para a nuvem antiga)
+    """
+    global NUVEM_PROVEDOR, _nuvem_base
+    forcado = (os.getenv('NUVEM_PROVEDOR') or '').strip().lower()
+    neon_url = (os.getenv('NEON_DATA_API_URL') or '').strip()
+    supabase_url = (os.getenv('SUPABASE_URL') or '').strip()
+
+    quer_supabase = forcado == 'supabase' or (forcado != 'neon' and not neon_url)
+
+    if quer_supabase:
+        if not supabase_url:
+            raise RuntimeError(
+                'Nenhuma nuvem configurada: faltam NEON_DATA_API_URL (principal) '
+                'e SUPABASE_URL (reserva).')
+        chave = (os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+                 or os.getenv('SUPABASE_ANON_KEY') or '')
+        if not chave:
+            raise RuntimeError(
+                'SUPABASE_ANON_KEY/SERVICE_ROLE_KEY ausente no .env.')
+        NUVEM_PROVEDOR = 'supabase'
+        _nuvem_base = supabase_url.rstrip('/')
+        return 'supabase', _nuvem_base, chave
+
+    if not neon_url:
+        raise RuntimeError('NEON_DATA_API_URL ausente (veja o .env.neon).')
+    NUVEM_PROVEDOR = 'neon'
+    _nuvem_base = _normalizar_base_neon(neon_url)
+    return 'neon', _nuvem_base, _obter_token_neon()
+
+
+def testar_conexao_nuvem(base_url):
+    """Sondagem leve: derruba o ciclo cedo quando a nuvem esta inacessivel.
+
+    Bate no /rest/v1/ (existe no Neon e no Supabase). Qualquer resposta HTTP
+    serve como 'rede viva'; so um erro de DNS/conexao reprova.
+    """
+    try:
+        get_http_session().head(
+            f"{base_url.rstrip('/')}/rest/v1/", timeout=5.0)
         return True
     except Exception:
         return False
+
+
+# Compatibilidade com o nome antigo (testes/scripts que ainda chamam assim).
+testar_conexao_supabase = testar_conexao_nuvem
 
 
 def tem_conflitos_pendentes(conn):
@@ -519,6 +1038,18 @@ def _garantir_tabela_conflitos(conn):
                     ON public.exodo_sync_conflitos (tabela, registro_id)
                     WHERE resolvido = FALSE
             """)
+            # Bancos que já tinham a tabela de uma versão ANTIGA não ganham as
+            # colunas novas: o CREATE TABLE IF NOT EXISTS acima não altera uma
+            # tabela existente. Sem estas colunas, o UPDATE/INSERT dos conflitos
+            # falhava ("não existe a coluna visto_em") e a edição local acabava
+            # descartada. Garantimos cada coluna de forma idempotente.
+            for coluna, tipo in (
+                ('empresa_id', 'TEXT'),
+                ('visto_em', 'TIMESTAMPTZ DEFAULT NOW()'),
+            ):
+                cur.execute(
+                    f'ALTER TABLE public.exodo_sync_conflitos '
+                    f'ADD COLUMN IF NOT EXISTS {coluna} {tipo}')
         conn.commit()
         _tem_tabela_conflitos_cache = True
     except Exception as e:
@@ -576,13 +1107,142 @@ def registrar_conflito_pendente(conn, tabela, registro_id, dados_locais, dados_n
         return False
 
 
+# Colunas que só dizem QUANDO a linha foi mexida (ou que o sincronizador
+# gravou). Duas versões que diferem apenas nelas representam o MESMO dado e não
+# justificam parquear um conflito para o usuário decidir.
+COLUNAS_IGNORADAS_NO_CONFLITO = frozenset({
+    'updated_at', 'created_at', 'criado_em', 'atualizado_em',
+    'data_alteracao', '_sincronizado_nuvem',
+})
+
+
+def _conflito_sem_diferenca_real(dados_locais, dados_nuvem):
+    """As duas versões do conflito têm o MESMO conteúdo de negócio?"""
+    local = dados_locais
+    nuvem = dados_nuvem
+    for nome, valor in (('local', local), ('nuvem', nuvem)):
+        if isinstance(valor, str):
+            try:
+                if nome == 'local':
+                    local = json.loads(valor)
+                else:
+                    nuvem = json.loads(valor)
+            except Exception:
+                return False
+    if not isinstance(local, dict) or not isinstance(nuvem, dict):
+        return False
+    for chave in set(local) | set(nuvem):
+        if chave in COLUNAS_IGNORADAS_NO_CONFLITO:
+            continue
+        if not _valores_equivalentes(local.get(chave), nuvem.get(chave)):
+            return False
+    return True
+
+
+def fechar_conflitos_identicos(conn, limite=500):
+    """Fecha conflitos que NÃO são conflito (as duas versões são iguais).
+
+    Conflitos abertos bloqueiam o download daquele registro para sempre
+    (`ids_bloqueados_no_download`). Versões antigas parqueavam conflito só
+    porque `10` e `10.0` viravam textos diferentes (e as datas, formatos
+    diferentes do mesmo instante). O resultado ficou visível: dezenas de
+    pedidos/produtos nunca mais aceitavam edição feita no site.
+
+    Aqui a comparação é a mesma da detecção nova (`_valores_equivalentes`).
+    Só fecha quando TODOS os campos de negócio coincidem — conflito real (com
+    conteúdo diferente) continua esperando a decisão do usuário.
+    """
+    if not _garantir_tabela_conflitos(conn):
+        return 0
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, tabela, registro_id, dados_locais, dados_nuvem
+                  FROM exodo_sync_conflitos
+                 WHERE resolvido = FALSE
+                 ORDER BY criado_em ASC
+                 LIMIT %s
+                """,
+                (limite,),
+            )
+            pendentes = cur.fetchall()
+    except Exception as e:
+        conn.rollback()
+        print_log(f"[CONFLITO] Não foi possível listar conflitos: {e}", Colors.YELLOW)
+        return 0
+
+    identicos = [
+        linha['id'] for linha in pendentes
+        if _conflito_sem_diferenca_real(linha.get('dados_locais'),
+                                        linha.get('dados_nuvem'))
+    ]
+    if not identicos:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE exodo_sync_conflitos
+                   SET resolvido = TRUE, visto_em = NOW()
+                 WHERE id = ANY(%s) AND resolvido = FALSE
+                """,
+                (identicos,),
+            )
+            fechados = cur.rowcount
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print_log(f"[CONFLITO] Falha ao fechar conflitos idênticos: {e}", Colors.YELLOW)
+        return 0
+
+    if fechados:
+        print_log(
+            f"[CONFLITO] {fechados} conflito(s) fechado(s) automaticamente: "
+            "as duas versões eram o MESMO dado (só mudava o formato de "
+            "número/data). Os registros voltam a aceitar a nuvem.",
+            Colors.GREEN,
+        )
+    return fechados
+
+
+def _texto_win1252_seguro(texto):
+    """Troca o que o Postgres local (WIN1252) não consegue gravar por ASCII.
+
+    Algumas instalações foram criadas com `server_encoding = WIN1252`. Símbolos
+    fora dessa tabela (→ ← — “ ” … emojis) fazem o INSERT falhar com
+    "sequência de escape Unicode não tem suporte" e o conflito NUNCA é
+    parqueado — era o que acontecia com produto_historico ("Nome: x → y").
+    Acentos continuam intactos (WIN1252 os tem).
+    """
+    if texto is None:
+        return None
+    substituicoes = {
+        '\u2192': '->',
+        '\u2190': '<-',
+        '\u2191': '^',
+        '\u2193': 'v',
+        '\u2014': '-',
+        '\u2013': '-',
+        '\u2019': "'",
+        '\u2018': "'",
+        '\u201c': '"',
+        '\u201d': '"',
+        '\u2026': '...',
+        '\u00a0': ' ',
+    }
+    for de, para in substituicoes.items():
+        texto = texto.replace(de, para)
+    return texto.encode('cp1252', errors='replace').decode('cp1252')
+
+
 def _json_para_conflito(dados):
     """Serializa um registro para jsonb (aceita dict, lista, texto ou None)."""
     if dados is None:
         return None
     if isinstance(dados, str):
-        return dados
-    return json.dumps(dados, default=str)
+        return _texto_win1252_seguro(dados)
+    return _texto_win1252_seguro(json.dumps(dados, default=str, ensure_ascii=False))
 
 
 def ids_bloqueados_no_download(conn, incluir_pendentes=True):
@@ -613,8 +1273,12 @@ def ids_bloqueados_no_download(conn, incluir_pendentes=True):
             if incluir_pendentes and _tem_tabela_log(conn):
                 cur.execute("SELECT table_name, record_id FROM _exodo_sync_log")
                 for tabela, record_id in cur.fetchall():
-                    if record_id:
-                        bloqueados.setdefault(tabela, {})[str(record_id)] = 'alteracao_local_pendente'
+                    # Registra as DUAS grafias do id (real, com aspas, e limpa):
+                    # guardar só a variante limpa deixava a trava de download
+                    # sem efeito para os ids legados com aspas — a cópia velha da
+                    # nuvem passava por cima da edição local ainda pendente.
+                    for candidato in _candidatos_record_id(record_id):
+                        bloqueados.setdefault(tabela, {})[str(candidato)] = 'alteracao_local_pendente'
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -654,9 +1318,68 @@ def carregar_meta_colunas(conn):
         print_log(f"Erro ao carregar metadados das colunas locais: {e}", Colors.RED)
 
 
+def _colunas_do_postgres_nuvem():
+    """{tabela: set(colunas)} lido direto do Postgres do Neon. None se falhar.
+
+    Usado no lugar do OpenAPI: a Data API do Neon nao publica esse documento
+    (responde 404 PGRST205), entao lemos as colunas do proprio banco. O
+    resultado e o mesmo `information_schema` que o app Flutter ja usa.
+    """
+    global _colunas_nuvem_postgres_cache, _colunas_nuvem_falha_ate
+    if _colunas_nuvem_postgres_cache is not None:
+        return _colunas_nuvem_postgres_cache
+    if time.time() < _colunas_nuvem_falha_ate:
+        return None  # falhou ha pouco: nao repete a cada tabela
+    url = (os.getenv('NEON_DATABASE_URL')
+           or os.getenv('NEON_DATABASE_URL_UNPOOLED')
+           or os.getenv('DATABASE_URL_UNPOOLED') or '')
+    if not url:
+        print_log('[NUVEM] NEON_DATABASE_URL ausente: sem deteccao de colunas da '
+                  'nuvem (filtrando pelo conjunto de reserva).', Colors.YELLOW)
+        _colunas_nuvem_falha_ate = time.time() + 300
+        return None
+    cn = None
+    try:
+        cn = psycopg2.connect(url, connect_timeout=25, sslmode='require')
+        with cn.cursor() as cur:
+            cur.execute(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema='public' ORDER BY table_name, ordinal_position")
+            dados = {}
+            for tabela, coluna in cur.fetchall():
+                dados.setdefault(tabela, set()).add(coluna)
+        if dados:
+            _colunas_nuvem_postgres_cache = dados
+            print_log(f"[NUVEM] Colunas reais lidas do Postgres do Neon "
+                      f"({len(dados)} tabelas).", Colors.CYAN)
+        return _colunas_nuvem_postgres_cache
+    except Exception as e:
+        print_log(f"[NUVEM] Nao consegui ler as colunas do Postgres do Neon: {e}. "
+                  "Tentando de novo em 5 min.", Colors.YELLOW)
+        _colunas_nuvem_falha_ate = time.time() + 300
+        return None
+    finally:
+        if cn is not None:
+            try:
+                cn.close()
+            except Exception:
+                pass
+
+
 def get_supabase_colunas(supabase_url, api_key, table_name):
-    """Retorna o conjunto de colunas de uma tabela no Supabase usando OpenAPI (com cache duradouro)."""
+    """Colunas reais de uma tabela na nuvem.
+
+    Neon: lidas do proprio Postgres (information_schema) — a Data API do Neon
+    nao expoe o OpenAPI do PostgREST.
+    Supabase (reserva): pelo OpenAPI, como sempre foi.
+    """
     global _supabase_schema_cache
+    if NUVEM_PROVEDOR == 'neon':
+        dados = _colunas_do_postgres_nuvem()
+        if dados is None:
+            return None
+        return dados.get(table_name)
+
     if _supabase_schema_cache is None:
         try:
             url = f"{supabase_url.rstrip('/')}/rest/v1/"
@@ -786,7 +1509,7 @@ def _ids_por_numero_na_nuvem(supabase_url, api_key, table_name, numeros, empresa
     tabela = urllib.parse.quote(table_name, safe='')
     for i in range(0, len(numeros), 50):
         lote = numeros[i:i + 50]
-        lista = ",".join(f'"{n}"' for n in lote)
+        lista = _pg_in_list(lote)
         url = f"{base}/rest/v1/{tabela}?select=id,numero&numero=in.({lista})"
         if empresa_filtro:
             url += f"&empresa_id=eq.{empresa_filtro}"
@@ -970,7 +1693,10 @@ def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
                 WHERE table_name = %s
                 ORDER BY id ASC
             """, (table_name,))
-            logs = cur.fetchall()
+            logs = [
+                (linha[0], linha[1], linha[2])
+                for linha in cur.fetchall()
+            ]
 
         if not logs:
             return 0
@@ -987,30 +1713,47 @@ def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
         
         supabase_cols = get_supabase_colunas(supabase_url, api_key, table_name)
         
-        # Agrupar IDs para buscar no banco em um único SELECT (Evita N+1 consultas)
+        # Agrupar IDs para buscar no banco em um único SELECT (Evita N+1 consultas).
+        # Cada id é buscado nas DUAS grafias (real e sem aspas externas) e o row_dict
+        # fica indexado pelas duas — assim `rows_dict.get(record_id)` funciona nos
+        # dois históricos de id (ver _candidatos_record_id).
         record_ids = [log[1] for log in logs if log[2] != 'DELETE']
         rows_dict = {}
         
         if record_ids:
+            unique_ids = sorted({
+                candidato
+                for rid in record_ids
+                for candidato in _candidatos_record_id(rid)
+            })
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                unique_ids = list(set(record_ids))
                 if len(unique_ids) == 1:
                     cur.execute(f'SELECT * FROM "{table_name}" WHERE id = %s', (unique_ids[0],))
                 else:
                     cur.execute(f'SELECT * FROM "{table_name}" WHERE id IN %s', (tuple(unique_ids),))
                 for row in cur.fetchall():
-                    rows_dict[row['id']] = dict(row)
+                    row_dict = dict(row)
+                    for candidato in _candidatos_record_id(row_dict.get('id')):
+                        rows_dict[candidato] = row_dict
 
         # DETECÇÃO DE CONFLITOS (Apenas para tabelas normais de dados)
         nuvem_dict = {}
         if record_ids and table_name != 'exodo_sync_conflitos':
             try:
-                valid_ids = [rid for rid in record_ids if rid]
-                if valid_ids:
+                # As DUAS grafias de id vão para a nuvem também: ids reais com
+                # aspas precisam do escape do _pg_in_list (senão o filtro não
+                # casa e a checagem de conflito nunca enxerga a linha da nuvem).
+                candidatos_nuvem = sorted({
+                    candidato
+                    for rid in record_ids
+                    for candidato in _candidatos_record_id(rid)
+                    if candidato
+                })
+                if candidatos_nuvem:
                     # Chunks de IDs para evitar URLs gigantes
-                    for j in range(0, len(valid_ids), 100):
-                        chunk_ids = valid_ids[j:j+100]
-                        ids_str = ",".join([f'"{rid}"' for rid in chunk_ids])
+                    for j in range(0, len(candidatos_nuvem), 100):
+                        chunk_ids = candidatos_nuvem[j:j+100]
+                        ids_str = _pg_in_list(chunk_ids)
                         url_check = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?id=in.({ids_str})"
                         # `fetch_json` devolve (dados, status). Antes o retorno era
                         # usado COMO SE fosse a lista: o `for` iterava a tupla, o
@@ -1035,9 +1778,14 @@ def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
             cols_to_check = supabase_cols if supabase_cols else set(get_colunas_tabela(conn, table_name))
             
             for log_id, record_id, op in logs:
-                if op != 'DELETE' and record_id in nuvem_dict:
+                row_nuvem_encontrado = None
+                for candidato in _candidatos_record_id(record_id):
+                    if candidato in nuvem_dict:
+                        row_nuvem_encontrado = nuvem_dict[candidato]
+                        break
+                if op != 'DELETE' and row_nuvem_encontrado:
                     row_local = rows_dict.get(record_id)
-                    row_nuvem = nuvem_dict.get(record_id)
+                    row_nuvem = row_nuvem_encontrado
                     if row_local and row_nuvem:
                         conflito = False
                         if col_ts:
@@ -1065,33 +1813,32 @@ def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
                                     pass
                                     
                             if dt_nuvem and dt_last and dt_nuvem > dt_last:
-                                conflito = True
+                                # Só é CONFLITO se a nuvem também for mais nova
+                                # que a versão LOCAL. Antes bastava a nuvem ter
+                                # mudado depois do cursor: uma edição local mais
+                                # recente (ex.: site às 11:49 e PC às 11:51)
+                                # virava "conflito" e a alteração local NUNCA
+                                # subia — o cursor ficava congelado e o conflito
+                                # era recriado a cada ciclo (deadlock visto em
+                                # produtos/"[#491c0]").
+                                dt_local = _instante_canonico(row_local.get(col_ts))
+                                conflito = dt_local is None or dt_nuvem > dt_local
                         else:
                             conflito = True
                             
-                        # Verificar se campos de dados reais são diferentes
+                        # Verificar se campos de dados reais são diferentes.
+                        # A comparação é por VALOR: datas pelo instante e
+                        # números pelo valor (10 == 10.0). Antes era texto puro,
+                        # então `total` 10 (nuvem) x 10.0 (local) parqueava um
+                        # conflito que não existia e congelava o registro.
                         diferente = False
-                        ignore_cols = {'updated_at', 'created_at', 'criado_em', 'atualizado_em', '_sincronizado_nuvem'}
                         for col in cols_to_check:
-                            if col in ignore_cols:
+                            if col in COLUNAS_IGNORADAS_NO_CONFLITO:
                                 continue
-                            val_l = row_local.get(col)
-                            val_n = row_nuvem.get(col)
-                            if isinstance(val_l, (dict, list)) or isinstance(val_n, (dict, list)):
-                                try:
-                                    l_str = json.dumps(val_l, sort_keys=True, default=str)
-                                    n_str = json.dumps(val_n, sort_keys=True, default=str)
-                                    if l_str != n_str:
-                                        diferente = True
-                                        break
-                                except:
-                                    if val_l != val_n:
-                                        diferente = True
-                                        break
-                            else:
-                                if str(val_l) != str(val_n):
-                                    diferente = True
-                                    break
+                            if not _valores_equivalentes(
+                                    row_local.get(col), row_nuvem.get(col)):
+                                diferente = True
+                                break
                                     
                         if conflito and diferente:
                             # PARQUEADO: a edição local NÃO é descartada nem deixa a
@@ -1129,7 +1876,7 @@ def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
         if deletes_to_process:
             for i in range(0, len(deletes_to_process), 100):
                 chunk = deletes_to_process[i:i+100]
-                ids_formatted = ",".join(chunk)
+                ids_formatted = _pg_in_list(chunk)
                 try:
                     url = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?id=in.({ids_formatted})"
                     headers = {
@@ -1313,6 +2060,16 @@ def _serializar_valor_com_tipo(val, col_type):
     if val is None:
         return None
 
+    # Valores complexos (dict/list) em colunas de qualquer tipo precisam ser
+    # serializados antes de ir ao PostgreSQL, senao o psycopg2 falha com
+    # "can't adapt type 'dict'". Colunas JSON reparseiam em seguida; nas demais
+    # o valor vai como texto JSON (ex.: impressora_producao_extra).
+    if isinstance(val, (dict, list)):
+        try:
+            val = json.dumps(val, ensure_ascii=False, default=str)
+        except Exception:
+            val = str(val)
+
     # Sanitizar strings para encoding WIN1252 do banco local
     if isinstance(val, str):
         val = _sanitizar_win1252(val)
@@ -1361,6 +2118,36 @@ def _serializar_valor_com_tipo(val, col_type):
     return val
 
 
+# Folga aplicada ao cursor do delta, em segundos.
+#
+# POR QUÊ: o cursor é gravado com o relógio DESTE PC, mas o `updated_at` que
+# decide o filtro é carimbado pelo relógio da NUVEM. Se o PC estiver alguns
+# segundos adiantado (ou a VM da nuvem atrasada — já visto ~0,5 s), uma
+# alteração feita logo depois de um ciclo fica com carimbo ANTERIOR ao cursor e
+# NUNCA mais é baixada: o registro fica congelado até alguém mexer nele outra
+# vez. Baixar de novo o que já foi baixado é inofensivo (a trava de versão
+# descarta linha igual/mais antiga), então o delta volta um pouco no tempo.
+FOLGA_RELOGIO_SEGUNDOS = 120
+
+
+def _desde_com_folga(desde_timestamp):
+    """Cursor do delta recuado `FOLGA_RELOGIO_SEGUNDOS` (ISO), ou o original."""
+    if not desde_timestamp:
+        return desde_timestamp
+    texto = str(desde_timestamp).strip()
+    if texto.endswith('Z'):
+        texto = texto[:-1] + '+00:00'
+    try:
+        instante = datetime.fromisoformat(texto)
+        if instante.tzinfo is None:
+            instante = instante.replace(tzinfo=timezone.utc)
+        folga = max(0, int(_log_config_int('SYNC_FOLGA_RELOGIO',
+                                           FOLGA_RELOGIO_SEGUNDOS)))
+        return (instante - timedelta(seconds=folga)).isoformat()
+    except Exception:
+        return desde_timestamp
+
+
 def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key, empresa_filtro=None):
     """Consulta dados novos na nuvem para uma tabela (executada concorrentemente).
 
@@ -1403,9 +2190,11 @@ def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key, emp
     offset = 0
     BATCH_SIZE = 1000
     
+    desde_efetivo = _desde_com_folga(desde_timestamp) if col_ts else desde_timestamp
+
     while True:
         if col_ts:
-            ts_encoded = urllib.parse.quote(desde_timestamp)
+            ts_encoded = urllib.parse.quote(desde_efetivo)
             params = (f"select=*&{col_ts}=gte.{ts_encoded}{filtro_empresa}"
                       f"&order={col_ts}.asc&limit={BATCH_SIZE}&offset={offset}")
         else:
@@ -1446,6 +2235,74 @@ def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key, emp
 TABELAS_SEM_FILTRO_DE_EMPRESA = frozenset({'empresas'})
 
 
+# Colunas que carregam a "versão" da linha. Só estas servem para decidir se a
+# nuvem é mais nova que o local; created_at/data não mudam em UPDATE e não
+# podem ser usadas para isso.
+_COLUNAS_DE_VERSAO = ('updated_at', 'data_alteracao', 'atualizado_em')
+
+
+def _coluna_de_versao(colunas_e_tipos):
+    """(nome, tipo) da coluna de versão da tabela, ou (None, None).
+
+    Aceita também colunas de data guardadas como TEXTO (várias tabelas foram
+    criadas assim). Nesse caso a comparação no SQL converte com segurança
+    apenas o que parece uma data ISO — ver `_condicao_versao_sql`.
+    """
+    for coluna in _COLUNAS_DE_VERSAO:
+        tipo = (colunas_e_tipos.get(coluna) or '').upper()
+        if 'TIMESTAMP' in tipo or tipo == 'DATE':
+            return coluna, tipo
+        if 'TEXT' in tipo or 'CHAR' in tipo:
+            return coluna, tipo
+    return None, None
+
+
+def _condicao_versao_sql(tabela, coluna, tipo):
+    """Condição SQL: a versão da nuvem é ESTRITAMENTE mais nova que a local.
+
+    Para colunas de texto a conversão é protegida por regex: valor que não
+    parece data ISO vira NULL (nuvem não sobrescreve; local sem data é
+    preenchido). Assim uma linha corrompida nunca derruba o lote inteiro.
+    """
+    alvo = f'"{tabela}"."{coluna}"'
+    if 'TEXT' in tipo or 'CHAR' in tipo:
+        local_ts = (f"CASE WHEN {alvo} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' "
+                    f"THEN {alvo}::timestamptz END")
+        nuvem_ts = (f"CASE WHEN EXCLUDED.\"{coluna}\" ~ "
+                    f"'^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' "
+                    f"THEN EXCLUDED.\"{coluna}\"::timestamptz END")
+        return (f'({local_ts} IS NULL OR ({nuvem_ts} IS NOT NULL AND '
+                f'{nuvem_ts} > {local_ts}))')
+    return (f'({alvo} IS NULL OR (EXCLUDED."{coluna}" IS NOT NULL AND '
+            f'EXCLUDED."{coluna}" > {alvo}))')
+
+
+# Canal que o APP (Flutter) escuta para recarregar a tela na hora
+# (lib/services/lan_realtime_service.dart). É separado do `exodo_sync_event`
+# (que acorda o ciclo da nuvem): o app só é acordado quando chega dado de
+# FORA — as gravações do próprio usuário já atualizam a tela em memória.
+CANAL_UI = 'exodo_ui_event'
+
+
+def notificar_ui_local(conn, tabela):
+    """Avisa o app que esta tabela mudou no banco local.
+
+    Por que existe: o trigger que avisa a interface silencia quando
+    `exodo.sync_mode='on'` — e é exatamente assim que o download da nuvem
+    grava (para a réplica não virar fila de envio). Sem este aviso, o produto
+    alterado no site chegava ao PostgreSQL local mas a tela continuava com os
+    dados da abertura do app; só aparecia ao sair e entrar de novo. A LAN já
+    fazia isso (`sincronizador_lan._notificar_ui`); o caminho da nuvem não.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute('SELECT pg_notify(%s, %s)', (CANAL_UI, str(tabela)))
+        conn.commit()
+    except Exception as e:
+        print_log(f'[DOWNLOAD] Aviso à interface falhou ({tabela}): {e}',
+                  Colors.YELLOW)
+
+
 def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloqueados=None):
     """Persiste no banco de dados local os dados baixados do Supabase.
 
@@ -1471,11 +2328,37 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
     importados = 0
     rejeitados_empresa = 0
     protegidos = 0
+    ignorados_mais_antigos = 0
     aplicados = []
     ids_protegidos = (bloqueados or {}).get(table_name, {})
     # Ver se este cadastro de empresas e dos que NAO devem ser filtrados (ver
     # TABELAS_SEM_FILTRO_DE_EMPRESA). Sem isto, so a empresa ativa chegaria.
     aplicar_filtro_empresa = bool(empresa_filtro) and table_name not in TABELAS_SEM_FILTRO_DE_EMPRESA
+
+    # 🔒 TRAVA "NUVEM SÓ SOBRESCREVE SE FOR MAIS NOVA".
+    #
+    # O `ON CONFLICT ... DO UPDATE` antigo aplicava qualquer linha que chegasse,
+    # inclusive uma cópia velha devolvida por uma nuvem parada/restaurada. Com a
+    # condição abaixo, o UPDATE só acontece quando o `updated_at` da nuvem é
+    # ESTRITAMENTE maior que o do banco local. Empate ou local mais novo → a
+    # linha local fica intacta. É a mesma regra que o app usa em memória.
+    #
+    # `IS NULL` no local = linha legada sem carimbo: a nuvem pode preencher.
+    # `EXCLUDED IS NULL` não pode sobrescrever uma linha que tem data: sem
+    # carimbo não há como provar que a nuvem é mais nova.
+    col_versao, tipo_versao = _coluna_de_versao(colunas_e_tipos)
+
+    def _condicoes_do_conflito():
+        condicoes = []
+        if tabela_tem_empresa_id:
+            condicoes.append(
+                f'"{table_name}"."empresa_id" = EXCLUDED."empresa_id"')
+        if col_versao:
+            condicoes.append(
+                _condicao_versao_sql(table_name, col_versao, tipo_versao))
+        return (' WHERE ' + ' AND '.join(condicoes)) if condicoes else ''
+
+    guarda_conflito = _condicoes_do_conflito()
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL exodo.sync_mode = 'on'")
@@ -1510,19 +2393,20 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
                 # `id`, que NÃO inclui a empresa. Sem o WHERE, um id igual em outra
                 # empresa (ex.: produto "Diversos", ids curtos, timestamp colidente)
                 # atualizaria a linha existente e ela trocaria de dono. O WHERE faz o
-                # UPDATE do conflito só quando o dono atual é o mesmo que está chegando.
-                guarda_empresa = (
-                    ' WHERE "%s"."empresa_id" = EXCLUDED."empresa_id"' % table_name
-                    if tabela_tem_empresa_id else ''
-                )
+                # UPDATE do conflito só quando o dono atual é o mesmo que está chegando
+                # (e, na mesma cláusula, só quando a nuvem é mais nova — ver
+                # `guarda_conflito` acima).
                 sql = f"""
                     INSERT INTO "{table_name}" ({cols_sql})
                     VALUES ({vals_sql})
-                    ON CONFLICT (id) DO UPDATE SET {upd_sql}{guarda_empresa}
+                    ON CONFLICT (id) DO UPDATE SET {upd_sql}{guarda_conflito}
                 """
                 cur.execute(sql, valores)
-                importados += 1
-                aplicados.append(str(row_filtrado.get('id')))
+                if cur.rowcount:
+                    importados += 1
+                    aplicados.append(str(row_filtrado.get('id')))
+                else:
+                    ignorados_mais_antigos += 1
         conn.commit()
         if rejeitados_empresa > 0:
             print_log(
@@ -1558,22 +2442,22 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
             vals_sql = ', '.join(['%s'] * len(valores))
             upd_sql  = ', '.join([f'"{c}"=EXCLUDED."{c}"' for c in colunas if c != 'id'])
             # 🔒 TRAVA NO CONFLITO DE ID (modo resiliente): igual à do modo em lote.
-            guarda_empresa = (
-                ' WHERE "%s"."empresa_id" = EXCLUDED."empresa_id"' % table_name
-                if tabela_tem_empresa_id else ''
-            )
             sql = f"""
                 INSERT INTO "{table_name}" ({cols_sql})
                 VALUES ({vals_sql})
-                ON CONFLICT (id) DO UPDATE SET {upd_sql}{guarda_empresa}
+                ON CONFLICT (id) DO UPDATE SET {upd_sql}{guarda_conflito}
             """
             try:
                 with conn.cursor() as cur:
                     cur.execute("SET LOCAL exodo.sync_mode = 'on'")
                     cur.execute(sql, valores)
+                    aplicou = cur.rowcount
                 conn.commit()
-                importados += 1
-                aplicados.append(str(row_filtrado.get('id')))
+                if aplicou:
+                    importados += 1
+                    aplicados.append(str(row_filtrado.get('id')))
+                else:
+                    ignorados_mais_antigos += 1
             except Exception as e_row:
                 conn.rollback()
                 print_log(f"[DOWNLOAD] {table_name} (Registro {row_filtrado.get('id')}): falha - {e_row}", Colors.RED)
@@ -1593,9 +2477,20 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
             Colors.YELLOW,
         )
 
+    if ignorados_mais_antigos > 0:
+        print_log(
+            f"[DOWNLOAD] {table_name}: {ignorados_mais_antigos} registro(s) "
+            "ignorado(s) — a cópia da nuvem veio IGUAL ou MAIS ANTIGA que a local. "
+            "A versão local foi preservada.",
+            Colors.CYAN,
+        )
+
     if importados > 0:
         print_log(f"[DOWNLOAD] {table_name}: {importados} registro(s) recebidos da nuvem", Colors.GREEN)
-        
+        # A tela do app é avisada AQUI (e não só no fim do ciclo): é o que faz a
+        # alteração feita no site aparecer no app local assim que o delta chega.
+        notificar_ui_local(conn, table_name)
+
     return importados, aplicados
 
 
@@ -1613,6 +2508,61 @@ def download_tabela(conn, table_name, supabase_url, api_key, desde_timestamp, em
         bloqueados=ids_bloqueados_no_download(conn),
     )
     return importados, True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CATÁLOGO EM TEMPO QUASE REAL (site -> app local)
+#
+# O ciclo completo faz download de ~40 tabelas e roda a cada 30 s. Para o
+# catálogo isso é lento demais: quem altera o preço/estoque de um produto no
+# site espera ver o app local mudar na hora. Este caminho baixa SÓ o delta de
+# `produtos` a cada poucos segundos, usando o MESMO cursor e o MESMO
+# `gravar_registros_locais` — portanto a regra "a nuvem só sobrescreve se for
+# mais nova", a trava de empresa e a proteção de conflito continuam valendo.
+# ─────────────────────────────────────────────────────────────────────────────
+TABELAS_RAPIDAS = ('produtos',)
+
+
+def sincronizar_produtos_rapido(conn, supabase_url, api_key, empresa_ativa=None):
+    """Baixa o delta do catálogo e grava no banco local. Devolve os recebidos.
+
+    Não avança cursor de tabela sem cursor (o ciclo completo cuida do primeiro
+    carregamento) e não faz nada com a nuvem bloqueada (401/402/403).
+    """
+    if nuvem_bloqueada():
+        return 0
+    if not _colunas_e_tipos_cache:
+        carregar_meta_colunas(conn)
+
+    recebidos_total = 0
+    for tabela in TABELAS_RAPIDAS:
+        desde = get_ultima_sync_tabela(conn, tabela, empresa_ativa)
+        if not desde:
+            continue
+        try:
+            _tabela, rows, sucesso, _is_404 = fetch_updates_tabela(
+                tabela, desde, supabase_url, api_key, empresa_ativa)
+        except Exception as e:
+            print_log(f'[RAPIDO] {tabela}: falha ao consultar a nuvem ({e})',
+                      Colors.YELLOW)
+            continue
+        if not sucesso or not rows:
+            continue
+        try:
+            recebidos, _aplicados = gravar_registros_locais(
+                conn, tabela, rows, empresa_filtro=empresa_ativa,
+                bloqueados=ids_bloqueados_no_download(conn),
+            )
+        except Exception as e:
+            print_log(f'[RAPIDO] {tabela}: falha ao gravar ({e})', Colors.YELLOW)
+            continue
+        # Avança o cursor mesmo quando tudo veio protegido/mais antigo: a
+        # proteção é por registro e é reavaliada a cada ciclo (ver o mesmo
+        # cuidado no ciclo completo).
+        salvar_ultima_sync_tabela(
+            conn, tabela, datetime.now(timezone.utc).isoformat(), empresa_ativa)
+        recebidos_total += recebidos
+    return recebidos_total
 
 
 # Vira True depois da primeira limpeza desta execução do sincronizador.
@@ -1685,8 +2635,15 @@ def remover_dados_de_outras_empresas(conn, empresa_ativa, tabelas):
         if '_sincronizado_nuvem' in colunas:
             where += " AND _sincronizado_nuvem IS NOT FALSE"
         if tem_log and 'id' in colunas:
+            # Protege nas DUAS grafias do id: o record_id real (ids legados com
+            # aspas no valor) e a variante limpa. Só o btrim deixava pendências
+            # de ids com aspas fora da proteção e a limpeza de outras empresas
+            # levava embora edição que ainda não tinha subido.
             where += (" AND id NOT IN (SELECT record_id FROM _exodo_sync_log "
-                      "WHERE table_name = %s)")
+                      "WHERE table_name = %s AND record_id IS NOT NULL) "
+                      "AND id NOT IN (SELECT btrim(record_id, '\"') FROM _exodo_sync_log "
+                      "WHERE table_name = %s AND record_id IS NOT NULL)")
+            params.append(tabela)
             params.append(tabela)
         try:
             with conn.cursor() as cur:
@@ -1772,6 +2729,59 @@ def atualizar_status_no_supabase(conn, supabase_url, api_key):
     except Exception as e:
         print_log(f"[SYNC] Erro ao atualizar status no Supabase: {e}", Colors.RED)
 
+def publicar_conflitos_no_supabase(conn, supabase_url, api_key):
+    """Publica o espelho dos conflitos locais para o Portal Êxodo.
+
+    O portal nunca acessa o PostgreSQL de uma loja diretamente. Ele lê este
+    espelho e envia a decisão de volta como um bridge_command para o PC correto.
+    """
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id, empresa_id, tabela, registro_id, dados_locais,
+                          dados_nuvem, resolvido, criado_em, visto_em
+                     FROM exodo_sync_conflitos
+                    ORDER BY visto_em DESC NULLS LAST LIMIT 1000"""
+            )
+            conflitos = cur.fetchall()
+    except Exception:
+        return
+    if not conflitos:
+        return
+
+    pc_name = platform.node()
+    payload = []
+    for conflito in conflitos:
+        payload.append({
+            'id': str(conflito['id']),
+            'empresa_id': str(conflito.get('empresa_id') or ''),
+            'pc_name': pc_name,
+            'tabela': str(conflito.get('tabela') or ''),
+            'registro_id': str(conflito.get('registro_id') or ''),
+            'dados_locais': conflito.get('dados_locais') or {},
+            'dados_nuvem': conflito.get('dados_nuvem') or {},
+            'resolvido': bool(conflito.get('resolvido')),
+            'criado_em': conflito.get('criado_em').isoformat() if conflito.get('criado_em') else None,
+            'visto_em': conflito.get('visto_em').isoformat() if conflito.get('visto_em') else None,
+            'resolvido_em': datetime.now(timezone.utc).isoformat() if conflito.get('resolvido') else None,
+        })
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'apikey': api_key,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates',
+    }
+    try:
+        url = f"{supabase_url.rstrip('/')}/rest/v1/sync_conflicts"
+        resposta = requests.post(url, json=payload, headers=headers, timeout=20)
+        if resposta.status_code == 404:
+            return  # migração ainda não aplicada nesta nuvem
+        if resposta.status_code not in (200, 201, 204):
+            print_log(f"[CONFLITO] Portal: HTTP {resposta.status_code} ao publicar conflitos", Colors.YELLOW)
+    except Exception as e:
+        print_log(f"[CONFLITO] Portal indisponível ao publicar conflitos: {e}", Colors.YELLOW)
+
+
 def reportar_sync_status_supabase(conn, supabase_url, api_key, enviados=0, recebidos=0, erro=None):
     """Reporta o status de sync no Supabase (sync_status + sync_logs) para o portal.
     Atualiza o status de cada empresa local para que o portal mostre o sync real,
@@ -1794,6 +2804,8 @@ def reportar_sync_status_supabase(conn, supabase_url, api_key, enviados=0, receb
                 empresas = cur.fetchall()
         except Exception as e:
             print_log(f"[SYNC] Erro ao listar empresas locais: {e}", Colors.RED)
+
+        publicar_conflitos_no_supabase(conn, supabase_url, api_key)
 
         if not empresas:
             return
@@ -2018,6 +3030,98 @@ def executar_atualizacao_completa(supabase_url, api_key, conn=None):
     except Exception as e:
         return False, f"Erro durante atualizacao: {e}"
 
+def executar_resolucao_conflito_remota(conn, extra):
+    """Aplica no PC a decisão feita pelo Portal Êxodo."""
+    if conn is None:
+        raise RuntimeError('banco local indisponível')
+    conflito_id = str(extra.get('conflito_id') or '')
+    decisao = str(extra.get('decisao') or '').lower()
+    if not conflito_id or decisao not in ('local', 'nuvem'):
+        raise ValueError('comando de conflito incompleto')
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """SELECT id, tabela, registro_id, dados_nuvem
+                 FROM exodo_sync_conflitos
+                WHERE id=%s AND resolvido=FALSE""",
+            (conflito_id,),
+        )
+        conflito = cur.fetchone()
+    if not conflito:
+        return 'Conflito já resolvido ou não encontrado neste PC.'
+
+    tabela = str(conflito['tabela'])
+    registro_id = str(conflito['registro_id'])
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', tabela):
+        raise ValueError(f'tabela inválida: {tabela}')
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=%s",
+            (tabela,),
+        )
+        colunas = {row[0] for row in cur.fetchall()}
+        if 'id' not in colunas:
+            raise ValueError(f'tabela sem coluna id: {tabela}')
+
+        if decisao == 'local':
+            # Reenfileira a versão local sem assumir que todas as tabelas usam
+            # exatamente o mesmo nome de coluna de data.
+            timestamp_col = next(
+                (coluna for coluna in (
+                    'updated_at', 'created_at', 'criado_em',
+                    'data_alteracao', 'data_venda', 'data'
+                ) if coluna in colunas),
+                None,
+            )
+            sets = []
+            valores = []
+            if timestamp_col:
+                sets.append(f'"{timestamp_col}"=NOW()')
+            if '_sincronizado_nuvem' in colunas:
+                sets.append('"_sincronizado_nuvem"=FALSE')
+            if sets:
+                cur.execute(
+                    f'UPDATE "{tabela}" SET {", ".join(sets)} WHERE id=%s',
+                    (registro_id,),
+                )
+            cur.execute(
+                """INSERT INTO _exodo_sync_log (table_name, record_id, operation)
+                   VALUES (%s, %s, 'UPDATE')
+                   ON CONFLICT (table_name, record_id)
+                   DO UPDATE SET operation='UPDATE', created_at=NOW()""",
+                (tabela, registro_id),
+            )
+        else:
+            dados = conflito.get('dados_nuvem') or {}
+            if not isinstance(dados, dict):
+                raise ValueError('versão da nuvem inválida')
+            dados = {k: v for k, v in dados.items() if k in colunas and k != 'id'}
+            if dados:
+                sets = []
+                valores = []
+                for coluna, valor in dados.items():
+                    sets.append(f'"{coluna.replace(chr(34), chr(34) * 2)}"=%s')
+                    valores.append(Json(valor) if isinstance(valor, (dict, list)) else valor)
+                valores.append(registro_id)
+                cur.execute(
+                    f'UPDATE "{tabela}" SET {", ".join(sets)} WHERE id=%s',
+                    valores,
+                )
+            cur.execute(
+                "DELETE FROM _exodo_sync_log WHERE table_name=%s AND record_id=%s",
+                (tabela, registro_id),
+            )
+
+        cur.execute(
+            "UPDATE exodo_sync_conflitos SET resolvido=TRUE, visto_em=NOW() WHERE id=%s",
+            (conflito_id,),
+        )
+    conn.commit()
+    return f"Conflito {tabela}/{registro_id} resolvido usando a versão {'local' if decisao == 'local' else 'da nuvem'}."
+
+
 def processar_comandos_no_supabase(conn, supabase_url, api_key):
     pc_name = platform.node()
     pc_query = urllib.parse.quote(str(pc_name), safe='')
@@ -2125,6 +3229,9 @@ def processar_comandos_no_supabase(conn, supabase_url, api_key):
                 elif comando == "identify":
                     resultado = f"PC identificado: {pc_name}"
                     sucesso = True
+                elif comando == "resolve_conflict":
+                    resultado = executar_resolucao_conflito_remota(conn, extra)
+                    sucesso = True
                 else:
                     resultado = f"Comando desconhecido: {comando}"
                     sucesso = False
@@ -2161,9 +3268,15 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
             on_state_change('paused')
         return 0, 0
 
+    # Fecha conflitos que NÃO são conflito antes de qualquer chamada de rede.
+    # É operação 100% local e precisa rodar mesmo com a nuvem fora: um conflito
+    # falso antigo congela o registro e o site nunca mais consegue atualizá-lo.
+    fechar_conflitos_identicos(conn)
+
     # Monitor de Conexão Inteligente: Testar conectividade antes de iniciar chamadas lentas à nuvem
-    if not testar_conexao_supabase(supabase_url):
-        print_log("[SYNC] Supabase inacessivel (Offline). Pulando ciclo.", Colors.YELLOW)
+    if not testar_conexao_nuvem(supabase_url):
+        nome_nuvem = (NUVEM_PROVEDOR or 'nuvem').upper()
+        print_log(f"[SYNC] {nome_nuvem} inacessivel (Offline). Pulando ciclo.", Colors.YELLOW)
         if on_state_change:
             on_state_change('offline')
         return 0, 0
@@ -2244,12 +3357,26 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
                 tabelas_vazias_localmente.add(tabela)
                 ultima_salva = get_ultima_sync_tabela(conn, tabela, empresa_ativa)
                 if ultima_salva != _EPOCH:
-                    print_log(
-                        f"[SYNC] ⚠️ Tabela '{tabela}' vazia mas timestamp de sync existe "
-                        f"({ultima_salva}). Resetando para full download.",
-                        Colors.YELLOW
+                    # Só volta para epoch (full download) se o cursor é ANTIGO.
+                    # Um cursor RECENTE com tabela vazia significa "acabou de ser
+                    # baixada e veio vazia" (empresa sem dados nesta tabela) —
+                    # rebaixar a tabela inteira a cada ciclo era o loop de egress.
+                    # O rebuild de verdade (banco apagado) tem cursor antigo, e o
+                    # "Puxar Nuvem" manual ignora este limite via forcarRecarga.
+                    instante_cursor = _instante_canonico(ultima_salva)
+                    agora_utc = datetime.now(timezone.utc)
+                    cursor_velho = (
+                        instante_cursor is None
+                        or (agora_utc - instante_cursor)
+                        >= _IDADE_MINIMA_CURSOR_PARA_FULL_DOWNLOAD
                     )
-                    salvar_ultima_sync_tabela(conn, tabela, _EPOCH, empresa_ativa)
+                    if cursor_velho:
+                        print_log(
+                            f"[SYNC] ⚠️ Tabela '{tabela}' vazia mas cursor antigo "
+                            f"({ultima_salva}). Resetando para full download.",
+                            Colors.YELLOW
+                        )
+                        salvar_ultima_sync_tabela(conn, tabela, _EPOCH, empresa_ativa)
         except Exception:
             pass  # Tabela pode não existir ainda; sem problema
 
@@ -2322,14 +3449,26 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
                     # So avanca o timestamp da tabela se a gravacao teve sucesso.
                     # Se TODOS os registros falharam, o timestamp NAO avanca e a
                     # proxima rodada tenta de novo (evita perder registros).
-                    if recebidos > 0:
-                        salvar_ultima_sync_tabela(conn, tabela, agora_iso, empresa_ativa)
+                    # Avança o cursor MESMO quando todos os registros vieram
+                    # protegidos (importados == 0). A proteção é POR REGISTRO
+                    # (reavaliada em cada ciclo via _exodo_sync_log/conflitos),
+                    # enquanto o cursor serve só à consulta delta. Sem isso, um
+                    # único registro protegido congelava o cursor e o conflito
+                    # era recriado para sempre (ex.: produtos/"[#491c0]" ficou
+                    # com o cursor parado em 10:55 e nunca mais subiu).
+                    salvar_ultima_sync_tabela(conn, tabela, agora_iso, empresa_ativa)
                 elif tabela not in tabelas_vazias_localmente:
                     # Tabela com dados local e nada novo na nuvem: avanca o cursor.
                     salvar_ultima_sync_tabela(conn, tabela, agora_iso, empresa_ativa)
-                # Tabela VAZIA localmente: o cursor fica onde está (epoch, logo
-                # após o reset) e ela é re-checada no próximo ciclo — sem ficar
-                # resetando e logando para sempre.
+                else:
+                    # Tabela VAZIA localmente e a nuvem devolveu 0 linhas mesmo
+                    # pedindo desde o epoch: esta empresa nao tem dado nesta
+                    # tabela. Avanca o cursor de qualquer forma — deixar ele
+                    # parado no epoch fazia a proxima leitura re-scanear a
+                    # tabela inteira da nuvem toda vez (loop de download).
+                    # Agora que o cursor avanca, o safeguard de cima só volta pra
+                    # epoch quando o cursor fica antigo (>6h) de verdade.
+                    salvar_ultima_sync_tabela(conn, tabela, agora_iso, empresa_ativa)
             else:
                 if is_404:
                     # Tabela não existe no Supabase (404) — marcar cooldown
@@ -2428,27 +3567,44 @@ def aguardar_notificacao_ou_timeout(db_host, db_port, db_name, db_user, db_passw
 # Loop principal de sincronização CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_sync_loop(interval_seconds=10, status_callback=None):
-    load_dotenv()
+def obter_conexao_local():
+    """Abre uma conexao com o PostgreSQL LOCAL (usando as chaves DB_* do .env).
 
-    supabase_url = os.getenv('SUPABASE_URL')
-    api_key      = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY')
+    Usada pelos itens de menu do tray (carga inicial e resolver conflitos).
+    """
+    return psycopg2.connect(
+        host=os.getenv('DB_HOST', 'localhost'),
+        port=os.getenv('DB_PORT', '5432'),
+        dbname=os.getenv('DB_NAME'),
+        user=os.getenv('DB_USER'),
+        password=os.getenv('DB_PASSWORD'),
+        connect_timeout=10,
+        client_encoding='UTF8',
+    )
+
+
+def run_sync_loop(interval_seconds=10, status_callback=None):
+    carregar_arquivos_env()
+
     db_host      = os.getenv('DB_HOST', 'localhost')
     db_port      = os.getenv('DB_PORT', '5432')
     db_name      = os.getenv('DB_NAME')
     db_user      = os.getenv('DB_USER')
     db_password  = os.getenv('DB_PASSWORD')
 
-    if not all([supabase_url, api_key]):
-        print_log("SUPABASE_URL ou chaves nao configuradas no .env!", Colors.RED)
+    try:
+        provedor, nuvem_url, api_key = resolver_nuvem()
+    except Exception as e_nuvem:
+        print_log(f"Nuvem nao configurada: {e_nuvem}", Colors.RED)
         return
 
     if not all([db_name, db_user, db_password]):
         print_log("Variaveis PostgreSQL nao configuradas no .env!", Colors.RED)
         return
 
-    print_log("Iniciando Sincronizador Bidirecional Otimizado (Local <-> Supabase)", Colors.BLUE)
-    print_log(f"Supabase: {supabase_url}")
+    print_log(f"Iniciando Sincronizador Bidirecional Otimizado "
+              f"(Local <-> Nuvem/{provedor.upper()})", Colors.BLUE)
+    print_log(f"Nuvem ({provedor}): {nuvem_url}")
     print_log(f"Local:    {db_user}@{db_host}:{db_port}/{db_name}")
     print_log(f"Configuracao: Espera reativa ate {interval_seconds}s (LISTEN/NOTIFY ativo)")
 
@@ -2498,12 +3654,25 @@ def run_sync_loop(interval_seconds=10, status_callback=None):
 
             last_full_sync_time = agora
             print_log("--- Inicio do ciclo de sincronizacao ---", Colors.BLUE)
+
+            # Renova o token do Neon (se for o provedor ativo) UMA vez por ciclo.
+            try:
+                provedor_ciclo, nuvem_url_ciclo, api_key = resolver_nuvem()
+            except Exception as e_res:
+                print_log(f"[NUVEM] Nao consegui falar com a nuvem ({e_res}); "
+                          "tentando de novo em breve.", Colors.YELLOW)
+                conn.close()
+                aguardar_notificacao_ou_timeout(
+                    db_host=db_host, db_port=db_port, db_name=db_name,
+                    db_user=db_user, db_password=db_password, timeout=interval_seconds
+                )
+                continue
             
             def log_state(state):
                 print_log(f"Monitor de Conexao: Estado alterado para {state.upper()}", Colors.BLUE)
 
             total_enviados, total_recebidos = executar_ciclo_sincronizacao(
-                conn, supabase_url, api_key, on_state_change=log_state
+                conn, nuvem_url_ciclo, api_key, on_state_change=log_state
             )
             msg = f"Ciclo concluido: {total_enviados} enviados, {total_recebidos} recebidos"
             print_log(f"{msg}", Colors.GREEN)
@@ -2530,9 +3699,15 @@ def run_sync_loop(interval_seconds=10, status_callback=None):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Sincronizador Bidirecional Local <-> Supabase')
+    parser = argparse.ArgumentParser(description='Sincronizador Bidirecional Local <-> Nuvem (Neon/Supabase)')
     parser.add_argument('--interval', type=int, default=60, help='Intervalo em segundos (padrao: 60)')
+    parser.add_argument('--podar-log', action='store_true',
+                        help='Somente limpa o sincronizador.log (retencao de 7 dias) e sai')
     args = parser.parse_args()
+    if args.podar_log:
+        tamanho = podar_log(forcar=True)
+        print(f"sincronizador.log podado. Tamanho final: {tamanho} bytes.")
+        sys.exit(0)
     try:
         run_sync_loop(args.interval)
     except KeyboardInterrupt:

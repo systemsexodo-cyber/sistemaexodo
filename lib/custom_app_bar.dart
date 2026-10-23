@@ -10,8 +10,14 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 700;
     return AppBar(
-      title: Text(title),
+      title: Text(
+        title,
+        overflow: TextOverflow.ellipsis,
+      ),
+      centerTitle: isMobile ? false : true,
       elevation: 0,
       backgroundColor: Colors.transparent,
       bottom: bottom,

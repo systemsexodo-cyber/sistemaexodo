@@ -8,7 +8,6 @@ import '../models/empresa.dart';
 import 'local_storage_service.dart';
 import 'supabase_service.dart';
 import 'database_service.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -74,7 +73,7 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  final LocalStorageService _storage = LocalStorageService();
+  final LocalStorageService _storage;
   final SupabaseService _supabaseService = SupabaseService.instance;
 
   Usuario? _usuarioAtual;
@@ -122,12 +121,23 @@ class AuthService extends ChangeNotifier {
 
   // Lista de usuários (em produção, viria de um backend)
   final List<Usuario> _usuarios = [];
+
+  /// A lista de usuários SALVA já foi lida do banco nesta sessão?
+  ///
+  /// Enquanto for `false`, [_salvarUsuarios] não grava. É a trava que impede o
+  /// boot de sobrescrever a lista salva com a memória ainda vazia (o boot começa
+  /// sem nenhum usuário em memória). Sem ela, o usuário criado pelo operador era
+  /// apagado no primeiro save do boot.
+  bool _usuariosLidos = false;
   final List<Empresa> _empresas = [];
 
   List<Usuario> get usuarios => List.unmodifiable(_usuarios);
   List<Empresa> get empresas => List.unmodifiable(_empresas);
 
-  AuthService() {
+  AuthService({LocalStorageService? storage, bool carregarAutomaticamente = true})
+      : _storage = storage ?? LocalStorageService() {
+    if (!carregarAutomaticamente) return;
+
     // Iniciar carregamento
     _isCarregandoDados = true;
     notifyListeners();
@@ -173,22 +183,10 @@ class AuthService extends ChangeNotifier {
   /// Carrega dados salvos do localStorage
   Future<void> _carregarDadosSalvos() async {
     try {
-      // Primeiro, carregar usuários padrão (se necessário)
-      _carregarUsuariosPadrao();
-
-      // Depois, carregar usuários salvos (substituem os padrão se existirem) com timeout
-      try {
-        await carregarUsuarios().timeout(
-          const Duration(seconds: 5),
-          onTimeout: () {
-            debugPrint(
-              '>>> [AuthService] Timeout ao carregar usuários - usando padrão',
-            );
-          },
-        );
-      } catch (e) {
-        debugPrint('>>> [AuthService] Erro ao carregar usuários: $e');
-      }
+      // USUÁRIOS: LER a lista salva ANTES de aplicar os padrões — a ordem é o
+      // que preserva os usuários criados pelo operador (ver
+      // [carregarUsuariosNoBoot]).
+      await carregarUsuariosNoBoot();
 
       // Atualizar senha do usuário "user" se ainda tiver a senha antiga
       try {
@@ -663,8 +661,11 @@ class AuthService extends ChangeNotifier {
             '>>> [Restore] Senha do usuário "$email" restaurada (estava vazia)',
           );
         }
-        // Se o usuário não tem empresaId mas temos um disponível, atribuir
-        if ((u.empresaId == null || u.empresaId!.isEmpty) &&
+        // Se o usuário não tem empresaId mas temos um disponível, atribuir.
+        // A conta de suporte global ("user") fica SEMPRE sem empresa: é ela que
+        // enxerga todas — cada empresa tem o seu próprio master.
+        if (email != 'user' &&
+            (u.empresaId == null || u.empresaId!.isEmpty) &&
             empresaIdExistente != null) {
           empresaIdNovo = empresaIdExistente;
           precisaAtualizar = true;
@@ -718,17 +719,24 @@ class AuthService extends ChangeNotifier {
     final agora = DateTime.now();
     bool alterado = false;
 
+    // A conta de suporte GLOBAL é o "user" SEM empresa — é ela que enxerga
+    // todas as empresas e que faz o login. Cada empresa tem o seu próprio
+    // master "user" (com empresaId), criado em [_garantirMasterDaEmpresa].
     final idxUser = _usuarios.indexWhere(
-      (u) => u.email.toLowerCase() == 'user',
+      (u) =>
+          u.email.toLowerCase() == 'user' &&
+          (u.empresaId == null || u.empresaId!.isEmpty),
     );
     if (idxUser == -1) {
-      // Master não existe — criar
+      // Conta global não existe — criar. Id '1' só quando estiver livre, senão
+      // uma conta antiga (agora vinculada a uma empresa) já ocupa esse id.
+      final idGlobal = _usuarios.any((u) => u.id == '1') ? 'user-global' : '1';
       _usuarios.add(
         Usuario(
-          id: '1',
+          id: idGlobal,
           nome: 'Usuário',
           email: 'user',
-          senha: 'kP4#%vMJ',
+          senha: _senhaMasterPadrao,
           tipo: TipoUsuario.administrador,
           isMaster: true,
           createdAt: agora,
@@ -737,13 +745,13 @@ class AuthService extends ChangeNotifier {
         ),
       );
       debugPrint(
-        '>>> [AuthService] Usuário master "user" criado (não existia)',
+        '>>> [AuthService] Usuário master GLOBAL "user" criado (não existia)',
       );
       alterado = true;
     } else if (_usuarios[idxUser].senha.isEmpty) {
       // Master existe mas com senha vazia — restaurar
       _usuarios[idxUser] = _usuarios[idxUser].copyWith(
-        senha: 'kP4#%vMJ',
+        senha: _senhaMasterPadrao,
         updatedAt: agora,
       );
       debugPrint(
@@ -851,70 +859,46 @@ class AuthService extends ChangeNotifier {
     String supabaseEmail,
     String senhaTrim,
   ) async {
-    if (!SupabaseService.isAvailable ||
-        _supabaseService.servidorIndisponivel) {
+    if (!SupabaseService.isAvailable || _supabaseService.servidorIndisponivel) {
       debugPrint(
-        '>>> [Supabase] 📴 Nuvem indisponível: validando só pelo banco local.',
+        '>>> [Neon] 📴 Nuvem indisponível: validando só pelo banco local.',
       );
       return _ResultadoValidacaoNuvem.indisponivel;
     }
-    debugPrint('>>> [Supabase] Validando conta para sessão exclusiva...');
-
-    bool logadoComSucesso = false;
-    String? senhaUsada;
-    bool semRede = false;
+    debugPrint('>>> [Neon] Validando conta na nuvem...');
 
     try {
-      await _supabaseService
-          .login(supabaseEmail, senhaTrim)
+      final resultado = await _supabaseService
+          .validarCredenciaisNaNuvem(supabaseEmail, senhaTrim)
           .timeout(const Duration(seconds: 5));
-      logadoComSucesso = true;
-      senhaUsada = senhaTrim;
-    } catch (e) {
-      semRede = _nuvemIndisponivel(e);
-      if (semRede) {
+
+      if (resultado == false) {
+        // A nuvem CONHECE o e-mail, mas a senha de lá é outra. O banco LOCAL
+        // (que já conferiu a senha acima e funciona offline) é a fonte da
+        // verdade; a divergência é cópia desatualizada na nuvem. Avisamos e
+        // liberamos — negar aqui travaria o usuário por causa de um sync
+        // atrasado. (Antes, com o SDK do Supabase, havia uma lista de senhas
+        // de fallback que não faz sentido agora: a checagem é a mesma senha
+        // da tabela `usuarios`.)
         debugPrint(
-          '>>> [Supabase] 📴 Nuvem indisponível (sem internet/cota): o login '
+          '>>> [Neon] ⚠️ A nuvem tem senha diferente para este e-mail; '
+          'mantendo a senha LOCAL.',
+        );
+      } else if (resultado == null) {
+        debugPrint(
+          '>>> [Neon] ℹ️ Este e-mail ainda não existe na nuvem; valendo só o '
+          'banco local.',
+        );
+      }
+    } catch (e) {
+      if (_nuvemIndisponivel(e)) {
+        debugPrint(
+          '>>> [Neon] 📴 Nuvem indisponível (sem internet/cota): o login '
           'será validado apenas pelo banco local.',
         );
         return _ResultadoValidacaoNuvem.indisponivel;
       }
-    }
-
-    if (!logadoComSucesso && !semRede) {
-      for (final fallback in const ['user', 'hmrzbdKJB6Bc4Vcr', 'ad1579036']) {
-        try {
-          await _supabaseService
-              .login(supabaseEmail, fallback)
-              .timeout(const Duration(seconds: 5));
-          logadoComSucesso = true;
-          senhaUsada = fallback;
-          break;
-        } catch (e) {
-          if (_nuvemIndisponivel(e)) {
-            debugPrint(
-              '>>> [Supabase] 📴 Nuvem indisponível no fallback — validando só '
-              'pelo banco local.',
-            );
-            return _ResultadoValidacaoNuvem.indisponivel;
-          }
-        }
-      }
-    }
-
-    if (!logadoComSucesso) {
-      debugPrint('>>> [Supabase] A nuvem recusou as credenciais.');
-      return _ResultadoValidacaoNuvem.senhaInvalida;
-    }
-
-    if (senhaUsada != null && senhaUsada != senhaTrim) {
-      try {
-        await _supabaseService.client.auth
-            .updateUser(UserAttributes(password: senhaTrim))
-            .timeout(const Duration(seconds: 5));
-      } catch (e) {
-        debugPrint('>>> [Supabase] ⚠️ Erro ao sincronizar senha: $e');
-      }
+      debugPrint('>>> [Neon] ⚠️ Validação na nuvem falhou (não é infra): $e');
     }
 
     try {
@@ -1053,8 +1037,14 @@ class AuthService extends ChangeNotifier {
         }
       }
 
-      // Busca o usuário
+      // Busca o usuário.
+      //
+      // Cada empresa tem o seu próprio master "user" (mesmo e-mail e senha).
+      // O login deve casar com a conta de SUPORTE GLOBAL (sem empresa), senão
+      // cairia na primeira empresa que tivesse um "user" e o operador seria
+      // jogado direto nela em vez de escolher a empresa.
       Usuario? usuarioEncontrado;
+      Usuario? masterSemEmpresa;
       for (var u in _usuarios) {
         final emailMatch = u.email.toLowerCase().trim() == emailLower;
         final senhaMatch = u.senha.trim() == senhaTrim;
@@ -1064,11 +1054,18 @@ class AuthService extends ChangeNotifier {
           '>>> Comparando: emailMatch=$emailMatch (${u.email.toLowerCase().trim()} == $emailLower), senhaMatch=$senhaMatch (${u.senha.trim()} == $senhaTrim), ativo=$ativo',
         );
 
-        if (emailMatch && senhaMatch && ativo) {
-          usuarioEncontrado = u;
-          debugPrint('>>> Usuário encontrado: ${u.nome}');
+        if (!emailMatch || !senhaMatch || !ativo) continue;
+
+        final semEmpresa = u.empresaId == null || u.empresaId!.isEmpty;
+        if (semEmpresa) {
+          masterSemEmpresa = u;
           break;
         }
+        usuarioEncontrado ??= u;
+      }
+      usuarioEncontrado ??= masterSemEmpresa;
+      if (usuarioEncontrado != null) {
+        debugPrint('>>> Usuário encontrado: ${usuarioEncontrado.nome}');
       }
 
       if (usuarioEncontrado == null) {
@@ -1381,6 +1378,7 @@ class AuthService extends ChangeNotifier {
             debugPrint(
               '>>> [AuthService] ✓ Empresa com certificado/senha salva no localStorage',
             );
+            await _adotarMasterDaEmpresa(empresaComConfig);
             notifyListeners();
             return;
           } else {
@@ -1395,30 +1393,20 @@ class AuthService extends ChangeNotifier {
     }
 
     _empresaAtual = empresa;
+    // A sessão do master passa a ser a do usuário DESTA empresa.
+    await _adotarMasterDaEmpresa(empresa);
     final empresaMap = empresa.toMap();
 
-    // Sincronizar empresa_id com o metadado do usuário no Supabase para o RLS funcionar
-    try {
-      final supabaseUser = _supabaseService.client.auth.currentUser;
-      if (supabaseUser != null) {
-        debugPrint(
-          '>>> [AuthService] 🔄 Sincronizando empresa_id (${empresa.id}) com metadados do Supabase...',
-        );
-        await _supabaseService.client.auth
-            .updateUser(UserAttributes(data: {'empresa_id': empresa.id}))
-            .timeout(const Duration(seconds: 5));
-
-        // Forçar atualização da sessão para renovar o JWT com o novo metadado
-        await _supabaseService.client.auth.refreshSession();
-        debugPrint(
-          '>>> [AuthService] ✅ Metadados e sessão do usuário atualizados no Supabase.',
-        );
-      }
-    } catch (e) {
-      debugPrint(
-        '>>> [AuthService] ⚠️ Erro ao atualizar metadados no Supabase: $e',
-      );
-    }
+    // NOTA (migração Neon): aqui havia a sincronização de `empresa_id` nos
+    // metadados do usuário de nuvem (`auth.updateUser`) para o RLS funcionar.
+    // Isso deixou de existir por dois motivos:
+    //   1. a Data API do Neon é acessada com o papel `anonymous` e o RLS está
+    //      DESLIGADO nas tabelas (o isolamento por empresa é feito no app, por
+    //      `empresa_id` nas consultas — o mesmo desenho de antes, quando o app
+    //      usava a chave `service_role`, que também atravessava o RLS);
+    //   2. não existe usuário de nuvem: a identidade do app vive na tabela
+    //      `usuarios`.
+    // O `empresa_id` continua sendo gravado no localStorage logo abaixo.
 
     debugPrint('>>> [AuthService] Salvando empresa no localStorage...');
     debugPrint(
@@ -1620,6 +1608,102 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Senha do usuário master, usada também ao criar o master de cada empresa.
+  static const String _senhaMasterPadrao = 'kP4#%vMJ';
+
+  /// Cria o REGISTRO do usuário master DESTA empresa (ainda não persistido).
+  ///
+  /// O sistema nasceu com UM único usuário master ("user", sem empresa) que
+  /// enxergava todas as empresas. Como o MESMO registro era reaproveitado em
+  /// todas, o que está ligado ao usuário (responsável do caixa, numeração da
+  /// NFC-e, permissões, auditoria) atravessava as empresas — era a causa dos
+  /// dados se misturarem. Agora CADA empresa tem o seu próprio "user",
+  /// vinculado ao `empresaId` dela.
+  Usuario _novoMasterDaEmpresa(Empresa empresa) {
+    final agora = DateTime.now();
+    return Usuario(
+      id: 'user-${empresa.id}',
+      nome: 'Usuário',
+      email: 'user',
+      senha: _senhaMasterPadrao,
+      tipo: TipoUsuario.administrador,
+      empresaId: empresa.id,
+      isMaster: true,
+      ativo: true,
+      createdAt: agora,
+      updatedAt: agora,
+    );
+  }
+
+  /// O master JÁ vinculado a esta empresa (por `empresaId`), se existir.
+  Usuario? _masterDaEmpresa(String empresaId) => _usuarios.firstWhereOrNull(
+    (u) => u.email.toLowerCase() == 'user' && u.empresaId == empresaId,
+  );
+
+  /// Garante o master da empresa e devolve o registro (existente ou novo).
+  Usuario _garantirMasterDaEmpresa(Empresa empresa) {
+    final existente = _masterDaEmpresa(empresa.id);
+    if (existente != null) return existente;
+    final novo = _novoMasterDaEmpresa(empresa);
+    _usuarios.add(novo);
+    debugPrint(
+      '>>> [AuthService] 👤 Usuário master criado para a empresa '
+      '"${empresa.nomeExibicao}" (empresaId=${empresa.id})',
+    );
+    _salvarUsuarios();
+    notifyListeners();
+    return novo;
+  }
+
+  /// Garante um master para CADA empresa ativa.
+  ///
+  /// É a migração das empresas que já existiam antes desta mudança: sem ela, a
+  /// empresa antiga ficaria dependendo do master global compartilhado. Grava a
+  /// lista UMA única vez.
+  void _garantirMastersDasEmpresas() {
+    final faltando = <Empresa>[
+      for (final e in _empresas)
+        if (e.ativo && _masterDaEmpresa(e.id) == null) e,
+    ];
+    if (faltando.isEmpty) return;
+    for (final e in faltando) {
+      _usuarios.add(_novoMasterDaEmpresa(e));
+      debugPrint(
+        '>>> [AuthService] 👤 Usuário master criado para a empresa '
+        '"${e.nomeExibicao}" (empresaId=${e.id})',
+      );
+    }
+    _salvarUsuarios();
+    notifyListeners();
+  }
+
+  /// Faz a sessão ATUAL passar a ser o master DA EMPRESA aberta.
+  ///
+  /// Só age quando o usuário logado é o master (o "user" ou um isMaster). Assim
+  /// o responsável do caixa, a numeração da NFC-e e as permissões são os
+  /// DAQUELA empresa, e não de um registro único compartilhado por todas.
+  Future<void> _adotarMasterDaEmpresa(Empresa empresa) async {
+    final atual = _usuarioAtual;
+    if (atual == null) return;
+    final ehMaster = atual.email.toLowerCase() == 'user' || atual.isMaster;
+    if (!ehMaster) return;
+    final master = _garantirMasterDaEmpresa(empresa);
+    if (atual.id == master.id) return;
+    _usuarioAtual = master;
+    debugPrint(
+      '>>> [AuthService] 🔑 Sessão master adotada: usuário da empresa '
+      '"${empresa.nomeExibicao}" (id=${master.id})',
+    );
+    try {
+      await _storage.salvar('usuario_atual', master.toMap());
+    } catch (e) {
+      debugPrint(
+        '>>> [AuthService] Erro ao salvar usuário master da empresa: $e',
+      );
+    }
+    notifyListeners();
+  }
+
   /// Atualiza um usuário
   Future<void> atualizarUsuario(Usuario usuario) async {
     final index = _usuarios.indexWhere((u) => u.id == usuario.id);
@@ -1786,6 +1870,25 @@ class AuthService extends ChangeNotifier {
     _empresas.add(empresa);
     notifyListeners();
     await _salvarEmpresas();
+    // Cada empresa nasce com o SEU usuário master (não mais um "user" único
+    // compartilhado por todas, que era o que misturava os dados).
+    _garantirMasterDaEmpresa(empresa);
+  }
+
+  /// Sincroniza, apenas em memória, a cópia da empresa mantida pelo
+  /// AuthService. Usado quando o DataService altera configurações da empresa
+  /// atual (perfis tributários, departamentos, estoques...) e persiste no
+  /// banco: sem isso o AuthService continuaria com a configuração antiga e a
+  /// reaplicaria ao selecionar a empresa de novo (o perfil padrão "voltava").
+  void sincronizarEmpresaEmMemoria(Empresa empresa) {
+    final index = _empresas.indexWhere((e) => e.id == empresa.id);
+    if (index != -1) {
+      _empresas[index] = empresa;
+    }
+    if (_empresaAtual?.id == empresa.id) {
+      _empresaAtual = empresa;
+    }
+    notifyListeners();
   }
 
   /// Atualiza uma empresa
@@ -1920,7 +2023,52 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Boot dos USUÁRIOS: primeiro LÊ o que está salvo, depois garante o master.
+  ///
+  /// A ORDEM é o que preserva os usuários criados pelo operador. Antes,
+  /// [_carregarUsuariosPadrao] rodava primeiro — e ele GRAVA na hora. Como no
+  /// boot a memória ainda está vazia, esse save levava só o master "user" para
+  /// `cache_dados.usuarios` e APAGAVA a lista salva. O usuário criado aparecia
+  /// na tela e sumia no reinício seguinte: a lista sempre voltava aos 3
+  /// restaurados por [_restaurarUsuariosLocais] (user, carlos, silvio).
+  ///
+  /// Extraído para método próprio porque o teste de regressão exercita ESTA
+  /// ordem, e não uma cópia dela.
+  @visibleForTesting
+  Future<void> carregarUsuariosNoBoot() async {
+    try {
+      await carregarUsuarios().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          debugPrint(
+            '>>> [AuthService] Timeout ao carregar usuários - usando padrão',
+          );
+        },
+      );
+    } catch (e) {
+      debugPrint('>>> [AuthService] Erro ao carregar usuários: $e');
+    }
+
+    // Leitura feita (ou tentada): só agora a gravação é liberada. Se o banco
+    // local NÃO respondeu, a lista em memória não representa o que está salvo —
+    // nesse caso o boot também não grava por cima.
+    _usuariosLidos = !DatabaseService().bancoLocalFalhou;
+    _carregarUsuariosPadrao();
+    // Daqui em diante a gravação segue normal (criar/editar/remover usuário).
+    _usuariosLidos = true;
+  }
+
   Future<void> _salvarUsuarios() async {
+    // TRAVA DE BOOT: gravar antes de ler a lista salva sobrescreveria os
+    // usuários do banco com a memória (vazia) do boot — era isso que fazia o
+    // usuário recém-criado desaparecer no reinício do app.
+    if (!_usuariosLidos) {
+      debugPrint(
+        '>>> [AuthService] ⛔ Gravação de usuários BLOQUEADA: a lista salva '
+        'ainda não foi lida. Gravar agora apagaria os usuários já cadastrados.',
+      );
+      return;
+    }
     try {
       // SEGURANÇA: NUNCA salvar usuários com senha vazia no PostgreSQL.
       // Se um usuário chegar aqui sem senha (ex: merge do Supabase),
@@ -2375,6 +2523,9 @@ class AuthService extends ChangeNotifier {
       notifyListeners();
     } finally {
       _isProcessandoEmpresas = false;
+      // Empresas carregadas: garantir o master de cada uma (inclusive as que já
+      // existiam antes desta mudança).
+      _garantirMastersDasEmpresas();
     }
   }
 }

@@ -87,3 +87,38 @@ CREATE TRIGGER trigger_sync_status_updated_at
     EXECUTE FUNCTION public.update_sync_status_updated_at();
 
 SELECT 'OK - Tabelas sync_logs e sync_status criadas' AS resultado;
+
+-- 3. sync_conflicts: conflitos locais publicados para o Portal Êxodo
+CREATE TABLE IF NOT EXISTS public.sync_conflicts (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL DEFAULT '',
+    pc_name TEXT NOT NULL DEFAULT '',
+    tabela TEXT NOT NULL DEFAULT '',
+    registro_id TEXT NOT NULL DEFAULT '',
+    dados_locais JSONB,
+    dados_nuvem JSONB,
+    resolvido BOOLEAN NOT NULL DEFAULT FALSE,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    visto_em TIMESTAMPTZ DEFAULT NOW(),
+    resolvido_em TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_empresa
+    ON public.sync_conflicts(empresa_id, resolvido, visto_em DESC);
+
+ALTER TABLE public.sync_conflicts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY sync_conflicts_anon_select ON public.sync_conflicts
+    FOR SELECT TO anon USING (true);
+CREATE POLICY sync_conflicts_auth_select ON public.sync_conflicts
+    FOR SELECT TO authenticated USING (true);
+CREATE POLICY sync_conflicts_anon_insert ON public.sync_conflicts
+    FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY sync_conflicts_anon_update ON public.sync_conflicts
+    FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY sync_conflicts_auth_insert ON public.sync_conflicts
+    FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY sync_conflicts_auth_update ON public.sync_conflicts
+    FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+GRANT ALL ON public.sync_conflicts TO anon;
+GRANT ALL ON public.sync_conflicts TO authenticated;
+GRANT ALL ON public.sync_conflicts TO service_role;

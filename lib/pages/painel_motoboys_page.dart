@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/data_service.dart';
@@ -9,6 +11,7 @@ import '../services/pedido_pdf_service.dart';
 import '../theme.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
+import '../utils/rota_texto.dart';
 
 class PainelMotoboysPage extends StatefulWidget {
   const PainelMotoboysPage({super.key});
@@ -25,6 +28,23 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
   
   // Toggle para mostrar pedidos já entregues
   bool _mostrarEntregues = false;
+
+  // ── Filtros do painel ──────────────────────────────────────────────
+  // Sentinela do dropdown de motoboy: "todos" (não filtra nada) e "sem
+  // motoboy" (as entregas que ainda aguardam delegação). Os demais valores
+  // são o id do motorista.
+  static const String _filtroTodos = '__todos__';
+  static const String _filtroSemMotoboy = '__sem_motoboy__';
+
+  String _motoristaFiltro = _filtroTodos;
+  String _busca = '';
+  final TextEditingController _buscaController = TextEditingController();
+
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
 
   void _alternarSelecao(String id) {
     setState(() {
@@ -61,7 +81,7 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
       
       if (s == 'pendente' || s == 'em preparo') return true;
       return false;
-    }).toList();
+    }).where((p) => _passaNoFiltro(p)).toList();
 
     // Agrupar por motoboy
     final entregasPorMotoboy = <String?, List<Pedido>>{};
@@ -72,6 +92,17 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
         entregasPorMotoboy[motoristaId] = [];
       }
       entregasPorMotoboy[motoristaId]!.add(pedido);
+    }
+
+    // Comissão: só a entrega ENTREGUE gera valor a pagar (mesma regra da tela
+    // de Comissões). O que ainda está em rota aparece como previsão.
+    var totalComissao = 0.0;
+    var totalEntregues = 0;
+    for (final pedido in pedidosEntrega) {
+      if (_pedidoEntregue(pedido)) {
+        totalEntregues++;
+        totalComissao += _comissaoDoPedido(pedido, dataService);
+      }
     }
 
     return AppTheme.appBackground(
@@ -97,6 +128,11 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
         ),
         body: Column(
           children: [
+            // Filtros por motoboy e por entrega
+            _buildBarraFiltros(dataService),
+            // Total de comissões — só faz sentido no modo "Ver Entregues"
+            if (_mostrarEntregues)
+              _buildResumoComissoes(totalComissao, totalEntregues),
             // Barra flutuante se houver itens selecionados
             if (_selecionadosIds.isNotEmpty)
               Container(
@@ -135,6 +171,16 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  if (pedidosEntrega.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 48),
+                      child: Center(
+                        child: Text(
+                          'Nenhuma entrega encontrada com os filtros atuais.',
+                          style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                        ),
+                      ),
+                    ),
                   // 1. Aguardando Motoboy
                   if (entregasPorMotoboy.containsKey(null) || entregasPorMotoboy.containsKey(''))
                     _buildSessaoMotoboy(
@@ -205,6 +251,12 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
             ),
             if (motorista != null)
               IconButton(
+                icon: const Icon(Icons.copy, color: Colors.white70),
+                tooltip: 'Copiar rota (para enviar no WhatsApp do motoboy)',
+                onPressed: () => _copiarRota(context, motorista, pedidos),
+              ),
+            if (motorista != null)
+              IconButton(
                 icon: const Icon(Icons.print, color: Colors.white70),
                 tooltip: 'Imprimir todas as entregas',
                 onPressed: () {
@@ -223,11 +275,61 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
               ),
           ],
         ),
-        subtitle: Text(
-          '${pedidos.length} entrega(s)',
-          style: TextStyle(color: Colors.white.withOpacity(0.7)),
-        ),
+        subtitle: _buildSubtituloSessao(dataService, pedidos),
         children: pedidos.map((p) => _buildCardPedido(context, p, motorista, dataService)).toList(),
+      ),
+    );
+  }
+
+  /// Monta o texto da rota deste motoboy e copia para a área de transferência,
+  /// para o operador colar no WhatsApp dele.
+  Future<void> _copiarRota(
+    BuildContext context,
+    Motorista motorista,
+    List<Pedido> pedidos,
+  ) async {
+    if (pedidos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nenhuma entrega para copiar.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    final itens = pedidos.map((p) {
+      final entregue = p.deliveryInfo?.status.toLowerCase() == 'entregue';
+      final endereco = (p.deliveryInfo != null &&
+              p.deliveryInfo!.enderecoCompleto.trim().isNotEmpty)
+          ? p.deliveryInfo!.enderecoCompleto
+          : p.clienteEndereco;
+      return RotaItemTexto(
+        numero: p.numero,
+        cliente: p.clienteNome,
+        telefone: p.clienteTelefone,
+        endereco: endereco,
+        valor: p.totalGeral,
+        pago: p.totalmenteRecebido,
+        entregue: entregue,
+        observacao: p.observacoes,
+      );
+    }).toList();
+
+    final texto = RotaTexto.montar(
+      titulo: 'ROTA DO MOTOBOY',
+      motorista: motorista.nome,
+      data: DateTime.now(),
+      itens: itens,
+    );
+
+    await RotaTexto.copiar(texto);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Rota copiada! Agora é só colar no WhatsApp do motoboy.'),
+        backgroundColor: Colors.green,
       ),
     );
   }
@@ -235,6 +337,11 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
   Widget _buildCardPedido(BuildContext context, Pedido pedido, Motorista? motoristaAtual, DataService dataService) {
     final isSelecionado = _selecionadosIds.contains(pedido.id);
     final isEntregue = pedido.deliveryInfo?.status.toLowerCase() == 'entregue';
+    // Comissão deste motoboy para ESTA entrega (null quando ainda não há
+    // motoboy definido).
+    final comissao = motoristaAtual == null
+        ? null
+        : _comissaoDoPedido(pedido, dataService);
     
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -279,9 +386,23 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
                         child: const Text('ENTREGUE', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
                       ),
                     const Spacer(),
-                    Text(
-                      formatoMoeda.format(pedido.totalGeral), 
-                      style: const TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          formatoMoeda.format(pedido.totalGeral),
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold)
+                        ),
+                        if (comissao != null)
+                          Text(
+                            '${isEntregue ? 'Comissão' : 'Prevista'}: ${formatoMoeda.format(comissao)}',
+                            style: TextStyle(
+                              color: isEntregue ? Colors.greenAccent : Colors.white54,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
@@ -347,6 +468,19 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
                   ),
                 ),
               ],
+              // Já entregue: permite DESFAZER. Volta a entrega para "Saiu para
+              // entrega" e ela sai da conta da comissão do motoboy.
+              if (isEntregue)
+                TextButton.icon(
+                  onPressed: () => _desmarcarComoEntregue(pedido, dataService),
+                  icon: const Icon(Icons.undo, size: 16),
+                  label: const Text('Não entregue', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.orangeAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    minimumSize: Size.zero,
+                  ),
+                ),
             ],
           ),
         ],
@@ -539,10 +673,12 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
     // A ENTREGA (tabela `entregas`) é quem alimenta a comissão do motoboy na
     // tela de Comissões. Delegar aqui só mexia no PEDIDO: a entrega continuava
     // sem motorista (ou nem existia) e a taxa cadastrada nunca contava.
-    _sincronizarEntregaDoPedido(
-      pedido: pedido,
-      deliveryInfo: novoDeliveryInfo,
-      dataService: dataService,
+    unawaited(
+      _sincronizarEntregaDoPedido(
+        pedido: pedido,
+        deliveryInfo: novoDeliveryInfo,
+        dataService: dataService,
+      ),
     );
 
     if (mostrarSnackBar) {
@@ -560,13 +696,14 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
   /// É a `entregas` que a tela de Comissões lê para pagar o motoboy (status
   /// 'Entregue' + motorista). Antes, delegar e marcar como entregue pelo painel
   /// só alterava o pedido — a comissão da taxa cadastrada não contabilizava.
-  void _sincronizarEntregaDoPedido({
+  Future<void> _sincronizarEntregaDoPedido({
     required Pedido pedido,
     required DeliveryInfo deliveryInfo,
     required DataService dataService,
     bool entregue = false,
+    bool desmarcar = false,
     DateTime? quando,
-  }) {
+  }) async {
     final agora = quando ?? DateTime.now();
     final novoStatus =
         entregue ? StatusEntrega.entregue : StatusEntrega.emEntrega;
@@ -577,7 +714,7 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
 
     if (index >= 0) {
       final existente = dataService.entregas[index];
-      dataService.updateEntrega(
+      await dataService.updateEntrega(
         existente.copyWith(
           pedidoNumero: pedido.numero,
           clienteNome: pedido.clienteNome ?? existente.clienteNome,
@@ -587,6 +724,7 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
           taxaEntrega: deliveryInfo.taxaEntrega ?? existente.taxaEntrega,
           status: novoStatus,
           dataEntrega: entregue ? agora : existente.dataEntrega,
+          limparDataEntrega: desmarcar,
         ),
       );
       return;
@@ -594,7 +732,7 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
 
     // Sem entrega registrada ainda: cria uma com o estado atual da delegação.
     final dInfo = deliveryInfo;
-    dataService.addEntrega(
+    await dataService.addEntrega(
       Entrega(
         id: const Uuid().v4(),
         pedidoId: pedido.id,
@@ -617,38 +755,354 @@ class _PainelMotoboysPageState extends State<PainelMotoboysPage> {
     );
   }
 
-  void _marcarComoEntregue(Pedido pedido, DataService dataService) {
-    if (pedido.deliveryInfo != null) {
-      final agora = DateTime.now();
-      final novoDeliveryInfo = pedido.deliveryInfo!.copyWith(
-        status: 'Entregue',
-        dataEntrega: agora,
-      );
-      
-      final pedidoAtualizado = pedido.copyWith(
-        deliveryInfo: novoDeliveryInfo,
-        updatedAt: agora,
-      );
-      
-      dataService.updatePedido(pedidoAtualizado);
+  Future<void> _marcarComoEntregue(
+    Pedido pedido,
+    DataService dataService,
+  ) async {
+    final dInfo = pedido.deliveryInfo;
+    if (dInfo == null) return;
 
-      // Conclui a ENTREGA também: é ela que entra no cálculo da comissão do
-      // motoboy. Antes só o pedido ficava "Entregue" e a entrega continuava
-      // "Aguardando", então a taxa cadastrada no motoboy não contabilizava.
-      _sincronizarEntregaDoPedido(
-        pedido: pedido,
-        deliveryInfo: novoDeliveryInfo,
-        dataService: dataService,
-        entregue: true,
-        quando: agora,
-      );
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Pedido ${pedido.numero} marcado como entregue!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
+    final messenger = ScaffoldMessenger.of(context);
+    final agora = DateTime.now();
+    final novoDeliveryInfo = dInfo.copyWith(
+      status: 'Entregue',
+      dataEntrega: agora,
+    );
+
+    final pedidoAtualizado = pedido.copyWith(
+      deliveryInfo: novoDeliveryInfo,
+      // O status do PEDIDO acompanha o da entrega: é ele que as outras telas e
+      // relatórios leem. Antes só o deliveryInfo mudava, então a entrega podia
+      // aparecer como entregue aqui e continuar "em rota" no resto do sistema.
+      status: pedido.status.toLowerCase() == 'cancelado'
+          ? pedido.status
+          : 'Entregue',
+      updatedAt: agora,
+    );
+
+    // Aguardado de propósito: o pedido e a ENTREGA precisam estar gravados (no
+    // banco local) antes de o usuário sair da tela — é ela que entra no cálculo
+    // da comissão do motoboy. Antes só o pedido ficava "Entregue" e a entrega
+    // continuava "Aguardando", então a taxa cadastrada não contabilizava.
+    await dataService.updatePedido(pedidoAtualizado);
+    await _sincronizarEntregaDoPedido(
+      pedido: pedido,
+      deliveryInfo: novoDeliveryInfo,
+      dataService: dataService,
+      entregue: true,
+      quando: agora,
+    );
+    // Fecha a janela do debounce: sem este flush a alteração ficava só na
+    // memória e o estado antigo voltava ao reabrir a tela.
+    await dataService.persistirAlteracoesPendentes();
+
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Pedido ${pedido.numero} marcado como entregue!'),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
+
+  /// Desfaz o "Entregue": volta o pedido para "Saiu para entrega" e reabre a
+  /// ENTREGA correspondente (status Em Entrega).
+  ///
+  /// É essa reabertura que tira a entrega da comissão: a tela de Comissões só
+  /// conta entrega com status 'Entregue'.
+  Future<void> _desmarcarComoEntregue(
+    Pedido pedido,
+    DataService dataService,
+  ) async {
+    final dInfo = pedido.deliveryInfo;
+    if (dInfo == null) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final agora = DateTime.now();
+    final novoDeliveryInfo = dInfo.copyWith(
+      status: 'Saiu para entrega',
+      limparDataEntrega: true,
+    );
+
+    await dataService.updatePedido(
+      pedido.copyWith(
+        deliveryInfo: novoDeliveryInfo,
+        // Desfaz também o status geral do pedido: se ele tinha sido marcado
+        // como "Entregue", volta para "Saiu para entrega" (senão o pedido
+        // continuava contando como concluído nos relatórios).
+        status: pedido.status.toLowerCase() == 'entregue'
+            ? 'Saiu para entrega'
+            : pedido.status,
+        updatedAt: agora,
+      ),
+    );
+
+    await _sincronizarEntregaDoPedido(
+      pedido: pedido,
+      deliveryInfo: novoDeliveryInfo,
+      dataService: dataService,
+      desmarcar: true,
+    );
+    await dataService.persistirAlteracoesPendentes();
+
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          'Pedido ${pedido.numero} voltou para "Saiu para entrega" e saiu da comissão.',
+        ),
+        backgroundColor: Colors.orangeAccent,
+      ),
+    );
+  }
+
+  // ── Comissão do motoboy (mesma regra da tela de Comissões) ────────────
+
+  bool _pedidoEntregue(Pedido pedido) =>
+      pedido.deliveryInfo?.status.toLowerCase() == 'entregue';
+
+  Motorista? _motoristaDoPedido(Pedido pedido, DataService dataService) {
+    final id = pedido.deliveryInfo?.motoristaId;
+    if (id == null || id.isEmpty) return null;
+    for (final m in dataService.motoristas) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
+
+  /// Taxa da entrega usada no cálculo: a da ENTREGA quando ela já existe (é a
+  /// fonte que a tela de Comissões lê); senão, a taxa do próprio pedido.
+  double _taxaDaEntrega(Pedido pedido, DataService dataService) {
+    for (final entrega in dataService.entregas) {
+      if (entrega.pedidoId.isNotEmpty && entrega.pedidoId == pedido.id) {
+        return entrega.taxaEntrega ?? pedido.deliveryInfo?.taxaEntrega ?? 0.0;
+      }
+    }
+    return pedido.deliveryInfo?.taxaEntrega ?? 0.0;
+  }
+
+  double _comissaoDoPedido(Pedido pedido, DataService dataService) {
+    return comissaoPorEntregaDoMotoboy(
+      motorista: _motoristaDoPedido(pedido, dataService),
+      taxaEntrega: _taxaDaEntrega(pedido, dataService),
+    );
+  }
+
+  /// Subtítulo do grupo: quantidade de entregas + comissão do motoboy.
+  Widget _buildSubtituloSessao(DataService dataService, List<Pedido> pedidos) {
+    var comissaoEntregue = 0.0;
+    var entregues = 0;
+    var previsao = 0.0;
+    for (final pedido in pedidos) {
+      final comissao = _comissaoDoPedido(pedido, dataService);
+      previsao += comissao;
+      if (_pedidoEntregue(pedido)) {
+        entregues++;
+        comissaoEntregue += comissao;
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${pedidos.length} entrega(s)',
+          style: TextStyle(color: Colors.white.withOpacity(0.7)),
+        ),
+        if (previsao > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              'Comissão: ${formatoMoeda.format(comissaoEntregue)}'
+              '${previsao > comissaoEntregue ? ' • previsto ${formatoMoeda.format(previsao)}' : ''}'
+              '${entregues > 0 ? ' ($entregues entregue(s))' : ''}',
+              style: const TextStyle(
+                color: Colors.greenAccent,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ── Filtros ───────────────────────────────────────────────────────────
+
+  /// Motoboy escolhido + busca textual (nº do pedido, cliente, endereço...).
+  bool _passaNoFiltro(Pedido pedido) {
+    final motoristaId = pedido.deliveryInfo?.motoristaId ?? '';
+
+    if (_motoristaFiltro == _filtroSemMotoboy) {
+      if (motoristaId.isNotEmpty) return false;
+    } else if (_motoristaFiltro != _filtroTodos &&
+        motoristaId != _motoristaFiltro) {
+      return false;
+    }
+
+    if (_busca.isEmpty) return true;
+    final termo = _busca.toLowerCase();
+    final campos = <String?>[
+      pedido.numero,
+      pedido.clienteNome,
+      pedido.clienteTelefone,
+      pedido.clienteEndereco,
+      pedido.deliveryInfo?.enderecoCompleto,
+      pedido.deliveryInfo?.bairro,
+      pedido.deliveryInfo?.motoristaNome,
+      pedido.observacoes,
+    ];
+    return campos.any((c) => c != null && c.toLowerCase().contains(termo));
+  }
+
+  Widget _buildBarraFiltros(DataService dataService) {
+    // Se o motoboy filtrado saiu do cadastro, o dropdown voltaria a um valor
+    // inexistente e quebraria; cai para "Todos".
+    final ids = dataService.motoristas.map((m) => m.id).toSet();
+    final valorAtual = (_motoristaFiltro == _filtroTodos ||
+            _motoristaFiltro == _filtroSemMotoboy ||
+            ids.contains(_motoristaFiltro))
+        ? _motoristaFiltro
+        : _filtroTodos;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E2E).withOpacity(0.85),
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withOpacity(0.08)),
+        ),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                isExpanded: true,
+                dropdownColor: const Color(0xFF2A2A3E),
+                value: valorAtual,
+                icon: const Icon(Icons.two_wheeler,
+                    color: Colors.white54, size: 18),
+                items: <DropdownMenuItem<String>>[
+                  const DropdownMenuItem<String>(
+                    value: _filtroTodos,
+                    child: Text('Todos os motoboys',
+                        style: TextStyle(color: Colors.white)),
+                  ),
+                  const DropdownMenuItem<String>(
+                    value: _filtroSemMotoboy,
+                    child: Text('Aguardando motoboy',
+                        style: TextStyle(color: Colors.white)),
+                  ),
+                  ...dataService.motoristas.map(
+                    (m) => DropdownMenuItem<String>(
+                      value: m.id,
+                      child: Text(m.nome,
+                          style: const TextStyle(color: Colors.white)),
+                    ),
+                  ),
+                ],
+                onChanged: (valor) => setState(
+                  () => _motoristaFiltro = valor ?? _filtroTodos,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _buscaController,
+            onChanged: (valor) => setState(() => _busca = valor.trim()),
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Filtrar entrega (nº do pedido, cliente, endereço...)',
+              hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+              prefixIcon:
+                  const Icon(Icons.search, color: Colors.white38, size: 18),
+              suffixIcon: _busca.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.clear,
+                          size: 16, color: Colors.white54),
+                      onPressed: () {
+                        _buscaController.clear();
+                        setState(() => _busca = '');
+                      },
+                    ),
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.05),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Colors.white24),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Colors.orangeAccent),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResumoComissoes(double total, int entregues) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: Colors.greenAccent.withOpacity(0.12),
+      child: Row(
+        children: [
+          const Icon(Icons.attach_money, color: Colors.greenAccent, size: 20),
+          const SizedBox(width: 8),
+          const Text(
+            'Comissões (entregues)',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            '$entregues entrega(s) • ',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.7),
+              fontSize: 12,
+            ),
+          ),
+          Text(
+            formatoMoeda.format(total),
+            style: const TextStyle(
+              color: Colors.greenAccent,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Comissão do motoboy por UMA entrega — mesma conta da tela de Comissões
+/// ([Motorista.comissaoPorEntregas]): valor fixo por entrega, % sobre a taxa,
+/// ou R$ 0 quando o combinado é só diária.
+///
+/// Pura de propósito (não toca em widget) para poder ser verificada sem abrir
+/// tela.
+double comissaoPorEntregaDoMotoboy({
+  required Motorista? motorista,
+  required double taxaEntrega,
+}) {
+  if (motorista == null) return 0.0;
+  return motorista.comissaoPorEntregas(
+    entregas: 1,
+    somaTaxasEntregas: taxaEntrega,
+  );
 }

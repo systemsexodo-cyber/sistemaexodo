@@ -121,6 +121,7 @@ class _InventarioPageState extends State<InventarioPage> {
         content: Text(
           '✓ Inventário aplicado: ${resumo['conferidos']} conferidos • '
           '${resumo['faltas']} faltando • ${resumo['sobras']} sobrando • '
+          '${resumo['zerados'] ?? 0} zerado(s) • '
           '${resumo['ajustados']} ajustados'
           '${loteId != null ? ' • lote $loteId' : ''}',
         ),
@@ -179,8 +180,10 @@ class _InventarioPageState extends State<InventarioPage> {
     filtrados.sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
 
     final conferidos = _contagens.length;
-    final faltas = filtrados.where((p) => _contagens.containsKey(p.id) && _contagens[p.id]! < p.estoque - 0.0005).length;
-    final sobras = filtrados.where((p) => _contagens.containsKey(p.id) && _contagens[p.id]! > p.estoque + 0.0005).length;
+    // Contagem 0 = ZERAMENTO (mostrado à parte, não é falta nem sobra).
+    final zerando = filtrados.where((p) => _contagens.containsKey(p.id) && _contagens[p.id] == 0 && p.estoque.abs() > 0.0005).length;
+    final faltas = filtrados.where((p) => _contagens.containsKey(p.id) && _contagens[p.id]! < p.estoque - 0.0005 && _contagens[p.id] != 0).length;
+    final sobras = filtrados.where((p) => _contagens.containsKey(p.id) && _contagens[p.id]! > p.estoque + 0.0005 && _contagens[p.id] != 0).length;
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -206,6 +209,8 @@ class _InventarioPageState extends State<InventarioPage> {
                   _chipResumo('FALTANDO', faltas, Colors.redAccent),
                   const SizedBox(width: 8),
                   _chipResumo('SOBRANDO', sobras, Colors.orangeAccent),
+                  const SizedBox(width: 8),
+                  _chipResumo('ZERANDO', zerando, Colors.amberAccent),
                 ],
               ),
             ),
@@ -313,6 +318,10 @@ class _InventarioPageState extends State<InventarioPage> {
       if ((contado - sistema).abs() < 0.0005) {
         corStatus = Colors.greenAccent;
         textoStatus = 'Confere';
+      } else if (contado == 0) {
+        // Contou 0: o saldo será ZERADO (não é falta nem sobra).
+        corStatus = Colors.amberAccent;
+        textoStatus = 'ZERAR → 0';
       } else if (contado < sistema) {
         corStatus = Colors.redAccent;
         textoStatus = '−${(sistema - contado).toStringAsFixed(2)}';

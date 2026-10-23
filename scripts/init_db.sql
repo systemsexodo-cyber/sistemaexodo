@@ -249,6 +249,36 @@ CREATE TABLE IF NOT EXISTS public.agendamentos_servico (
     sync boolean DEFAULT false
 );
 
+-- Colunas do model AgendamentoServico. O dump antigo não as tinha e o app
+-- descartava em silêncio os campos sem coluna — a DATA do agendamento sumia
+-- (`data_agendamento`) e na leitura virava DateTime.now(), fazendo todos os
+-- agendamentos aparecerem no dia corrente. Idempotente (IF NOT EXISTS).
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS servico_id text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS servicos_ids jsonb DEFAULT '[]'::jsonb;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS data_agendamento timestamp with time zone;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS duracao_minutos integer DEFAULT 60;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS intervalo_minutos integer DEFAULT 0;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS tipo_entrega text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS valor_taxi_dog numeric;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS bairro_entrega text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS pedido_id text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS numero_pedido text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS recebido boolean DEFAULT false;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS data_recebimento timestamp with time zone;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS cliente_telefone text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS endereco text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS numero_endereco text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS complemento text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS ponto_referencia text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS excluido boolean DEFAULT false;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS travado boolean DEFAULT false;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS funcionario_id text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS funcionario_nome text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS recorrente boolean DEFAULT false;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS is_pago boolean DEFAULT false;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS pagamento_info text;
+ALTER TABLE public.agendamentos_servico ADD COLUMN IF NOT EXISTS materiais jsonb DEFAULT '[]'::jsonb;
+
 --
 -- Name: bridge_commands; Type: TABLE; Schema: public; Owner: -
 --
@@ -769,6 +799,35 @@ CREATE TABLE IF NOT EXISTS public.notas_entrada (
     updated_at text,
     "dataEmissao" text,
     "valorTotal" numeric,
+    sync boolean DEFAULT false
+);
+
+--
+-- Name: pedidos_compra; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.pedidos_compra (
+    id text NOT NULL,
+    empresa_id text,
+    numero text,
+    fornecedor_id text,
+    fornecedor_nome text,
+    fornecedor_cnpj text,
+    fornecedor_telefone text,
+    status text DEFAULT 'rascunho',
+    itens jsonb DEFAULT '[]'::jsonb,
+    observacao text,
+    usuario text,
+    estoque_destino_id text,
+    estoque_destino_nome text,
+    data_criacao timestamp with time zone,
+    data_envio timestamp with time zone,
+    previsao_entrega timestamp with time zone,
+    data_recebimento timestamp with time zone,
+    data_cancelamento timestamp with time zone,
+    motivo_cancelamento text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
     sync boolean DEFAULT false
 );
 
@@ -1538,6 +1597,16 @@ DO $$ BEGIN
 END $$;
 
 --
+-- Name: pedidos_compra pedidos_compra_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pedidos_compra_pkey' AND connamespace = 'public'::regnamespace) THEN
+        ALTER TABLE ONLY public.pedidos_compra ADD CONSTRAINT pedidos_compra_pkey PRIMARY KEY (id);
+    END IF;
+END $$;
+
+--
 -- Name: produto_historico produto_historico_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1873,6 +1942,13 @@ CREATE TRIGGER trg_exodo_sync_log_ordens_servico AFTER INSERT OR DELETE OR UPDAT
 
 DROP TRIGGER IF EXISTS trg_exodo_sync_log_pedidos ON public.pedidos;
 CREATE TRIGGER trg_exodo_sync_log_pedidos AFTER INSERT OR DELETE OR UPDATE ON public.pedidos FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+
+--
+-- Name: pedidos_compra trg_exodo_sync_log_pedidos_compra; Type: TRIGGER; Schema: public; Owner: -
+--
+
+DROP TRIGGER IF EXISTS trg_exodo_sync_log_pedidos_compra ON public.pedidos_compra;
+CREATE TRIGGER trg_exodo_sync_log_pedidos_compra AFTER INSERT OR DELETE OR UPDATE ON public.pedidos_compra FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
 
 --
 -- Name: produto_historico trg_exodo_sync_log_produto_historico; Type: TRIGGER; Schema: public; Owner: -
@@ -2235,6 +2311,9 @@ CREATE INDEX IF NOT EXISTS idx_motoristas_empresa_id ON public.motoristas (empre
 CREATE INDEX IF NOT EXISTS idx_nfces_empresa_id ON public.nfces (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_nfes_empresa_id ON public.nfes (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_notas_entrada_empresa_id ON public.notas_entrada (empresa_id);
+CREATE INDEX IF NOT EXISTS idx_pedidos_compra_empresa_id ON public.pedidos_compra (empresa_id);
+CREATE INDEX IF NOT EXISTS idx_pedidos_compra_status ON public.pedidos_compra (status);
+CREATE INDEX IF NOT EXISTS idx_pedidos_compra_fornecedor ON public.pedidos_compra (fornecedor_nome);
 CREATE INDEX IF NOT EXISTS idx_ordens_servico_empresa_id ON public.ordens_servico (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_produto_historico_empresa_id ON public.produto_historico (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_romaneios_empresa_id ON public.romaneios (empresa_id);

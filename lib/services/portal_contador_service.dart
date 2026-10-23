@@ -2,12 +2,15 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:postgrest/postgrest.dart'
+    show PostgrestException, PostgrestFilterBuilder, PostgrestList;
 
 import '../models/empresa.dart';
 import '../models/nfce.dart';
 import '../models/produto.dart';
 import '../models/venda_balcao.dart';
+import 'neon_client.dart';
+import 'neon_storage.dart';
 import 'supabase_service.dart';
 
 /// Tipo do documento fiscal exibido no Portal do Contador.
@@ -260,7 +263,7 @@ class PortalContadorService {
   /// filtro de período sem quebrar quando o banco usa camelCase ou snake_case.
   final Map<String, String?> _cacheColunaData = {};
 
-  SupabaseClient get _client => SupabaseService.instance.client;
+  NeonClient get _client => SupabaseService.instance.client;
 
   // ==========================================================================
   // AUTENTICAÇÃO

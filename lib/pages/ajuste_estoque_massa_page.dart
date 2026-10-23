@@ -727,6 +727,8 @@ class _AjusteEstoqueMassaPageState extends State<AjusteEstoqueMassaPage> {
             _linhaResumo('Estoques ajustados', '${resumo['estoquesAjustados'] ?? 0}', Colors.greenAccent),
             _linhaResumo('  entradas (estoque subiu)', '${resumo['entradas'] ?? 0}', Colors.blueAccent),
             _linhaResumo('  saídas (estoque baixou)', '${resumo['saidas'] ?? 0}', Colors.orangeAccent),
+            if ((resumo['zeramentos'] ?? 0) > 0)
+              _linhaResumo('  estoques zerados (saldo 0)', '${resumo['zeramentos']}', Colors.amberAccent),
             _linhaResumo('Preços ajustados', '${resumo['precosAjustados'] ?? 0}', Colors.purpleAccent),
             _linhaResumo('Sem alteração', '${resumo['semAlteracao'] ?? 0}', Colors.white54),
             if (lote != null)

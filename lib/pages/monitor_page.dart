@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/empresa.dart';
 import '../models/status_sync.dart';
+import '../models/conflito_sync.dart';
 import '../services/auth_service.dart';
 import '../services/sync_monitor_service.dart';
 import '../theme.dart';
@@ -25,6 +27,8 @@ class _MonitorPageState extends State<MonitorPage> {
   List<StatusSync> _empresas = [];
   List<Map<String, dynamic>> _errosRecentes = [];
   List<Map<String, dynamic>> _logsEmpresa = [];
+  List<Map<String, dynamic>> _conflitosEmpresa = [];
+  String? _resolvendoConflito;
   String? _empresaSelecionada;
   bool _carregando = true;
   bool _atualizando = false;
@@ -61,8 +65,13 @@ class _MonitorPageState extends State<MonitorPage> {
       final status = await SyncMonitorService.buscarStatusInterpretado();
       final erros = await SyncMonitorService.buscarErrosRecentes();
       List<Map<String, dynamic>> logs = _logsEmpresa;
+      List<Map<String, dynamic>> conflitos = _conflitosEmpresa;
       if (_empresaSelecionada != null) {
         logs = await SyncMonitorService.buscarLogsEmpresa(
+          _empresaSelecionada!,
+          limite: 100,
+        );
+        conflitos = await SyncMonitorService.buscarConflitosEmpresa(
           _empresaSelecionada!,
           limite: 100,
         );
@@ -73,6 +82,7 @@ class _MonitorPageState extends State<MonitorPage> {
         _empresas = _comEmpresasNuncaSincronizadas(status);
         _errosRecentes = erros;
         _logsEmpresa = logs;
+        _conflitosEmpresa = conflitos;
         _carregando = false;
         _ultimaAtualizacao = DateTime.now();
       });
@@ -755,6 +765,7 @@ class _MonitorPageState extends State<MonitorPage> {
     setState(() {
       _empresaSelecionada = empresaId;
       _logsSomenteErros = false;
+      _conflitosEmpresa = [];
     });
     _carregarDados();
   }
@@ -851,6 +862,7 @@ class _MonitorPageState extends State<MonitorPage> {
             ],
           ),
         ),
+        if (_conflitosEmpresa.isNotEmpty) _buildPainelConflitos(),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
@@ -885,6 +897,177 @@ class _MonitorPageState extends State<MonitorPage> {
         ),
       ],
     );
+  }
+
+  Widget _buildPainelConflitos() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.amberAccent.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.amberAccent.withOpacity(0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: Colors.amberAccent, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Conflitos pendentes (${_conflitosEmpresa.length})',
+                  style: const TextStyle(
+                    color: Colors.amberAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              const Text(
+                'decisão será aplicada no PC de origem',
+                style: TextStyle(color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 280),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: _conflitosEmpresa.length,
+              separatorBuilder: (_, __) => const Divider(color: Colors.white12),
+              itemBuilder: (_, index) => _buildConflitoRemoto(_conflitosEmpresa[index]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConflitoRemoto(Map<String, dynamic> conflito) {
+    final id = conflito['id']?.toString() ?? '';
+    final tabela = conflito['tabela']?.toString() ?? '';
+    final registro = conflito['registro_id']?.toString() ?? '';
+    final pc = conflito['pc_name']?.toString() ?? '';
+    final locais = _mapa(conflito['dados_locais']);
+    final nuvem = _mapa(conflito['dados_nuvem']);
+    final campos = ConflitoSync.diferencas(locais, nuvem);
+    final nome = (locais['nome'] ?? locais['produto_nome'] ??
+            nuvem['nome'] ?? nuvem['produto_nome'] ?? registro)
+        .toString();
+    final processando = _resolvendoConflito == id;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '$tabela • $nome',
+                style: const TextStyle(color: Colors.white, fontSize: 12,
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+            Text('PC: ${pc.isEmpty ? '-' : pc}',
+                style: const TextStyle(color: Colors.white54, fontSize: 10)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (campos.isEmpty)
+          const Text('Diferença apenas em campos de controle.',
+              style: TextStyle(color: Colors.white54, fontSize: 11))
+        else
+          Text(
+            campos.take(4).map((c) => '$c: ${_resumoValor(locais[c])} → ${_resumoValor(nuvem[c])}').join('  |  '),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white70, fontSize: 10),
+          ),
+        const SizedBox(height: 6),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            OutlinedButton(
+              onPressed: processando ? null : () => _resolverConflito(conflito, manterLocal: false),
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.blueAccent),
+              child: const Text('Usar nuvem', style: TextStyle(fontSize: 11)),
+            ),
+            const SizedBox(width: 6),
+            ElevatedButton(
+              onPressed: processando ? null : () => _resolverConflito(conflito, manterLocal: true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber[800]),
+              child: Text(processando ? 'Enviando...' : 'Manter local',
+                  style: const TextStyle(fontSize: 11)),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Map<String, dynamic> _mapa(dynamic valor) {
+    if (valor is Map) return Map<String, dynamic>.from(valor);
+    if (valor is String) {
+      try {
+        final decodificado = jsonDecode(valor);
+        if (decodificado is Map) return Map<String, dynamic>.from(decodificado);
+      } catch (_) {}
+    }
+    return const {};
+  }
+
+  String _resumoValor(dynamic valor) {
+    if (valor == null) return '—';
+    final texto = valor is Map || valor is List ? jsonEncode(valor) : valor.toString();
+    return texto.length > 42 ? '${texto.substring(0, 42)}…' : texto;
+  }
+
+  Future<void> _resolverConflito(Map<String, dynamic> conflito,
+      {required bool manterLocal}) async {
+    final id = conflito['id']?.toString() ?? '';
+    final pc = conflito['pc_name']?.toString() ?? '';
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Confirmar resolução', style: TextStyle(color: Colors.white)),
+        content: Text(
+          manterLocal
+              ? 'Enviar a versão local para a nuvem neste computador?'
+              : 'Substituir a versão local pela versão da nuvem neste computador?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirmar')),
+        ],
+      ),
+    );
+    if (confirmado != true || id.isEmpty || pc.isEmpty) return;
+    setState(() => _resolvendoConflito = id);
+    try {
+      await SyncMonitorService.resolverConflitoRemoto(
+        conflitoId: id,
+        pcName: pc,
+        manterLocal: manterLocal,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Decisão enviada. O PC aplicará no próximo ciclo.')));
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await _carregarDados();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Não foi possível enviar a decisão: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _resolvendoConflito = null);
+    }
   }
 
   Widget _buildPilula(String texto, Color cor) {

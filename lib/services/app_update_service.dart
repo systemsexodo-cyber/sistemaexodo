@@ -4,8 +4,7 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
-import 'package:supabase_flutter/supabase_flutter.dart'
-    show FileOptions, BucketOptions, SearchOptions;
+import 'neon_storage.dart' show FileOptions, BucketOptions, SearchOptions;
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
 import 'package:sistema_exodo_novo/services/win32_process_helper.dart';
 
@@ -120,7 +119,7 @@ class VersaoNaNuvem {
 }
 
 class AppUpdateService {
-  static const String currentAppVersion = "1.0.53";
+  static const String currentAppVersion = "1.0.56";
 
   /// Verifica se há uma nova versão do aplicativo no Supabase (Direcionada por Empresa ou Global)
   static Future<Map<String, dynamic>?> verificarAtualizacao({

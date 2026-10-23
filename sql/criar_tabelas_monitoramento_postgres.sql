@@ -38,3 +38,18 @@ CREATE INDEX IF NOT EXISTS idx_sync_status_online ON sync_status(online);
 CREATE INDEX IF NOT EXISTS idx_sync_status_updated ON sync_status(updated_at DESC);
 
 SELECT 'OK - Tabelas sync_logs e sync_status criadas no PostgreSQL local' AS resultado;
+
+-- Espelho local opcional dos conflitos publicados para o Portal Êxodo.
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL DEFAULT '',
+    pc_name TEXT NOT NULL DEFAULT '',
+    tabela TEXT NOT NULL DEFAULT '',
+    registro_id TEXT NOT NULL DEFAULT '',
+    dados_locais JSONB,
+    dados_nuvem JSONB,
+    resolvido BOOLEAN NOT NULL DEFAULT FALSE,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    visto_em TIMESTAMPTZ DEFAULT NOW(),
+    resolvido_em TIMESTAMPTZ
+);

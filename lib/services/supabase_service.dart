@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 import '../models/cliente.dart';
 import '../models/produto.dart';
@@ -20,6 +19,7 @@ import '../models/empresa.dart';
 import '../models/usuario.dart';
 import '../models/agendamento_servico.dart';
 import '../models/nota_entrada.dart';
+import '../models/pedido_compra.dart';
 import '../models/funcionario.dart';
 import '../models/taxa_entrega.dart';
 import '../models/conta_pagar.dart';
@@ -28,36 +28,33 @@ import '../models/mesa_comanda.dart';
 import '../models/link_vendedor.dart';
 import '../models/comissao_vendedor.dart';
 import 'package:sistema_exodo_novo/models/romaneio.dart';
-import '../supabase_config.dart';
 import 'package:postgres/postgres.dart';
-import 'env_config.dart';
+import 'package:postgrest/postgrest.dart' as pg;
+import 'neon_client.dart';
+import 'neon_config.dart';
+import 'neon_service.dart';
+import 'neon_storage.dart';
 
-/// Serviço para sincronizar todos os dados com Supabase (PostgreSQL)
+/// Serviço para sincronizar todos os dados com a nuvem (Postgres do Neon).
+///
+/// O NOME da classe é histórico: até a migração ela falava com o Supabase
+/// (PostgREST + Auth + Storage). Hoje a nuvem é o Neon e este serviço usa:
+/// a Data API (PostgREST), o Neon Auth (token da Data API) e o Object Storage
+/// (S3) — ver [NeonClient]. O nome foi mantido para não reescrever as ~400
+/// referências de `SupabaseService.instance` espalhadas pelo app.
 class SupabaseService {
   SupabaseService._(); // Construtor privado para singleton
 
   static final SupabaseService instance = SupabaseService._();
-  // late final: so acessa Supabase.instance.client QUANDO FOR USADO, nao no
-  // construtor. Se o Supabase ainda nao inicializou (ex: maquina nova sem
-  // internet - timeout no boot), construir DataService/AuthService lancava
-  // excecao aqui e o app NAO ABRIA. Agora o acesso e adiado para quando os
-  // metodos sao realmente chamados (e todos ja tratam isAvailable/erro).
-  late final SupabaseClient _client = Supabase.instance.client;
 
-  SupabaseClient get client => _client;
+  /// Cliente da nuvem. O acesso é adiado para o momento do uso (o mesmo motivo
+  /// de antes: máquina nova sem internet não pode impedir o app de abrir).
+  NeonClient get _client => NeonClient.instance;
 
-  /// Verifica se o Supabase está disponível (inicializado)
-  static bool get isAvailable {
-    try {
-      // Verificar se o Supabase foi inicializado (tem acesso via anon key)
-      final client = Supabase.instance.client;
-      // Se conseguimos acessar o client, Supabase está disponível
-      // mesmo sem usuário autenticado (anon key permite acesso)
-      return client != null;
-    } catch (e) {
-      return false;
-    }
-  }
+  NeonClient get client => _client;
+
+  /// A nuvem está configurada? Basta a URL da Data API estar no `.env.neon`.
+  static bool get isAvailable => NeonConfig.dataApiUrl.isNotEmpty;
 
   /// Alias de instância para isAvailable
   bool get connected => isAvailable;
@@ -152,61 +149,72 @@ class SupabaseService {
   /// Erros que indicam indisponibilidade da INFRAESTRUTURA do Supabase
   /// (PostgREST/Postgres fora do ar), e não um problema pontual de dados.
   ///
-  /// Inclui a COTA estourada (402 `exceed_egress_quota`): do ponto de vista do
-  /// app a nuvem está fora — insistir a cada tabela/heartbeat só enche o log.
+  /// Inclui a COTA estourada do Neon (402 `exceed_egress_quota` /
+  /// `GENERIC_QUOTA_EXCEEDED`): do ponto de vista do app a nuvem está fora —
+  /// insistir a cada tabela/heartbeat só enche o log e gasta mais cota.
   static bool isErroInfraestrutura(Object? e) {
     final s = e?.toString().toLowerCase() ?? '';
     if (s.isEmpty) return false;
+    // PGRST205: "Could not find the table ... in the schema cache" — erro de
+    // DADOS (tabela inexistente), NÃO de infra. Sem este filtro, o 404 de uma
+    // tabela ainda não criada (ex: pedidos_compra) dispara o circuit breaker e
+    // derruba a nuvem inteira por 2 minutos.
+    if (s.contains('pgrst205') || s.contains('could not find the table')) {
+      return false;
+    }
     return s.contains('pgrst002') ||
-        s.contains('schema cache') ||
+        // "schema cache" sozinho (PGRST002) = Postgres inacessível = infra.
+        // Com "could not find" já foi descartado acima (PGRST205 = dados).
+        (s.contains('schema cache') && !s.contains('could not find')) ||
         s.contains('service unavailable') ||
         s.contains('gateway timeout') ||
         s.contains('upstream request timeout') ||
         s.contains('exceed_egress_quota') ||
+        s.contains('generic_quota_exceeded') ||
+        s.contains('exceeded the quota') ||
+        s.contains('quota_exceeded') ||
         s.contains('restricted due to') ||
         s.contains('payment required') ||
+        s.contains('http 402') ||
         s.contains('code: 402') ||
         s.contains('code: 503') ||
         s.contains('code: 504');
   }
 
-  /// Inicializa o Supabase
+  /// Inicializa o acesso à nuvem do Neon (Data API + Neon Auth).
   static Future<void> initialize() async {
     try {
-      if (SupabaseConfig.url == 'YOUR_SUPABASE_URL') {
-        debugPrint('>>> [Supabase] ⚠️ Supabase URL não configurada.');
+      if (!NeonConfig.dataApiDisponivel) {
+        debugPrint(
+          '>>> [Neon] ⚠️ Data API não configurada (NEON_DATA_API_URL ausente '
+          'em ${NeonConfig.nomeArquivo}). O app segue em modo local.',
+        );
         return;
       }
 
-      await Supabase.initialize(
-        url: SupabaseConfig.url,
-        anonKey: SupabaseConfig.anonKey,
-        debug: kDebugMode,
-      );
+      // O Neon Auth emite o JWT que a Data API exige: sem ele toda consulta
+      // responde 401, então é o primeiro passo do boot.
+      await NeonClient.instance.inicializar();
+
       // Verificar conectividade real
       try {
-        final response = await Supabase.instance.client
+        final response = await NeonClient.instance
             .from('empresas')
             .select('id')
             .limit(1)
             .timeout(const Duration(seconds: 5));
         debugPrint(
-          '>>> [Supabase] ✅ Conectividade verificada: ${response.length} empresas acessíveis',
+          '>>> [Neon] ✅ Conectividade verificada: ${response.length} empresas acessíveis',
         );
       } catch (e) {
-        debugPrint(
-          '>>> [Supabase] ⚠️ Erro na verificação de conectividade: $e',
-        );
-        // Se a nuvem está fora ou com a cota estourada (402), aciona o
+        debugPrint('>>> [Neon] ⚠️ Erro na verificação de conectividade: $e');
+        // Se a nuvem está fora ou com a cota estourada, aciona o
         // circuit breaker: evita a tempestade de tentativas a cada tabela no
         // boot. O login passa a usar só o banco local nesse período.
         SupabaseService.instance._marcarIndisponivelSeInfra(e);
-        debugPrint(
-          '>>> [Supabase] ℹ️ Isso pode ser normal se não houver empresas ou problema de CORS',
-        );
       }
     } catch (e) {
-      debugPrint('>>> [Supabase] ❌ Erro ao inicializar: $e');
+      debugPrint('>>> [Neon] ❌ Erro ao inicializar: $e');
     }
   }
 
@@ -231,6 +239,7 @@ class SupabaseService {
   static const String tableMotoristas = 'motoristas';
   static const String tableAgendamentosServico = 'agendamentos_servico';
   static const String tableNotasEntrada = 'notas_entrada';
+  static const String tablePedidosCompra = 'pedidos_compra';
   static const String tableFuncionarios = 'funcionarios';
   static const String tableTaxasEntrega = 'taxas_entrega';
   static const String tableContasPagar = 'contas_pagar';
@@ -245,7 +254,7 @@ class SupabaseService {
   static const String tableComissoesVendedores = 'comissoes_vendedores';
 
   /// Obtém dados filtrados por empresa_id
-  SupabaseQueryBuilder _from(String table) {
+  pg.PostgrestQueryBuilder<void> _from(String table) {
     return _client.from(table);
   }
 
@@ -256,6 +265,13 @@ class SupabaseService {
     String empresaId, {
     DateTime? lastSync,
     int mesesRetroativos = 3,
+    bool deltaCatalogo = false,
+    // Quando informado, baixa APENAS estas tabelas (nomes físicos, ex.:
+    // `produtos`). É o que o aviso do Realtime usa: um produto alterado no
+    // outro aparelho precisa de UMA consulta, não das 30 tabelas do ciclo
+    // completo — no celular essa varredura levava dezenas de segundos e a
+    // alteração só aparecia "depois de um tempo".
+    Set<String>? tabelas,
   }) async {
     try {
       if (!isAvailable) {
@@ -303,6 +319,7 @@ class SupabaseService {
         tableMotoristas: 'motoristas',
         tableAgendamentosServico: 'agendamentos_servico',
         tableNotasEntrada: 'notas_entrada',
+        tablePedidosCompra: 'pedidos_compra',
         tableFuncionarios: 'funcionarios',
         tableTaxasEntrega: 'taxas_entrega',
         tableContasPagar: 'contas_pagar',
@@ -331,6 +348,13 @@ class SupabaseService {
         tableAjustesEstoqueLote,
       };
 
+      // EGRESS: catálogo que TAMBÉM pode usar delta (quando `deltaCatalogo` está
+      // ligado). Só entram aqui as tabelas que têm trigger de `updated_at` no
+      // banco — são as únicas em que toda alteração atualiza a marca, então o
+      // delta não perde registro. `produtos` sozinho é ~5 MB por ciclo: sem
+      // isto o pulso de 45 s rebaixava a tabela inteira dezenas de vezes ao dia.
+      const tabelasComDeltaSeguro = {tableProdutos, tableClientes};
+
       // Contadores de falha: quando o Supabase está fora do ar (PGRST002/503/
       // 504) TODAS as tabelas falham e voltam vazias. Sem contabilizar, o
       // chamador trataria "tudo vazio" como "nenhum dado novo" e marcaria a
@@ -339,9 +363,15 @@ class SupabaseService {
       final List<String> tabelasFalhadas = <String>[];
       bool servidorFora = servidorIndisponivel;
 
+      // Recorte opcional (aviso do Realtime): só as tabelas pedidas.
+      final recorte = (tabelas == null || tabelas.isEmpty) ? null : tabelas;
+      var totalConsultadas = 0;
+
       for (var tableEntry in tabelasMap.entries) {
         final tableName = tableEntry.key;
         final dataKey = tableEntry.value;
+        if (recorte != null && !recorte.contains(tableName)) continue;
+        totalConsultadas++;
 
         // Circuit breaker: se o servidor já se mostrou indisponível, não insiste
         // nas demais tabelas — só pioraria a sobrecarga e o log.
@@ -362,8 +392,15 @@ class SupabaseService {
           while (hasMore) {
             var query = _from(tableName).select().eq('empresa_id', empresaId);
 
-            if (lastSync != null &&
-                !tabelasSempreCompletas.contains(tableName)) {
+            // EGRESS: quando o banco local já tem os catálogos (deltaCatalogo) e
+            // a tabela tem trigger de updated_at, busca só o que mudou.
+            final usaDelta =
+                lastSync != null &&
+                (!tabelasSempreCompletas.contains(tableName) ||
+                    (deltaCatalogo &&
+                        tabelasComDeltaSeguro.contains(tableName)));
+
+            if (usaDelta) {
               query = query.gte(
                 'updated_at',
                 lastSync.toUtc().toIso8601String(),
@@ -420,7 +457,7 @@ class SupabaseService {
       return {
         'data': dados,
         'falhas': falhas,
-        'totalTabelas': tabelasMap.length,
+        'totalTabelas': totalConsultadas,
         'servidorIndisponivel': servidorFora,
         'tabelasFalhadas': tabelasFalhadas,
       };
@@ -449,6 +486,7 @@ class SupabaseService {
     required List<Motorista> motoristas,
     required List<AgendamentoServico> agendamentosServico,
     required List<NotaEntrada> notasEntrada,
+    List<PedidoCompra>? pedidosCompra,
     required List<Funcionario> funcionarios,
     required List<TaxaEntrega> taxasEntrega,
     required List<ContaPagar> contasPagar,
@@ -496,6 +534,7 @@ class SupabaseService {
         tableMotoristas: motoristas,
         tableAgendamentosServico: agendamentosServico,
         tableNotasEntrada: notasEntrada,
+        tablePedidosCompra: pedidosCompra ?? [],
         tableFuncionarios: funcionarios,
         tableTaxasEntrega: taxasEntrega,
         tableContasPagar: contasPagar,
@@ -525,6 +564,7 @@ class SupabaseService {
         final List<Map<String, dynamic>> maps = lista.map((item) {
           final map = (item as dynamic).toMap() as Map<String, dynamic>;
           map['empresa_id'] = empresaId; // Garantir empresa_id
+          _carimbarUpdatedAt(table, map);
 
           // Tratar problema PGRST204 - Coluna não existe no Supabase
           if (table == tableProdutos) {
@@ -638,6 +678,9 @@ class SupabaseService {
           );
         }
       }
+      for (final item in lista) {
+        _carimbarUpdatedAt(table, item, colunasReais: colunas);
+      }
       final query = _client.from(table).upsert(lista, onConflict: onConflict);
       await query.timeout(const Duration(seconds: 60));
       debugPrint(
@@ -685,51 +728,82 @@ class SupabaseService {
         'updated_at': DateTime.now().toIso8601String(),
       };
 
-      debugPrint('>>> [Supabase] 📤 Enviando dados de teste: $testData');
+      debugPrint('>>> [Neon] 📤 Enviando dados de teste: $testData');
 
-      final response = await _client.from(tableProdutos).upsert([
-        _toSafeMap(testData),
-      ]).select();
+      // O retorno da mutação não é usado (o cliente PostgREST é tipado em
+      // `void`); o que importa é a chamada ter sucesso.
+      await _client.from(tableProdutos).upsert([_toSafeMap(testData)]).select();
 
-      debugPrint('>>> [Supabase] ✅ Teste de inserção OK! Resposta: $response');
-      return {'sucesso': true, 'resposta': response};
+      debugPrint('>>> [Neon] ✅ Teste de inserção OK!');
+      return {'sucesso': true};
     } catch (e) {
-      debugPrint('>>> [Supabase] ❌ FALHA no teste de inserção: $e');
+      debugPrint('>>> [Neon] ❌ FALHA no teste de inserção: $e');
       return {'sucesso': false, 'erro': e.toString()};
     }
   }
 
   // ============ MÉTODOS DE AUTH ============
+  //
+  // A identidade do app NÃO vem do provedor de nuvem: o login é validado
+  // contra a tabela `usuarios` (senha em texto, como sempre foi) e funciona
+  // offline. Da nuvem só se usa a credencial de serviço (token anônimo do Neon
+  // Auth) que a Data API exige. Ver [NeonClient].
+  //
+  // Três respostas possíveis em [validarCredenciaisNaNuvem]:
+  //   true  → a nuvem confirmou as credenciais;
+  //   false → a nuvem CONHECE o e-mail e a senha não confere (recusa real);
+  //   null  → a nuvem não conhece esse e-mail (ex.: usuário criado offline).
+  //           A palavra final é do banco local.
+  Future<bool?> validarCredenciaisNaNuvem(String email, String senha) async {
+    final alvo = email.trim().toLowerCase();
+    if (alvo.isEmpty) return null;
+    final local = alvo.contains('@') ? alvo.split('@').first : alvo;
 
-  Future<AuthResponse> login(String email, String password) async {
-    return await _client.auth.signInWithPassword(
-      email: email,
-      password: password,
+    final linhas = await _client
+        .from(tableUsuarios)
+        .select('id, senha')
+        .inFilter('email', <String>{alvo, local}.toList())
+        .limit(20);
+
+    if (linhas.isEmpty) return null;
+    final senhaLimpa = senha.trim();
+    return linhas.any(
+      (linha) => (linha['senha']?.toString() ?? '').trim() == senhaLimpa,
     );
   }
 
+  /// Valida as credenciais na nuvem e lança quando ela RECUSA a senha.
+  ///
+  /// Mantido para compatibilidade com chamadas antigas ao SDK do Supabase
+  /// (que fazia `signInWithPassword`).
+  Future<void> login(String email, String password) async {
+    final resultado = await validarCredenciaisNaNuvem(email, password);
+    if (resultado == false) {
+      throw Exception('A nuvem recusou as credenciais de $email');
+    }
+  }
+
+  /// Sessão exclusiva "uma conta, um PC".
+  ///
+  /// O app chamava a RPC `claim_user_device_session`, que NÃO existe no schema
+  /// — nem no Neon, nem no dump do Supabase (nunca existiu lá também). O efeito
+  /// prático era o erro ser confundido com indisponibilidade de infraestrutura
+  /// e o login seguir em modo local com aviso; ou seja, o controle nunca
+  /// chegou a valer. Aqui a checagem é explícita e local: devolvemos `true`
+  /// (esta máquina é aceita) sem gastar requisição. Ver README de migração.
   Future<bool> reivindicarSessaoDeUsuario({
     required String machineId,
     required String machineName,
   }) async {
-    if (!isAvailable || _client.auth.currentUser == null) return false;
-    final result = await _client.rpc(
-      'claim_user_device_session',
-      params: {'p_machine_id': machineId, 'p_machine_name': machineName},
-    );
-    return result == true;
+    return true;
   }
 
-  Future<void> liberarSessaoDeUsuario(String machineId) async {
-    if (!isAvailable || _client.auth.currentUser == null) return;
-    await _client.rpc(
-      'release_user_device_session',
-      params: {'p_machine_id': machineId},
-    );
-  }
+  /// Contraparte de [reivindicarSessaoDeUsuario]: nada a liberar na nuvem.
+  Future<void> liberarSessaoDeUsuario(String machineId) async {}
 
-  Future<AuthResponse> signUp(String email, String password) async {
-    return await _client.auth.signUp(email: email, password: password);
+  /// Compatibilidade com o antigo cadastro de conta no provedor de auth.
+  Future<void> signUp(String email, String password) async {
+    await _client.auth.signUp(email: email, password: password);
   }
 
   Future<void> logout() async {
@@ -929,6 +1003,10 @@ class SupabaseService {
       m.remove('perguntasSelecao');
       m.remove('exibir_composicao_pdv');
       m.remove('exibirComposicaoPdv');
+      // Existe apenas no Postgres LOCAL. Sem removê-la, TODO upsert de produto
+      // falhava com PGRST204 e a edição era descartada silenciosamente.
+      m.remove('codigos_barras_adicionais');
+      m.remove('codigosBarrasAdicionais');
     }
     if (table.contains('pedidos')) {
       m.remove('acrescimoTotal');
@@ -1018,12 +1096,23 @@ class SupabaseService {
         }
       }
 
+      // Toda escrita é uma VERSÃO NOVA. Sem este carimbo, uma alteração
+      // parcial (ex.: só o estoque, feita no site) não entra no delta e o PC
+      // nunca a baixa.
+      _carimbarUpdatedAt(table, dataToUpsert, colunasReais: colunas);
       final safeData = _toSafeMap(dataToUpsert);
       await _client
           .from(table)
           .upsert(safeData, onConflict: onConflict)
           .timeout(const Duration(seconds: 8));
       debugPrint('>>> [Supabase] ✅ Upsert concluído em $table');
+      // Empresa garantida na nuvem: libera o cache da FK de `usuarios`.
+      if (table == tableEmpresas) {
+        final idEmpresa = safeData['id']?.toString();
+        if (idEmpresa != null && idEmpresa.isNotEmpty) {
+          (_empresasNaNuvemCache ??= <String>{}).add(idEmpresa);
+        }
+      }
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao fazer upsert em $table: $e');
       rethrow;
@@ -1063,47 +1152,12 @@ class SupabaseService {
   }
 
   Future<Set<String>> _detectarColunasUsuariosInterno() async {
-    try {
-      final resp = await http
-          .get(
-            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-            headers: {
-              'apikey': SupabaseConfig.anonKey,
-              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (resp.statusCode == 200) {
-        final decoded = jsonDecode(resp.body);
-        if (decoded is Map<String, dynamic>) {
-          final definitions = decoded['definitions'];
-          if (definitions is Map<String, dynamic>) {
-            final usuarios = definitions['usuarios'];
-            if (usuarios is Map<String, dynamic>) {
-              final properties = usuarios['properties'];
-              if (properties is Map<String, dynamic>) {
-                final colunas = properties.keys.toSet();
-                debugPrint(
-                  '>>> [Supabase] ℹ️ Colunas reais de usuarios detectadas (${colunas.length}): ${colunas.join(', ')}',
-                );
-                return colunas;
-              }
-            }
-          }
-        }
-      } else {
-        debugPrint(
-          '>>> [Supabase] ⚠️ Falha ao detectar colunas de usuarios (HTTP ${resp.statusCode})',
-        );
-        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
-      }
-    } catch (e) {
-      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de usuarios: $e');
-      _marcarIndisponivelSeInfra(e);
-    }
-    return _colunasUsuariosFallback;
+    final colunas = (await _detectarColunasTodasTabelas())[tableUsuarios];
+    if (colunas == null || colunas.isEmpty) return _colunasUsuariosFallback;
+    debugPrint(
+      '>>> [Neon] ℹ️ Colunas reais de usuarios detectadas (${colunas.length}): ${colunas.join(', ')}',
+    );
+    return colunas;
   }
 
   /// ============================================================
@@ -1130,54 +1184,147 @@ class SupabaseService {
     _detectandoColunasTodasTabelas = futuro;
     try {
       final colunas = await futuro;
-      _colunasTodasTabelasCache = colunas;
+      // Não cacheia vazio: se a leitura falhou (banco fora), a próxima
+      // tentativa precisa poder tentar de novo.
+      if (colunas.isNotEmpty) _colunasTodasTabelasCache = colunas;
       return colunas;
     } finally {
       _detectandoColunasTodasTabelas = null;
     }
   }
 
-  Future<Map<String, Set<String>>> _detectarColunasTodasTabelasInterno() async {
-    final resultado = <String, Set<String>>{};
-    try {
-      final resp = await http
-          .get(
-            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-            headers: {
-              'apikey': SupabaseConfig.anonKey,
-              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
+  /// Colunas reais de todas as tabelas de `public`, lidas do PRÓPRIO Postgres
+  /// do Neon (`information_schema`).
+  ///
+  /// Substitui a leitura do OpenAPI do PostgREST (`GET /rest/v1/`) que existia
+  /// no Supabase: além de custar centenas de KB a cada boot, a Data API do Neon
+  /// não publica esse documento (responde praticamente vazio). A consulta ao
+  /// `information_schema` devolve só nomes de colunas (poucos KB), é exata e
+  /// aproveita a conexão direta que o app já tem com o Neon.
+  static Map<String, Set<String>>? _colunasPostgresCache;
+  static Future<Map<String, Set<String>>>? _lendoColunasPostgres;
 
-      if (resp.statusCode == 200) {
-        final decoded = jsonDecode(resp.body);
-        if (decoded is Map<String, dynamic>) {
-          final definitions = decoded['definitions'];
-          if (definitions is Map<String, dynamic>) {
-            definitions.forEach((nome, def) {
-              if (def is Map<String, dynamic>) {
-                final properties = def['properties'];
-                if (properties is Map<String, dynamic>) {
-                  resultado[nome] = properties.keys.toSet();
-                }
-              }
-            });
-            debugPrint(
-              '>>> [Supabase] ℹ️ Colunas reais detectadas via OpenAPI (${resultado.length} tabelas)',
-            );
-          }
-        }
-      } else {
+  static Future<Map<String, Set<String>>> _colunasDoPostgres() {
+    final cache = _colunasPostgresCache;
+    if (cache != null) return Future.value(cache);
+    final emAndamento = _lendoColunasPostgres;
+    if (emAndamento != null) return emAndamento;
+    final futuro = _lerColunasDoPostgres();
+    _lendoColunasPostgres = futuro;
+    return futuro.whenComplete(() => _lendoColunasPostgres = null);
+  }
+
+  static Future<Map<String, Set<String>>> _lerColunasDoPostgres() async {
+    final resultado = <String, Set<String>>{};
+    if (!NeonConfig.postgresDisponivel) return resultado;
+    Connection? conn;
+    try {
+      conn = await NeonService.abrirConexao();
+      final linhas = await conn.execute(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
+      );
+      for (final linha in linhas) {
+        final tabela = linha[0] as String;
+        final coluna = linha[1] as String;
+        (resultado[tabela] ??= <String>{}).add(coluna);
+      }
+      if (resultado.isNotEmpty) _colunasPostgresCache = resultado;
+      debugPrint(
+        '>>> [Neon] ℹ️ Colunas reais lidas do information_schema '
+        '(${resultado.length} tabelas).',
+      );
+    } catch (e) {
+      debugPrint('>>> [Neon] ⚠️ Falha ao ler colunas do Postgres: $e');
+    } finally {
+      await conn?.close();
+    }
+    return resultado;
+  }
+
+  Future<Map<String, Set<String>>> _detectarColunasTodasTabelasInterno() async {
+    final doPostgres = await _colunasDoPostgres();
+    if (doPostgres.isNotEmpty) return doPostgres;
+    // Sem DATABASE_URL (site/celular): a única porta para a nuvem é a Data API.
+    // O OpenAPI dela lista as colunas reais de cada tabela e mantém o filtro
+    // ativo — sem isso, um campo que só existe no banco local (ex.:
+    // codigos_barras_adicionais) derrubava o registro inteiro com PGRST204.
+    final doOpenApi = await _colunasDoOpenApi();
+    return doOpenApi.isNotEmpty ? doOpenApi : doPostgres;
+  }
+
+  /// Colunas reais de todas as tabelas, lidas do documento OpenAPI/Swagger que
+  /// o próprio PostgREST publica em `GET <dataApiUrl>/`.
+  ///
+  /// É o fallback de [_lerColunasDoPostgres] para quando não há conexão direta
+  /// com o Postgres (Flutter Web e celular, onde `DATABASE_URL` não existe).
+  /// No site, o filtro de colunas simplesmente não rodava e qualquer coluna
+  /// desconhecida fazia o upsert falhar por completo.
+  static Map<String, Set<String>>? _colunasOpenApiCache;
+  static Future<Map<String, Set<String>>>? _lendoColunasOpenApi;
+  static DateTime? _openApiFalhouEm;
+  static const Duration _cooldownOpenApi = Duration(minutes: 5);
+
+  static Future<Map<String, Set<String>>> _colunasDoOpenApi() {
+    final cache = _colunasOpenApiCache;
+    if (cache != null) return Future.value(cache);
+    // Falhou há pouco: não repete o download (o documento tem centenas de KB)
+    // a cada upsert. Passado o cooldown, tenta de novo.
+    final falhouEm = _openApiFalhouEm;
+    if (falhouEm != null &&
+        DateTime.now().difference(falhouEm) < _cooldownOpenApi) {
+      return Future.value(const <String, Set<String>>{});
+    }
+    final emAndamento = _lendoColunasOpenApi;
+    if (emAndamento != null) return emAndamento;
+    final futuro = _lerColunasDoOpenApi();
+    _lendoColunasOpenApi = futuro;
+    return futuro.whenComplete(() => _lendoColunasOpenApi = null);
+  }
+
+  static Future<Map<String, Set<String>>> _lerColunasDoOpenApi() async {
+    final resultado = <String, Set<String>>{};
+    final base = NeonConfig.dataApiUrl.trim();
+    if (base.isEmpty) return resultado;
+    try {
+      final uri = Uri.parse(base.endsWith('/') ? base : '$base/');
+      final resposta = await http
+          .get(uri, headers: NeonClient.instance.headers)
+          .timeout(const Duration(seconds: 12));
+      if (resposta.statusCode != 200) {
+        _openApiFalhouEm = DateTime.now();
         debugPrint(
-          '>>> [Supabase] ⚠️ Falha ao detectar colunas via OpenAPI (HTTP ${resp.statusCode})',
+          '>>> [Supabase] ⚠️ OpenAPI respondeu HTTP ${resposta.statusCode}; '
+          'seguindo sem filtro dinâmico de colunas.',
         );
-        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
+        return resultado;
+      }
+      final documento = jsonDecode(resposta.body);
+      if (documento is! Map) return resultado;
+      final componentes = documento['components'];
+      final definicoes =
+          documento['definitions'] ??
+          (componentes is Map ? componentes['schemas'] : null);
+      if (definicoes is! Map) return resultado;
+      definicoes.forEach((tabela, definicao) {
+        if (definicao is! Map) return;
+        final propriedades = definicao['properties'];
+        if (propriedades is! Map) return;
+        resultado[tabela.toString()] = propriedades.keys
+            .map((coluna) => coluna.toString())
+            .toSet();
+      });
+      if (resultado.isNotEmpty) {
+        _colunasOpenApiCache = resultado;
+        _openApiFalhouEm = null;
+        debugPrint(
+          '>>> [Supabase] ℹ️ Colunas reais lidas do OpenAPI da Data API '
+          '(${resultado.length} tabelas).',
+        );
       }
     } catch (e) {
-      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas via OpenAPI: $e');
-      _marcarIndisponivelSeInfra(e);
+      _openApiFalhouEm = DateTime.now();
+      debugPrint('>>> [Supabase] ⚠️ Falha ao ler colunas do OpenAPI: $e');
     }
     return resultado;
   }
@@ -1207,6 +1354,81 @@ class SupabaseService {
             .skip(1)
             .map((p) => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1))
             .join();
+  }
+
+  /// Tabelas que têm a coluna `updated_at` na nuvem. Usado para carimbar a
+  /// versão das escritas parciais (ver [_carimbarUpdatedAt]).
+  static const Set<String> _tabelasComUpdatedAt = {
+    'aberturas_caixa',
+    'agendamentos_servico',
+    'ajustes_estoque_lote',
+    'caixa',
+    'clientes',
+    'comissoes_vendedores',
+    'contas_pagar',
+    'departamentos',
+    'empresas',
+    'entregas',
+    'estoque_historico',
+    'fechamentos_caixa',
+    'funcionarios',
+    'links_vendedores',
+    'lotes_produto',
+    'mesas_comandas',
+    'motoristas',
+    'nfces',
+    'nfes',
+    'notas_entrada',
+    'pedidos_compra',
+    'orcamentos',
+    'ordens_servico',
+    'pedidos',
+    'perfis_tributarios',
+    'produto_historico',
+    'produtos',
+    'romaneios',
+    'sangrias_caixa',
+    'servicos',
+    'servicos_realizados',
+    'suprimentos_caixa',
+    'taxas_entrega',
+    'trocas_devolucoes',
+    'vendas_balcao',
+  };
+
+  /// Carimba `updated_at = agora` em TODA escrita na nuvem que não trouxe a
+  /// coluna.
+  ///
+  /// O delta sync (no app e no sincronizador do PC) descobre o que mudou por
+  /// `updated_at`. Quando o site altera só um campo (ex.: estoque), o payload
+  /// é parcial e não inclui a coluna: a linha mudava na nuvem, mas continuava
+  /// com a data antiga e NUNCA era baixada — o sintoma "alterei no site e o
+  /// app local não mudou".
+  ///
+  /// [colunasReais] quando conhecido evita enviar a coluna para tabelas que
+  /// não a têm (e o PGRST204). Sem ele, usa a lista das tabelas conhecidas.
+  static void _carimbarUpdatedAt(
+    String table,
+    Map<String, dynamic> data, {
+    Set<String>? colunasReais,
+  }) {
+    final temColuna = colunasReais != null
+        ? colunasReais.contains('updated_at')
+        : _tabelasComUpdatedAt.contains(table);
+    if (!temColuna) return;
+    final atual = data['updated_at'];
+    if (atual != null && atual.toString().trim().isNotEmpty) return;
+    data['updated_at'] = DateTime.now().toUtc().toIso8601String();
+  }
+
+  /// Exposto apenas para teste (ver [_carimbarUpdatedAt]).
+  @visibleForTesting
+  static void carimbarUpdatedAtParaTeste(
+    String table,
+    Map<String, dynamic> data, {
+    Set<String>? colunasReais,
+  }) {
+    _carimbarUpdatedAt(table, data, colunasReais: colunasReais);
   }
 
   /// Filtra um mapa para conter SOMENTE colunas que existem na tabela real do
@@ -1280,49 +1502,74 @@ class SupabaseService {
   }
 
   Future<Set<String>> _detectarColunasEmpresasInterno() async {
-    try {
-      final resp = await http
-          .get(
-            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-            headers: {
-              'apikey': SupabaseConfig.anonKey,
-              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
+    final colunas = (await _detectarColunasTodasTabelas())[tableEmpresas];
+    if (colunas == null || colunas.isEmpty) return _colunasEmpresasFallback;
+    debugPrint(
+      '>>> [Neon] ℹ️ Colunas reais de empresas detectadas (${colunas.length}): ${colunas.join(', ')}',
+    );
+    return colunas;
+  }
 
-      if (resp.statusCode == 200) {
-        final decoded = jsonDecode(resp.body);
-        if (decoded is Map<String, dynamic>) {
-          final definitions = decoded['definitions'];
-          if (definitions is Map<String, dynamic>) {
-            final empresas = definitions['empresas'];
-            if (empresas is Map<String, dynamic>) {
-              final properties = empresas['properties'];
-              if (properties is Map<String, dynamic>) {
-                final colunas = properties.keys.toSet();
-                debugPrint(
-                  '>>> [Supabase] ℹ️ Colunas reais de empresas detectadas (${colunas.length}): ${colunas.join(', ')}',
-                );
-                return colunas;
-              }
-            }
-          }
-        }
-      } else {
+  /// IDs das empresas que a NUVEM conhece (cache positivo, preenchido na
+  /// primeira consulta). É a memória curta que evita o erro 23503 dos usuários.
+  Set<String>? _empresasNaNuvemCache;
+
+  /// A empresa [empresaId] existe na tabela `empresas` da nuvem?
+  ///
+  /// A tabela `usuarios` tem FK para `empresas` (`usuarios_empresa_id_fkey`).
+  /// Mandar um usuário cuja empresa só existe no banco LOCAL (ex.: empresa de
+  /// teste criada aqui, ou recém-criada e ainda não enviada) faz o Postgres
+  /// recusar a linha com 23503 — e a sincronização ficava repetindo "ERRO
+  /// GRAVE" para sempre, sem nunca conseguir gravar. Com esta verificação o app
+  /// sabe, antes de tentar, se a empresa está na nuvem, e mantém o usuário
+  /// apenas local quando não está.
+  ///
+  /// Devolve `true` quando a consulta falha (rede): na dúvida, deixamos o envio
+  /// acontecer — a FK do banco continua sendo a proteção final.
+  Future<bool> empresaExisteNaNuvem(String empresaId) async {
+    if (empresaId.isEmpty) return false;
+    if (!isAvailable) return true;
+
+    var cache = _empresasNaNuvemCache;
+    if (cache == null) {
+      try {
+        final linhas = await _client
+            .from(tableEmpresas)
+            .select('id')
+            .timeout(const Duration(seconds: 8));
+        cache = <String>{
+          for (final linha in linhas as List) linha['id'].toString(),
+        };
+        _empresasNaNuvemCache = cache;
+      } catch (e) {
         debugPrint(
-          '>>> [Supabase] ⚠️ Falha ao detectar colunas de empresas (HTTP ${resp.statusCode})',
+          '>>> [Supabase] ⚠️ Não consegui listar as empresas da nuvem: $e',
         );
-        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
+        return true;
+      }
+    }
+    if (cache.contains(empresaId)) return true;
+
+    // Empresa criada nesta sessão DEPOIS do cache ter sido montado: confirma
+    // pontualmente (uma consulta só, e só para id fora da lista conhecida).
+    try {
+      final linhas = await _client
+          .from(tableEmpresas)
+          .select('id')
+          .eq('id', empresaId)
+          .limit(1)
+          .timeout(const Duration(seconds: 8));
+      if ((linhas as List).isNotEmpty) {
+        cache.add(empresaId);
+        return true;
       }
     } catch (e) {
-      debugPrint('>>> [Supabase] ⚠️ Falha ao detectar colunas de empresas: $e');
-      _marcarIndisponivelSeInfra(e);
+      debugPrint(
+        '>>> [Supabase] ⚠️ Não consegui confirmar a empresa $empresaId na nuvem: $e',
+      );
+      return true;
     }
-    // Fallback conservador: colunas conhecidas do schema
-    // (ADICIONAR_CONFIGURACOES_EMPRESA.sql / SUPABASE_FIX_ALL.sql).
-    return _colunasEmpresasFallback;
+    return false;
   }
 
   /// Upsert resiliente de um usuário no Supabase.
@@ -1344,6 +1591,22 @@ class SupabaseService {
     }
     if (dados['empresa_id'] == null || dados['empresa_id'].toString().isEmpty) {
       throw Exception('Usuário sem empresa_id não pode ir para a nuvem');
+    }
+
+    // 🏠 TRAVA DA FK (usuarios_empresa_id_fkey).
+    //
+    // Sem a empresa na nuvem o Postgres recusa o usuário com 23503 e o erro se
+    // repetia a cada salvamento ("ERRO GRAVE: usuário ... NÃO sincronizou").
+    // Empresa que existe só no banco local (teste, demo, ou ainda não enviada)
+    // não pode receber usuário na nuvem: aqui pulamos ANTES de tentar, de forma
+    // silenciosa e explícita, mantendo o usuário apenas no banco local.
+    final empresaIdDoUsuario = dados['empresa_id'].toString();
+    if (!await empresaExisteNaNuvem(empresaIdDoUsuario)) {
+      debugPrint(
+        '>>> [Supabase] 🏠 Usuário ${dados['id']} mantido apenas LOCAL: a empresa '
+        '$empresaIdDoUsuario não existe na nuvem (usuarios_empresa_id_fkey).',
+      );
+      return;
     }
 
     // Filtra os dados para conter somente colunas que existem na tabela.
@@ -1400,51 +1663,14 @@ class SupabaseService {
   }
 
   Future<Set<String>> _detectarColunasEstoqueHistoricoInterno() async {
-    try {
-      final resp = await http
-          .get(
-            Uri.parse('${SupabaseConfig.url}/rest/v1/'),
-            headers: {
-              'apikey': SupabaseConfig.anonKey,
-              'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (resp.statusCode == 200) {
-        final decoded = jsonDecode(resp.body);
-        if (decoded is Map<String, dynamic>) {
-          final definitions = decoded['definitions'];
-          if (definitions is Map<String, dynamic>) {
-            final tabela = definitions['estoque_historico'];
-            if (tabela is Map<String, dynamic>) {
-              final properties = tabela['properties'];
-              if (properties is Map<String, dynamic>) {
-                final colunas = properties.keys.toSet();
-                debugPrint(
-                  '>>> [Supabase] ℹ️ Colunas reais de estoque_historico detectadas (${colunas.length}): ${colunas.join(', ')}',
-                );
-                return colunas;
-              }
-            }
-          }
-        }
-      } else {
-        debugPrint(
-          '>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico (HTTP ${resp.statusCode})',
-        );
-        _marcarIndisponivelSeInfra(null, statusCode: resp.statusCode);
-      }
-    } catch (e) {
-      debugPrint(
-        '>>> [Supabase] ⚠️ Falha ao detectar colunas de estoque_historico: $e',
-      );
-      _marcarIndisponivelSeInfra(e);
+    final colunas = (await _detectarColunasTodasTabelas())[tableEstoqueHistorico];
+    if (colunas == null || colunas.isEmpty) {
+      return _colunasEstoqueHistoricoFallback;
     }
-    // Fallback conservador: colunas conhecidas do schema (sem custo_unitario/
-    // valor_custo — que ainda não existem até rodar o SUPABASE_FIX_ALL.sql).
-    return _colunasEstoqueHistoricoFallback;
+    debugPrint(
+      '>>> [Neon] ℹ️ Colunas reais de estoque_historico detectadas (${colunas.length}): ${colunas.join(', ')}',
+    );
+    return colunas;
   }
 
   /// Realiza upsert de múltiplos itens em uma tabela (Batch)
@@ -1473,6 +1699,12 @@ class SupabaseService {
         enrichedData = enrichedData
             .map((m) => m..removeWhere((k, _) => !colunas.contains(k)))
             .toList();
+      }
+
+      // Mesmo carimbo do upsert individual: o lote pode estar atualizando só
+      // uma coluna e a nuvem precisa registrar que aquela linha mudou.
+      for (final item in enrichedData) {
+        _carimbarUpdatedAt(table, item);
       }
 
       final typedData = enrichedData.map((m) => _toSafeMap(m)).toList();
@@ -1538,6 +1770,17 @@ class SupabaseService {
             } else {
               rethrow;
             }
+          }
+        }
+      }
+
+      // Empresas garantidas na nuvem: libera o cache da FK de `usuarios` para
+      // que os masters recém-criados possam subir sem esperar o próximo ciclo.
+      if (table == tableEmpresas) {
+        for (final item in enrichedData) {
+          final idEmpresa = item['id']?.toString();
+          if (idEmpresa != null && idEmpresa.isNotEmpty) {
+            (_empresasNaNuvemCache ??= <String>{}).add(idEmpresa);
           }
         }
       }
@@ -1833,6 +2076,7 @@ class SupabaseService {
       tableRomaneios,
       tableFuncionarios,
       tableNotasEntrada,
+      tablePedidosCompra,
       tableAgendamentosServico,
       tableLotesProdutos,
       tableEstoqueHistorico,
@@ -1897,14 +2141,23 @@ class SupabaseService {
   /// SUPABASE_DB_PASSWORD estejam configuradas no .env.
   ///
   /// Retorna (sucesso, mensagens de log).
-  /// Cria tabelas no Supabase usando a Management API do Supabase
-  /// Requer um Personal Access Token (PAT) do Supabase configurado no .env
+  /// Verifica (e tenta criar) as tabelas que o app usa, na nuvem do Neon.
+  ///
+  /// A nuvem mudou de Supabase para Neon: a checagem agora usa a Data API
+  /// (PostgREST) do Neon, e o "criar tabela" continua dependendo de uma RPC
+  /// `executar_sql` — que NÃO existe no Neon. Para criar/alterar schema aqui o
+  /// caminho é migração (`pg_dump`/`psql`), não o app.
   Future<(bool, List<String>)> criarTabelasNoSupabase() async {
     final logs = <String>[];
-    final supabaseUrl = SupabaseConfig.url;
-    final apiKey = SupabaseConfig.anonKey;
+    final nuvemUrl = NeonConfig.dataApiUrl;
+    if (nuvemUrl.isEmpty) {
+      return (
+        false,
+        ['❌ NEON_DATA_API_URL não configurada em ${NeonConfig.nomeArquivo}'],
+      );
+    }
 
-    logs.add('🔌 Verificando e criando tabelas no Supabase...');
+    logs.add('🔌 Verificando e criando tabelas no Neon...');
 
     final sqlStatements = _getSqlCriarTabelas();
     int tabelasExistentes = 0;
@@ -1918,10 +2171,9 @@ class SupabaseService {
       try {
         final response = await http
             .get(
-              Uri.parse('$supabaseUrl/rest/v1/$nomeTabela?select=id&limit=1'),
+              Uri.parse('$nuvemUrl/$nomeTabela?select=id&limit=1'),
               headers: {
-                'apikey': apiKey,
-                'Authorization': 'Bearer $apiKey',
+                ...NeonClient.instance.headers,
                 'Content-Type': 'application/json',
               },
             )
@@ -1960,10 +2212,9 @@ class SupabaseService {
     try {
       final testResponse = await http
           .post(
-            Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
+            Uri.parse('$nuvemUrl/rpc/executar_sql'),
             headers: {
-              'apikey': apiKey,
-              'Authorization': 'Bearer $apiKey',
+              ...NeonClient.instance.headers,
               'Content-Type': 'application/json',
             },
             body: jsonEncode({'sql_query': 'SELECT 1'}),
@@ -2015,10 +2266,9 @@ class SupabaseService {
 
           final response = await http
               .post(
-                Uri.parse('$supabaseUrl/rest/v1/rpc/executar_sql'),
+                Uri.parse('$nuvemUrl/rpc/executar_sql'),
                 headers: {
-                  'apikey': apiKey,
-                  'Authorization': 'Bearer $apiKey',
+                  ...NeonClient.instance.headers,
                   'Content-Type': 'application/json',
                 },
                 body: jsonEncode({'sql_query': sqlLimpo}),
@@ -2077,26 +2327,17 @@ class SupabaseService {
     final logs = <String>[];
     final tabelasExistentes = <String>{};
 
-    if (!EnvConfig.supabaseDbAvailable) {
+    if (!NeonConfig.postgresDisponivel) {
       return (
         false,
         tabelasExistentes,
-        ['❌ Variáveis SUPABASE_DB_* não configuradas no .env'],
+        ['❌ NEON_DATABASE_URL não configurada em ${NeonConfig.nomeArquivo}'],
       );
     }
 
     Connection? conn;
     try {
-      conn = await Connection.open(
-        Endpoint(
-          host: EnvConfig.supabaseDbHost,
-          port: EnvConfig.supabaseDbPort,
-          database: EnvConfig.supabaseDbName,
-          username: EnvConfig.supabaseDbUser,
-          password: EnvConfig.supabaseDbPassword,
-        ),
-        settings: const ConnectionSettings(sslMode: SslMode.require),
-      );
+      conn = await NeonService.abrirConexao();
 
       final result = await conn.execute(
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
@@ -2389,6 +2630,28 @@ class SupabaseService {
         ALTER TABLE public.notas_entrada ENABLE ROW LEVEL SECURITY;
         DROP POLICY IF EXISTS service_role_notas_entrada ON public.notas_entrada;
         CREATE POLICY service_role_notas_entrada ON public.notas_entrada FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'pedidos_compra': """
+        CREATE TABLE IF NOT EXISTS public.pedidos_compra (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          numero TEXT DEFAULT '', fornecedor_id TEXT DEFAULT '',
+          fornecedor_nome TEXT DEFAULT '', fornecedor_cnpj TEXT DEFAULT '',
+          fornecedor_telefone TEXT DEFAULT '', status TEXT DEFAULT 'rascunho',
+          itens JSONB DEFAULT '[]'::jsonb, observacao TEXT DEFAULT '',
+          usuario TEXT DEFAULT '', estoque_destino_id TEXT DEFAULT '',
+          estoque_destino_nome TEXT DEFAULT '',
+          data_criacao TIMESTAMPTZ DEFAULT NOW(), data_envio TIMESTAMPTZ,
+          previsao_entrega TIMESTAMPTZ, data_recebimento TIMESTAMPTZ,
+          data_cancelamento TIMESTAMPTZ, motivo_cancelamento TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_pedidos_compra_empresa ON public.pedidos_compra(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_pedidos_compra_status ON public.pedidos_compra(status);
+        ALTER TABLE public.pedidos_compra ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_pedidos_compra ON public.pedidos_compra;
+        CREATE POLICY service_role_pedidos_compra ON public.pedidos_compra FOR ALL USING (auth.role() = 'service_role');
+        GRANT ALL ON TABLE public.pedidos_compra TO anon, authenticated, service_role;
       """,
 
       'ordens_servico': """
@@ -2699,6 +2962,32 @@ class SupabaseService {
         ALTER TABLE public.lotes_produto ENABLE ROW LEVEL SECURITY;
         DROP POLICY IF EXISTS service_role_lotes ON public.lotes_produto;
         CREATE POLICY service_role_lotes ON public.lotes_produto FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      // Faltava na nuvem: `ajustes_estoque_lote` é gravado pelo app, mas não
+      // estava neste mapa — num Neon novo o upsert falhava (PGRST205) e a
+      // operação era DESCARTADA pelo filtro de erro irrecuperável.
+      'ajustes_estoque_lote': """
+        CREATE TABLE IF NOT EXISTS public.ajustes_estoque_lote (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          data TIMESTAMPTZ NOT NULL DEFAULT NOW(), usuario TEXT DEFAULT '',
+          observacao TEXT DEFAULT '', origem TEXT DEFAULT 'Ajuste em massa',
+          itens JSONB NOT NULL DEFAULT '[]'::jsonb,
+          total_itens INTEGER DEFAULT 0,
+          total_estoques INTEGER DEFAULT 0,
+          total_precos INTEGER DEFAULT 0,
+          desfeito BOOLEAN NOT NULL DEFAULT false,
+          data_desfeito TIMESTAMPTZ,
+          usuario_desfeito TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE public.ajustes_estoque_lote ADD COLUMN IF NOT EXISTS empresa_id TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_ajustes_estoque_lote_empresa ON public.ajustes_estoque_lote(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_ajustes_estoque_lote_data ON public.ajustes_estoque_lote(data DESC);
+        CREATE INDEX IF NOT EXISTS idx_ajustes_estoque_lote_desfeito ON public.ajustes_estoque_lote(desfeito);
+        ALTER TABLE public.ajustes_estoque_lote ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_ajustes ON public.ajustes_estoque_lote;
+        CREATE POLICY service_role_ajustes ON public.ajustes_estoque_lote FOR ALL USING (auth.role() = 'service_role');
       """,
 
       'produto_historico': """

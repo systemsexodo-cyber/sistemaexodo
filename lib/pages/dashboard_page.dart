@@ -341,7 +341,7 @@ class _DashboardPageState extends State<DashboardPage> {
           backgroundColor: Colors.transparent,
           appBar: AppBar(
             title: const Text('Dashboard'),
-            centerTitle: true,
+            centerTitle: MediaQuery.of(context).size.width >= 700,
             backgroundColor: Colors.transparent,
             elevation: 0,
             leading: IconButton(

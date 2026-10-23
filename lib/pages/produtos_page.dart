@@ -444,33 +444,867 @@ class _ProdutosPageState extends State<ProdutosPage> {
     }
   }
 
+  void _exportarCsv(List<Produto> produtos) {
+    try {
+      debugPrint('>>> [ProdutosPage] Iniciando exportação CSV...');
+      if (produtos.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nenhum produto filtrado para exportar')),
+        );
+        return;
+      }
+      ExcelExportService.exportarProdutosCSV(produtos);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✓ CSV exportado! Verifique a pasta DOWNLOADS (Ctrl+J)'),
+          backgroundColor: Colors.blueAccent,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Erro na exportação CSV: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  void _exportarExcel(List<Produto> produtos) {
+    try {
+      debugPrint('>>> [ProdutosPage] Iniciando exportação Excel...');
+      if (produtos.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nenhum produto filtrado para exportar')),
+        );
+        return;
+      }
+      ExcelExportService.exportarProdutos(produtos);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✓ Exportação concluída! Verifique a pasta DOWNLOADS (Ctrl+J)'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Erro na exportação Excel: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  void _abrirInventarioContabilidade() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text(
+          'Gerar Inventário',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'Escolha o tipo de inventário que deseja gerar para a contabilidade:',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _gerarInventario(isRetroativo: false);
+            },
+            child: const Text('ESTOQUE ATUAL'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              final data = await showDatePicker(
+                context: context,
+                initialDate: DateTime(DateTime.now().year - 1, 12, 31),
+                firstDate: DateTime(2023),
+                lastDate: DateTime.now(),
+                helpText: 'Selecione a data do inventário retroativo',
+              );
+              if (data != null) {
+                _gerarInventario(isRetroativo: true, dataAlvo: data);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.amber.shade700,
+            ),
+            child: const Text('ESTOQUE RETROATIVO'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _campoBusca() {
+    return TextField(
+      controller: _buscaController,
+      onChanged: (v) {
+        setState(() {
+          _busca = v;
+          _resetPaginacao();
+        });
+      },
+      style: const TextStyle(color: Colors.white, fontSize: 15),
+      decoration: InputDecoration(
+        hintText: 'Buscar produtos...',
+        hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+        border: InputBorder.none,
+        isDense: true,
+      ),
+    );
+  }
+
+  Widget _limparBusca() {
+    return IconButton(
+      icon: const Icon(Icons.close, size: 18),
+      tooltip: 'Limpar busca',
+      onPressed: () {
+        _buscaController.clear();
+        setState(() {
+          _busca = '';
+          _resetPaginacao();
+        });
+      },
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+    );
+  }
+
+  /// Contagem de itens. No celular usa o formato compacto ("filtrados/total")
+  /// para não competir com o campo de busca; o detalhe fica no tooltip.
+  Widget _chipContagens(
+    DataService service,
+    List<Produto> produtosFiltrados, {
+    bool compacto = false,
+  }) {
+    final total = service.produtos.length;
+    final filtrados = produtosFiltrados.length;
+    final temFiltro = filtrados < total;
+    final decoracao = BoxDecoration(
+      color: Colors.blueAccent.withOpacity(0.2),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: Colors.blueAccent.withOpacity(0.4)),
+    );
+
+    if (compacto) {
+      return Tooltip(
+        message: temFiltro
+            ? 'Total: $total • Filtrados: $filtrados'
+            : 'Total: $total',
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: decoracao,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.inventory_2_outlined,
+                color: Colors.blueAccent.withOpacity(0.8),
+                size: 13,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                temFiltro ? '$filtrados/$total' : '$total',
+                style: const TextStyle(
+                  color: Colors.blueAccent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: decoracao,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.inventory_2_outlined,
+            color: Colors.blueAccent.withOpacity(0.8),
+            size: 14,
+          ),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              'Total: $total',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.blueAccent,
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          if (temFiltro) ...[
+            const SizedBox(width: 6),
+            Container(
+              width: 1,
+              height: 12,
+              color: Colors.blueAccent.withOpacity(0.3),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                'Filtrados: $filtrados',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.blueAccent.withOpacity(0.7),
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _botaoOrdenacao() {
+    return PopupMenuButton<SortOption>(
+      icon: Icon(
+        _sortOption == SortOption.codigo
+            ? Icons.tag
+            : _sortOption == SortOption.nome
+                ? Icons.sort_by_alpha
+                : _sortOption == SortOption.recentes
+                    ? Icons.history
+                    : _sortOption == SortOption.grupo
+                        ? Icons.category_outlined
+                        : Icons.straighten,
+        color: Colors.blueAccent,
+        size: 20,
+      ),
+      tooltip: 'Ordenar produtos',
+      onSelected: (option) => setState(() => _sortOption = option),
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: SortOption.codigo,
+          child: Row(children: [
+            Icon(Icons.tag, size: 16),
+            SizedBox(width: 8),
+            Text('Código'),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: SortOption.nome,
+          child: Row(children: [
+            Icon(Icons.sort_by_alpha, size: 16),
+            SizedBox(width: 8),
+            Text('Nome (A-Z)'),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: SortOption.recentes,
+          child: Row(children: [
+            Icon(Icons.history, size: 16),
+            SizedBox(width: 8),
+            Text('Recentes'),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: SortOption.grupo,
+          child: Row(children: [
+            Icon(Icons.category_outlined, size: 16),
+            SizedBox(width: 8),
+            Text('Grupo'),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: SortOption.unidade,
+          child: Row(children: [
+            Icon(Icons.straighten, size: 16),
+            SizedBox(width: 8),
+            Text('Unidade'),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  Widget _botaoFiltroGrupo(DataService service) {
+    return PopupMenuButton<String?>(
+      icon: Icon(
+        Icons.category,
+        color: _filtroGrupo != null ? Colors.purpleAccent : Colors.white60,
+        size: 20,
+      ),
+      tooltip: 'Filtrar por Grupo',
+      onSelected: (v) => setState(() {
+        _filtroGrupo = v;
+        _resetPaginacao();
+      }),
+      itemBuilder: (context) {
+        final grupos = service.produtos
+            .map((p) => p.grupo)
+            .where((g) => g.isNotEmpty)
+            .toSet()
+            .toList();
+        grupos.sort();
+        return [
+          const PopupMenuItem(value: null, child: Text('Todos os Grupos')),
+          ...grupos.map((g) => PopupMenuItem(value: g, child: Text(g))),
+        ];
+      },
+    );
+  }
+
+  Widget _botaoFiltroUnidade(DataService service) {
+    return PopupMenuButton<String?>(
+      icon: Icon(
+        Icons.straighten,
+        color: _filtroUnidade != null ? Colors.tealAccent : Colors.white60,
+        size: 20,
+      ),
+      tooltip: 'Filtrar por Unidade',
+      onSelected: (v) => setState(() {
+        _filtroUnidade = v;
+        _resetPaginacao();
+      }),
+      itemBuilder: (context) {
+        final unidades = service.produtos
+            .map((p) => p.unidade)
+            .where((u) => u.isNotEmpty)
+            .toSet()
+            .toList();
+        unidades.sort();
+        return [
+          const PopupMenuItem(value: null, child: Text('Todas as Unidades')),
+          ...unidades.map((u) => PopupMenuItem(value: u, child: Text(u))),
+        ];
+      },
+    );
+  }
+
+  Widget _botaoFiltroStatus() {
+    return PopupMenuButton<bool?>(
+      icon: Icon(
+        Icons.toggle_on,
+        color: _filtroAtivo == false
+            ? Colors.redAccent
+            : (_filtroAtivo == true ? Colors.greenAccent : Colors.white60),
+        size: 22,
+      ),
+      tooltip: 'Filtrar por Status',
+      onSelected: (v) {
+        setState(() {
+          _filtroAtivo = v;
+          _resetPaginacao();
+        });
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: null,
+          child: Row(children: [
+            Icon(Icons.select_all, size: 16, color: Colors.white70),
+            SizedBox(width: 8),
+            Text('Todos', style: TextStyle(color: Colors.white)),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: true,
+          child: Row(children: [
+            Icon(Icons.check_circle, size: 16, color: Colors.greenAccent),
+            SizedBox(width: 8),
+            Text('Ativos no PDV', style: TextStyle(color: Colors.greenAccent)),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: false,
+          child: Row(children: [
+            Icon(Icons.cancel, size: 16, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Desativados do PDV', style: TextStyle(color: Colors.redAccent)),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  Widget _botaoFiltroEstoque() {
+    return PopupMenuButton<int?>(
+      icon: Icon(
+        Icons.filter_list,
+        color: _filtroEstoque != null ? Colors.orangeAccent : Colors.white60,
+        size: 22,
+      ),
+      color: const Color(0xFF1A1A2E),
+      tooltip: 'Filtrar por Estoque',
+      onSelected: (v) {
+        setState(() {
+          _filtroEstoque = v;
+          _resetPaginacao();
+        });
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: null,
+          child: Text('Todos os Itens', style: TextStyle(color: Colors.white)),
+        ),
+        const PopupMenuItem(
+          value: 10,
+          child: Text('Estoque Baixo (<10)',
+              style: TextStyle(color: Colors.redAccent)),
+        ),
+        const PopupMenuItem(
+          value: 20,
+          child: Text('Estoque Médio (<20)',
+              style: TextStyle(color: Colors.orangeAccent)),
+        ),
+      ],
+    );
+  }
+
   void _showForm(BuildContext context, {Produto? produto, bool isClone = false}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
       builder: (_) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: produto_form.ProdutoServicoForm(
-            item: produto,
-            onSave: (newProduto) async {
-              final service = Provider.of<DataService>(context, listen: false);
-              if (produto == null || isClone) {
-                await service.addProduto(newProduto);
-              } else {
-                await service.updateProduto(newProduto);
-              }
-              // Invalidar cache após salvar
-              if (mounted) {
-                setState(() {});
-                Navigator.pop(context);
-              }
-            },
-          ),
+        return produto_form.ProdutoServicoForm(
+          item: produto,
+          onSave: (newProduto) async {
+            final service = Provider.of<DataService>(context, listen: false);
+            if (produto == null || isClone) {
+              await service.addProduto(newProduto);
+            } else {
+              await service.updateProduto(newProduto);
+            }
+            // Invalidar cache após salvar
+            if (mounted) {
+              setState(() {});
+              Navigator.pop(context);
+            }
+          },
         );
       },
+    );
+  }
+
+  /// Mesma regra do [PermissionWidget]: admin/master/gerente (e o usuário
+  /// "user") têm acesso a tudo; os demais dependem da permissão.
+  bool _podeNoTopo(TipoPermissao permissao) {
+    final usuario =
+        Provider.of<AuthService>(context, listen: false).usuarioAtual;
+    if (usuario != null &&
+        (usuario.isAdmin ||
+            usuario.isMaster ||
+            usuario.isGerente ||
+            usuario.email.toLowerCase() == 'user')) {
+      return true;
+    }
+    return PermissionService().temPermissao(usuario, permissao);
+  }
+
+  bool _temAcesso(_AcaoProdutos acao) =>
+      acao.permissao == null || _podeNoTopo(acao.permissao!);
+
+  void _alternarModoSelecao() {
+    setState(() {
+      _modoSelecao = !_modoSelecao;
+      if (!_modoSelecao) _selecionados.clear();
+    });
+  }
+
+  void _selecionarTodos(List<Produto> produtos) {
+    setState(() {
+      if (_selecionados.length == produtos.length) {
+        _selecionados.clear();
+      } else {
+        _selecionados.addAll(produtos.map((p) => p.id));
+      }
+    });
+  }
+
+  /// Ações de navegação do topo. No celular entram no menu "⋮".
+  List<_AcaoProdutos> _acoesPrincipaisDoTopo(
+    BuildContext context,
+    DataService service,
+  ) {
+    return [
+      _AcaoProdutos(
+        rotulo: 'Produção / Manufatura',
+        icone: Icons.engineering,
+        cor: Colors.orangeAccent,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ProducaoPage()),
+          );
+        },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Diagnóstico e Sincronização',
+        icone: Icons.sync_rounded,
+        cor: Colors.blueAccent,
+        onPressed: () => _showSyncDiagnostics(context, service),
+      ),
+    ];
+  }
+
+  /// Ações de estoque/relatórios/exportação. No desktop viram ícones; no
+  /// celular entram no menu "⋮".
+  List<_AcaoProdutos> _acoesSecundariasDoTopo(
+    BuildContext context,
+    DataService service,
+    List<Produto> produtosFiltrados,
+  ) {
+    final qtdReposicao = service.produtos
+        .where((p) =>
+            (p.estoqueMinimo > 0 && p.estoque <= p.estoqueMinimo) ||
+            p.estoque <= 0)
+        .length;
+    final qtdValidade = service.contarProdutosComValidadeCritica(dias: 30);
+
+    return [
+      _AcaoProdutos(
+        rotulo: 'Relatório de Reposição',
+        icone: Icons.assignment_late_outlined,
+        cor: Colors.white70,
+        permissao: TipoPermissao.estoqueVisualizar,
+        contador: qtdReposicao,
+        corContador: Colors.redAccent,
+        contadorExtra: qtdValidade,
+        corContadorExtra: Colors.orangeAccent,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const EstoqueReposicaoPage()),
+          );
+        },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Imprimir Inventário p/ Contagem',
+        icone: Icons.print_outlined,
+        cor: Colors.white,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: () =>
+            _imprimirInventarioContagem(context, service, produtosFiltrados),
+      ),
+      _AcaoProdutos(
+        rotulo: 'Inventário da Loja',
+        icone: Icons.fact_check_outlined,
+        cor: Colors.tealAccent,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const InventarioPage()),
+          );
+        },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Quebras e Perdas',
+        icone: Icons.broken_image_outlined,
+        cor: Colors.orangeAccent,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const QuebrasPage()),
+          );
+        },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Relatório Geral de Estoque',
+        icone: Icons.analytics_outlined,
+        cor: Colors.white70,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const EstoqueRelatorioGeralPage()),
+          );
+        },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Exportar CSV para E-commerce',
+        icone: Icons.shopping_cart_checkout_rounded,
+        cor: Colors.blueAccent,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: () => _exportarCsv(produtosFiltrados),
+      ),
+      _AcaoProdutos(
+        rotulo: 'Inventário p/ Contabilidade (Custo)',
+        icone: Icons.account_balance_rounded,
+        cor: Colors.amberAccent,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: _abrirInventarioContabilidade,
+      ),
+      _AcaoProdutos(
+        rotulo: 'Exportar para Excel',
+        icone: Icons.file_download_outlined,
+        cor: Colors.greenAccent,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: () => _exportarExcel(produtosFiltrados),
+      ),
+      _AcaoProdutos(
+        rotulo: 'Ajuste Geral • Estoque e Preço',
+        icone: Icons.tune_rounded,
+        cor: Colors.orangeAccent,
+        permissao: TipoPermissao.estoqueEntrada,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AjusteEstoqueMassaPage()),
+          );
+        },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Entrada Rápida',
+        icone: Icons.playlist_add,
+        cor: Theme.of(context).colorScheme.onPrimary,
+        permissao: TipoPermissao.estoqueEntrada,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const EntradaRapidaProdutosPage()),
+          );
+        },
+      ),
+    ];
+  }
+
+  /// Barra do desktop: todos os ícones, na mesma ordem de antes.
+  List<Widget> _acoesDoTopoDesktop(
+    BuildContext context,
+    DataService service,
+    List<Produto> produtosFiltrados,
+  ) {
+    return [
+      for (final acao in _acoesPrincipaisDoTopo(context, service))
+        if (_temAcesso(acao)) _botaoDaAcao(acao),
+      IconButton(
+        icon: Icon(
+          _modoSelecao ? Icons.check_circle : Icons.edit_note_rounded,
+          color: _modoSelecao ? Colors.greenAccent : Colors.white70,
+        ),
+        tooltip: _modoSelecao ? 'Finalizar Seleção' : 'Edição em Massa',
+        onPressed: _alternarModoSelecao,
+      ),
+      if (_modoSelecao) ...[
+        IconButton(
+          icon: Icon(
+            _selecionados.length == produtosFiltrados.length
+                ? Icons.deselect
+                : Icons.select_all,
+            color: Colors.white70,
+          ),
+          tooltip: 'Selecionar Todos',
+          onPressed: () => _selecionarTodos(produtosFiltrados),
+        ),
+        if (_selecionados.isNotEmpty) ...[
+          IconButton(
+            icon: const Icon(Icons.bolt_rounded, color: Colors.yellowAccent),
+            tooltip: 'Edição Rápida da Lista',
+            onPressed: () => _mostrarQuickListEdit(context, service),
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.auto_fix_high_rounded,
+              color: Colors.orangeAccent,
+            ),
+            tooltip: 'Alterar Selecionados (Massa)',
+            onPressed: () => _mostrarDialogEdicaoEmMassa(context, service),
+          ),
+        ],
+      ],
+      for (final acao in _acoesSecundariasDoTopo(context, service, produtosFiltrados))
+        if (_temAcesso(acao)) _botaoDaAcao(acao),
+      if (_podeNoTopo(TipoPermissao.produtosCriar))
+        IconButton(
+          icon: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
+          tooltip: 'Novo produto',
+          onPressed: () => _showForm(context),
+        ),
+    ];
+  }
+
+  /// Barra do celular: só o "novo produto" (ou a seleção) e o menu "⋮".
+  List<Widget> _acoesDoTopoCelular(
+    BuildContext context,
+    DataService service,
+    List<Produto> produtosFiltrados,
+  ) {
+    return [
+      if (_modoSelecao) ...[
+        IconButton(
+          icon: const Icon(Icons.check_circle, color: Colors.greenAccent),
+          tooltip: 'Finalizar Seleção',
+          onPressed: _alternarModoSelecao,
+        ),
+        IconButton(
+          icon: Icon(
+            _selecionados.length == produtosFiltrados.length
+                ? Icons.deselect
+                : Icons.select_all,
+            color: Colors.white70,
+          ),
+          tooltip: 'Selecionar Todos',
+          onPressed: () => _selecionarTodos(produtosFiltrados),
+        ),
+      ],
+      if (!_modoSelecao && _podeNoTopo(TipoPermissao.produtosCriar))
+        IconButton(
+          icon: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
+          tooltip: 'Novo produto',
+          onPressed: () => _showForm(context),
+        ),
+      PopupMenuButton<_AcaoProdutos>(
+        tooltip: 'Mais ações',
+        icon: const Icon(Icons.more_vert, color: Colors.white),
+        onSelected: (acao) => acao.onPressed(),
+        itemBuilder: (menuContext) {
+          final principais = _acoesPrincipaisDoTopo(context, service)
+              .where(_temAcesso)
+              .toList();
+          final selecao = <_AcaoProdutos>[
+            if (!_modoSelecao)
+              _AcaoProdutos(
+                rotulo: 'Selecionar para edição em massa',
+                icone: Icons.edit_note_rounded,
+                cor: Colors.white70,
+                onPressed: _alternarModoSelecao,
+              ),
+            if (_modoSelecao && _selecionados.isNotEmpty) ...[
+              _AcaoProdutos(
+                rotulo: 'Edição rápida da lista',
+                icone: Icons.bolt_rounded,
+                cor: Colors.yellowAccent,
+                onPressed: () => _mostrarQuickListEdit(context, service),
+              ),
+              _AcaoProdutos(
+                rotulo: 'Alterar selecionados (em massa)',
+                icone: Icons.auto_fix_high_rounded,
+                cor: Colors.orangeAccent,
+                onPressed: () => _mostrarDialogEdicaoEmMassa(context, service),
+              ),
+            ],
+          ];
+          final secundarias =
+              _acoesSecundariasDoTopo(context, service, produtosFiltrados)
+                  .where(_temAcesso)
+                  .toList();
+
+          PopupMenuItem<_AcaoProdutos> item(_AcaoProdutos acao) =>
+              PopupMenuItem<_AcaoProdutos>(
+                value: acao,
+                child: _itemDoMenu(acao),
+              );
+
+          return [
+            for (final acao in principais) item(acao),
+            if (selecao.isNotEmpty) ...[
+              const PopupMenuDivider(),
+              for (final acao in selecao) item(acao),
+            ],
+            if (secundarias.isNotEmpty) ...[
+              if (principais.isNotEmpty || selecao.isNotEmpty)
+                const PopupMenuDivider(),
+              for (final acao in secundarias) item(acao),
+            ],
+          ];
+        },
+      ),
+    ];
+  }
+
+  Widget _botaoDaAcao(_AcaoProdutos acao) {
+    final botao = IconButton(
+      icon: Icon(acao.icone, color: acao.cor ?? Colors.white70),
+      tooltip: acao.rotulo,
+      onPressed: acao.onPressed,
+    );
+    final primeiro = acao.contador ?? 0;
+    final segundo = acao.contadorExtra ?? 0;
+    if (primeiro <= 0 && segundo <= 0) return botao;
+    return Stack(
+      children: [
+        botao,
+        if (primeiro > 0)
+          Positioned(
+            right: 8,
+            top: 8,
+            child: _seloContagem(
+              primeiro,
+              acao.corContador ?? Colors.redAccent,
+            ),
+          ),
+        if (segundo > 0)
+          Positioned(
+            right: 28,
+            top: 8,
+            child: _seloContagem(
+              segundo,
+              acao.corContadorExtra ?? Colors.orangeAccent,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _seloContagem(int valor, Color cor) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: cor,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+      child: Text(
+        valor.toString(),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 8,
+          fontWeight: FontWeight.bold,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _itemDoMenu(_AcaoProdutos acao) {
+    final primeiro = acao.contador ?? 0;
+    final segundo = acao.contadorExtra ?? 0;
+    return SizedBox(
+      width: 240,
+      child: Row(
+        children: [
+          Icon(acao.icone, color: acao.cor ?? Colors.white70, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              acao.rotulo,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+            ),
+          ),
+          if (primeiro > 0) ...[
+            const SizedBox(width: 8),
+            _seloContagem(primeiro, acao.corContador ?? Colors.redAccent),
+          ],
+          if (segundo > 0) ...[
+            const SizedBox(width: 6),
+            _seloContagem(segundo, acao.corContadorExtra ?? Colors.orangeAccent),
+          ],
+        ],
+      ),
     );
   }
 
@@ -573,549 +1407,135 @@ class _ProdutosPageState extends State<ProdutosPage> {
     }
 
     final produtosFiltrados = _cacheFiltrados;
+    final ehCelular = MediaQuery.sizeOf(context).width < 700;
 
     return AppTheme.appBackground(
       child: Scaffold(
         appBar: CustomAppBar(
           title: 'Produtos • ${service.empresaAtual?.nomeExibicao ?? 'Catálogo'}${service.empresaAtual != null ? ' (${service.empresaAtual!.idCurto})' : ''}',
-          actions: [
-            // Botão Produção/Manufatura
-            IconButton(
-              icon: const Icon(Icons.engineering, color: Colors.orangeAccent),
-              tooltip: 'Produção / Manufatura',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ProducaoPage()),
-                );
-              },
-            ),
-            // Botão Sincronizar e Diagnóstico
-            IconButton(
-              icon: const Icon(Icons.sync_rounded, color: Colors.blueAccent),
-              tooltip: 'Diagnóstico e Sincronização',
-              onPressed: () => _showSyncDiagnostics(context, service),
-            ),
-            // Modo Seleção / Edição em Massa
-            IconButton(
-              icon: Icon(
-                _modoSelecao ? Icons.check_circle : Icons.edit_note_rounded,
-                color: _modoSelecao ? Colors.greenAccent : Colors.white70,
-              ),
-              tooltip: _modoSelecao ? 'Finalizar Seleção' : 'Edição em Massa',
-              onPressed: () => setState(() {
-                _modoSelecao = !_modoSelecao;
-                if (!_modoSelecao) _selecionados.clear();
-              }),
-            ),
-            if (_modoSelecao) ...[
-              IconButton(
-                icon: Icon(
-                  _selecionados.length == produtosFiltrados.length 
-                      ? Icons.deselect 
-                      : Icons.select_all,
-                  color: Colors.white70,
-                ),
-                tooltip: 'Selecionar Todos',
-                onPressed: () {
-                  setState(() {
-                    if (_selecionados.length == produtosFiltrados.length) {
-                      _selecionados.clear();
-                    } else {
-                      _selecionados.addAll(produtosFiltrados.map((p) => p.id));
-                    }
-                  });
-                },
-              ),
-              if (_selecionados.isNotEmpty) ...[
-                IconButton(
-                  icon: const Icon(Icons.bolt_rounded, color: Colors.yellowAccent),
-                  tooltip: 'Edição Rápida da Lista',
-                  onPressed: () => _mostrarQuickListEdit(context, service),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.auto_fix_high_rounded, color: Colors.orangeAccent),
-                  tooltip: 'Alterar Selecionados (Massa)',
-                  onPressed: () => _mostrarDialogEdicaoEmMassa(context, service),
-                ),
-              ],
-            ],
-            // Botão Relatório de Reposição (Atenção ao Estoque Mínimo)
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: Stack(
-                children: [
-                  IconButton(
-                    icon: const Icon(
-                      Icons.assignment_late_outlined,
-                      color: Colors.white70,
-                    ),
-                    tooltip: 'Relatório de Reposição',
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const EstoqueReposicaoPage(),
-                        ),
-                      );
-                    },
-                  ),
-                  if (service.produtos.any((p) => (p.estoqueMinimo > 0 && p.estoque <= p.estoqueMinimo) || p.estoque <= 0))
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        constraints: const BoxConstraints(
-                          minWidth: 14,
-                          minHeight: 14,
-                        ),
-                        child: Text(
-                          service.produtos.where((p) => (p.estoqueMinimo > 0 && p.estoque <= p.estoqueMinimo) || p.estoque <= 0).length.toString(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                  // Badge de validade crítica (produtos com lote vencido ou vencendo em 30 dias)
-                  if (service.contarProdutosComValidadeCritica(dias: 30) > 0)
-                    Positioned(
-                      right: 28,
-                      top: 8,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: Colors.orangeAccent,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        constraints: const BoxConstraints(
-                          minWidth: 14,
-                          minHeight: 14,
-                        ),
-                        child: Text(
-                          service.contarProdutosComValidadeCritica(dias: 30).toString(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            // Botão Imprimir Inventário para Contagem
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.print_outlined,
-                  color: Colors.white,
-                ),
-                tooltip: 'Imprimir Inventário p/ Contagem',
-                onPressed: () => _imprimirInventarioContagem(context, service, produtosFiltrados),
-              ),
-            ),
-            // Botão Inventário da Loja (contagem de conferência)
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.fact_check_outlined,
-                  color: Colors.tealAccent,
-                ),
-                tooltip: 'Inventário da Loja',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const InventarioPage(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            // Botão Relatório de Quebras / Perdas (lançamento manual)
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.broken_image_outlined,
-                  color: Colors.orangeAccent,
-                ),
-                tooltip: 'Quebras e Perdas',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const QuebrasPage(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            // Botão Relatório Geral
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.analytics_outlined,
-                  color: Colors.white70,
-                ),
-                tooltip: 'Relatório Geral de Estoque',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const EstoqueRelatorioGeralPage(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            // Botão Exportar CSV
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.shopping_cart_checkout_rounded,
-                  color: Colors.blueAccent,
-                ),
-                tooltip: 'Exportar CSV para E-commerce',
-                onPressed: () {
-                  try {
-                    debugPrint('>>> [ProdutosPage] Iniciando exportação CSV...');
-                    if (produtosFiltrados.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Nenhum produto filtrado para exportar')),
-                      );
-                      return;
-                    }
-                    ExcelExportService.exportarProdutosCSV(produtosFiltrados);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('✓ CSV exportado! Verifique a pasta DOWNLOADS (Ctrl+J)'),
-                        backgroundColor: Colors.blueAccent,
-                        duration: Duration(seconds: 4),
-                      ),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('❌ Erro na exportação CSV: $e'),
-                        backgroundColor: Colors.redAccent,
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-            // Botão Inventário para Contabilidade (Novo!)
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.account_balance_rounded,
-                  color: Colors.amberAccent,
-                ),
-                tooltip: 'Inventário p/ Contabilidade (Custo)',
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      backgroundColor: const Color(0xFF1E1E2E),
-                      title: const Text('Gerar Inventário', style: TextStyle(color: Colors.white)),
-                      content: const Text(
-                        'Escolha o tipo de inventário que deseja gerar para a contabilidade:',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _gerarInventario(isRetroativo: false);
-                          },
-                          child: const Text('ESTOQUE ATUAL'),
-                        ),
-                        ElevatedButton(
-                          onPressed: () async {
-                            Navigator.pop(context);
-                            final data = await showDatePicker(
-                              context: context,
-                              initialDate: DateTime(DateTime.now().year - 1, 12, 31),
-                              firstDate: DateTime(2023),
-                              lastDate: DateTime.now(),
-                              helpText: 'Selecione a data do inventário retroativo',
-                            );
-                            if (data != null) {
-                              _gerarInventario(isRetroativo: true, dataAlvo: data);
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
-                          child: const Text('ESTOQUE RETROATIVO'),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-            // Botão Exportar Excel
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueVisualizar,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.file_download_outlined,
-                  color: Colors.greenAccent,
-                ),
-                tooltip: 'Exportar para Excel',
-                onPressed: () {
-                  try {
-                    debugPrint('>>> [ProdutosPage] Iniciando exportação Excel...');
-                    if (produtosFiltrados.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Nenhum produto filtrado para exportar')),
-                      );
-                      return;
-                    }
-                    ExcelExportService.exportarProdutos(produtosFiltrados);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('✓ Exportação concluída! Verifique a pasta DOWNLOADS (Ctrl+J)'),
-                        backgroundColor: Colors.green,
-                        duration: Duration(seconds: 4),
-                      ),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('❌ Erro na exportação Excel: $e'),
-                        backgroundColor: Colors.redAccent,
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-            // Botão Ajuste Geral (estoque e preço de um lote montado por filtros)
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueEntrada,
-              child: IconButton(
-                icon: const Icon(Icons.tune_rounded, color: Colors.orangeAccent),
-                tooltip: 'Ajuste Geral • Estoque e Preço (em massa)',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AjusteEstoqueMassaPage(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            // Botão entrada rápida
-            PermissionWidget(
-              permissao: TipoPermissao.estoqueEntrada,
-              child: IconButton(
-                icon: Icon(
-                  Icons.playlist_add,
-                  color: Theme.of(context).colorScheme.onPrimary,
-                ),
-                tooltip: 'Entrada Rápida',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const EntradaRapidaProdutosPage(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            PermissionWidget(
-              permissao: TipoPermissao.produtosCriar,
-              child: IconButton(
-                icon: Icon(
-                  Icons.add,
-                  color: Theme.of(context).colorScheme.onPrimary,
-                ),
-                onPressed: () => _showForm(context),
-              ),
-            ),
-          ],
+          actions: ehCelular
+              ? _acoesDoTopoCelular(context, service, produtosFiltrados)
+              : _acoesDoTopoDesktop(context, service, produtosFiltrados),
         ),
         body: Column(
           children: [
                     // Barra de busca minimalista
             Container(
               margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              height: 54,
+              padding: EdgeInsets.fromLTRB(16, ehCelular ? 6 : 0, 12, ehCelular ? 6 : 0),
+              height: ehCelular ? null : 54,
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: Colors.white.withOpacity(0.1)),
               ),
-              child: Row(
-                children: [
-                  Icon(Icons.search, color: Colors.white.withOpacity(0.6), size: 22),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.blueAccent.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.blueAccent.withOpacity(0.4)),
-                    ),
-                    child: Row(
+              child: ehCelular
+                  // No celular o campo fica na primeira linha e os filtros na
+                  // segunda (com rolagem horizontal), para nada estourar.
+                  ? Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.inventory_2_outlined, color: Colors.blueAccent.withOpacity(0.8), size: 14),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Total: ${service.produtos.length}',
-                          style: const TextStyle(color: Colors.blueAccent, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                        if (produtosFiltrados.length < service.produtos.length) ...[
-                          const SizedBox(width: 6),
-                          Container(width: 1, height: 12, color: Colors.blueAccent.withOpacity(0.3)),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Filtrados: ${produtosFiltrados.length}',
-                            style: TextStyle(color: Colors.blueAccent.withOpacity(0.7), fontSize: 12),
+                        SizedBox(
+                          height: 44,
+                          child: Row(
+                            children: [
+                              Icon(Icons.search,
+                                  color: Colors.white.withOpacity(0.6), size: 22),
+                              const SizedBox(width: 8),
+                              Expanded(child: _campoBusca()),
+                              if (_busca.isNotEmpty) _limparBusca(),
+                            ],
                           ),
-                        ],
+                        ),
+                        const Divider(height: 1, color: Colors.white10),
+                        SizedBox(
+                          height: 44,
+                          child: Row(
+                            children: [
+                              _chipContagens(service, produtosFiltrados,
+                                  compacto: true),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: Row(
+                                    children: [
+                                      _botaoOrdenacao(),
+                                      const VerticalDivider(
+                                          width: 12,
+                                          indent: 14,
+                                          endIndent: 14,
+                                          color: Colors.white10),
+                                      _botaoFiltroGrupo(service),
+                                      const VerticalDivider(
+                                          width: 12,
+                                          indent: 14,
+                                          endIndent: 14,
+                                          color: Colors.white10),
+                                      _botaoFiltroUnidade(service),
+                                      const VerticalDivider(
+                                          width: 12,
+                                          indent: 14,
+                                          endIndent: 14,
+                                          color: Colors.white10),
+                                      _botaoFiltroStatus(),
+                                      const VerticalDivider(
+                                          width: 12,
+                                          indent: 14,
+                                          endIndent: 14,
+                                          color: Colors.white10),
+                                      _botaoFiltroEstoque(),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Icon(Icons.search,
+                            color: Colors.white.withOpacity(0.6), size: 22),
+                        const SizedBox(width: 8),
+                        Flexible(
+                            child: _chipContagens(service, produtosFiltrados)),
+                        const SizedBox(width: 12),
+                        Expanded(child: _campoBusca()),
+                        if (_busca.isNotEmpty) _limparBusca(),
+                        const VerticalDivider(
+                            width: 20,
+                            indent: 14,
+                            endIndent: 14,
+                            color: Colors.white10),
+                        _botaoOrdenacao(),
+                        const VerticalDivider(
+                            width: 12,
+                            indent: 14,
+                            endIndent: 14,
+                            color: Colors.white10),
+                        _botaoFiltroGrupo(service),
+                        const VerticalDivider(
+                            width: 12,
+                            indent: 14,
+                            endIndent: 14,
+                            color: Colors.white10),
+                        _botaoFiltroUnidade(service),
+                        const VerticalDivider(
+                            width: 12,
+                            indent: 14,
+                            endIndent: 14,
+                            color: Colors.white10),
+                        _botaoFiltroStatus(),
+                        const VerticalDivider(
+                            width: 12,
+                            indent: 14,
+                            endIndent: 14,
+                            color: Colors.white10),
+                        _botaoFiltroEstoque(),
                       ],
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _buscaController,
-                      onChanged: (v) { setState(() { _busca = v; _resetPaginacao(); }); },
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
-                      decoration: InputDecoration(
-                        hintText: 'Buscar produtos...',
-                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-                        border: InputBorder.none,
-                        isDense: true,
-                      ),
-                    ),
-                  ),
-                  if (_busca.isNotEmpty)
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 18),
-                      onPressed: () { _buscaController.clear(); setState(() { _busca = ''; _resetPaginacao(); }); },
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  const VerticalDivider(width: 20, indent: 14, endIndent: 14, color: Colors.white10),
-                  // Botão de Ordenação (Novo lugar, mais visível)
-                  PopupMenuButton<SortOption>(
-                    icon: Icon(
-                      _sortOption == SortOption.codigo ? Icons.tag :
-                      _sortOption == SortOption.nome ? Icons.sort_by_alpha :
-                      _sortOption == SortOption.recentes ? Icons.history : 
-                      _sortOption == SortOption.grupo ? Icons.category_outlined : Icons.straighten,
-                      color: Colors.blueAccent, size: 20,
-                    ),
-                    tooltip: 'Ordenar produtos',
-                    onSelected: (option) => setState(() => _sortOption = option),
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(value: SortOption.codigo, child: Row(children: [Icon(Icons.tag, size: 16), SizedBox(width: 8), Text('Código')])),
-                      const PopupMenuItem(value: SortOption.nome, child: Row(children: [Icon(Icons.sort_by_alpha, size: 16), SizedBox(width: 8), Text('Nome (A-Z)')])),
-                      const PopupMenuItem(value: SortOption.recentes, child: Row(children: [Icon(Icons.history, size: 16), SizedBox(width: 8), Text('Recentes')])),
-                      const PopupMenuItem(value: SortOption.grupo, child: Row(children: [Icon(Icons.category_outlined, size: 16), SizedBox(width: 8), Text('Grupo')])),
-                      const PopupMenuItem(value: SortOption.unidade, child: Row(children: [Icon(Icons.straighten, size: 16), SizedBox(width: 8), Text('Unidade')])),
-                    ],
-                  ),
-                  const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
-                  // Filtro por Grupo (Novo!)
-                  PopupMenuButton<String?>(
-                    icon: Icon(Icons.category, 
-                      color: _filtroGrupo != null ? Colors.purpleAccent : Colors.white60, 
-                      size: 20
-                    ),
-                    tooltip: 'Filtrar por Grupo',
-                    onSelected: (v) => setState(() { _filtroGrupo = v; _resetPaginacao(); }),
-                    itemBuilder: (context) {
-                      final grupos = service.produtos
-                          .map((p) => p.grupo)
-                          .where((g) => g.isNotEmpty)
-                          .toSet()
-                          .toList();
-                      grupos.sort();
-                      
-                      return [
-                        const PopupMenuItem(value: null, child: Text('Todos os Grupos')),
-                        ...grupos.map((g) => PopupMenuItem(value: g, child: Text(g))),
-                      ];
-                    },
-                  ),
-                  const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
-                  // Filtro por Unidade (Novo!)
-                  PopupMenuButton<String?>(
-                    icon: Icon(Icons.straighten, 
-                      color: _filtroUnidade != null ? Colors.tealAccent : Colors.white60, 
-                      size: 20
-                    ),
-                    tooltip: 'Filtrar por Unidade',
-                    onSelected: (v) => setState(() { _filtroUnidade = v; _resetPaginacao(); }),
-                    itemBuilder: (context) {
-                      final unidades = service.produtos
-                          .map((p) => p.unidade)
-                          .where((u) => u.isNotEmpty)
-                          .toSet()
-                          .toList();
-                      unidades.sort();
-                      
-                      return [
-                        const PopupMenuItem(value: null, child: Text('Todas as Unidades')),
-                        ...unidades.map((u) => PopupMenuItem(value: u, child: Text(u))),
-                      ];
-                    },
-                  ),
-                  const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
-                  // Filtro por Status (Ativo/Desativado)
-                  PopupMenuButton<bool?>(
-                    icon: Icon(Icons.toggle_on,
-                      color: _filtroAtivo == false ? Colors.redAccent : (_filtroAtivo == true ? Colors.greenAccent : Colors.white60),
-                      size: 22
-                    ),
-                    tooltip: 'Filtrar por Status',
-                    onSelected: (v) { setState(() { _filtroAtivo = v; _resetPaginacao(); }); },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(value: null, child: Row(children: [Icon(Icons.select_all, size: 16, color: Colors.white70), SizedBox(width: 8), Text('Todos', style: TextStyle(color: Colors.white))])),
-                      const PopupMenuItem(value: true, child: Row(children: [Icon(Icons.check_circle, size: 16, color: Colors.greenAccent), SizedBox(width: 8), Text('Ativos no PDV', style: TextStyle(color: Colors.greenAccent))])),
-                      const PopupMenuItem(value: false, child: Row(children: [Icon(Icons.cancel, size: 16, color: Colors.redAccent), SizedBox(width: 8), Text('Desativados do PDV', style: TextStyle(color: Colors.redAccent))])),
-                    ],
-                  ),
-                  const VerticalDivider(width: 12, indent: 14, endIndent: 14, color: Colors.white10),
-                  PopupMenuButton<int?>(
-                    icon: Icon(Icons.filter_list, 
-                      color: _filtroEstoque != null ? Colors.orangeAccent : Colors.white60, 
-                      size: 22
-                    ),
-                    color: const Color(0xFF1A1A2E),
-                    onSelected: (v) { setState(() { _filtroEstoque = v; _resetPaginacao(); }); },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(value: null, child: Text('Todos os Itens', style: TextStyle(color: Colors.white))),
-                      const PopupMenuItem(value: 10, child: Text('Estoque Baixo (<10)', style: TextStyle(color: Colors.redAccent))),
-                      const PopupMenuItem(value: 20, child: Text('Estoque Médio (<20)', style: TextStyle(color: Colors.orangeAccent))),
-                    ],
-                  ),
-                ],
-              ),
             ),
             if (_filtroEstoque != null || _filtroGrupo != null || _filtroAtivo != null)
               Padding(
@@ -1250,7 +1670,139 @@ class _ProdutosPageState extends State<ProdutosPage> {
                           if (estaEditando) {
                             return _buildEdicaoRapida(produto);
                           }
-  
+
+                          // No celular estes blocos descem para dentro do card,
+                          // liberando largura para o nome e os selos.
+                          final precoDoProduto = Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                _formatoMoeda.format(produto.precoAtual),
+                                style: const TextStyle(
+                                  color: Color(0xFF00FF9D), // Verde neon
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 17,
+                                  // Sombras simplificadas para performance Web
+                                  shadows: [
+                                    Shadow(
+                                        color: Color(0x8000FF9D), blurRadius: 4),
+                                  ],
+                                ),
+                              ),
+                              if (produto.promocaoAtiva)
+                                Text(
+                                  _formatoMoeda.format(produto.preco),
+                                  style: const TextStyle(
+                                    color: Colors.white24,
+                                    fontSize: 10,
+                                    decoration: TextDecoration.lineThrough,
+                                  ),
+                                ),
+                            ],
+                          );
+
+                          final botaoAtivoDoProduto = GestureDetector(
+                            onTap: () => _toggleAtivoProduto(produto),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: produto.ativo
+                                    ? Colors.greenAccent.withOpacity(0.12)
+                                    : Colors.redAccent.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: produto.ativo
+                                      ? Colors.greenAccent.withOpacity(0.3)
+                                      : Colors.redAccent.withOpacity(0.4),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    produto.ativo
+                                        ? Icons.toggle_on_rounded
+                                        : Icons.toggle_off_rounded,
+                                    size: 20,
+                                    color: produto.ativo
+                                        ? Colors.greenAccent
+                                        : Colors.redAccent,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    produto.ativo ? 'ATIVO' : 'OFF',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: produto.ativo
+                                          ? Colors.greenAccent
+                                          : Colors.redAccent,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+
+                          final menuDoProduto = PopupMenuButton<String>(
+                            icon: const Icon(Icons.more_vert,
+                                color: Colors.white30, size: 20),
+                            color: const Color(0xFF1A1A2E),
+                            onSelected: (v) {
+                              if (v == 'edit') {
+                                _showForm(context, produto: produto);
+                              }
+                              if (v == 'clone') _clonarProduto(produto);
+                              if (v == 'copy') _copiarDescricao(produto);
+                              if (v == 'del') _confirmarExclusao(produto);
+                            },
+                            itemBuilder: (context) => [
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Row(children: [
+                                  Icon(Icons.edit,
+                                      size: 16, color: Colors.white70),
+                                  SizedBox(width: 8),
+                                  Text('Editar Detalhes',
+                                      style: TextStyle(color: Colors.white)),
+                                ]),
+                              ),
+                              const PopupMenuItem(
+                                value: 'clone',
+                                child: Row(children: [
+                                  Icon(Icons.copy_all_rounded,
+                                      size: 16, color: Colors.blueAccent),
+                                  SizedBox(width: 8),
+                                  Text('Clonar Produto',
+                                      style: TextStyle(color: Colors.white)),
+                                ]),
+                              ),
+                              const PopupMenuItem(
+                                value: 'copy',
+                                child: Row(children: [
+                                  Icon(Icons.copy_rounded,
+                                      size: 16, color: Colors.white70),
+                                  SizedBox(width: 8),
+                                  Text('Copiar Texto',
+                                      style: TextStyle(color: Colors.white)),
+                                ]),
+                              ),
+                              const PopupMenuItem(
+                                value: 'del',
+                                child: Row(children: [
+                                  Icon(Icons.delete_outline,
+                                      size: 16, color: Colors.redAccent),
+                                  SizedBox(width: 8),
+                                  Text('Excluir Produto',
+                                      style: TextStyle(color: Colors.redAccent)),
+                                ]),
+                              ),
+                            ],
+                          );
+
                           return RepaintBoundary(
                             child: Container(
                               margin: const EdgeInsets.only(bottom: 8),
@@ -1352,7 +1904,11 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                             ),
                                           ],
                                         ),
-                                        Row(
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 4,
+                                          crossAxisAlignment:
+                                              WrapCrossAlignment.center,
                                           children: [
                                             // Badge de Estoque
                                             Container(
@@ -1368,17 +1924,20 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                                   Icon(estoqueBaixo ? Icons.warning_amber_rounded : Icons.inventory_2_outlined, 
                                                     size: 12, color: estoqueBaixo ? Colors.redAccent : Colors.blueAccent),
                                                   const SizedBox(width: 6),
-                                                  Text('${produto.estoque} ${produto.unidade}', 
-                                                    style: TextStyle(
-                                                      fontSize: 11, 
-                                                      color: estoqueBaixo ? Colors.redAccent : Colors.white,
-                                                      fontWeight: FontWeight.bold,
-                                                      letterSpacing: 0.5
-                                                    )),
+                                                  Flexible(
+                                                    child: Text('${_quantidadeCompacta(produto.estoque)} ${produto.unidade}',
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        fontSize: 11, 
+                                                        color: estoqueBaixo ? Colors.redAccent : Colors.white,
+                                                        fontWeight: FontWeight.bold,
+                                                        letterSpacing: 0.5
+                                                      )),
+                                                  ),
                                                 ],
                                               ),
                                             ),
-                                            const SizedBox(width: 8),
                                             // Badge de Grupo
                                             Container(
                                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1392,8 +1951,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                             ),
                                             // Badge de Validade/Lote
                                             if (service.lotesProdutos.any((l) => l.produtoId == produto.id)) ...[
-                                              const SizedBox(width: 8),
-                                              Builder(builder: (context) {
+                                                Builder(builder: (context) {
                                                 final proxima = service.proximaValidade(produto.id);
                                                 final temVencido = service.lotesProdutos.any((l) => l.produtoId == produto.id && l.estaVencido);
                                                 final venceBreve = proxima != null && !proxima.isAfter(DateTime.now().add(const Duration(days: 30)));
@@ -1439,8 +1997,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                               }),
                                             ],
                                             if (isDesativado) ...[
-                                              const SizedBox(width: 8),
-                                              Container(
+                                                Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                                 decoration: BoxDecoration(
                                                   color: Colors.redAccent.withOpacity(0.15),
@@ -1459,8 +2016,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                               ),
                                             ],
                                             if (produto.enviaBalanca) ...[
-                                              const SizedBox(width: 8),
-                                              // Badge de Balança
+                                                // Badge de Balança
                                               Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                                 decoration: BoxDecoration(
@@ -1492,88 +2048,33 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                               style: const TextStyle(fontSize: 10, color: Colors.white60, fontStyle: FontStyle.italic),
                                             ),
                                           ),
+                                        if (ehCelular)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 8),
+                                            child: Wrap(
+                                              spacing: 12,
+                                              runSpacing: 6,
+                                              crossAxisAlignment:
+                                                  WrapCrossAlignment.center,
+                                              children: [
+                                                precoDoProduto,
+                                                botaoAtivoDoProduto,
+                                              ],
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        _formatoMoeda.format(produto.precoAtual),
-                                        style: const TextStyle(
-                                          color: Color(0xFF00FF9D), // Verde cintilante/neon
-                                          fontWeight: FontWeight.bold, 
-                                          fontSize: 17,
-                                          // Sombras simplificadas para performance Web
-                                          shadows: [
-                                            Shadow(color: Color(0x8000FF9D), blurRadius: 4),
-                                          ],
-                                        ),
-                                      ),
-                                      if (produto.promocaoAtiva)
-                                        Text(
-                                          _formatoMoeda.format(produto.preco),
-                                          style: const TextStyle(color: Colors.white24, fontSize: 10, decoration: TextDecoration.lineThrough),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(width: 12),
-                                  // Botão visível de Ativar/Desativar no PDV
-                                  GestureDetector(
-                                    onTap: () => _toggleAtivoProduto(produto),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: produto.ativo 
-                                            ? Colors.greenAccent.withOpacity(0.12) 
-                                            : Colors.redAccent.withOpacity(0.15),
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(
-                                          color: produto.ativo 
-                                              ? Colors.greenAccent.withOpacity(0.3) 
-                                              : Colors.redAccent.withOpacity(0.4),
-                                          width: 1.5,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            produto.ativo ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
-                                            size: 20,
-                                            color: produto.ativo ? Colors.greenAccent : Colors.redAccent,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            produto.ativo ? 'ATIVO' : 'OFF',
-                                            style: TextStyle(
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.bold,
-                                              color: produto.ativo ? Colors.greenAccent : Colors.redAccent,
-                                              letterSpacing: 0.5,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  PopupMenuButton<String>(
-                                    icon: const Icon(Icons.more_vert, color: Colors.white30, size: 20),
-                                    color: const Color(0xFF1A1A2E),
-                                    onSelected: (v) {
-                                      if (v == 'edit') _showForm(context, produto: produto);
-                                      if (v == 'clone') _clonarProduto(produto);
-                                      if (v == 'copy') _copiarDescricao(produto);
-                                      if (v == 'del') _confirmarExclusao(produto);
-                                    },
-                                    itemBuilder: (context) => [
-                                      const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 16, color: Colors.white70), SizedBox(width: 8), Text('Editar Detalhes', style: TextStyle(color: Colors.white))])),
-                                      const PopupMenuItem(value: 'clone', child: Row(children: [Icon(Icons.copy_all_rounded, size: 16, color: Colors.blueAccent), SizedBox(width: 8), Text('Clonar Produto', style: TextStyle(color: Colors.white))])),
-                                      const PopupMenuItem(value: 'copy', child: Row(children: [Icon(Icons.copy_rounded, size: 16, color: Colors.white70), SizedBox(width: 8), Text('Copiar Texto', style: TextStyle(color: Colors.white))])),
-                                      const PopupMenuItem(value: 'del', child: Row(children: [Icon(Icons.delete_outline, size: 16, color: Colors.redAccent), SizedBox(width: 8), Text('Excluir Produto', style: TextStyle(color: Colors.redAccent))])),
-                                    ],
-                                  ),
+                                  if (ehCelular)
+                                    menuDoProduto
+                                  else ...[
+                                    precoDoProduto,
+                                    const SizedBox(width: 12),
+                                    botaoAtivoDoProduto,
+                                    const SizedBox(width: 4),
+                                    menuDoProduto,
+                                  ],
                                 ],
                               ),
                             ),
@@ -2353,4 +2854,39 @@ class _ProdutosPageState extends State<ProdutosPage> {
       ),
     );
   }
+}
+
+/// Ação da barra superior da tela de Produtos.
+///
+/// No desktop vira um ícone com tooltip; no celular entra no menu "⋮" com
+/// rótulo, para o topo caber na largura da tela.
+class _AcaoProdutos {
+  const _AcaoProdutos({
+    required this.rotulo,
+    required this.icone,
+    required this.onPressed,
+    this.cor,
+    this.permissao,
+    this.contador,
+    this.corContador,
+    this.contadorExtra,
+    this.corContadorExtra,
+  });
+
+  final String rotulo;
+  final IconData icone;
+  final VoidCallback onPressed;
+  final Color? cor;
+  final TipoPermissao? permissao;
+  final int? contador;
+  final Color? corContador;
+  final int? contadorExtra;
+  final Color? corContadorExtra;
+}
+
+
+/// Quantidade curta para os badges: 5 em vez de 5.0, 1.5 vira 1.50.
+String _quantidadeCompacta(double valor) {
+  if (valor % 1 == 0) return valor.toInt().toString();
+  return valor.toStringAsFixed(2);
 }

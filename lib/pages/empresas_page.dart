@@ -4173,7 +4173,6 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       final motivo = empAtualizada.verificarMotivoBloqueio(
                         ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
                         ultimaDataExecucao: dataService.ultimaDataExecucao,
-                        limiteDiasOffline: 5,
                       );
 
                       if (mounted) {
@@ -4247,7 +4246,6 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     final motivo = empAtualizada.verificarMotivoBloqueio(
                       ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
                       ultimaDataExecucao: dataService.ultimaDataExecucao,
-                      limiteDiasOffline: 5,
                     );
 
                     if (mounted) {

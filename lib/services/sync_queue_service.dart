@@ -120,8 +120,13 @@ class SyncQueueService {
     // Verificar limite maximo da fila para evitar estouro de memoria
     if (_queue.length > _maxQueueSize) {
       final removidas = _queue.length - _maxQueueSize;
+      final descartadas = _queue.sublist(0, removidas);
       _queue.removeRange(0, removidas);
       debugPrint('>>> [SyncQueue] ⚠ Fila cheia: removidas $removidas operacoes antigas (limite: $_maxQueueSize)');
+      // Nada é descartado em silêncio: o que saiu da fila vai para a DLQ.
+      for (final op in descartadas) {
+        unawaited(_enviarParaDlq(op, 'fila excedeu o limite de $_maxQueueSize'));
+      }
     }
     
     // Persistir no PostgreSQL
@@ -182,6 +187,62 @@ class SyncQueueService {
       } catch (erroCache) {
         debugPrint('>>> [SyncQueue] ❌ Erro ao persistir fila no PostgreSQL e no arquivo local: $e; $erroCache');
       }
+    }
+  }
+
+  /// FILA MORTA (DLQ): operação que a fila parou de tentar fica registrada
+  /// aqui em vez de sumir em silêncio.
+  ///
+  /// Os DADOS continuam salvos localmente (a DLQ só documenta o que a nuvem não
+  /// recebeu), então ela serve para o suporte enxergar a divergência
+  /// local×nuvem e reenviar manualmente — antes, um erro de esquema, 10
+  /// tentativas falhando ou uma fila cheia descartavam a mutação sem nenhum
+  /// registro durável.
+  static const String _chaveDlq = 'exodo_sync_dlq';
+  static const int _maxItensDlq = 200;
+
+  Future<void> _enviarParaDlq(SyncOperation operation, String motivo) async {
+    debugPrint(
+      '>>> [SyncQueue] 📥 ${operation.type} (${operation.dataId}) → DLQ: $motivo',
+    );
+    if (kIsWeb || !_persistQueue) return;
+    try {
+      final bruto = await DatabaseService().carregarConfig(_chaveDlq);
+      final lista =
+          <Map<String, dynamic>>[
+            if (bruto is List)
+              for (final e in bruto) Map<String, dynamic>.from(e as Map),
+          ];
+      lista.add({
+        'id': operation.id,
+        'empresa_id': operation.empresaId,
+        'tipo': operation.type,
+        'data_id': operation.dataId,
+        'data_json': jsonEncode(operation.data),
+        'retry_count': operation.retryCount,
+        'descartada_em': DateTime.now().toIso8601String(),
+        'motivo': motivo,
+      });
+      // Teto: a DLQ é diagnóstico, não um segundo backup.
+      final excedente = lista.length - _maxItensDlq;
+      if (excedente > 0) lista.removeRange(0, excedente);
+      await DatabaseService().salvarConfig(_chaveDlq, lista);
+    } catch (e) {
+      debugPrint('>>> [SyncQueue] ⚠️ Não foi possível registrar a DLQ: $e');
+    }
+  }
+
+  /// Operações que a fila desistiu de enviar (diagnóstico/reenvio manual).
+  Future<List<Map<String, dynamic>>> carregarDlq() async {
+    if (kIsWeb || !_persistQueue) return [];
+    try {
+      final bruto = await DatabaseService().carregarConfig(_chaveDlq);
+      if (bruto is! List) return [];
+      return [
+        for (final e in bruto) Map<String, dynamic>.from(e as Map),
+      ];
+    } catch (_) {
+      return [];
     }
   }
 
@@ -336,6 +397,9 @@ class SyncQueueService {
         if (erroIrrecuperavel(e)) {
           debugPrint('>>> [SyncQueue] ⚠️ Erro irrecuperável (esquema/permissão). '
               'DESCARTANDO ${operation.type} (${operation.dataId}): $e');
+          // Para a fila deixa de tentar, mas o registro NÃO some: vai para a
+          // DLQ (registros ainda estão salvos localmente).
+          await _enviarParaDlq(operation, 'erro irrecuperável: $e');
           await _persistirFila();
           continue;
         }
@@ -365,6 +429,8 @@ class SyncQueueService {
           debugPrint('>>> [SyncQueue] ⚠⚠⚠ Operacao ${operation.type} '
               '(${operation.dataId}) excedeu $_maxRetryCount tentativas. '
               'DESCARTADA — os dados continuam salvos LOCALMENTE.');
+          // Descarte visível: a operação vai para a DLQ, não some em silêncio.
+          await _enviarParaDlq(operation, 'excedeu $_maxRetryCount tentativas');
         }
       }
       

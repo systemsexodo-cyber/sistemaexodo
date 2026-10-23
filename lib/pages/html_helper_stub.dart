@@ -38,6 +38,9 @@ void updateUrl(String path, {bool replace = false}) {
 /// Stream de foco da janela (stub)
 Stream<dynamic> get onWindowFocus => const Stream.empty();
 
+/// Stream de retorno da página à tela (stub)
+Stream<dynamic> get onWindowVisible => const Stream.empty();
+
 /// Toca áudio no navegador (stub)
 void playAudio(String assetPath, {double volume = 1.0}) {
   // Não faz nada fora da Web

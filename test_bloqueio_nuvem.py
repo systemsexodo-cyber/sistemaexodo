@@ -136,6 +136,7 @@ def instalar_mocks(lista_logs, chamadas_http):
     S.obter_empresa_ativa = lambda conn: None
     S.empresa_permite_sincronizacao_nuvem = lambda conn, emp: True
     S.testar_conexao_supabase = lambda url: True
+    S.testar_conexao_nuvem = lambda url: True
     S.atualizar_status_no_supabase = lambda *a, **k: None
     S.processar_comandos_no_supabase = lambda *a, **k: None
     S.garantir_base_local_completa = lambda *a, **k: None

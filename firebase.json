@@ -9,6 +9,7 @@
   "hosting": {
     "site": "exodosystems-1541d",
     "public": "build/web",
+    "predeploy": "powershell -NoProfile -ExecutionPolicy Bypass -File tool/limpa_segredos_web.ps1",
     "ignore": [
       "firebase.json",
       "**/.*",

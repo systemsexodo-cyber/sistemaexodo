@@ -154,23 +154,20 @@ class _ProdutosPageState extends State<ProdutosPage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
       builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          ),
-          child: ProdutoServicoForm(
-            item: produto,
-            onSave: (newProduto) {
-              // Fechar modal primeiro
-              Navigator.of(ctx).pop();
+        return ProdutoServicoForm(
+          item: produto,
+          onSave: (newProduto) {
+            // Fechar modal primeiro
+            Navigator.of(ctx).pop();
 
-              // Chamar callback após o frame de fechamento do modal
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                onProdutoSalvo(newProduto);
-              });
-            },
-          ),
+            // Chamar callback após o frame de fechamento do modal
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              onProdutoSalvo(newProduto);
+            });
+          },
         );
       },
     );

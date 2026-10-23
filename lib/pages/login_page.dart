@@ -12,6 +12,9 @@ import 'bloqueio_mensalidade_page.dart';
 import '../models/empresa.dart';
 import '../services/data_service.dart';
 import '../services/app_update_service.dart';
+import '../services/config_servidor_mobile.dart';
+import '../services/env_config.dart';
+import 'configuracao_servidor_page.dart';
 
 /// Página de login do sistema
 class LoginPage extends StatefulWidget {
@@ -93,7 +96,6 @@ class _LoginPageState extends State<LoginPage> {
         final motivo = empresaAtual.verificarMotivoBloqueio(
           ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
           ultimaDataExecucao: dataService.ultimaDataExecucao,
-          limiteDiasOffline: 5,
         );
         if (motivo != MotivoBloqueioEmpresa.nenhum &&
             !dataService.liberacaoProvisoriaAtiva) {
@@ -160,6 +162,23 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> _abrirConfigServidor() async {
+    final mudou = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => const ConfiguracaoServidorPage(),
+      ),
+    );
+    if (!mounted || mudou != true) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Servidor salvo. Se o sistema já estava aberto, feche e abra de novo.',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -218,6 +237,26 @@ class _LoginPageState extends State<LoginPage> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
+
+                    // No celular o usuário precisa dizer em qual PC está o
+                    // banco desta loja (o APK é o mesmo para todas as lojas).
+                    if (ConfigServidorMobile.aplicavel) ...[
+                      const SizedBox(height: 10),
+                      TextButton.icon(
+                        onPressed: _abrirConfigServidor,
+                        icon: const Icon(Icons.dns_outlined, size: 15),
+                        label: Text(
+                          'Servidor: ${EnvConfig.dbHost}:${EnvConfig.dbPort}',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white38,
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          minimumSize: const Size(0, 34),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -340,7 +379,7 @@ class _LoginPageState extends State<LoginPage> {
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
           width: 400,
-          padding: const EdgeInsets.all(40),
+          padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 700 ? 24 : 40),
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(32),

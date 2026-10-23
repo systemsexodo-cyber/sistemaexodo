@@ -25,6 +25,7 @@ import 'package:sistema_exodo_novo/services/env_config.dart';
 import 'package:sistema_exodo_novo/models/lote_produto.dart';
 import 'package:sistema_exodo_novo/models/produto_historico.dart';
 import 'package:sistema_exodo_novo/models/nota_entrada.dart';
+import 'package:sistema_exodo_novo/models/pedido_compra.dart';
 import 'package:sistema_exodo_novo/models/caixa.dart';
 import 'package:sistema_exodo_novo/models/agendamento_servico.dart';
 import 'package:sistema_exodo_novo/models/pet.dart';
@@ -177,6 +178,11 @@ class ResultadoMigracaoImpostos {
 }
 
 class DataService extends ChangeNotifier {
+  /// Callback opcional para manter o AuthService em sincronia quando as
+  /// configurações da empresa atual mudam (perfis tributários, departamentos,
+  /// estoques, etc.). Injetado no `main.dart`.
+  void Function(Empresa empresa)? onEmpresaAtualizada;
+
   List<EstoqueHistorico> get estoqueHistorico => _estoqueHistorico;
 
   /// Lotes de ajuste em massa (estoque/preço) aplicados — mais recente primeiro.
@@ -206,6 +212,7 @@ class DataService extends ChangeNotifier {
 
   // Getters públicos para acesso às listas (se não existirem)
   final List<NotaEntrada> _notasEntrada = [];
+  final List<PedidoCompra> _pedidosCompra = [];
   final List<AgendamentoServico> _agendamentosServico = [];
   final List<Funcionario> _funcionarios = [];
   final List<TaxaEntrega> _taxasEntrega = [];
@@ -222,6 +229,8 @@ class DataService extends ChangeNotifier {
   bool _persistindoPerfisTributarios =
       false; // Guard contra recursão na persistência
   final List<Departamento> _departamentos = [];
+  bool _migrandoDepartamentos =
+      false; // Guard contra corrida na migração do cache
   bool _persistindoDepartamentos =
       false; // Guard contra recursão na persistência
   final List<Estoque> _estoques = [];
@@ -234,7 +243,12 @@ class DataService extends ChangeNotifier {
   String? _responsavelAtivo;
 
   // Controle de Performance de Sincronização
-  DateTime? _ultimoResetFoco;
+
+  // Controle do pulso do portal (web). O navegador estrangula timers de abas
+  // escondidas (~1×/minuto), então guardamos quando o pulso rodou por último
+  // para diagnosticar atrasos e para não duplicar pulsos quando a aba volta.
+  DateTime? _ultimoPulsoWeb;
+  DateTime? _ultimoRetornoWeb;
 
   // Controle de sincronização Google Drive
   final Set<String> _notasSincronizadasDrive = {};
@@ -242,7 +256,6 @@ class DataService extends ChangeNotifier {
 
   // Monitor de Bridge (NFC-e)
   List<Map<String, dynamic>> _bridgesStatus = [];
-  StreamSubscription? _bridgeSubscription;
 
   // Controle de Sincronização e Snapshots
   bool _primeiraCargaAgendamentosRealizada = false;
@@ -302,12 +315,30 @@ class DataService extends ChangeNotifier {
         'agendamentos': _agendamentosServico.map((e) => e.toMap()).toList(),
         'contas_pagar': _contasPagar.map((e) => e.toMap()).toList(),
         'notas_entrada': _notasEntrada.map((e) => e.toMap()).toList(),
+        'pedidos_compra': _pedidosCompra.map((e) => e.toMap()).toList(),
         'funcionarios': _funcionarios.map((e) => e.toMap()).toList(),
         'ordens_servico': _ordensServico.map((e) => e.toMap()).toList(),
         'trocas_devolucoes': _trocasDevolucoes.map((e) => e.toMap()).toList(),
         'comissoes': _comissoesVendedores.map((e) => e.toMap()).toList(),
         'nfces': _nfces.map((e) => e.toMap()).toList(),
         'romaneios': _romaneios.map((e) => e.toMap()).toList(),
+        // Coleções que faltavam: sem elas o backup não restaurava caixa,
+        // entregas, mesas/comandas, estoque, lotes, NF-e nem links de venda.
+        'nfes': _nfes.map((e) => e.toMap()).toList(),
+        'entregas': _entregas.map((e) => e.toMap()).toList(),
+        'motoristas': _motoristas.map((e) => e.toMap()).toList(),
+        'taxas_entrega': _taxasEntrega.map((e) => e.toMap()).toList(),
+        'links_vendedores': _linksVendedores.map((e) => e.toMap()).toList(),
+        'mesas_comandas': _mesasComandas.map((e) => e.toMap()).toList(),
+        'aberturas_caixa': _aberturasCaixa.map((e) => e.toMap()).toList(),
+        'fechamentos_caixa': _fechamentosCaixa.map((e) => e.toMap()).toList(),
+        'sangrias': _sangrias.map((e) => e.toMap()).toList(),
+        'suprimentos': _suprimentos.map((e) => e.toMap()).toList(),
+        'estoque_historico': _estoqueHistorico.map((e) => e.toMap()).toList(),
+        'ajustes_estoque_lote': _ajustesEstoqueLote
+            .map((e) => e.toMap())
+            .toList(),
+        'lotes_produto': _lotesProdutos.map((e) => e.toMap()).toList(),
       },
     };
   }
@@ -334,6 +365,7 @@ class DataService extends ChangeNotifier {
       _agendamentosServico.clear();
       _contasPagar.clear();
       _notasEntrada.clear();
+      _pedidosCompra.clear();
       _funcionarios.clear();
       _nfces.clear();
       _romaneios.clear();
@@ -343,7 +375,11 @@ class DataService extends ChangeNotifier {
       // Importar cada coleção usando fromMap dos modelos
       if (colecoes['clientes'] is List) {
         for (final item in colecoes['clientes'] as List) {
-          _clientes.add(Cliente.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa: cliente carimbado com OUTRA empresa no arquivo
+          // fica de fora (mesma regra de produtos/serviços acima).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _clientes.add(Cliente.fromMap(map));
         }
       }
       if (colecoes['produtos'] is List) {
@@ -359,65 +395,99 @@ class DataService extends ChangeNotifier {
       }
       if (colecoes['servicos'] is List) {
         for (final item in colecoes['servicos'] as List) {
-          _tiposServico.add(Servico.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa: serviço carimbado com OUTRA empresa no backup não
+          // entra (antes ele "aparecia em todas" ao restaurar).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _tiposServico.add(Servico.fromMap(map));
         }
       }
       if (colecoes['pedidos'] is List) {
         for (final item in colecoes['pedidos'] as List) {
-          _pedidos.add(Pedido.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _pedidos.add(Pedido.fromMap(map));
         }
       }
       if (colecoes['servicos_realizados'] is List) {
         for (final item in colecoes['servicos_realizados'] as List) {
-          _servicosRealizados.add(
-            ServicoRealizado.fromMap(item as Map<String, dynamic>),
-          );
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa: serviço realizado carimbado com OUTRA empresa
+          // não entra (mesma regra de produtos/serviços/agendamentos acima).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _servicosRealizados.add(ServicoRealizado.fromMap(map));
         }
       }
       if (colecoes['orcamentos'] is List) {
         for (final item in colecoes['orcamentos'] as List) {
-          _orcamentos.add(Orcamento.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa: orçamento de outra empresa não entra — sem isto,
+          // restaurar o backup de uma empresa com a outra aberta levava os
+          // ORC- para o lugar errado (e o reenvio à nuvem re-carimbava).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _orcamentos.add(Orcamento.fromMap(map));
         }
       }
       if (colecoes['vendas_balcao'] is List) {
         for (final item in colecoes['vendas_balcao'] as List) {
-          _vendasBalcao.add(VendaBalcao.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _vendasBalcao.add(VendaBalcao.fromMap(map));
         }
       }
       if (colecoes['agendamentos'] is List) {
         for (final item in colecoes['agendamentos'] as List) {
-          _agendamentosServico.add(
-            AgendamentoServico.fromMap(item as Map<String, dynamic>),
-          );
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _agendamentosServico.add(AgendamentoServico.fromMap(map));
         }
       }
       if (colecoes['contas_pagar'] is List) {
         for (final item in colecoes['contas_pagar'] as List) {
-          _contasPagar.add(ContaPagar.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _contasPagar.add(ContaPagar.fromMap(map));
         }
       }
       if (colecoes['notas_entrada'] is List) {
         for (final item in colecoes['notas_entrada'] as List) {
-          _notasEntrada.add(NotaEntrada.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _notasEntrada.add(NotaEntrada.fromMap(map));
+        }
+      }
+      if (colecoes['pedidos_compra'] is List) {
+        for (final item in colecoes['pedidos_compra'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _pedidosCompra.add(PedidoCompra.fromMap(map));
         }
       }
       if (colecoes['funcionarios'] is List) {
         for (final item in colecoes['funcionarios'] as List) {
-          _funcionarios.add(Funcionario.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _funcionarios.add(Funcionario.fromMap(map));
         }
       }
       if (colecoes['ordens_servico'] is List) {
         for (final item in colecoes['ordens_servico'] as List) {
-          _ordensServico.add(
-            OrdemServico.fromMap(item as Map<String, dynamic>),
-          );
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _ordensServico.add(OrdemServico.fromMap(map));
         }
       }
       if (colecoes['trocas_devolucoes'] is List) {
         for (final item in colecoes['trocas_devolucoes'] as List) {
-          final trocaItem = TrocaDevolucao.fromMap(
-            item as Map<String, dynamic>,
-          );
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          final trocaItem = TrocaDevolucao.fromMap(map);
           if (_isTrocaDevolucaoValida(trocaItem)) {
             _trocasDevolucoes.add(trocaItem);
           }
@@ -425,24 +495,144 @@ class DataService extends ChangeNotifier {
       }
       if (colecoes['comissoes'] is List) {
         for (final item in colecoes['comissoes'] as List) {
-          _comissoesVendedores.add(
-            ComissaoVendedor.fromMap(item as Map<String, dynamic>),
-          );
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _comissoesVendedores.add(ComissaoVendedor.fromMap(map));
         }
       }
       if (colecoes['nfces'] is List) {
         for (final item in colecoes['nfces'] as List) {
-          _nfces.add(NFCe.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _nfces.add(NFCe.fromMap(map));
         }
       }
       if (colecoes['romaneios'] is List) {
         for (final item in colecoes['romaneios'] as List) {
-          _romaneios.add(Romaneio.fromMap(item as Map<String, dynamic>));
+          final map = Map<String, dynamic>.from(item as Map);
+          // Trava de empresa (mesma regra dos produtos/serviços).
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _romaneios.add(Romaneio.fromMap(map));
         }
       }
 
-      // Persistir no PostgreSQL
-      await _salvarTodosDados(aguardarSupabase: false, isSync: true);
+      // Coleções que também faltavam no restore (mesmas do export).
+      if (colecoes['nfes'] is List) {
+        _nfes.clear();
+        for (final item in colecoes['nfes'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _nfes.add(NFCe.fromMap(map));
+        }
+      }
+      if (colecoes['entregas'] is List) {
+        _entregas.clear();
+        for (final item in colecoes['entregas'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _entregas.add(Entrega.fromMap(map));
+        }
+      }
+      if (colecoes['motoristas'] is List) {
+        _motoristas.clear();
+        for (final item in colecoes['motoristas'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _motoristas.add(Motorista.fromMap(map));
+        }
+      }
+      if (colecoes['taxas_entrega'] is List) {
+        _taxasEntrega.clear();
+        for (final item in colecoes['taxas_entrega'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _taxasEntrega.add(TaxaEntrega.fromMap(map));
+        }
+      }
+      if (colecoes['links_vendedores'] is List) {
+        _linksVendedores.clear();
+        for (final item in colecoes['links_vendedores'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _linksVendedores.add(LinkVendedor.fromMap(map));
+        }
+      }
+      if (colecoes['mesas_comandas'] is List) {
+        _mesasComandas.clear();
+        for (final item in colecoes['mesas_comandas'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _mesasComandas.add(MesaComanda.fromMap(map));
+        }
+      }
+      if (colecoes['aberturas_caixa'] is List) {
+        _aberturasCaixa.clear();
+        for (final item in colecoes['aberturas_caixa'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _aberturasCaixa.add(AberturaCaixa.fromMap(map));
+        }
+      }
+      if (colecoes['fechamentos_caixa'] is List) {
+        _fechamentosCaixa.clear();
+        for (final item in colecoes['fechamentos_caixa'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _fechamentosCaixa.add(FechamentoCaixa.fromMap(map));
+        }
+      }
+      if (colecoes['sangrias'] is List) {
+        _sangrias.clear();
+        for (final item in colecoes['sangrias'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _sangrias.add(SangriaCaixa.fromMap(map));
+        }
+      }
+      if (colecoes['suprimentos'] is List) {
+        _suprimentos.clear();
+        for (final item in colecoes['suprimentos'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _suprimentos.add(SuprimentoCaixa.fromMap(map));
+        }
+      }
+      if (colecoes['estoque_historico'] is List) {
+        _estoqueHistorico.clear();
+        for (final item in colecoes['estoque_historico'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _estoqueHistorico.add(EstoqueHistorico.fromMap(map));
+        }
+      }
+      if (colecoes['ajustes_estoque_lote'] is List) {
+        _ajustesEstoqueLote.clear();
+        for (final item in colecoes['ajustes_estoque_lote'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _ajustesEstoqueLote.add(AjusteEstoqueLote.fromMap(map));
+        }
+      }
+      if (colecoes['lotes_produto'] is List) {
+        _lotesProdutos.clear();
+        for (final item in colecoes['lotes_produto'] as List) {
+          final map = Map<String, dynamic>.from(item as Map);
+          if (!_registroDaEmpresaAberta(map)) continue;
+          _lotesProdutos.add(LoteProduto.fromMap(map));
+        }
+      }
+
+      // Persistir no PostgreSQL. `forcarTodos` é OBRIGATÓRIO aqui: `_salvarTodosDados`
+      // só grava coleções sujas, e o restore não passa por `_marcarSujo` — sem
+      // forçar, o backup era "restaurado" na tela e NUNCA chegava ao banco local
+      // (sumia no próximo boot).
+      await _salvarTodosDados(
+        aguardarSupabase: false,
+        forcarTodos: true,
+        isSync: true,
+      );
 
       notifyListeners();
 
@@ -460,6 +650,8 @@ class DataService extends ChangeNotifier {
     _produtos.clear();
     _tiposServico.clear();
     _pedidos.clear();
+    _servicosRealizados.clear();
+    _orcamentos.clear();
     _ordensServico.clear();
     _entregas.clear();
     _motoristas.clear();
@@ -469,6 +661,7 @@ class DataService extends ChangeNotifier {
     _ajustesEstoqueLote.clear();
     _lotesProdutos.clear();
     _notasEntrada.clear();
+    _pedidosCompra.clear();
     _agendamentosServico.clear();
     _funcionarios.clear();
     _taxasEntrega.clear();
@@ -559,8 +752,9 @@ class DataService extends ChangeNotifier {
     // 'Carlos'). ANTES era comparação exata de string, o que fazia o operador
     // não encontrar o PRÓPRIO caixa e o app "herdar" o caixa de outro usuário.
     final sessao = _aberturaMaisRecente(
-      _aberturasCaixa
-          .where((ab) => _ehMesmoOperador(ab.responsavel, responsavel)),
+      _aberturasCaixa.where(
+        (ab) => _ehMesmoOperador(ab.responsavel, responsavel),
+      ),
     );
     if (sessao == null || _temFechamento(sessao)) return null;
     return sessao;
@@ -592,6 +786,7 @@ class DataService extends ChangeNotifier {
   }
 
   List<NotaEntrada> get notasEntrada => _notasEntrada;
+  List<PedidoCompra> get pedidosCompra => _pedidosCompra;
   List<NFCe> get nfces => _nfces;
   List<NFCe> get nfes => _nfes;
   List<VendaBalcao> get vendasBalcao => _vendasBalcao;
@@ -695,8 +890,77 @@ class DataService extends ChangeNotifier {
     });
   }
 
+  // ── Nuvem em tempo real (Neon Realtime) ────────────────────────────────
+  // A nuvem avisa QUE tabela mudou; aqui só antecipamos a sincronização que
+  // já rodaria no timer de 45 s. No Windows o banco local continua sendo o
+  // principal: o aviso faz a PUXADA (delta) chegar agora, e o resto do ciclo
+  // (inclusive o envio da fila) segue igual.
+  Timer? _nuvemRefreshTimer;
+  bool _recarregandoPelaNuvem = false;
+
+  /// Tabelas avisadas pela nuvem e ainda não puxadas.
+  ///
+  /// Antes, cada aviso disparava o ciclo COMPLETO (as 30 tabelas do
+  /// `carregarTudoDoSupabase`). No celular, com rede móvel, essa varredura
+  /// levava dezenas de segundos — o produto alterado no PC só aparecia muito
+  /// depois, mesmo com o push chegando em ~1 s. Agora só a(s) tabela(s)
+  /// avisada(s) é(são) baixada(s).
+  final Set<String> _tabelasAvisadasPelaNuvem = <String>{};
+
+  void _aoMudarPelaNuvem(String tabela) {
+    if (_descartado || _currentEmpresaId == null || _isOffline) return;
+    debugPrint('>>> [Neon-Realtime] 🔔 A nuvem avisou mudança em $tabela.');
+    _tabelasAvisadasPelaNuvem.add(tabela);
+    _nuvemRefreshTimer?.cancel();
+    _nuvemRefreshTimer = Timer(const Duration(milliseconds: 800), () {
+      unawaited(_recarregarPelaNuvem());
+    });
+  }
+
+  /// Puxa o delta da nuvem logo depois do aviso (com trava de reentrância:
+  /// várias tabelas mudam quase juntas e não faz sentido disparar N ciclos).
+  Future<void> _recarregarPelaNuvem() async {
+    if (_recarregandoPelaNuvem || _descartado || _currentEmpresaId == null) {
+      return;
+    }
+    // Ciclo completo em andamento: a puxada pontual seria descartada por
+    // `_carregarDadosDoSupabase`. Mantém os avisos guardados e tenta de novo.
+    if (_syncEmAndamento) {
+      _nuvemRefreshTimer?.cancel();
+      _nuvemRefreshTimer = Timer(const Duration(seconds: 1), () {
+        unawaited(_recarregarPelaNuvem());
+      });
+      return;
+    }
+    _recarregandoPelaNuvem = true;
+    // Só as tabelas que a nuvem avisou (uma consulta por tabela, em vez do
+    // ciclo completo). O conjunto é limpo aqui e reabastecido se um aviso
+    // chegar durante a puxada.
+    final tabelas = Set<String>.from(_tabelasAvisadasPelaNuvem);
+    if (tabelas.isEmpty) {
+      _recarregandoPelaNuvem = false;
+      return;
+    }
+    _tabelasAvisadasPelaNuvem.clear();
+    try {
+      await _sincronizarSilenciosamente(tabelas: tabelas);
+    } catch (e) {
+      debugPrint('>>> [Neon-Realtime] ⚠️ Falha na puxada após aviso: $e');
+    } finally {
+      _recarregandoPelaNuvem = false;
+      if (_tabelasAvisadasPelaNuvem.isNotEmpty && !_descartado) {
+        _nuvemRefreshTimer?.cancel();
+        _nuvemRefreshTimer = Timer(const Duration(milliseconds: 200), () {
+          unawaited(_recarregarPelaNuvem());
+        });
+      }
+    }
+  }
+
   Future<void> _recarregarPelaRedeLocal() async {
-    if (_recarregandoPelaRedeLocal || _descartado || _currentEmpresaId == null) {
+    if (_recarregandoPelaRedeLocal ||
+        _descartado ||
+        _currentEmpresaId == null) {
       return;
     }
     _recarregandoPelaRedeLocal = true;
@@ -751,7 +1015,9 @@ class DataService extends ChangeNotifier {
     }
 
     if (empresaEfetiva != _currentEmpresaId || !nuvemHabilitada) {
-      debugPrint('>>> [Supabase] ⏸️ Operação $table/${data['id']} mantida na fila da empresa $empresaEfetiva.');
+      debugPrint(
+        '>>> [Supabase] ⏸️ Operação $table/${data['id']} mantida na fila da empresa $empresaEfetiva.',
+      );
       _adicionarSincronizacaoPendente(
         table: table,
         data: data,
@@ -794,6 +1060,13 @@ class DataService extends ChangeNotifier {
         map.remove('eh_composto');
         map.remove('composicao');
         map.remove('cobrar_garcom');
+        // `codigos_barras_adicionais` foi adicionada só no banco LOCAL. Enviá-la
+        // fazia o PostgREST recusar o produto INTEIRO com PGRST204 ("Could not
+        // find the 'codigos_barras_adicionais' column") — por isso a edição
+        // feita no site não chegava à nuvem nem ao app. O filtro dinâmico de
+        // colunas também remove, mas aqui garantimos mesmo se ele falhar.
+        map.remove('codigos_barras_adicionais');
+        map.remove('codigosBarrasAdicionais');
       }
 
       // 2. Injetar o ID real do usuário do Supabase apenas em tabelas que possuem a coluna usuario_id
@@ -851,6 +1124,12 @@ class DataService extends ChangeNotifier {
       } else {
         map['updated_at'] = DateTime.now().toUtc().toIso8601String();
       }
+
+      // REGRA "LOCAL PRIMEIRO": nada sobe para a nuvem antes de estar gravado
+      // no PostgreSQL local. Se o local falhar, o envio simplesmente não
+      // acontece agora (a mutação fica suja/na fila e tenta de novo) — a nuvem
+      // nunca fica à frente do banco local.
+      await _garantirGravacaoLocalPendente();
 
       debugPrint('>>> [Supabase] 📤 Enviando para $table...');
       debugPrint('>>> [Supabase]    ID: ${map['id']}');
@@ -919,7 +1198,9 @@ class DataService extends ChangeNotifier {
     bool enfileirarSeOffline = true,
   }) async {
     if (!nuvemHabilitada) {
-      debugPrint('>>> [Supabase] ⏸️ Nuvem desativada; mantendo DELETE $table/$id na fila local.');
+      debugPrint(
+        '>>> [Supabase] ⏸️ Nuvem desativada; mantendo DELETE $table/$id na fila local.',
+      );
       _adicionarSincronizacaoPendente(
         table: table,
         data: {'id': id},
@@ -942,6 +1223,9 @@ class DataService extends ChangeNotifier {
       return;
     }
     try {
+      // REGRA "LOCAL PRIMEIRO": a exclusão já existe no banco local antes de
+      // pedir a mesma exclusão na nuvem (mesma garantia do upsert).
+      await _garantirGravacaoLocalPendente();
       await _supabaseService.delete(table, id);
 
       // Auto-reconexão ativa: se a deleção funcionou, com certeza estamos online
@@ -999,11 +1283,7 @@ class DataService extends ChangeNotifier {
     final id = dados['id']?.toString();
     if (!nuvemHabilitada) {
       if (id != null) _enviosLocaisEmCurso.remove(id);
-      _adicionarSincronizacaoPendente(
-        table: tabela,
-        data: dados,
-        type: evento,
-      );
+      _adicionarSincronizacaoPendente(table: tabela, data: dados, type: evento);
       return;
     }
 
@@ -1132,12 +1412,32 @@ class DataService extends ChangeNotifier {
     Map<String, dynamic> dados,
   ) {
     if (!nuvemHabilitada) {
-      debugPrint('>>> [Realtime] ⏸️ Evento $evento em $tabela ignorado: nuvem desativada para a empresa.');
+      debugPrint(
+        '>>> [Realtime] ⏸️ Evento $evento em $tabela ignorado: nuvem desativada para a empresa.',
+      );
       return;
     }
 
     try {
       final id = dados['id'] as String?;
+
+      // TRAVA DE EMPRESA: o canal Realtime é assinado com filtro por
+      // `empresa_id`, mas o evento de DELETE não leva filtro e uma assinatura
+      // pode chegar com payload de outra empresa. Este é o ponto em que o dado
+      // ENTRA nas listas em memória (é delas que o Fluxo de Caixa lê), então
+      // descartar o que não é da empresa aberta é o que impede QUALQUER tela de
+      // mostrar dados de outra empresa.
+      final empresaDoEvento = (dados['empresa_id'] ?? dados['empresaId'])
+          ?.toString();
+      if (empresaDoEvento != null &&
+          empresaDoEvento.isNotEmpty &&
+          empresaDoEvento != _currentEmpresaId) {
+        debugPrint(
+          '>>> [Realtime] 🛡️ $evento em $tabela (id: $id) ignorado: '
+          'pertence à empresa $empresaDoEvento, não a $_currentEmpresaId.',
+        );
+        return;
+      }
 
       // Trava ANTI-PERDA DE ALTERAÇÃO LOCAL: se este registro tem uma mudança
       // local que ainda não subiu, o evento da nuvem é mais ANTIGO para ele e
@@ -1179,6 +1479,15 @@ class DataService extends ChangeNotifier {
 
         case 'pedidos':
           _aplicarEmLista<Pedido>(_pedidos, evento, dados, Pedido.fromMap);
+          break;
+
+        case 'pedidos_compra':
+          _aplicarEmLista<PedidoCompra>(
+            _pedidosCompra,
+            evento,
+            dados,
+            PedidoCompra.fromMap,
+          );
           break;
 
         case 'vendas_balcao':
@@ -1317,6 +1626,20 @@ class DataService extends ChangeNotifier {
       }
 
       if (novoItem != null) {
+        // REGRA "A NUVEM NUNCA SOBRESCREVE O LOCAL": o evento que chega pelo
+        // Realtime só substitui a versão local quando é mais NOVO. Empate ou
+        // local mais novo → o local fica (sem isso, uma edição feita aqui era
+        // revertida pelo snapshot antigo que voltava pelo canal da nuvem).
+        final indexLocal = lista.indexWhere(
+          (item) => (item as dynamic).id == id,
+        );
+        if (indexLocal >= 0 &&
+            !_nuvemMaisNovaQueLocal(lista[indexLocal], novoItem)) {
+          debugPrint(
+            '>>> [Realtime] 🛡️ Evento da nuvem ignorado (local é igual ou mais novo): $id',
+          );
+          return;
+        }
         // Agora é seguro remover e adicionar
         lista.removeWhere((item) => (item as dynamic).id == id);
         lista.add(novoItem);
@@ -1334,6 +1657,7 @@ class DataService extends ChangeNotifier {
   int _currentSyncInterval = 10;
   DateTime _lastSyncActivityTime = DateTime.now();
   StreamSubscription? _windowFocusSubscription;
+  StreamSubscription? _windowVisibleSubscription;
 
   // Status de Sincronização
   DateTime? _ultimaSincronizacaoSucesso;
@@ -1390,9 +1714,11 @@ class DataService extends ChangeNotifier {
     _syncTimer?.cancel();
     _checkConnectivityTimer?.cancel();
     _windowFocusSubscription?.cancel();
+    _windowVisibleSubscription?.cancel();
     _syncTimer = null;
     _checkConnectivityTimer = null;
     _windowFocusSubscription = null;
+    _windowVisibleSubscription = null;
   }
 
   String get instanceId => _instanceId;
@@ -1449,6 +1775,35 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Grava AGORA, no PostgreSQL local, o que está pendente: as linhas alteradas
+  /// pelo caminho rápido (pedidos, vendas, caixa) e as coleções marcadas como
+  /// sujas (entregas, motoristas…).
+  ///
+  /// É diferente de [salvarDadosAgora]: NÃO reescreve todas as tabelas, então
+  /// serve para uma ação de tela (marcar/desmarcar entrega) confirmar a
+  /// gravação antes de o usuário trocar de tela, sem o custo de um flush
+  /// completo. Sem isso, a alteração ficava só na memória até o debounce — e
+  /// ao reabrir a tela o dado antigo voltava do banco.
+  Future<void> persistirAlteracoesPendentes() async {
+    if (!_persistenciaHabilitada) return;
+
+    _debounceLinhasLocais?.cancel();
+    _debounceLinhasLocais = null;
+    await _executarFlushLinhasLocais();
+
+    if (_dirtyCollections.isEmpty) return;
+
+    _debounceSalvamento?.cancel();
+    _debounceSalvamento = null;
+    try {
+      await _salvarTodosDados(aguardarSupabase: false);
+    } catch (e) {
+      debugPrint(
+        '>>> [DataService] ⚠️ Falha ao persistir alterações pendentes: $e',
+      );
+    }
+  }
+
   DateTime? _ultimaSincronizacao;
   static const Duration _intervaloSincronizacao = Duration(
     days: 90,
@@ -1456,6 +1811,23 @@ class DataService extends ChangeNotifier {
 
   // Controle de coleções modificadas (Selective Saving)
   final Set<String> _dirtyCollections = {};
+
+  /// Coleções marcadas como sujas porque receberam dados da NUVEM (e não por
+  /// uma edição do usuário). O flush automático delas roda com `isSync: true`,
+  /// para o trigger `set_updated_at` do PostgreSQL local NÃO trocar a data por
+  /// `NOW()`: a data que veio da nuvem é a informação real de "quando mudou".
+  ///
+  /// Sem isso, cada pulso reescrevia a tabela inteira e carimbava
+  /// `updated_at = agora` em todas as linhas; na comparação seguinte o local
+  /// parecia sempre mais novo que a nuvem e TODA alteração feita no site era
+  /// recusada ("Nuvem não é mais nova que o local") — o site nunca aparecia no
+  /// app Windows.
+  final Set<String> _colecoesSujasDaNuvem = {};
+
+  /// Verdadeiro enquanto o bloco que aplica os dados baixados da nuvem está
+  /// rodando. `_marcarSujo` consulta isto para classificar a coleção como
+  /// "vinda da nuvem".
+  bool _aplicandoDadosDaNuvem = false;
 
   // ---- GRAVAÇÃO LOCAL POR REGISTRO (caminho rápido) -------------------------
   //
@@ -1482,6 +1854,21 @@ class DataService extends ChangeNotifier {
   // ignoramos esses eventos para não sobrescrever a versão local correta.
   final Map<String, DateTime> _agendamentosCriadosLocalmente = {};
 
+  /// Piso entre cargas de download da nuvem no pulso automático.
+  ///
+  /// Com o delta ligado (`deltaCatalogo`), produtos/clientes descem só o que
+  /// mudou e as demais tabelas são pequenas — então o pulso de 10s pode puxar
+  /// novidades sem rebaixar o catálogo inteiro. O FULL SYNC automático do
+  /// catálogo (quando as coleções estão vazias) continua limitado a 1×/6h por
+  /// `_ultimaFullSyncCatalogoAutomatico`, que é o que protege a cota de egress.
+  static const Duration _intervaloMinimoCargaPesada = Duration(seconds: 10);
+  DateTime? _ultimaCargaPesadaNuvem;
+
+  /// Último FULL SYNC do catálogo disparado AUTOMATICAMENTE pelo safeguard de
+  /// coleções vazias (produtos/clientes/pedidos). Limitado a 1×/6h para não
+  /// rebaixar ~13MB a cada pulso quando as coleções seguem vazias.
+  DateTime? _ultimaFullSyncCatalogoAutomatico;
+
   void _resetTimerParaAtivo() {
     _lastSyncActivityTime = DateTime.now();
     if (_currentSyncInterval != 10) {
@@ -1503,7 +1890,29 @@ class DataService extends ChangeNotifier {
           );
           try {
             final versaoAntesDoPulso = _versaoNotificacoes;
-            await _carregarDadosDoSupabase(modoLeve: false);
+            // Puxa o DELTA da nuvem a cada pulso (~10s). O catálogo só desce
+            // inteiro na primeira carga ou no FULL SYNC automático (1×/6h);
+            // depois disso produtos/clientes vêm por `updated_at`. É o que faz
+            // a alteração feita no site aparecer no app em segundos.
+            final agoraPulso = DateTime.now();
+            final ultimaPesada = _ultimaCargaPesadaNuvem;
+            final podeCarregarPesado =
+                ultimaPesada == null ||
+                agoraPulso.difference(ultimaPesada) >=
+                    _intervaloMinimoCargaPesada;
+            if (podeCarregarPesado) {
+              _ultimaCargaPesadaNuvem = agoraPulso;
+              await _carregarDadosDoSupabase(modoLeve: false);
+            } else {
+              final faltam =
+                  _intervaloMinimoCargaPesada -
+                  agoraPulso.difference(ultimaPesada!);
+              debugPrint(
+                '>>> [Sync] ⏭️ Download pesado adiado (piso de '
+                '${_intervaloMinimoCargaPesada.inSeconds}s): libera em '
+                '${faltam.inSeconds}s. Upload segue em cada pulso.',
+              );
+            }
             await _salvarTodosDados(aguardarSupabase: false, isSync: true);
             await atualizarConflitosCount();
             // Verificar se outra máquina enviou dados novos para a nuvem
@@ -1546,14 +1955,85 @@ class DataService extends ChangeNotifier {
         // Agenda o próximo pulso de sincronia
         _programarProximoSync();
       });
+    } else {
+      // WEB: o site não tem Realtime (o NEON_REALTIME_SECRET é removido do
+      // bundle público antes do deploy), então busca somente o DELTA das
+      // tabelas em um pulso curto. Isso mantém as alterações feitas no Windows
+      // visíveis no portal em poucos segundos, sem expor credenciais nem fazer
+      // uma varredura completa do catálogo no navegador.
+      _syncTimer = Timer(const Duration(seconds: 10), _executarPulsoWeb);
     }
   }
 
-  void _marcarSujo(String collectionKey) {
+  /// Pulso do portal (web): puxa o delta e reagenda.
+  ///
+  /// Fica separado para poder ser chamado também quando a aba volta ao foco
+  /// (ver [_aoVoltarParaPaginaWeb]): assim não dependemos do timer, que o
+  /// navegador estrangula para ~1×/minuto quando a página está escondida.
+  Future<void> _executarPulsoWeb() async {
+    final agora = DateTime.now();
+    final anterior = _ultimoPulsoWeb;
+    _ultimoPulsoWeb = agora;
+    if (anterior != null &&
+        agora.difference(anterior) > const Duration(seconds: 25)) {
+      debugPrint(
+        '>>> [Sync] ⏱️ Pulso web atrasou '
+        '${agora.difference(anterior).inSeconds}s (aba em segundo plano?).',
+      );
+    }
+
+    if (!_descartado && !isOffline && !_syncEmAndamento) {
+      try {
+        final versaoAntesDoPulso = _versaoNotificacoes;
+        await _carregarDadosDoSupabase(modoLeve: true);
+        if (_versaoNotificacoes == versaoAntesDoPulso) {
+          debugPrint('>>> [Sync] 💤 Pulso web sem novidades.');
+        }
+      } catch (e) {
+        debugPrint('>>> [Sync] ⚠️ Erro no pulso web: $e');
+      }
+    }
+    if (!_descartado) _programarProximoSync();
+  }
+
+  /// A aba do portal voltou a ficar visível: puxa o delta NA HORA.
+  ///
+  /// O `window.onFocus` antigo não cobria troca de aba — e é justamente com a
+  /// aba escondida que o navegador estrangula o pulso de 10 s para 1×/minuto.
+  /// O resultado era a alteração feita no Windows demorar ~1 minuto para
+  /// aparecer no site.
+  void _aoVoltarParaPaginaWeb() {
+    if (_descartado || _currentEmpresaId == null) return;
+    final agora = DateTime.now();
+    if (_ultimoRetornoWeb != null &&
+        agora.difference(_ultimoRetornoWeb!).inSeconds < 2) {
+      return; // visibilitychange + focus podem chegar juntos
+    }
+    _ultimoRetornoWeb = agora;
+    debugPrint(
+      '>>> [Sync] 👁️ Portal voltou a ficar visível — puxando novidades agora.',
+    );
+    // Não cancela o `_syncTimer` aqui de propósito: o pulso termina chamando
+    // `_programarProximoSync()`, que já cancela/reagenda. Deixar o timer ativo
+    // mantém `isSilentSync` verdadeiro e evita o "Sincronizando..." piscando na
+    // tela só porque o usuário voltou para a aba.
+    unawaited(_executarPulsoWeb());
+  }
+
+  void _marcarSujo(String collectionKey, {bool daNuvem = false}) {
     // Toda alteração real de coleção passa por aqui — inclusive cada bloco que
     // aplica dados da nuvem. É o sinal usado pela carga silenciosa para decidir
     // se precisa avisar a UI.
     _mudouNestaCarga = true;
+    if (daNuvem || _aplicandoDadosDaNuvem) {
+      // Persistência de espelho da nuvem: o flush não pode recarimbar
+      // `updated_at` (ver `_colecoesSujasDaNuvem`).
+      _colecoesSujasDaNuvem.add(collectionKey);
+    } else {
+      // Edição local: o registro precisa do carimbo `updated_at = NOW()` para
+      // que os outros PCs/nuvem vejam a mudança pelo delta.
+      _colecoesSujasDaNuvem.remove(collectionKey);
+    }
     if (!_dirtyCollections.contains(collectionKey)) {
       _dirtyCollections.add(collectionKey);
       _salvarAutomaticamente();
@@ -1607,6 +2087,30 @@ class DataService extends ChangeNotifier {
     });
   }
 
+  /// Grava UMA linha no banco local e **aguarda** a gravação terminar.
+  ///
+  /// É o caminho usado antes de qualquer envio para a nuvem: quando este método
+  /// retorna, o registro já está no PostgreSQL local (regra "local primeiro,
+  /// nuvem depois"). Se a gravação não for possível pelo caminho rápido (web,
+  /// tabela sem linha própria, persistência desligada), cai no flush completo
+  /// — a mesma rede de segurança de sempre.
+  Future<void> _salvarLinhaLocalAntesDaNuvem(
+    String collectionKey,
+    Map<String, dynamic> row,
+  ) async {
+    _persistirLinhaLocal(collectionKey, row);
+    await _executarFlushLinhasLocais();
+  }
+
+  /// Igual a [_salvarLinhaLocalAntesDaNuvem], para EXCLUSÕES.
+  Future<void> _removerLinhaLocalAntesDaNuvem(
+    String collectionKey,
+    String id,
+  ) async {
+    _removerLinhaLocal(collectionKey, id);
+    await _executarFlushLinhasLocais();
+  }
+
   /// Grava no PostgreSQL apenas as linhas pendentes de cada coleção.
   ///
   /// Se uma linha falhar, a coleção inteira é marcada como suja: o flush
@@ -1614,6 +2118,18 @@ class DataService extends ChangeNotifier {
   /// a linha ficar em um retry apertado e infinito.
   Future<void> _executarFlushLinhasLocais() async {
     if (_linhasLocaisPendentes.isEmpty) return;
+    // Quem chama com `await` precisa da GARANTIA de que a linha está no banco
+    // local (regra "o local é salvo ANTES de ir para a nuvem"). Se já existe um
+    // flush em andamento, espera ele terminar: o que ficou de novo entra na
+    // passada seguinte e `_flushLinhasAgendado` garante que ela aconteça.
+    // Limite de 5 s: se o banco local travar, o chamador não pode ficar preso.
+    var esperasFlush = 0;
+    while (_salvandoLinhasLocais && esperasFlush < 250) {
+      _flushLinhasAgendado = true;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      esperasFlush++;
+      if (_linhasLocaisPendentes.isEmpty) return;
+    }
     if (_salvandoLinhasLocais) {
       _flushLinhasAgendado = true;
       return;
@@ -1674,6 +2190,45 @@ class DataService extends ChangeNotifier {
       if (_flushLinhasAgendado && _linhasLocaisPendentes.isNotEmpty) {
         _agendarFlushLinhasLocais();
       }
+    }
+  }
+
+  // Dois envios para a nuvem ao mesmo tempo não podem disparar dois flush
+  // completos simultâneos: o PostgreSQL local (Windows) trava com escrita
+  // concorrente. Este flag faz o segundo chamado apenas esperar o primeiro.
+  bool _garantiaLocalEmCurso = false;
+
+  /// REGRA DA CASA — **gravação LOCAL primeiro, nuvem depois, para TODA entidade**.
+  ///
+  /// 1) descarrega as linhas do caminho rápido (gravação por registro, ~150 ms);
+  /// 2) se ainda há coleções sujas (flush completo de 800 ms), força o gravar
+  ///    AGORA.
+  ///
+  /// Chamado antes de QUALQUER requisição de rede de escrita e antes de ler o
+  /// banco local: assim o dado que o usuário acabou de lançar já está no
+  /// PostgreSQL local quando o envio acontece — e uma releitura do banco nunca
+  /// enxerga a memória "à frente" do disco (era isso que apagava lançamento
+  /// recém-feito). Nuvem em pausa, offline ou com erro (402/quota) não segura,
+  /// não desfaz e não desordena nada disto: a nuvem é espelho, o local é a
+  /// fonte da verdade.
+  Future<void> _garantirGravacaoLocalPendente() async {
+    if (!_persistenciaHabilitada) return;
+    try {
+      await _executarFlushLinhasLocais();
+      if (_dirtyCollections.isEmpty ||
+          _salvandoDados ||
+          _garantiaLocalEmCurso) {
+        return; // nada pendente, ou o gravador completo já está rodando
+      }
+      _garantiaLocalEmCurso = true;
+      try {
+        _debounceSalvamento?.cancel();
+        await _executarSalvamentoAutomatico();
+      } finally {
+        _garantiaLocalEmCurso = false;
+      }
+    } catch (e) {
+      debugPrint('>>> [Local] ⚠️ Não consegui garantir gravação local: $e');
     }
   }
 
@@ -2024,7 +2579,6 @@ class DataService extends ChangeNotifier {
   // ==========================================================================
 
   DateTime? _ultimoBackupNuvem;
-  bool _emProcessoBackupNuvem = false;
 
   /// Data/hora do último backup enviado para a nuvem (empresa atual).
   DateTime? get ultimoBackupNuvem => _ultimoBackupNuvem;
@@ -2120,6 +2674,19 @@ class DataService extends ChangeNotifier {
   DateTime? _ultimoBackupCompletoNuvem;
   bool _emProcessoBackupCompleto = false;
 
+  /// BACKOFF: última tentativa de backup completo (sucesso OU falha).
+  ///
+  /// Sem isto, um backup que falha (ex.: cota do Neon estourada, `pg_dump`
+  /// indisponível) era re-tentado a cada 30min para sempre — cada tentativa
+  /// baixa o banco da nuvem INTEIRO (todas as empresas), ou seja, o retry
+  /// infinito era uma das maiores fontes de egress.
+  DateTime? _ultimaTentativaBackupCompletoNuvem;
+
+  /// Espera mínima entre TENTATIVAS de backup completo quando a anterior
+  /// falhou. Um backup bem-sucedido continua respeitando o intervalo normal
+  /// (`BACKUP_COMPLETO_NUVEM_HORAS`).
+  static const Duration _backoffAposFalhaBackup = Duration(hours: 6);
+
   /// Data/hora do último backup COMPLETO do banco da nuvem enviado.
   DateTime? get ultimoBackupCompletoNuvem => _ultimoBackupCompletoNuvem;
 
@@ -2161,6 +2728,29 @@ class DataService extends ChangeNotifier {
 
     final intervalo = EnvConfig.backupCompletoNuvemHoras;
     final agora = DateTime.now();
+
+    // BACKOFF: se a ÚLTIMA tentativa falhou há menos de 6h, não insiste.
+    // Uma falha hoje significava retry a cada 30min para sempre, e cada
+    // tentativa baixa o banco da nuvem inteiro (todas as empresas).
+    // "Falhou" = tentativa mais nova que o último sucesso, OU nunca houve
+    // sucesso algum (primeira máquina / backup ainda nunca completou).
+    final tentativaAtual = _ultimaTentativaBackupCompletoNuvem;
+    final ultimoSucesso = _ultimoBackupCompletoNuvem;
+    final tentativaFalhou =
+        tentativaAtual != null &&
+        (ultimoSucesso == null || tentativaAtual.isAfter(ultimoSucesso));
+    if (tentativaFalhou &&
+        agora.difference(tentativaAtual!) < _backoffAposFalhaBackup) {
+      final faltam = _backoffAposFalhaBackup - agora.difference(tentativaAtual);
+      debugPrint(
+        '>>> [BackupCompleto] ⏭️ Última tentativa falhou há '
+        '${agora.difference(tentativaAtual).inMinutes}min — '
+        'nova tentativa em ${faltam.inMinutes}min (backoff).',
+      );
+      return 'backup completo: tentativa anterior falhou, backoff de '
+          '${faltam.inMinutes}min restante';
+    }
+
     final horasDesdeUltimo = _ultimoBackupCompletoNuvem != null
         ? agora.difference(_ultimoBackupCompletoNuvem!).inHours
         : 9999;
@@ -2174,6 +2764,10 @@ class DataService extends ChangeNotifier {
     }
 
     _emProcessoBackupCompleto = true;
+    // Registra a TENTATIVA antes de rodar: se o processo morrer no meio
+    // (ex.: cota estourada), a próxima verificação já entra no backoff em vez
+    // de disparar outro pg_dump imediatamente.
+    _ultimaTentativaBackupCompletoNuvem = agora;
     debugPrint(
       '>>> [BackupCompleto] 🕐 Hora do backup COMPLETO do banco da nuvem...',
     );
@@ -2286,8 +2880,8 @@ class DataService extends ChangeNotifier {
       final nuvemEstaHabilitada = nuvemHabilitada;
       _syncQueue.setPaused(
         empresa == null ||
-        _currentEmpresaId != empresa.id ||
-        !nuvemEstaHabilitada,
+            _currentEmpresaId != empresa.id ||
+            !nuvemEstaHabilitada,
       );
 
       if (!nuvemEstaHabilitada) {
@@ -2300,6 +2894,7 @@ class DataService extends ChangeNotifier {
           _realtimeSync.iniciar(
             empresa.id,
             callback: _aplicarMudancaRealtime,
+            aoMudarNaNuvem: _aoMudarPelaNuvem,
           ),
         );
       }
@@ -2335,6 +2930,11 @@ class DataService extends ChangeNotifier {
       ),
     );
 
+    // Mantém a cópia do AuthService em sincronia (mesma empresa, mesmas
+    // configurações). Sem isso, o AuthService continuava com a config antiga
+    // (ex.: perfil padrão recém-alterado voltava e era reaplicado a seguir).
+    onEmpresaAtualizada?.call(empresaComTimestamp);
+
     notifyListeners();
   }
 
@@ -2350,11 +2950,9 @@ class DataService extends ChangeNotifier {
   static const Duration _limiteEsperaNuvemInicial = Duration(seconds: 15);
 
   // Controle de Paginação (Infinite Scroll)
-  int _paginaAtualClientes = 0;
   bool _temMaisClientes = true;
   bool _carregandoMaisClientes = false;
 
-  int _paginaAtualVendas = 0;
   bool _temMaisVendas = true;
   bool _carregandoMaisVendas = false;
   bool get isLoading => _isLoading;
@@ -2792,6 +3390,23 @@ class DataService extends ChangeNotifier {
     print('>>> DataService: Empresa nova: $empresaId');
     print('>>> DataService: ========================================');
 
+    // Linhas pendentes do caminho rápido (gravação linha a linha) pertencem à
+    // empresa que está sendo trocada: gravá-las AGORA, com `_currentEmpresaId`
+    // e `DatabaseService` ainda na empresa antiga. Se sobrarem para depois da
+    // troca, o carimbo de empresa (feito na hora da gravação) as adotaria pela
+    // empresa nova — é assim que lançamento de uma empresa parava na outra.
+    if (_currentEmpresaId != null && _temLinhasLocaisPendentes) {
+      try {
+        await _executarFlushLinhasLocais();
+      } catch (e) {
+        print(
+          '>>> DataService: ⚠️ Erro ao gravar linhas pendentes da empresa anterior: $e',
+        );
+        // Falhou: as coleções já foram marcadas como sujas e o _salvarTodosDados
+        // abaixo reescreve a tabela inteira da empresa antiga como rede de segurança.
+      }
+    }
+
     // Salvar dados da empresa anterior ANTES de trocar (se houver empresa anterior)
     if (_currentEmpresaId != null) {
       print(
@@ -2826,6 +3441,13 @@ class DataService extends ChangeNotifier {
     _produtos.clear();
     _tiposServico.clear();
     _pedidos.clear();
+    // Serviços realizados (SRV-) e orçamentos (ORC-) também são POR EMPRESA:
+    // sem estes dois clears, a empresa nova herdava os lançamentos da anterior
+    // — o orçamento lançado na BMJ aparecia na Exodo Systems. A carga só
+    // substitui a lista quando a nova empresa TEM registros (guards
+    // `if (...Map.isNotEmpty)`), então empresa "vazia" mantém o que sobrou.
+    _servicosRealizados.clear();
+    _orcamentos.clear();
     _ordensServico.clear();
     _entregas.clear();
     _motoristas.clear();
@@ -2835,6 +3457,7 @@ class DataService extends ChangeNotifier {
     _ajustesEstoqueLote.clear();
     _lotesProdutos.clear();
     _notasEntrada.clear();
+    _pedidosCompra.clear();
     _agendamentosServico.clear();
     _funcionarios.clear();
     _taxasEntrega.clear();
@@ -2925,27 +3548,29 @@ class DataService extends ChangeNotifier {
       // ✅ REALTIME: Ativar escuta WebSocket para sincronização multi-PC
       if (empresaId != null && !modoLeve && nuvemHabilitada) {
         _realtimeSync
-            .iniciar(empresaId, callback: _aplicarMudancaRealtime)
+            .iniciar(
+              empresaId,
+              callback: _aplicarMudancaRealtime,
+              aoMudarNaNuvem: _aoMudarPelaNuvem,
+            )
             .catchError((e) {
               debugPrint(
                 '>>> [Realtime] ⚠️ Erro ao iniciar Realtime (não bloqueante): $e',
               );
             });
-          } else if (!nuvemHabilitada) {
-            unawaited(_realtimeSync.parar());
+      } else if (!nuvemHabilitada) {
+        unawaited(_realtimeSync.parar());
       }
 
       // ✅ LAN EM TEMPO REAL: independente da nuvem. O sincronizador da rede
       // local grava no PostgreSQL deste PC e avisa por pg_notify; aqui a tela
       // é recarregada na hora (é o caminho que sustenta a loja sem internet).
       if (!modoLeve && !kIsWeb) {
-        _lanRealtime
-            .iniciar(callback: _aoMudarPelaRedeLocal)
-            .catchError((e) {
-              debugPrint(
-                '>>> [LAN-Realtime] ⚠️ Erro ao iniciar (não bloqueante): $e',
-              );
-            });
+        _lanRealtime.iniciar(callback: _aoMudarPelaRedeLocal).catchError((e) {
+          debugPrint(
+            '>>> [LAN-Realtime] ⚠️ Erro ao iniciar (não bloqueante): $e',
+          );
+        });
       }
 
       // FILA DE PRODUÇÃO: as vias que não saíram na impressora do setor ficam
@@ -2998,28 +3623,28 @@ class DataService extends ChangeNotifier {
     notifyListeners();
     print('>>> DataService: ✓ Troca de empresa concluída - dados isolados');
 
-    // Registrar listener de foco para Web (acordar o app se ficar em background)
+    // Web: retomar o pulso assim que a aba/janela voltar a ficar visível.
+    //
+    // Antes usávamos apenas `onWindowFocus`, que NÃO dispara ao trocar de aba.
+    // Como o navegador estrangula timers de páginas escondidas (~1×/minuto), a
+    // alteração feita no app Windows demorava até 1 minuto para aparecer no
+    // portal. Agora escutamos `visibilitychange` + `pageshow` + `focus` e
+    // puxamos o delta imediatamente ao voltar.
     if (kIsWeb) {
       try {
         _windowFocusSubscription?.cancel();
         _windowFocusSubscription = html_helper.onWindowFocus.listen(
-          (_) {
-            final agora = DateTime.now();
-            if (_ultimoResetFoco != null &&
-                agora.difference(_ultimoResetFoco!).inSeconds < 30) {
-              return;
-            }
-            _ultimoResetFoco = agora;
-
-            debugPrint(
-              '>>> [SISTEMA] Janela focada - Verificando atualizações...',
-            );
-            if (_currentEmpresaId != null) {
-              _carregarDadosDoSupabase(modoLeve: true);
-            }
-          },
+          (_) => _aoVoltarParaPaginaWeb(),
           onError: (e) {
             debugPrint('>>> [SISTEMA] Erro no stream de foco: $e');
+          },
+        );
+
+        _windowVisibleSubscription?.cancel();
+        _windowVisibleSubscription = html_helper.onWindowVisible.listen(
+          (_) => _aoVoltarParaPaginaWeb(),
+          onError: (e) {
+            debugPrint('>>> [SISTEMA] Erro no stream de visibilidade: $e');
           },
         );
       } catch (e) {
@@ -3028,16 +3653,7 @@ class DataService extends ChangeNotifier {
     }
   }
 
-  void _reiniciarTimerSincronizacao() {
-    _syncTimer?.cancel();
-    _syncTimer = Timer.periodic(const Duration(seconds: 45), (timer) {
-      if (_currentEmpresaId != null && !_isLoading) {
-        _sincronizarSilenciosamente();
-      }
-    });
-  }
-
-  Future<void> _sincronizarSilenciosamente() async {
+  Future<void> _sincronizarSilenciosamente({Set<String>? tabelas}) async {
     if (_currentEmpresaId == null) return;
 
     try {
@@ -3060,9 +3676,12 @@ class DataService extends ChangeNotifier {
         notifyListeners();
       }
 
-      debugPrint('>>> [Sync] 🔄 Sincronização silenciosa em andamento...');
+      debugPrint(
+        '>>> [Sync] 🔄 Sincronização silenciosa em andamento'
+        '${tabelas == null || tabelas.isEmpty ? '' : ' (${tabelas.join(', ')})'}...',
+      );
       if (SupabaseService.isAvailable && !_isOffline) {
-        await _carregarDadosDoSupabase();
+        await _carregarDadosDoSupabase(tabelas: tabelas);
         notifyListeners();
         debugPrint('>>> [Sync] ✅ Sincronização silenciosa concluída');
       } else {
@@ -3075,8 +3694,11 @@ class DataService extends ChangeNotifier {
 
   /// Obtém a chave de armazenamento com prefixo da empresa
   String _getChaveComEmpresa(String chaveBase) {
-    if (_currentEmpresaId == null) return chaveBase;
-    return 'empresa_${_currentEmpresaId}_$chaveBase';
+    final empresaId = _currentEmpresaId;
+    if (empresaId == null || empresaId.isEmpty) {
+      return 'empresa_desconhecida_$chaveBase';
+    }
+    return 'empresa_${empresaId}_$chaveBase';
   }
 
   /// Método público para forçar atualização dos listeners
@@ -3923,13 +4545,18 @@ class DataService extends ChangeNotifier {
   }
 
   /// Registra uma sangria do caixa atual
+  ///
+  /// [aberturaParam] permite lançar a sangria em um caixa específico (ex.: o
+  /// gestor lançando no caixa de outro operador pela visão "juntar caixas");
+  /// sem ele, vale o caixa aberto do usuário atual.
   Future<SangriaCaixa> registrarSangria({
     required double valor,
     required String motivo,
     String? observacao,
     String? responsavel,
+    AberturaCaixa? aberturaParam,
   }) async {
-    final abertura = aberturaCaixaAtual;
+    final abertura = aberturaParam ?? aberturaCaixaAtual;
     if (abertura == null) {
       throw Exception('Não há caixa aberto para registrar sangria');
     }
@@ -3941,7 +4568,7 @@ class DataService extends ChangeNotifier {
       valor: valor,
       motivo: motivo,
       observacao: observacao,
-      responsavel: responsavel ?? _responsavelAtivo,
+      responsavel: responsavel ?? abertura.responsavel ?? _responsavelAtivo,
     );
 
     _sangrias.add(sangria);
@@ -3958,13 +4585,18 @@ class DataService extends ChangeNotifier {
   }
 
   /// Registra um suprimento do caixa atual
+  ///
+  /// [aberturaParam] permite lançar o suprimento em um caixa específico (ex.: o
+  /// gestor lançando no caixa de outro operador pela visão "juntar caixas");
+  /// sem ele, vale o caixa aberto do usuário atual.
   Future<SuprimentoCaixa> registrarSuprimento({
     required double valor,
     required String motivo,
     String? observacao,
     String? responsavel,
+    AberturaCaixa? aberturaParam,
   }) async {
-    final abertura = aberturaCaixaAtual;
+    final abertura = aberturaParam ?? aberturaCaixaAtual;
     if (abertura == null) {
       throw Exception('Não há caixa aberto para registrar suprimento');
     }
@@ -3976,7 +4608,7 @@ class DataService extends ChangeNotifier {
       valor: valor,
       motivo: motivo,
       observacao: observacao,
-      responsavel: responsavel ?? _responsavelAtivo,
+      responsavel: responsavel ?? abertura.responsavel ?? _responsavelAtivo,
     );
 
     _suprimentos.add(suprimento);
@@ -4902,6 +5534,10 @@ class DataService extends ChangeNotifier {
 
   void deleteCliente(String id) {
     _clientes.removeWhere((c) => c.id == id);
+    // Exclusão no banco LOCAL por linha: sem isso a linha continuava viva no
+    // PostgreSQL e o registro "ressuscitava" no próximo boot (o snapshot do
+    // banco substitui a memória).
+    _removerLinhaLocal(LocalStorageService.keyClientes, id);
     notifyListeners();
     _salvarAutomaticamente();
     // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
@@ -4971,6 +5607,8 @@ class DataService extends ChangeNotifier {
 
   void deleteFuncionario(String id) {
     _funcionarios.removeWhere((f) => f.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyFuncionarios, id);
     notifyListeners();
     _salvarAutomaticamente();
     // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
@@ -5028,6 +5666,8 @@ class DataService extends ChangeNotifier {
 
   void deleteLinkVendedor(String id) {
     _linksVendedores.removeWhere((l) => l.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyLinksVendedores, id);
     notifyListeners();
     _salvarAutomaticamente();
     // Remover imediatamente do Supabase
@@ -5104,6 +5744,8 @@ class DataService extends ChangeNotifier {
 
   void deleteComissaoVendedor(String id) {
     _comissoesVendedores.removeWhere((c) => c.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyComissoesVendedores, id);
     notifyListeners();
     _marcarSujo(LocalStorageService.keyComissoesVendedores);
     enviarMudancaParaSupabase(SupabaseService.tableComissoesVendedores, {
@@ -5221,6 +5863,8 @@ class DataService extends ChangeNotifier {
 
   void deleteContaPagar(String id) {
     _contasPagar.removeWhere((c) => c.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyContasPagar, id);
     notifyListeners();
     _salvarAutomaticamente();
     // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
@@ -5249,6 +5893,19 @@ class DataService extends ChangeNotifier {
   }
 
   // ============ CRUD Produto ============
+
+  /// Produto que chega SEM perfil tributário recebe o PADRÃO do regime atual.
+  ///
+  /// A regra fica no serviço (e não só no formulário) para valer também para
+  /// importação, clone e qualquer caminho que grave produto — o vínculo
+  /// precisa chegar igual ao PostgreSQL local e à nuvem.
+  Produto _comPerfilTributarioPadrao(Produto produto) {
+    return produtoComPerfilTributarioPadrao(
+      produto,
+      _perfisTributarios,
+      paraSimples: empresaRegimeSimples,
+    );
+  }
 
   /// Garante que existe um produto "Diversos" com código 9999
   Future<Produto> garantirProdutoDiversos() async {
@@ -5307,6 +5964,9 @@ class DataService extends ChangeNotifier {
     if (produto.id.isEmpty) {
       produto = produto.copyWith(id: uuid.v4());
     }
+    // Produto SEM perfil tributário usa o PADRÃO do regime. O vínculo vai no
+    // `toMap()` e é gravado no PostgreSQL local e na nuvem junto com o item.
+    produto = _comPerfilTributarioPadrao(produto);
     // ⛔ TRAVA: nunca criar/gravar produto carimbado com OUTRA empresa (a
     // gravação cruzada é o que movia itens de uma empresa para a outra).
     if (ehProdutoDeOutraEmpresa(produto.empresaId)) {
@@ -5392,6 +6052,9 @@ class DataService extends ChangeNotifier {
       if (p.id.isEmpty) {
         p = p.copyWith(id: uuid.v4());
       }
+      // Lote (importação/planilha) também garante o perfil PADRÃO em quem não
+      // tem: o vínculo precisa subir para o banco local e para a nuvem.
+      p = _comPerfilTributarioPadrao(p);
       processados.add(p);
     }
 
@@ -5495,7 +6158,9 @@ class DataService extends ChangeNotifier {
     try {
       final dataList = processados.map((c) => c.toMap()).toList();
       await DatabaseService().adicionarClientesLote(dataList);
-      debugPrint('>>> [DataService] 🏛️ Lote de clientes persistido no PostgreSQL local.');
+      debugPrint(
+        '>>> [DataService] 🏛️ Lote de clientes persistido no PostgreSQL local.',
+      );
     } catch (e) {
       debugPrint(
         '>>> [DataService] ⚠️ Erro ao persistir lote de clientes no PostgreSQL: $e',
@@ -5511,9 +6176,13 @@ class DataService extends ChangeNotifier {
         await _supabaseService
             .upsertLote(SupabaseService.tableClientes, dataList)
             .timeout(const Duration(minutes: 5));
-        debugPrint('>>> [DataService] ✅ Lote de clientes sincronizado com Supabase.');
+        debugPrint(
+          '>>> [DataService] ✅ Lote de clientes sincronizado com Supabase.',
+        );
       } catch (e) {
-        debugPrint('>>> ❌ Erro ao sincronizar lote de clientes com Supabase: $e');
+        debugPrint(
+          '>>> ❌ Erro ao sincronizar lote de clientes com Supabase: $e',
+        );
         _adicionarSincronizacaoPendente();
       }
     } else if (processados.length > 100) {
@@ -5878,6 +6547,9 @@ class DataService extends ChangeNotifier {
       );
       return;
     }
+    // Mesmo produto antigo, SEM perfil tributário, recebe o PADRÃO do regime
+    // ao ser salvo — o vínculo é persistido no local e na nuvem.
+    produto = _comPerfilTributarioPadrao(produto);
     // ⛔ TRAVA: produto de outra empresa não é atualizado aqui. Antes ele era
     // gravado com a empresa aberta e TROCAVA DE DONO (a empresa original perdia
     // o item). Recusar deixa o dado onde ele é.
@@ -5897,13 +6569,21 @@ class DataService extends ChangeNotifier {
       // Registrar movimento de estoque se houver mudança na quantidade
       if (registrarMovimento && produto.estoque != produtoAntigo.estoque) {
         final diferenca = produto.estoque - produtoAntigo.estoque;
+        // Saldo levado a 0 = ZERAMENTO: registra como 'zerado' para não
+        // aparecer como entrada/saída nos totais do relatório de estoque.
+        final ehZeramento = produto.estoque == 0;
         registrarSaidaEstoque(
           produtoId: produto.id,
           quantidade: diferenca.abs(),
-          motivo: diferenca < 0 ? 'saida' : 'ajuste',
-          observacao: diferenca < 0 ? 'Saída via edição' : 'Ajuste via edição',
+          motivo: ehZeramento
+              ? 'zerar_estoque'
+              : (diferenca < 0 ? 'saida' : 'ajuste'),
+          observacao: ehZeramento
+              ? 'Estoque zerado (de ${produtoAntigo.estoque.toStringAsFixed(2)} para 0) via edição'
+              : (diferenca < 0 ? 'Saída via edição' : 'Ajuste via edição'),
           usuario: usuarioNome ?? 'sistema',
           notify: false,
+          tipoHistorico: ehZeramento ? 'zerado' : 'saida',
         );
       }
 
@@ -6022,6 +6702,9 @@ class DataService extends ChangeNotifier {
     );
 
     _produtos.removeWhere((p) => p.id == id);
+    // Exclusão real no banco local: sem isso o produto apagado voltava no
+    // próximo boot (a linha continuava no PostgreSQL local).
+    _removerLinhaLocal(LocalStorageService.keyProdutos, id);
     notifyListeners();
     _marcarSujo(LocalStorageService.keyProdutos);
 
@@ -6179,17 +6862,15 @@ class DataService extends ChangeNotifier {
       if (lote.quantidade <= 0 || validade == null) return false;
       final diaValidade = DateTime(validade.year, validade.month, validade.day);
       return !diaValidade.isAfter(limite);
-    }).toList()
-      ..sort((a, b) => a.dataValidade!.compareTo(b.dataValidade!));
+    }).toList()..sort((a, b) => a.dataValidade!.compareTo(b.dataValidade!));
     return resultado;
   }
 
   /// Quantidade de produtos com lotes vencidos ou vencendo em X dias
   int contarProdutosComValidadeCritica({int dias = 30}) {
-    return lotesComValidadeCritica(dias: dias)
-        .map((lote) => lote.produtoId)
-        .toSet()
-        .length;
+    return lotesComValidadeCritica(
+      dias: dias,
+    ).map((lote) => lote.produtoId).toSet().length;
   }
 
   /// Adiciona ou atualiza um lote de produto
@@ -6326,20 +7007,20 @@ class DataService extends ChangeNotifier {
     // validade não está indo": a tela chamava este método, mas ele retornava
     // aqui. Agora a validade sozinha já cria o lote, com um rótulo derivado.
     final loteTexto = (numeroLote ?? '').trim();
-    final temDadoDeLote = loteTexto.isNotEmpty ||
-        dataValidade != null ||
-        dataFabricacao != null;
+    final temDadoDeLote =
+        loteTexto.isNotEmpty || dataValidade != null || dataFabricacao != null;
     if (!temDadoDeLote) return;
-    final numeroLoteFinal =
-        loteTexto.isNotEmpty ? loteTexto : _rotuloLoteSemNumero(dataValidade);
+    final numeroLoteFinal = loteTexto.isNotEmpty
+        ? loteTexto
+        : _rotuloLoteSemNumero(dataValidade);
 
     // Depósito/estoque de destino do lote: é o MESMO que recebeu o produto em
     // `registrarEntradaEstoque` (o escolhido na tela ou, sem ele, o padrão do
     // produto). O lote carrega o depósito para o saldo ser separado por local.
     final produtoIndex = _produtos.indexWhere((p) => p.id == produtoId);
-    final produtoDoLote =
-        produtoIndex == -1 ? null : _produtos[produtoIndex];
-    final destinoEstoque = estoquePorId(_estoques, estoqueId)?.id ??
+    final produtoDoLote = produtoIndex == -1 ? null : _produtos[produtoIndex];
+    final destinoEstoque =
+        estoquePorId(_estoques, estoqueId)?.id ??
         (produtoDoLote != null
             ? estoquePadraoDe(produtoDoLote)
             : estoquePrincipalAtual?.id);
@@ -6353,8 +7034,7 @@ class DataService extends ChangeNotifier {
     LoteProduto? existente;
     for (final l in _lotesProdutos) {
       if (l.produtoId == produtoId &&
-          l.numeroLote.trim().toLowerCase() ==
-              numeroLoteFinal.toLowerCase() &&
+          l.numeroLote.trim().toLowerCase() == numeroLoteFinal.toLowerCase() &&
           _mesmaData(l.dataValidade, dataValidade) &&
           l.fornecedorId == fornecedorId &&
           l.estoqueId == destinoEstoque) {
@@ -6431,6 +7111,12 @@ class DataService extends ChangeNotifier {
     String? fornecedorNome,
     String? estoqueId,
     bool notify = true,
+
+    /// Tipo gravado no histórico. O padrão é 'entrada'; passa 'zerado' quando
+    /// a "entrada" só existe para LEVAR O SALDO A 0 (zeramento de estoque com
+    /// saldo negativo) — assim o movimento fica registrado, mas NÃO infla o
+    /// total de ENTRADAS das telas de relatório.
+    String tipoHistorico = 'entrada',
   }) async {
     // 1. Localizar o produto
     final index = _produtos.indexWhere((p) => p.id == produtoId);
@@ -6471,7 +7157,10 @@ class DataService extends ChangeNotifier {
     // A observação do histórico de alterações identifica a entrada no produto
     // (aparece na aba 'Histórico de Alterações' do formulário).
     final obsHistorico = [
-      'Entrada de estoque +${quantidade.toStringAsFixed(2)}',
+      if (tipoHistorico == 'zerado')
+        'Estoque zerado (saldo 0, correção de +${quantidade.toStringAsFixed(2)})'
+      else
+        'Entrada de estoque +${quantidade.toStringAsFixed(2)}',
       if (observacao != null && observacao.isNotEmpty) observacao,
       if (fornecedorNome != null && fornecedorNome.isNotEmpty)
         'Fornecedor: $fornecedorNome',
@@ -6492,10 +7181,13 @@ class DataService extends ChangeNotifier {
       produtoId: produtoId,
       data: DateTime.now(),
       quantidade: quantidade,
-      tipo: 'entrada',
+      tipo: tipoHistorico,
       observacao: [
         if (observacao != null && observacao.isNotEmpty) observacao,
-        'Entrada em ${nomeDoEstoque(_estoques, destinoEstoque)}',
+        if (tipoHistorico == 'zerado')
+          'Estoque zerado (entrada de ${quantidade.toStringAsFixed(2)} apenas para saldo 0)'
+        else
+          'Entrada em ${nomeDoEstoque(_estoques, destinoEstoque)}',
       ].join(' | '),
       usuario: usuario,
       fornecedorId: fornecedorId,
@@ -6532,7 +7224,32 @@ class DataService extends ChangeNotifier {
         .toList();
 
     if (fornecedoresParaZerar.isEmpty) {
-      // Se já está tudo zerado ou o mapa está vazio, garante que o geral é 0
+      // Sem saldo por fornecedor: garante que o geral é 0 — e REGISTRA o
+      // zeramento, senão o saldo mudaria sem nenhum rastro no histórico.
+      if (produto.estoque.abs() >= 0.0005) {
+        final historico = EstoqueHistorico(
+          id:
+              DateTime.now().millisecondsSinceEpoch.toString() +
+              '_zerar_geral_' +
+              produtoId,
+          produtoId: produtoId,
+          data: DateTime.now(),
+          quantidade: -produto.estoque, // delta assinado: 0 − saldo anterior
+          tipo: 'zerado',
+          observacao:
+              'Estoque zerado (de ${produto.estoque.toStringAsFixed(2)} para 0) '
+              'por ${usuario ?? "Sistema"}',
+          usuario: usuario,
+          motivo: 'zerar_estoque',
+        );
+        _estoqueHistorico.add(historico);
+        _enviarMudancaSupabase(
+          SupabaseService.tableEstoqueHistorico,
+          historico.toMap(),
+        );
+        _marcarSujo(LocalStorageService.keyEstoqueHistorico);
+      }
+
       final produtoAtualizado = produto.copyWith(
         estoque: 0.0,
         estoquePorFornecedor: {},
@@ -6544,6 +7261,7 @@ class DataService extends ChangeNotifier {
         aguardarSincronia: false,
         registrarMovimento: false,
       );
+      notifyListeners();
       return;
     }
 
@@ -6554,6 +7272,10 @@ class DataService extends ChangeNotifier {
 
       mapaEstoque[fornNome] = 0.0;
 
+      // Zeramento: o registro fica no histórico (rastreio de quem zerou, quanto
+      // existia e quando), mas como tipo 'zerado' ele NÃO vira "entrada" nem
+      // "saída" nos totais — um saldo negativo levado a 0 não é mercadoria que
+      // entrou, é uma conciliação de estoque.
       final historico = EstoqueHistorico(
         id:
             DateTime.now().millisecondsSinceEpoch.toString() +
@@ -6563,12 +7285,14 @@ class DataService extends ChangeNotifier {
             produtoId,
         produtoId: produtoId,
         data: DateTime.now(),
-        quantidade: -qtdAtual,
-        tipo: qtdAtual > 0 ? 'saida' : 'entrada',
+        quantidade: -qtdAtual, // delta assinado: 0 − saldo anterior
+        tipo: 'zerado',
         observacao:
-            'Zerar estoque do fornecedor "$fornNome" via botão rápido por ${usuario ?? "Sistema"}',
+            'Estoque zerado (de ${qtdAtual.toStringAsFixed(2)} para 0) — '
+            'fornecedor "$fornNome" via botão rápido por ${usuario ?? "Sistema"}',
         usuario: usuario,
         fornecedorNome: fornNome,
+        motivo: 'zerar_estoque',
       );
 
       _estoqueHistorico.add(historico);
@@ -6614,6 +7338,10 @@ class DataService extends ChangeNotifier {
     String? estoqueId, // de qual estoque sai (padrão: o principal da empresa)
     bool transferirParaEstoquePrincipal =
         true, // traz o que falta de outro estoque antes de baixar
+    /// Tipo gravado no histórico. O padrão é 'saida'; passa 'zerado' quando a
+    /// "saída" só existe para LEVAR O SALDO A 0 (zeramento de estoque): o
+    /// movimento fica registrado, mas NÃO conta no total de SAÍDAS.
+    String tipoHistorico = 'saida',
   }) async {
     final index = _produtos.indexWhere((p) => p.id == produtoId);
     if (index == -1) return;
@@ -6853,12 +7581,12 @@ class DataService extends ChangeNotifier {
     final historico = EstoqueHistorico(
       id:
           DateTime.now().millisecondsSinceEpoch.toString() +
-          '_saida_' +
+          '_${tipoHistorico}_' +
           produtoId,
       produtoId: produtoId,
       data: DateTime.now(),
       quantidade: -quantidade,
-      tipo: 'saida',
+      tipo: tipoHistorico,
       observacao:
           (observacao ?? '') + (motivo != null ? ' (Motivo: $motivo)' : ''),
       usuario: usuario,
@@ -6895,15 +7623,18 @@ class DataService extends ChangeNotifier {
 
   /// Aplica o resultado de um inventário de conferência: corrige o estoque de
   /// cada produto para a contagem real da loja e registra a diferença no
-  /// histórico (motivo 'inventario'). Faltas viram saída; sobras viram entrada.
+  /// histórico (motivo 'inventario'). Faltas viram saída; sobras viram entrada;
+  /// uma contagem de **0** é ZERAMENTO (fica como 'zerado' no histórico, sem
+  /// virar entrada/saída nem sobra/falta).
   ///
   /// [contagens] mapeia produtoId -> quantidade contada na loja.
-  /// Retorna um resumo para a tela: {conferidos, faltas, sobras, itensAjustados}.
+  /// Retorna um resumo para a tela: {conferidos, faltas, sobras, zerados,
+  /// ajustados}.
   Future<Map<String, int>> aplicarInventario(
     Map<String, double> contagens, {
     String? usuario,
   }) async {
-    var conferidos = 0, faltas = 0, sobras = 0, ajustados = 0;
+    var conferidos = 0, faltas = 0, sobras = 0, ajustados = 0, zerados = 0;
 
     // Itens que realmente mudaram: viram o lote do inventário (auditoria + desfazer).
     final itens = <AjusteEstoqueLoteItem>[];
@@ -6922,13 +7653,18 @@ class DataService extends ChangeNotifier {
         rotuloDestino: 'contado',
         abaterComposicao: true, // comportamento original do inventário
         usuario: usuario,
+        // Contou 0? O saldo foi levado a 0 de propósito: registra como
+        // ZERAMENTO ('zerado') em vez de sobra/falta.
+        zeramento: entry.value == 0,
       );
       if (diferenca == null) continue;
 
       conferidos++;
       if (diferenca.abs() < 0.0005) continue; // contagem confere — sem ajuste
 
-      if (diferenca < 0) {
+      if (entry.value == 0) {
+        zerados++;
+      } else if (diferenca < 0) {
         faltas++;
       } else {
         sobras++;
@@ -6954,6 +7690,7 @@ class DataService extends ChangeNotifier {
       'conferidos': conferidos,
       'faltas': faltas,
       'sobras': sobras,
+      'zerados': zerados,
       'ajustados': ajustados,
     };
   }
@@ -6978,6 +7715,11 @@ class DataService extends ChangeNotifier {
     String? usuario,
     String? observacao,
     String? estoqueId,
+
+    /// true = a diferença existe só para LEVAR O SALDO A 0 (zeramento). Grava
+    /// o movimento como 'zerado' em vez de entrada/saída, para o zeramento não
+    /// aparecer como "entrada" (ex.: saldo −193 → 0) nos totais das telas.
+    bool zeramento = false,
   }) async {
     final index = _produtos.indexWhere((p) => p.id == produtoId);
     if (index == -1) return null;
@@ -7001,7 +7743,10 @@ class DataService extends ChangeNotifier {
 
     if (arredondado.abs() < 0.0005) return 0; // já está no valor desejado
 
-    final detalhe = arredondado < 0
+    final detalhe = zeramento
+        ? '$origemMovimento — ESTOQUE ZERADO '
+              '(sistema: ${base.toStringAsFixed(2)} → saldo: 0.00)'
+        : arredondado < 0
         ? '$origemMovimento — faltando ${arredondado.abs().toStringAsFixed(2)} '
               '(sistema: ${base.toStringAsFixed(2)} → $rotuloDestino: ${novoEstoque.toStringAsFixed(2)})'
         : '$origemMovimento — sobra de ${arredondado.toStringAsFixed(2)} '
@@ -7025,6 +7770,7 @@ class DataService extends ChangeNotifier {
         abaterComposicao: abaterComposicao,
         estoqueId: estoqueId,
         transferirParaEstoquePrincipal: !porEstoque,
+        tipoHistorico: zeramento ? 'zerado' : 'saida',
       );
     } else {
       await registrarEntradaEstoque(
@@ -7034,6 +7780,7 @@ class DataService extends ChangeNotifier {
         usuario: usuario,
         fornecedorNome: 'Geral',
         estoqueId: estoqueId,
+        tipoHistorico: zeramento ? 'zerado' : 'entrada',
       );
     }
 
@@ -7064,76 +7811,6 @@ class DataService extends ChangeNotifier {
       return;
     }
     enviarMudancaParaSupabase(tabela, dados, evento: evento);
-  }
-
-  /// Grava tudo o que foi acumulado no modo lote: banco local em uma única
-  /// operação e nuvem em blocos (ou sincronização completa em segundo plano
-  /// quando o volume é grande demais para envio direto).
-  Future<void> _persistirLoteEmMassa() async {
-    final produtos = _loteProdutosPendentes.values.toList();
-    final historicos = Map<String, List<Map<String, dynamic>>>.from(
-      _loteMudancasPendentes,
-    );
-    _loteProdutosPendentes.clear();
-    _loteMudancasPendentes.clear();
-
-    final totalHistorico = historicos.values.fold<int>(
-      0,
-      (soma, lista) => soma + lista.length,
-    );
-    if (produtos.isEmpty && totalHistorico == 0) return;
-
-    debugPrint(
-      '>>> [DataService] 📦 Lote em massa: gravando ${produtos.length} produto(s) e $totalHistorico registro(s) de histórico...',
-    );
-
-    // 1. Banco local — uma única operação para todo o lote
-    try {
-      if (produtos.isNotEmpty) {
-        await DatabaseService().adicionarProdutosLote(produtos);
-        debugPrint(
-          '>>> [DataService] 💾 Lote de ${produtos.length} produto(s) gravado no PostgreSQL local.',
-        );
-      }
-    } catch (e) {
-      debugPrint(
-        '>>> [DataService] ⚠️ Erro ao gravar o lote no PostgreSQL local: $e',
-      );
-    }
-
-    _marcarSujo(LocalStorageService.keyProdutos);
-    _marcarSujo(LocalStorageService.keyEstoqueHistorico);
-
-    // 2. Nuvem
-    const int limiteEnvioDireto = 100;
-    if (!SupabaseService.isAvailable || _currentEmpresaId == null) {
-      // Sem nuvem agora: a sincronização completa (em segundo plano) leva tudo depois
-      _adicionarSincronizacaoPendente();
-      return;
-    }
-
-    if (produtos.length <= limiteEnvioDireto &&
-        totalHistorico <= limiteEnvioDireto) {
-      // Lote pequeno: mesmo comportamento de sempre (envio em segundo plano)
-      for (final p in produtos) {
-        enviarMudancaParaSupabase(SupabaseService.tableProdutos, p);
-      }
-      historicos.forEach((tabela, lista) {
-        for (final dado in lista) {
-          enviarMudancaParaSupabase(tabela, dado);
-        }
-      });
-      return;
-    }
-
-    // Lote grande: envia em blocos em segundo plano (não segura a tela).
-    // O histórico de estoque entra na sincronização completa, que já o cobre.
-    _enviarBlocosParaNuvem(SupabaseService.tableProdutos, produtos);
-    _enviarBlocosParaNuvem(
-      'produto_historico',
-      historicos['produto_historico'] ?? const [],
-    );
-    _adicionarSincronizacaoPendente();
   }
 
   /// Envia uma lista de registros para o Supabase em blocos de 100, em segundo plano.
@@ -7171,7 +7848,7 @@ class DataService extends ChangeNotifier {
   /// histórico de alterações do produto, mantendo a rastreabilidade.
   ///
   /// Retorna um resumo: {avaliados, estoquesAjustados, entradas, saidas,
-  /// precosAjustados, semAlteracao}.
+  /// zeramentos, precosAjustados, semAlteracao}.
   Future<Map<String, int>> aplicarAjusteEmMassa({
     Map<String, double> novosEstoques = const {},
     Map<String, double> novosPrecos = const {},
@@ -7186,7 +7863,7 @@ class DataService extends ChangeNotifier {
     String? observacao,
   }) async {
     var avaliados = 0, estoquesAjustados = 0, entradas = 0, saidas = 0;
-    var precosAjustados = 0, semAlteracao = 0;
+    var precosAjustados = 0, semAlteracao = 0, zeramentos = 0;
 
     final ids = <String>{...novosEstoques.keys, ...novosPrecos.keys};
 
@@ -7211,19 +7888,27 @@ class DataService extends ChangeNotifier {
             : (estoqueId != null
                   ? saldoNoEstoque(produtoAntes, estoqueId)
                   : produtoAntes.estoque);
+        // Levar o saldo a 0 é ZERAMENTO (inclusive no botão "ZERAR ESTOQUE"
+        // da tela em massa): registra como 'zerado' e não conta como
+        // entrada/saída — um saldo negativo levado a 0 não é mercadoria que
+        // entrou nem saiu.
+        final ehZeramento = novoEstoque == 0;
         final diferenca = await _ajustarEstoquePara(
           produtoId: id,
           novoEstoque: novoEstoque,
-          motivo: motivo ?? 'ajuste',
+          motivo: motivo ?? (ehZeramento ? 'zerar_estoque' : 'ajuste'),
           origemMovimento: 'Ajuste em massa',
           estoqueId: estoqueId,
           usuario: usuario,
           observacao: observacao,
+          zeramento: ehZeramento,
         );
         if (diferenca != null) {
           avaliados++;
           if (diferenca.abs() >= 0.0005) {
-            if (diferenca < 0) {
+            if (ehZeramento) {
+              zeramentos++;
+            } else if (diferenca < 0) {
               saidas++;
             } else {
               entradas++;
@@ -7290,6 +7975,7 @@ class DataService extends ChangeNotifier {
       'estoquesAjustados': estoquesAjustados,
       'entradas': entradas,
       'saidas': saidas,
+      'zeramentos': zeramentos,
       'precosAjustados': precosAjustados,
       'semAlteracao': semAlteracao,
     };
@@ -7358,6 +8044,7 @@ class DataService extends ChangeNotifier {
         origemMovimento: 'Zerar todo o estoque',
         usuario: usuario,
         observacao: observacao,
+        zeramento: true,
       );
 
       if (diferenca == null) continue; // produto não encontrado
@@ -7669,6 +8356,8 @@ class DataService extends ChangeNotifier {
 
   void deleteNotaEntrada(String notaId) {
     _notasEntrada.removeWhere((n) => n.id == notaId);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyNotasEntrada, notaId);
     notifyListeners();
     _marcarSujo(LocalStorageService.keyNotasEntrada);
     // Propagar delete para Supabase
@@ -7750,6 +8439,482 @@ class DataService extends ChangeNotifier {
     await enviarMudancaParaSupabase(SupabaseService.tableNotasEntrada, {
       'id': notaId,
     }, evento: 'DELETE');
+  }
+
+  // ============ CRUD PedidoCompra ============
+
+  /// Busca um pedido de compra pelo id (ou `null` se não existir mais).
+  PedidoCompra? pedidoCompraPorId(String id) {
+    for (final pedido in _pedidosCompra) {
+      if (pedido.id == id) return pedido;
+    }
+    return null;
+  }
+
+  /// Próximo número da série PC-0001.
+  ///
+  /// A numeração é derivada dos pedidos já carregados. O id continua sendo
+  /// único por timestamp, então uma numeração repetida entre dois aparelhos
+  /// não faz um pedido sobrescrever o outro.
+  String proximoNumeroPedidoCompra() {
+    var maior = 0;
+    final regex = RegExp(r'PC-(\d+)', caseSensitive: false);
+    for (final pedido in _pedidosCompra) {
+      final match = regex.firstMatch(pedido.numero);
+      if (match == null) continue;
+      final numero = int.tryParse(match.group(1) ?? '') ?? 0;
+      if (numero > maior) maior = numero;
+    }
+    return 'PC-${(maior + 1).toString().padLeft(4, '0')}';
+  }
+
+  /// Valida os itens e garante um id único por item.
+  ///
+  /// O formulário cria itens novos com `id` vazio e, na edição, eles precisam
+  /// receber id antes de entrar no pedido — é esse id que identifica o item no
+  /// recebimento (quantidades por item) e no histórico. Ids repetidos também
+  /// são trocados, porque duas linhas com o mesmo id fariam o recebimento
+  /// atualizar o item errado.
+  List<ItemPedidoCompra> _normalizarItensPedidoCompra(
+    List<ItemPedidoCompra> itens,
+  ) {
+    final validos = <ItemPedidoCompra>[];
+    final idsUsados = <String>{};
+    final base = DateTime.now().microsecondsSinceEpoch;
+    var sequencia = 0;
+
+    for (final item in itens) {
+      if (item.produtoId.isEmpty || item.quantidade <= 0) continue;
+      var id = item.id.trim();
+      if (id.isEmpty || idsUsados.contains(id)) {
+        do {
+          id = '${base}_item_${sequencia++}';
+        } while (idsUsados.contains(id));
+      }
+      idsUsados.add(id);
+      validos.add(id == item.id ? item : item.copyWith(id: id));
+    }
+    return validos;
+  }
+
+  /// Cria e salva um pedido de compra.
+  ///
+  /// [enviar] já nasce como `enviado` (o operador confirmou o pedido ao
+  /// fornecedor). Sem ele o pedido fica em `rascunho` e pode ser editado.
+  Future<PedidoCompra> criarPedidoCompra({
+    required String fornecedorNome,
+    String fornecedorId = '',
+    String? fornecedorCnpj,
+    String? fornecedorTelefone,
+    required List<ItemPedidoCompra> itens,
+    String? observacao,
+    String? usuario,
+    DateTime? previsaoEntrega,
+    String? estoqueDestinoId,
+    String? estoqueDestinoNome,
+    bool enviar = false,
+  }) async {
+    final itensValidos = _normalizarItensPedidoCompra(itens);
+    if (itensValidos.isEmpty) {
+      throw ArgumentError(
+        'Informe pelo menos um produto com quantidade maior que zero.',
+      );
+    }
+
+    final agora = DateTime.now();
+    final id = '${agora.microsecondsSinceEpoch}_pedido_compra';
+    final pedido = PedidoCompra(
+      id: id,
+      numero: proximoNumeroPedidoCompra(),
+      fornecedorId: fornecedorId,
+      fornecedorNome: fornecedorNome.trim().isEmpty
+          ? 'Não informado'
+          : fornecedorNome.trim(),
+      fornecedorCnpj: fornecedorCnpj,
+      fornecedorTelefone: fornecedorTelefone,
+      status: enviar ? StatusPedidoCompra.enviado : StatusPedidoCompra.rascunho,
+      itens: itensValidos,
+      observacao: observacao,
+      usuario: usuario,
+      estoqueDestinoId: estoqueDestinoId,
+      estoqueDestinoNome: estoqueDestinoNome,
+      dataCriacao: agora,
+      dataEnvio: enviar ? agora : null,
+      previsaoEntrega: previsaoEntrega,
+      createdAt: agora,
+      updatedAt: agora,
+    );
+
+    _pedidosCompra.add(pedido);
+    _marcarSujo(LocalStorageService.keyPedidosCompra);
+    notifyListeners();
+
+    await _persistirPedidoCompraLocal(pedido);
+    await _recalcularFlagsPedidoCompra(
+      produtoIds: pedido.itens.map((item) => item.produtoId).toSet(),
+    );
+    enviarMudancaParaSupabase(
+      SupabaseService.tablePedidosCompra,
+      pedido.toMap(),
+    );
+
+    return pedido;
+  }
+
+  /// Cria um pedido para cada fornecedor informado.
+  ///
+  /// É o caminho usado pelo relatório de reposição: os itens selecionados são
+  /// separados por fornecedor e cada grupo vira um pedido independente.
+  Future<List<PedidoCompra>> criarPedidosCompraPorFornecedor({
+    required Map<String, List<ItemPedidoCompra>> itensPorFornecedor,
+    String? usuario,
+    String? observacao,
+    bool enviar = false,
+  }) async {
+    final criados = <PedidoCompra>[];
+    for (final entry in itensPorFornecedor.entries) {
+      if (entry.value.isEmpty) continue;
+      criados.add(
+        await criarPedidoCompra(
+          fornecedorNome: entry.key,
+          itens: entry.value,
+          usuario: usuario,
+          observacao: observacao,
+          enviar: enviar,
+        ),
+      );
+    }
+    return criados;
+  }
+
+  /// Atualiza um pedido existente (edição de rascunho, envio etc.).
+  Future<void> atualizarPedidoCompra(PedidoCompra pedido) async {
+    final index = _pedidosCompra.indexWhere((p) => p.id == pedido.id);
+    if (index == -1) {
+      throw StateError('Pedido de compra não encontrado.');
+    }
+    final anterior = _pedidosCompra[index];
+    final itensNormalizados = _normalizarItensPedidoCompra(pedido.itens);
+    if (itensNormalizados.isEmpty) {
+      throw ArgumentError(
+        'Informe pelo menos um produto com quantidade maior que zero.',
+      );
+    }
+    final produtosAfetados = <String>{
+      ...anterior.itens.map((item) => item.produtoId),
+      ...itensNormalizados.map((item) => item.produtoId),
+    };
+
+    final atualizado = pedido.copyWith(
+      itens: itensNormalizados,
+      updatedAt: DateTime.now(),
+    );
+    _pedidosCompra[index] = atualizado;
+    _marcarSujo(LocalStorageService.keyPedidosCompra);
+    notifyListeners();
+
+    await _persistirPedidoCompraLocal(atualizado);
+    await _recalcularFlagsPedidoCompra(produtoIds: produtosAfetados);
+    enviarMudancaParaSupabase(
+      SupabaseService.tablePedidosCompra,
+      atualizado.toMap(),
+    );
+  }
+
+  /// Marca o pedido como enviado ao fornecedor.
+  Future<void> marcarPedidoCompraEnviado(String pedidoId) async {
+    final pedido = pedidoCompraPorId(pedidoId);
+    if (pedido == null) return;
+    // Só rascunho vira "enviado". Um pedido parcialmente recebido continua
+    // como `recebido_parcial` — voltar para `enviado` esconderia o progresso.
+    if (pedido.status != StatusPedidoCompra.rascunho) return;
+    await atualizarPedidoCompra(
+      pedido.copyWith(
+        status: StatusPedidoCompra.enviado,
+        dataEnvio: pedido.dataEnvio ?? DateTime.now(),
+      ),
+    );
+  }
+
+  /// Cancela um pedido em aberto sem mexer no estoque.
+  Future<void> cancelarPedidoCompra(
+    String pedidoId, {
+    String? motivo,
+    String? usuario,
+  }) async {
+    final pedido = pedidoCompraPorId(pedidoId);
+    if (pedido == null) return;
+    if (pedido.recebido) {
+      throw StateError(
+        'Este pedido já foi recebido. Para devolver a mercadoria use uma '
+        'saída/ajuste de estoque.',
+      );
+    }
+    if (pedido.cancelado) return;
+
+    final agora = DateTime.now();
+    final cancelado = pedido.copyWith(
+      status: StatusPedidoCompra.cancelado,
+      dataCancelamento: agora,
+      motivoCancelamento: motivo ?? pedido.motivoCancelamento,
+      usuario: usuario ?? pedido.usuario,
+      updatedAt: agora,
+    );
+    await atualizarPedidoCompra(cancelado);
+  }
+
+  /// Exclui o pedido do sistema. As entradas de estoque já lançadas ficam no
+  /// histórico (excluir um pedido recebido não estorna mercadoria).
+  Future<void> deletePedidoCompra(String pedidoId) async {
+    final index = _pedidosCompra.indexWhere((p) => p.id == pedidoId);
+    if (index == -1) return;
+    final produtosAfetados = _pedidosCompra[index].itens
+        .map((item) => item.produtoId)
+        .toSet();
+    _pedidosCompra.removeAt(index);
+    _removerLinhaLocal(LocalStorageService.keyPedidosCompra, pedidoId);
+    _marcarSujo(LocalStorageService.keyPedidosCompra);
+    notifyListeners();
+    await _recalcularFlagsPedidoCompra(produtoIds: produtosAfetados);
+    enviarMudancaParaSupabase(SupabaseService.tablePedidosCompra, {
+      'id': pedidoId,
+    }, evento: 'DELETE');
+  }
+
+  /// Dá entrada no estoque dos itens recebidos do pedido.
+  ///
+  /// [quantidadesPorItem] usa o id do item do pedido como chave. Quando o mapa
+  /// vem vazio (ou um item não é informado), a quantidade pendente inteira é
+  /// recebida — é o atalho "receber tudo".
+  ///
+  /// Cada item chama [registrarEntradaEstoque], então o saldo do produto, o
+  /// saldo por fornecedor, o saldo por estoque e o histórico continuam sendo
+  /// atualizados pelo fluxo já existente.
+  Future<ResultadoRecebimentoPedidoCompra> receberPedidoCompra({
+    required String pedidoId,
+    Map<String, double> quantidadesPorItem = const {},
+    String? estoqueId,
+    String? usuario,
+    bool atualizarCusto = true,
+  }) async {
+    final pedido = pedidoCompraPorId(pedidoId);
+    if (pedido == null) {
+      throw StateError('Pedido de compra não encontrado.');
+    }
+    if (pedido.cancelado) {
+      throw StateError('Pedido cancelado não pode ser recebido.');
+    }
+    if (!pedido.podeReceber) {
+      throw StateError('Todos os itens deste pedido já foram recebidos.');
+    }
+
+    final receberTudo = quantidadesPorItem.isEmpty;
+    final itensAtualizados = <ItemPedidoCompra>[];
+    final avisos = <String>[];
+    var itensRecebidos = 0;
+    var quantidadeRecebida = 0.0;
+    final destinoId = (estoqueId ?? pedido.estoqueDestinoId ?? '').trim();
+    final destinoNome = nomeDoEstoque(
+      _estoques,
+      destinoId.isEmpty ? null : destinoId,
+    );
+
+    for (final item in pedido.itens) {
+      final pendente = item.quantidadePendente;
+      if (pendente <= 0.0001) {
+        itensAtualizados.add(item);
+        continue;
+      }
+      final solicitada = receberTudo
+          ? pendente
+          : (quantidadesPorItem[item.id] ?? 0);
+      if (solicitada <= 0) {
+        itensAtualizados.add(item);
+        continue;
+      }
+      final quantidade = solicitada < pendente ? solicitada : pendente;
+      if (quantidade <= 0) {
+        itensAtualizados.add(item);
+        continue;
+      }
+
+      final entradaOk = await registrarEntradaEstoque(
+        produtoId: item.produtoId,
+        quantidade: quantidade,
+        observacao:
+            'Recebimento do pedido ${pedido.numero}'
+            '${pedido.fornecedorNome.isNotEmpty ? ' — ${pedido.fornecedorNome}' : ''}',
+        usuario: usuario ?? pedido.usuario,
+        fornecedorId: pedido.fornecedorId.isEmpty ? null : pedido.fornecedorId,
+        fornecedorNome: pedido.fornecedorNome.isEmpty
+            ? null
+            : pedido.fornecedorNome,
+        estoqueId: destinoId.isEmpty ? null : destinoId,
+        notify: false,
+      );
+
+      if (!entradaOk) {
+        avisos.add(
+          '${item.produtoNome}: produto não encontrado; item não recebido.',
+        );
+        itensAtualizados.add(item);
+        continue;
+      }
+
+      // Custo: o pedido guarda o custo combinado. Atualizar o cadastro é
+      // opcional porque o operador pode receber com custo diferente (frete,
+      // bonificação etc.).
+      if (atualizarCusto && item.precoCusto > 0) {
+        final produtoIndex = _produtos.indexWhere(
+          (p) => p.id == item.produtoId,
+        );
+        if (produtoIndex != -1) {
+          final produto = _produtos[produtoIndex];
+          if (produto.precoCusto != item.precoCusto) {
+            await updateProduto(
+              produto.copyWith(
+                precoCusto: item.precoCusto,
+                updatedAt: DateTime.now(),
+              ),
+              aguardarSincronia: false,
+              registrarMovimento: false,
+              notify: false,
+              motivoHistorico: 'Recebimento de pedido de compra',
+              observacaoHistorico:
+                  'Custo atualizado para R\$ ${item.precoCusto.toStringAsFixed(2)} '
+                  '(pedido ${pedido.numero})',
+              usuarioNome: usuario ?? pedido.usuario,
+            );
+          }
+        }
+      }
+
+      itensAtualizados.add(
+        item.copyWith(quantidadeRecebida: item.quantidadeRecebida + quantidade),
+      );
+      itensRecebidos++;
+      quantidadeRecebida += quantidade;
+    }
+
+    if (itensRecebidos == 0) {
+      if (avisos.isEmpty) {
+        throw StateError(
+          'Informe a quantidade recebida de pelo menos um item.',
+        );
+      }
+      return ResultadoRecebimentoPedidoCompra(
+        pedido: pedido,
+        itensRecebidos: 0,
+        quantidadeRecebida: 0,
+        avisos: avisos,
+      );
+    }
+
+    final todosRecebidos = itensAtualizados.every((item) => item.recebido);
+    final algumRecebido = itensAtualizados.any(
+      (item) => item.quantidadeRecebida > 0.0001,
+    );
+    final novoStatus = todosRecebidos
+        ? StatusPedidoCompra.recebido
+        : (algumRecebido ? StatusPedidoCompra.recebidoParcial : pedido.status);
+    final agora = DateTime.now();
+    final atualizado = pedido.copyWith(
+      itens: itensAtualizados,
+      status: novoStatus,
+      dataRecebimento: todosRecebidos ? agora : pedido.dataRecebimento,
+      estoqueDestinoId: destinoId.isEmpty ? pedido.estoqueDestinoId : destinoId,
+      estoqueDestinoNome: destinoNome,
+      updatedAt: agora,
+    );
+
+    final index = _pedidosCompra.indexWhere((p) => p.id == pedidoId);
+    if (index != -1) {
+      _pedidosCompra[index] = atualizado;
+    }
+    _marcarSujo(LocalStorageService.keyPedidosCompra);
+    notifyListeners();
+
+    await _persistirPedidoCompraLocal(atualizado);
+    await _recalcularFlagsPedidoCompra(
+      produtoIds: pedido.itens.map((item) => item.produtoId).toSet(),
+    );
+    enviarMudancaParaSupabase(
+      SupabaseService.tablePedidosCompra,
+      atualizado.toMap(),
+    );
+
+    return ResultadoRecebimentoPedidoCompra(
+      pedido: atualizado,
+      itensRecebidos: itensRecebidos,
+      quantidadeRecebida: quantidadeRecebida,
+      avisos: avisos,
+    );
+  }
+
+  Future<void> _persistirPedidoCompraLocal(PedidoCompra pedido) async {
+    try {
+      await DatabaseService().upsertItem(
+        LocalStorageService.keyPedidosCompra,
+        pedido.toMap(),
+      );
+    } catch (e) {
+      debugPrint(
+        '>>> [PedidoCompra] ⚠️ Não gravei o pedido ${pedido.numero} no '
+        'PostgreSQL local agora: $e',
+      );
+    }
+  }
+
+  /// Recalcula o selo "JÁ PEDIDO" dos produtos a partir dos pedidos ABERTOS.
+  ///
+  /// O campo `pedidoCompraGerado` era gravado à mão pelo relatório antigo e
+  /// ficava "preso" para sempre. Agora ele é derivado: só fica marcado quando
+  /// existe pedido em aberto com quantidade pendente para o produto. Ao
+  /// receber/cancelar/excluir o pedido, o selo cai sozinho.
+  Future<void> _recalcularFlagsPedidoCompra({Set<String>? produtoIds}) async {
+    final abertos = _pedidosCompra.where((pedido) => pedido.emAberto).toList();
+    final idsComPedido = <String>{};
+    final ultimaDataPorProduto = <String, DateTime>{};
+    for (final pedido in abertos) {
+      for (final item in pedido.itens) {
+        if (item.recebido) continue;
+        idsComPedido.add(item.produtoId);
+        final atual = ultimaDataPorProduto[item.produtoId];
+        if (atual == null || pedido.dataCriacao.isAfter(atual)) {
+          ultimaDataPorProduto[item.produtoId] = pedido.dataCriacao;
+        }
+      }
+    }
+
+    final alvos = produtoIds ?? idsComPedido;
+    for (final produtoId in alvos) {
+      final index = _produtos.indexWhere((p) => p.id == produtoId);
+      if (index == -1) continue;
+      final produto = _produtos[index];
+      final deveEstarMarcado = idsComPedido.contains(produtoId);
+      if (produto.pedidoCompraGerado == deveEstarMarcado) continue;
+      final dataReferencia = deveEstarMarcado
+          ? ultimaDataPorProduto[produtoId]
+          : null;
+      try {
+        await updateProduto(
+          produto.copyWith(
+            pedidoCompraGerado: deveEstarMarcado,
+            dataUltimoPedido: dataReferencia ?? produto.dataUltimoPedido,
+            updatedAt: DateTime.now(),
+          ),
+          aguardarSincronia: false,
+          registrarMovimento: false,
+          notify: false,
+          registrarHistorico: false,
+        );
+      } catch (e) {
+        debugPrint(
+          '>>> [PedidoCompra] ⚠️ Não atualizei o selo do produto '
+          '${produto.nome}: $e',
+        );
+      }
+    }
   }
 
   // ============ CRUD Servico ============
@@ -7870,6 +9035,8 @@ class DataService extends ChangeNotifier {
 
   void deleteTipoServico(String id) {
     _tiposServico.removeWhere((s) => s.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyServicos, id);
     notifyListeners();
     _salvarAutomaticamente();
     unawaited(_deleteNoSupabase(SupabaseService.tableServicos, id));
@@ -7934,6 +9101,8 @@ class DataService extends ChangeNotifier {
 
   void deleteOrdemServico(String id) {
     _ordensServico.removeWhere((o) => o.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyOrdensServico, id);
     notifyListeners();
     _salvarAutomaticamente();
     // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
@@ -8218,6 +9387,9 @@ class DataService extends ChangeNotifier {
     );
 
     _agendamentosServico.removeWhere((a) => a.id == id);
+    // Exclusão real no banco local: sem isso o agendamento cancelado/apagado
+    // voltava no próximo boot (a linha continuava no PostgreSQL local).
+    _removerLinhaLocal(LocalStorageService.keyAgendamentosServico, id);
 
     // Se o agendamento removido era ativo, tentar promover alguém da espera
     if (agendamentoRemovido.isAtivo) {
@@ -8608,7 +9780,14 @@ class DataService extends ChangeNotifier {
   Future<void> addServicoRealizado(ServicoRealizado servico) async {
     _servicosRealizados.add(servico);
     notifyListeners();
-    _marcarSujo(LocalStorageService.keyServicosRealizados);
+    // LOCAL PRIMEIRO: a linha vai para o PostgreSQL local e a gravação é
+    // AGUARDADA antes de qualquer envio. Nuvem pausa/erro (402) não entra
+    // nessa conta, e um reload logo em seguida não tem como apagar o
+    // lançamento (o snapshot do banco já o contém).
+    await _salvarLinhaLocalAntesDaNuvem(
+      LocalStorageService.keyServicosRealizados,
+      servico.toMap(),
+    );
     await _enviarServicoRealizadoParaSupabase(servico);
     debugPrint(
       '>>> Serviço realizado salvo: ${servico.numero} (${servico.status})',
@@ -8623,7 +9802,11 @@ class DataService extends ChangeNotifier {
     }
     _servicosRealizados[index] = servico;
     notifyListeners();
-    _marcarSujo(LocalStorageService.keyServicosRealizados);
+    // LOCAL PRIMEIRO (mesma regra do add): grava e AGUERA antes da nuvem.
+    await _salvarLinhaLocalAntesDaNuvem(
+      LocalStorageService.keyServicosRealizados,
+      servico.toMap(),
+    );
     await _enviarServicoRealizadoParaSupabase(servico);
     debugPrint(
       '>>> Serviço realizado atualizado: ${servico.numero} (${servico.status})',
@@ -8633,7 +9816,11 @@ class DataService extends ChangeNotifier {
   Future<void> removerServicoRealizado(String id) async {
     _servicosRealizados.removeWhere((s) => s.id == id);
     notifyListeners();
-    _marcarSujo(LocalStorageService.keyServicosRealizados);
+    // LOCAL PRIMEIRO: a exclusão sai do banco local e só depois vai pra nuvem.
+    await _removerLinhaLocalAntesDaNuvem(
+      LocalStorageService.keyServicosRealizados,
+      id,
+    );
     try {
       if (SupabaseService.isAvailable && _currentEmpresaId != null) {
         await enviarMudancaParaSupabase(
@@ -8770,7 +9957,12 @@ class DataService extends ChangeNotifier {
   Future<void> addOrcamento(Orcamento orcamento) async {
     _orcamentos.add(orcamento);
     notifyListeners();
-    _marcarSujo(LocalStorageService.keyOrcamentos);
+    // LOCAL PRIMEIRO: grava no PostgreSQL local e AGUARDA antes da nuvem
+    // (mesma regra dos serviços realizados e de todo o resto do sistema).
+    await _salvarLinhaLocalAntesDaNuvem(
+      LocalStorageService.keyOrcamentos,
+      orcamento.toMap(),
+    );
     await _enviarOrcamentoParaSupabase(orcamento);
     debugPrint(
       '>>> Orçamento salvo: ${orcamento.numero} (${orcamento.status})',
@@ -8785,7 +9977,11 @@ class DataService extends ChangeNotifier {
     }
     _orcamentos[index] = orcamento;
     notifyListeners();
-    _marcarSujo(LocalStorageService.keyOrcamentos);
+    // LOCAL PRIMEIRO: grava e AGUARDA antes da nuvem.
+    await _salvarLinhaLocalAntesDaNuvem(
+      LocalStorageService.keyOrcamentos,
+      orcamento.toMap(),
+    );
     await _enviarOrcamentoParaSupabase(orcamento);
     debugPrint(
       '>>> Orçamento atualizado: ${orcamento.numero} (${orcamento.status})',
@@ -8795,7 +9991,8 @@ class DataService extends ChangeNotifier {
   Future<void> removerOrcamento(String id) async {
     _orcamentos.removeWhere((o) => o.id == id);
     notifyListeners();
-    _marcarSujo(LocalStorageService.keyOrcamentos);
+    // LOCAL PRIMEIRO: a exclusão sai do banco local antes de ir pra nuvem.
+    await _removerLinhaLocalAntesDaNuvem(LocalStorageService.keyOrcamentos, id);
     try {
       if (SupabaseService.isAvailable && _currentEmpresaId != null) {
         await enviarMudancaParaSupabase(SupabaseService.tableOrcamentos, {
@@ -9270,6 +10467,8 @@ class DataService extends ChangeNotifier {
 
   void deleteEntrega(String id) {
     _entregas.removeWhere((e) => e.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyEntregas, id);
     notifyListeners();
     _marcarSujo(LocalStorageService.keyEntregas);
     enviarMudancaParaSupabase(SupabaseService.tableEntregas, {
@@ -9299,6 +10498,8 @@ class DataService extends ChangeNotifier {
 
   Future<void> deleteRomaneio(String id) async {
     _romaneios.removeWhere((r) => r.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyRomaneios, id);
     _marcarSujo(LocalStorageService.keyRomaneios);
     // Enviar mudança para Supabase automaticamente (sincronização bidirecional)
     await enviarMudancaParaSupabase('romaneios', {'id': id}, evento: 'DELETE');
@@ -9393,6 +10594,8 @@ class DataService extends ChangeNotifier {
 
   Future<void> deleteTaxaEntrega(String id) async {
     _taxasEntrega.removeWhere((t) => t.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyTaxasEntrega, id);
     notifyListeners();
     _salvarAutomaticamente();
 
@@ -9477,6 +10680,8 @@ class DataService extends ChangeNotifier {
 
   void deleteMotorista(String id) {
     _motoristas.removeWhere((m) => m.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyMotoristas, id);
     notifyListeners();
     _marcarSujo(LocalStorageService.keyMotoristas);
     enviarMudancaParaSupabase(SupabaseService.tableMotoristas, {
@@ -9819,6 +11024,8 @@ class DataService extends ChangeNotifier {
 
   Future<void> deleteTrocaDevolucao(String id) async {
     _trocasDevolucoes.removeWhere((t) => t.id == id);
+    // Exclusão real no banco local (senão volta no boot).
+    _removerLinhaLocal(LocalStorageService.keyTrocasDevolucoes, id);
     print('✓ Troca/Devolução removida da memória');
     notifyListeners();
     _marcarSujo(LocalStorageService.keyTrocasDevolucoes);
@@ -10087,6 +11294,83 @@ class DataService extends ChangeNotifier {
   // ─── Mínimos de numeração (carregados do exodo_config) ───────────────────
   String? _minNumeroVenda;
   String? _minNumeroPedido;
+
+  // ─── Mínimos das séries que antes eram calculadas SÓ com a lista em ──────
+  // ─── memória (SRV-/ORC-/AGD-). Com o piso persistido, a série nunca volta ─
+  // ─── para 0001 quando a lista ainda não carregou, o app troca de empresa ou ─
+  // ─── outro computador já emitiu números. ──────────────────────────────────
+  String? _minNumeroServico;
+  String? _minNumeroOrcamento;
+  String? _minNumeroAgendamento;
+
+  static final RegExp _rePrefixoNumero = RegExp(r'^([A-Za-z]+)-(\d+)');
+
+  /// Sobe o piso da série correspondente a um número JÁ EMITIDO (sem gravar).
+  ///
+  /// Só trata SRV-/ORC-/AGD-; VND-/PED- continuam pelo caminho antigo
+  /// (`_elevarMinimoNumeracaoPeloNumero`, que tem regra própria de caixa nomeado).
+  void _elevarPisoEmMemoria(String? numero) {
+    final match = _rePrefixoNumero.firstMatch(numero ?? '');
+    if (match == null) return;
+    final prefixo = match.group(1)!.toUpperCase();
+    final n = int.tryParse(match.group(2)!) ?? 0;
+    if (n <= 0) return;
+    switch (prefixo) {
+      case 'SRV':
+        if (n > (int.tryParse(_minNumeroServico ?? '0') ?? 0)) {
+          _minNumeroServico = n.toString();
+        }
+      case 'ORC':
+        if (n > (int.tryParse(_minNumeroOrcamento ?? '0') ?? 0)) {
+          _minNumeroOrcamento = n.toString();
+        }
+      case 'AGD':
+        if (n > (int.tryParse(_minNumeroAgendamento ?? '0') ?? 0)) {
+          _minNumeroAgendamento = n.toString();
+        }
+    }
+  }
+
+  /// Sobe os pisos SRV/ORC/AGD a partir do que está em memória e persiste só o
+  /// que mudou. Roda depois da carga local e depois da carga da nuvem: qualquer
+  /// número que exista em QUALQUER DAS DUAS fontes trava a série daí em diante.
+  Future<void> _elevarEPersistirPisosSerie() async {
+    final antesServico = _minNumeroServico;
+    final antesOrcamento = _minNumeroOrcamento;
+    final antesAgendamento = _minNumeroAgendamento;
+
+    for (final s in _servicosRealizados) {
+      _elevarPisoEmMemoria(s.numero);
+    }
+    for (final p in _pedidos) {
+      _elevarPisoEmMemoria(p.numero);
+    }
+    for (final o in _orcamentos) {
+      _elevarPisoEmMemoria(o.numero);
+    }
+    for (final a in _agendamentosServico) {
+      _elevarPisoEmMemoria(a.numero);
+    }
+
+    try {
+      if (antesServico != _minNumeroServico && _minNumeroServico != null) {
+        await _salvarMinNumeracao('servico', int.parse(_minNumeroServico!));
+      }
+      if (antesOrcamento != _minNumeroOrcamento &&
+          _minNumeroOrcamento != null) {
+        await _salvarMinNumeracao('orcamento', int.parse(_minNumeroOrcamento!));
+      }
+      if (antesAgendamento != _minNumeroAgendamento &&
+          _minNumeroAgendamento != null) {
+        await _salvarMinNumeracao(
+          'agendamento',
+          int.parse(_minNumeroAgendamento!),
+        );
+      }
+    } catch (e) {
+      debugPrint('>>> [DataService] ⚠️ Falha ao persistir pisos de série: $e');
+    }
+  }
 
   // ─── Identidade DESTE caixa (numeração por caixa: CX1-0001) ──────────────
   // Cada computador nomeia o próprio caixa e passa a ter a PRÓPRIA sequência.
@@ -10439,6 +11723,91 @@ class DataService extends ChangeNotifier {
     return base < 1 ? 1 : base;
   }
 
+  /// Faixas de NFC-e em uso nesta sessão, por série ('1', '2'...).
+  ///
+  /// A série entra na chave porque cada série tem SEQUÊNCIA PRÓPIRA na SEFAZ:
+  /// compartilhar um bloco entre séries entregaria número repetido.
+  final Map<String, FaixaNumeracao> _faixasNfceAtual = {};
+
+  /// Reserva atomicamente o próximo NÚMERO FISCAL da série (bloco via CAS na
+  /// nuvem, mesma mecânica já usada em VND-/PED-).
+  ///
+  /// Por quê: o cálculo de NFC-e era "maior número que eu tenho + 1" — dois
+  /// PCs emitindo offline chegavam ao MESMO número e o segundo levava
+  /// rejeição 539 de duplicidade na SEFAZ (o fiscal é único, diferente de um
+  /// simples número interno).
+  ///
+  /// Devolve null quando não dá para reservar (offline / nuvem indisponível /
+  /// sem permissão): o chamador então cai no cálculo local antigo — emitir com
+  /// risco de 539 é melhor do que não emitir.
+  Future<int?> reservarProximoNumeroNfce({
+    String serie = '1',
+    int numeroInicial = 1,
+  }) async {
+    final serieNorm = serie.trim().isEmpty ? '1' : serie.trim();
+    final empresaId = (_currentEmpresaId ?? '').trim();
+    if (empresaId.isEmpty) return null;
+    final tipo = 'nfce_s$serieNorm';
+    try {
+      // Piso: maior número desta série já registrado (lista local de notas).
+      final base = getProximoNumeroNfce(
+        serie: serieNorm,
+        numeroInicial: numeroInicial,
+      );
+      final piso = base < 1 ? 1 : base;
+
+      var faixa =
+          _faixasNfceAtual[serieNorm] ??
+          await _faixas.lerLocal(tipo, empresaId);
+
+      // Faixa atrasada em relação à realidade (ex.: reemissão/contingência
+      // queimou números FORA do bloco): não dá para entregar número já usado,
+      // então descarta e reserva um bloco novo a partir do piso.
+      if (faixa != null && !faixa.esgotada && faixa.proximo < piso) {
+        debugPrint(
+          '>>> [DataService] 🔢 Faixa NFC-e série $serieNorm atrasada '
+          '(${faixa.proximo} < $piso) — reservando bloco novo.',
+        );
+        faixa = null;
+      }
+
+      if (faixa == null || faixa.esgotada) {
+        // Nuvem indisponível: não tenta reservar (evita timeouts no caixa).
+        if (SupabaseService.instance.servidorIndisponivel) {
+          debugPrint(
+            '>>> [DataService] ⏸️ Faixa NFC-e série $serieNorm: nuvem '
+            'indisponível — usando sequência local.',
+          );
+          return null;
+        }
+        final nova = await _faixas.reservar(
+          tipo: tipo,
+          empresaId: empresaId,
+          aPartirDe: piso,
+          tamanho: 100,
+        );
+        if (nova == null) return null;
+        faixa = nova;
+        await _faixas.salvarLocal(nova, empresaId);
+        debugPrint(
+          '>>> [DataService] 🔢 Faixa NFC-e reservada (série $serieNorm): '
+          '${nova.inicio}..${nova.fim} — ${nova.restantes} números para emitir offline',
+        );
+      }
+
+      final numero = faixa.proximo;
+      final avancada = faixa.avancar();
+      _faixasNfceAtual[serieNorm] = avancada;
+      await _faixas.salvarLocal(avancada, empresaId);
+      return numero;
+    } catch (e) {
+      debugPrint(
+        '>>> [DataService] ⚠️ Faixa NFC-e indisponível (série $serieNorm): $e',
+      );
+      return null;
+    }
+  }
+
   /// Chave de configuração dos mínimos de numeração, SEMPRE com o id da empresa.
   ///
   /// A tabela `exodo_config` é única no banco local (não tem `empresa_id`): usar a
@@ -10458,14 +11827,22 @@ class DataService extends ChangeNotifier {
     // não vale mais (senão a empresa nova sairia numerando na faixa da outra).
     _faixaVendaAtual = null;
     _faixaPedidoAtual = null;
+    // Bloco de NFC-e também é por empresa/série: não pode vazar entre empresas.
+    _faixasNfceAtual.clear();
     // Nome do caixa é por empresa: trocar de empresa pode trocar o prefixo.
     await carregarIdentidadeDoCaixa();
 
     final chaveVnd = _chaveMinNumeracao('venda');
     final chavePed = _chaveMinNumeracao('pedido');
+    final chaveSrv = _chaveMinNumeracao('servico');
+    final chaveOrc = _chaveMinNumeracao('orcamento');
+    final chaveAgd = _chaveMinNumeracao('agendamento');
     if (chaveVnd == null || chavePed == null) {
       _minNumeroVenda = null;
       _minNumeroPedido = null;
+      _minNumeroServico = null;
+      _minNumeroOrcamento = null;
+      _minNumeroAgendamento = null;
       return;
     }
 
@@ -10473,10 +11850,16 @@ class DataService extends ChangeNotifier {
       final db = DatabaseService();
       final vnd = await db.carregarConfig(chaveVnd);
       final ped = await db.carregarConfig(chavePed);
+      final srv = chaveSrv == null ? null : await db.carregarConfig(chaveSrv);
+      final orc = chaveOrc == null ? null : await db.carregarConfig(chaveOrc);
+      final agd = chaveAgd == null ? null : await db.carregarConfig(chaveAgd);
       _minNumeroVenda = vnd?.toString();
       _minNumeroPedido = ped?.toString();
+      _minNumeroServico = srv?.toString();
+      _minNumeroOrcamento = orc?.toString();
+      _minNumeroAgendamento = agd?.toString();
       debugPrint(
-        '>>> [DataService] Mínimos carregados (empresa $_currentEmpresaId): VND=$_minNumeroVenda PED=$_minNumeroPedido',
+        '>>> [DataService] Mínimos carregados (empresa $_currentEmpresaId): VND=$_minNumeroVenda PED=$_minNumeroPedido SRV=$_minNumeroServico ORC=$_minNumeroOrcamento AGD=$_minNumeroAgendamento',
       );
     } catch (e) {
       debugPrint(
@@ -10701,11 +12084,18 @@ class DataService extends ChangeNotifier {
       proximoNumero = numerosExistentes.reduce((a, b) => a > b ? a : b) + 1;
     }
 
+    // Trava por piso persistido: se outro PC (ou esta máquina em sessão anterior)
+    // já emitiu SRV-0100, a série NUNCA volta para 0001 mesmo com a lista em
+    // memória vazia/ainda não carregada.
+    final pisoServico = int.tryParse(_minNumeroServico ?? '0') ?? 0;
+    if (pisoServico >= proximoNumero) proximoNumero = pisoServico + 1;
+
     // Garantir que o número não existe (proteção extra)
     while (numerosExistentes.contains(proximoNumero)) {
       proximoNumero++;
     }
 
+    _elevarPisoEmMemoria('SRV-$proximoNumero');
     return 'SRV-${proximoNumero.toString().padLeft(4, '0')}';
   }
 
@@ -10724,10 +12114,14 @@ class DataService extends ChangeNotifier {
     if (numerosExistentes.isNotEmpty) {
       proximoNumero = numerosExistentes.reduce((a, b) => a > b ? a : b) + 1;
     }
+    // Trava por piso persistido (mesma regra do SRV-).
+    final pisoOrcamento = int.tryParse(_minNumeroOrcamento ?? '0') ?? 0;
+    if (pisoOrcamento >= proximoNumero) proximoNumero = pisoOrcamento + 1;
     while (numerosExistentes.contains(proximoNumero)) {
       proximoNumero++;
     }
 
+    _elevarPisoEmMemoria('ORC-$proximoNumero');
     return 'ORC-${proximoNumero.toString().padLeft(4, '0')}';
   }
 
@@ -10751,10 +12145,15 @@ class DataService extends ChangeNotifier {
       proximoNumero = numerosExistentes.reduce((a, b) => a > b ? a : b) + 1;
     }
 
+    // Trava por piso persistido (mesma regra do SRV-).
+    final pisoAgendamento = int.tryParse(_minNumeroAgendamento ?? '0') ?? 0;
+    if (pisoAgendamento >= proximoNumero) proximoNumero = pisoAgendamento + 1;
+
     while (numerosExistentes.contains(proximoNumero)) {
       proximoNumero++;
     }
 
+    _elevarPisoEmMemoria('AGD-$proximoNumero');
     return 'AGD-${proximoNumero.toString().padLeft(4, '0')}';
   }
 
@@ -10996,6 +12395,10 @@ class DataService extends ChangeNotifier {
   Future<void> _carregarDadosDoSupabase({
     bool modoLeve = false,
     bool forcarRecarga = false,
+    // Puxada PONTUAL (aviso do Realtime): baixa só estas tabelas. Não avança o
+    // watermark do delta — as demais tabelas não foram consultadas, então o
+    // próximo ciclo completo continua de onde parou.
+    Set<String>? tabelas,
   }) async {
     if (_currentEmpresaId == null) {
       print(
@@ -11045,10 +12448,14 @@ class DataService extends ChangeNotifier {
         _syncTimer != null &&
         _syncTimer!.isActive;
 
+    final isPontual = tabelas != null && tabelas.isNotEmpty;
+
     var isDeltaSync = _ultimaSincronizacaoSucesso != null;
     var lastSyncBuffer = isDeltaSync
         ? _ultimaSincronizacaoSucesso!
-              .subtract(const Duration(minutes: 1))
+              // Puxada pontual: margem maior (e barata — uma tabela só), para
+              // cobrir relógio adiantado no aparelho que recebe o aviso.
+              .subtract(Duration(minutes: isPontual ? 10 : 1))
               .toUtc()
         : null;
 
@@ -11056,13 +12463,36 @@ class DataService extends ChangeNotifier {
     // está vazia (banco reconstruído / desinstalação parcial), forçar full sync.
     // Sem isso, produtos antigos que não foram alterados desde o último sync
     // nunca seriam baixados do Supabase.
-    if (isDeltaSync &&
+    //
+    // THROTTLE: só é permitido 1 full sync do catálogo automático a cada 6h.
+    // Se as coleções continuam vazias (ex.: empresa sem catálogo na nuvem, ou
+    // nuvem devolvendo erro/sem dados), cada pulso de 10s rebaixaria ~13MB —
+    // foi isso que estourou a cota de egress do Neon. O "Puxar Nuvem" manual
+    // (`forcarRecarga`) e o carregamento inicial continuam livres.
+    if (!isPontual &&
+        isDeltaSync &&
         (_produtos.isEmpty || _clientes.isEmpty || _pedidos.isEmpty)) {
-      debugPrint(
-        '>>> [Supabase] ⚠️ Delta sync ativo mas coleção(ões) vazia(s): produtos=${_produtos.length}, clientes=${_clientes.length}, pedidos=${_pedidos.length}. Forçando FULL SYNC...',
-      );
-      isDeltaSync = false;
-      lastSyncBuffer = null;
+      final ultimaFull = _ultimaFullSyncCatalogoAutomatico;
+      final podeFullSyncAutomatico =
+          forcarRecarga ||
+          ultimaFull == null ||
+          DateTime.now().difference(ultimaFull) >= const Duration(hours: 6);
+      if (podeFullSyncAutomatico) {
+        _ultimaFullSyncCatalogoAutomatico = DateTime.now();
+        debugPrint(
+          '>>> [Supabase] ⚠️ Delta sync ativo mas coleção(ões) vazia(s): produtos=${_produtos.length}, clientes=${_clientes.length}, pedidos=${_pedidos.length}. Forçando FULL SYNC...',
+        );
+        isDeltaSync = false;
+        lastSyncBuffer = null;
+      } else {
+        final faltam =
+            const Duration(hours: 6) - DateTime.now().difference(ultimaFull);
+        debugPrint(
+          '>>> [Supabase] ⏭️ Coleção(ões) vazia(s) mas full sync do catálogo já '
+          'rodou há pouco — próximo em ${faltam.inMinutes}min. Mantendo DELTA '
+          'para não rebaixar ~13MB a cada pulso.',
+        );
+      }
     }
 
     debugPrint(
@@ -11089,6 +12519,16 @@ class DataService extends ChangeNotifier {
         _currentEmpresaId!,
         lastSync: lastSyncBuffer,
         mesesRetroativos: 24, // Carregar histórico de até 2 anos
+        // EGRESS: depois da primeira carga completa, produtos/clientes vêm só
+        // com o que mudou desde o último sync (o catálogo inteiro era ~5 MB a
+        // cada pulso de 45 s). Se o banco local estiver vazio, `isDeltaSync`
+        // já é forçado para false mais acima — aí o catálogo volta completo.
+        //
+        // `!forcarRecarga`: o botão "Puxar da Nuvem" promete trazer TODAS as
+        // tabelas sem pular nada; com delta, o catálogo viria incompleto (só os
+        // registros alterados). Na recarga forçada, portanto, delta desligado.
+        deltaCatalogo: isDeltaSync && !forcarRecarga,
+        tabelas: isPontual ? tabelas : null,
       );
 
       final Map<String, dynamic> dados = result['data'] as Map<String, dynamic>;
@@ -11156,6 +12596,7 @@ class DataService extends ChangeNotifier {
           dados['suprimentos']?.isNotEmpty == true ||
           dados['entregas']?.isNotEmpty == true ||
           dados['notas_entrada']?.isNotEmpty == true ||
+          dados['pedidos_compra']?.isNotEmpty == true ||
           dados['estoque_historico']?.isNotEmpty == true ||
           dados['lotes_produto']?.isNotEmpty == true ||
           dados['links_vendedores']?.isNotEmpty == true ||
@@ -11165,20 +12606,33 @@ class DataService extends ChangeNotifier {
         debugPrint(
           '>>> [Supabase] Nenhum dado novo/atualizado encontrado. Sincronização delta concluída.',
         );
-        _ultimaSincronizacaoSucesso = DateTime.now();
-        // Persistir timestamp de sucesso
-        if (_currentEmpresaId != null) {
-          final keySync = _getEmpresaKey('exodo_ultima_sincronizacao_sucesso');
-          await _storage.salvar(
-            keySync,
-            _ultimaSincronizacaoSucesso!.toIso8601String(),
-          );
+        // Puxada pontual não mexe no watermark: as outras tabelas não foram
+        // consultadas nesta rodada.
+        if (!isPontual) {
+          _ultimaSincronizacaoSucesso = DateTime.now();
+          // Persistir timestamp de sucesso
+          if (_currentEmpresaId != null) {
+            final keySync = _getEmpresaKey(
+              'exodo_ultima_sincronizacao_sucesso',
+            );
+            await _storage.salvar(
+              keySync,
+              _ultimaSincronizacaoSucesso!.toIso8601String(),
+            );
+          }
+          _ultimoErroSync = null;
+          _primeiraCargaAgendamentosRealizada = true;
         }
-        _ultimoErroSync = null;
-        _primeiraCargaAgendamentosRealizada = true;
         addSyncLog("Concluído: Nenhum dado novo/atualizado encontrado.");
         return;
       }
+
+      // A PARTIR DAQUI os dados são da NUVEM: o `_marcarSujo` das coleções
+      // abaixo as classifica como "sujas por carga da nuvem". O flush grava com
+      // sync_mode = 'on' e preserva o `updated_at` real do registro (ver
+      // `_colecoesSujasDaNuvem`). É o que impede o local de se declarar sempre
+      // mais novo e recusar as alterações feitas no site.
+      _aplicandoDadosDaNuvem = true;
 
       // 1. Clientes
       if (dados['clientes'] != null) {
@@ -11188,8 +12642,9 @@ class DataService extends ChangeNotifier {
           nomeColecao: 'Clientes',
         );
         if (novos.isNotEmpty) {
-          _mesclarSemRemover(_clientes, novos);
-          _marcarSujo(LocalStorageService.keyClientes);
+          if (_mesclarSemRemover(_clientes, novos)) {
+            _marcarSujo(LocalStorageService.keyClientes);
+          }
           print('>>> ✓ ${novos.length} clientes sincronizados do Supabase');
         }
       }
@@ -11266,8 +12721,9 @@ class DataService extends ChangeNotifier {
         }
         aceitos = comEstoques;
         if (aceitos.isNotEmpty) {
-          _mesclarSemRemover(_produtos, aceitos);
-          _marcarSujo(LocalStorageService.keyProdutos);
+          if (_mesclarSemRemover(_produtos, aceitos)) {
+            _marcarSujo(LocalStorageService.keyProdutos);
+          }
           print(
             '>>> ✓ ${aceitos.length} produtos sincronizados do Supabase (${parseErros > 0 ? '$parseErros com erro de parse' : 'sem erros'})',
           );
@@ -11283,8 +12739,9 @@ class DataService extends ChangeNotifier {
           nomeColecao: 'Serviços',
         );
         if (novos.isNotEmpty) {
-          _mesclarSemRemover(_tiposServico, novos);
-          _marcarSujo(LocalStorageService.keyServicos);
+          if (_mesclarSemRemover(_tiposServico, novos)) {
+            _marcarSujo(LocalStorageService.keyServicos);
+          }
           print('>>> ✓ ${novos.length} serviços carregados do Supabase');
         }
       }
@@ -11323,11 +12780,13 @@ class DataService extends ChangeNotifier {
               dirty = true;
               continue;
             }
-            // CONFLICT RESOLUTION: Preservar versão local se for mais recente
-            // Isso evita que o sync periódico sobrescreva mudanças locais (ex: cancelamentos)
-            if (local.updatedAt.isAfter(pedido.updatedAt)) {
+            // CONFLICT RESOLUTION: a nuvem só substitui o local quando é mais
+            // NOVA (regra "a nuvem nunca sobrescreve o local" — empate fica o
+            // local). Isso evita que o sync periódico sobrescreva mudanças locais
+            // (ex.: cancelamentos feitos aqui).
+            if (!_nuvemMaisNovaQueLocal(local, pedido)) {
               debugPrint(
-                '>>> [Sync] 🛡️ Preservando versão LOCAL mais recente do Pedido ${local.numero} (local: ${local.updatedAt}, supabase: ${pedido.updatedAt})',
+                '>>> [Sync] 🛡️ Preservando versão LOCAL do Pedido ${local.numero} (local: ${local.updatedAt}, supabase: ${pedido.updatedAt})',
               );
               // Não sobrescrever - manter o local. Mas marcar para re-enviar ao Supabase.
               await enviarMudancaParaSupabase(
@@ -11364,9 +12823,11 @@ class DataService extends ChangeNotifier {
           );
           if (indexLocal != -1) {
             final local = _servicosRealizados[indexLocal];
-            // Preserva a versão local quando ela é mais recente (ex.: recebimento
-            // feito aqui e ainda não enviado).
-            if (local.updatedAt.isAfter(servico.updatedAt)) {
+            // Preserva a versão local quando ela NÃO é mais antiga que a da
+            // nuvem (empate também fica local — regra "a nuvem nunca
+            // sobrescreve o local"; ex.: recebimento feito aqui e ainda não
+            // enviado, ou snapshot velho vindo do espelho).
+            if (!_nuvemMaisNovaQueLocal(local, servico)) {
               continue;
             }
             _servicosRealizados[indexLocal] = servico;
@@ -11399,7 +12860,8 @@ class DataService extends ChangeNotifier {
           );
           if (indexLocal != -1) {
             final local = _orcamentos[indexLocal];
-            if (local.updatedAt.isAfter(orcamento.updatedAt)) continue;
+            // Empate/nuvem antiga → o local manda (nunca sobrescrever o local).
+            if (!_nuvemMaisNovaQueLocal(local, orcamento)) continue;
             _orcamentos[indexLocal] = orcamento;
             dirty = true;
           } else {
@@ -11426,6 +12888,11 @@ class DataService extends ChangeNotifier {
         for (final ordem in novasOrdens) {
           final index = _ordensServico.indexWhere((o) => o.id == ordem.id);
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local": só substitui se a
+            // nuvem for mais nova (antes a nuvem vencia SEMPRE nesta tabela).
+            if (!_nuvemMaisNovaQueLocal(_ordensServico[index], ordem)) {
+              continue;
+            }
             _ordensServico[index] = ordem;
           } else {
             _ordensServico.add(ordem);
@@ -11447,6 +12914,10 @@ class DataService extends ChangeNotifier {
         for (final entrega in novasEntregas) {
           final index = _entregas.indexWhere((e) => e.id == entrega.id);
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_entregas[index], entrega)) {
+              continue;
+            }
             _entregas[index] = entrega;
           } else {
             _entregas.add(entrega);
@@ -11466,6 +12937,10 @@ class DataService extends ChangeNotifier {
         for (final motorista in novosMotoristas) {
           final index = _motoristas.indexWhere((m) => m.id == motorista.id);
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_motoristas[index], motorista)) {
+              continue;
+            }
             _motoristas[index] = motorista;
           } else {
             _motoristas.add(motorista);
@@ -11511,6 +12986,11 @@ class DataService extends ChangeNotifier {
               dirty = true;
               continue;
             }
+            // REGRA "a nuvem nunca sobrescreve o local": venda local igual ou
+            // mais nova fica intocada (antes a nuvem vencia sempre aqui).
+            if (!_nuvemMaisNovaQueLocal(local, venda)) {
+              continue;
+            }
             _vendasBalcao[indexLocal] = venda;
             dirty = true;
           } else {
@@ -11540,6 +13020,10 @@ class DataService extends ChangeNotifier {
         for (final troca in novasTrocas) {
           final index = _trocasDevolucoes.indexWhere((t) => t.id == troca.id);
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_trocasDevolucoes[index], troca)) {
+              continue;
+            }
             _trocasDevolucoes[index] = troca;
           } else {
             _trocasDevolucoes.add(troca);
@@ -11564,6 +13048,10 @@ class DataService extends ChangeNotifier {
             (e) => e.id == registro.id,
           );
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_estoqueHistorico[index], registro)) {
+              continue;
+            }
             _estoqueHistorico[index] = registro;
           } else {
             _estoqueHistorico.add(registro);
@@ -11586,6 +13074,10 @@ class DataService extends ChangeNotifier {
         for (final lote in novosLotes) {
           final index = _ajustesEstoqueLote.indexWhere((l) => l.id == lote.id);
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_ajustesEstoqueLote[index], lote)) {
+              continue;
+            }
             _ajustesEstoqueLote[index] = lote;
           } else {
             _ajustesEstoqueLote.add(lote);
@@ -11595,6 +13087,33 @@ class DataService extends ChangeNotifier {
         _marcarSujo(LocalStorageService.keyAjustesEstoqueLote);
         print(
           '>>> ✓ ${novosLotes.length} lote(s) de ajuste carregados do Supabase',
+        );
+      }
+
+      // 10a.1 Pedidos de compra (pedidos feitos ao fornecedor e ainda não
+      // recebidos). São documentos da empresa: mesclam por id e nunca deixam
+      // uma versão mais antiga da nuvem sobrescrever o recebimento local.
+      if (dados['pedidos_compra'] != null &&
+          (dados['pedidos_compra'] as List).isNotEmpty) {
+        final novosPedidos = _parseListaSegura(
+          dados['pedidos_compra'] as List,
+          PedidoCompra.fromMap,
+          nomeColecao: 'Pedidos de Compra',
+        );
+        for (final pedido in novosPedidos) {
+          final index = _pedidosCompra.indexWhere((p) => p.id == pedido.id);
+          if (index >= 0) {
+            if (!_nuvemMaisNovaQueLocal(_pedidosCompra[index], pedido)) {
+              continue;
+            }
+            _pedidosCompra[index] = pedido;
+          } else {
+            _pedidosCompra.add(pedido);
+          }
+        }
+        _marcarSujo(LocalStorageService.keyPedidosCompra);
+        print(
+          '>>> ✓ ${novosPedidos.length} pedido(s) de compra carregados do Supabase',
         );
       }
 
@@ -11608,6 +13127,10 @@ class DataService extends ChangeNotifier {
         for (final lote in novosLotes) {
           final index = _lotesProdutos.indexWhere((l) => l.id == lote.id);
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_lotesProdutos[index], lote)) {
+              continue;
+            }
             _lotesProdutos[index] = lote;
           } else {
             _lotesProdutos.add(lote);
@@ -11630,6 +13153,10 @@ class DataService extends ChangeNotifier {
         for (final abertura in novasAberturas) {
           final index = _aberturasCaixa.indexWhere((a) => a.id == abertura.id);
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_aberturasCaixa[index], abertura)) {
+              continue;
+            }
             _aberturasCaixa[index] = abertura;
           } else {
             _aberturasCaixa.add(abertura);
@@ -11659,6 +13186,10 @@ class DataService extends ChangeNotifier {
             (f) => f.id == fechamento.id,
           );
           if (index >= 0) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            if (!_nuvemMaisNovaQueLocal(_fechamentosCaixa[index], fechamento)) {
+              continue;
+            }
             _fechamentosCaixa[index] = fechamento;
           } else {
             _fechamentosCaixa.add(fechamento);
@@ -11696,6 +13227,12 @@ class DataService extends ChangeNotifier {
           nomeColecao: 'Romaneios',
         );
         for (final item in novos) {
+          // REGRA "a nuvem nunca sobrescreve o local".
+          final indexLocal = _romaneios.indexWhere((r) => r.id == item.id);
+          if (indexLocal >= 0 &&
+              !_nuvemMaisNovaQueLocal(_romaneios[indexLocal], item)) {
+            continue;
+          }
           _romaneios.removeWhere((r) => r.id == item.id);
           _romaneios.add(item);
         }
@@ -11710,8 +13247,9 @@ class DataService extends ChangeNotifier {
           Funcionario.fromMap,
           nomeColecao: 'Funcionários',
         );
-        _mesclarSemRemover(_funcionarios, novos);
-        _marcarSujo(LocalStorageService.keyFuncionarios);
+        if (_mesclarSemRemover(_funcionarios, novos)) {
+          _marcarSujo(LocalStorageService.keyFuncionarios);
+        }
         print('>>> ✓ ${novos.length} funcionários carregados do Supabase');
       }
 
@@ -11722,8 +13260,9 @@ class DataService extends ChangeNotifier {
           TaxaEntrega.fromMap,
           nomeColecao: 'Taxas de Entrega',
         );
-        _mesclarSemRemover(_taxasEntrega, novos);
-        _marcarSujo(LocalStorageService.keyTaxasEntrega);
+        if (_mesclarSemRemover(_taxasEntrega, novos)) {
+          _marcarSujo(LocalStorageService.keyTaxasEntrega);
+        }
       }
 
       // 17. Contas a Pagar
@@ -11733,8 +13272,9 @@ class DataService extends ChangeNotifier {
           ContaPagar.fromMap,
           nomeColecao: 'Contas a Pagar',
         );
-        _mesclarSemRemover(_contasPagar, novos);
-        _marcarSujo(LocalStorageService.keyContasPagar);
+        if (_mesclarSemRemover(_contasPagar, novos)) {
+          _marcarSujo(LocalStorageService.keyContasPagar);
+        }
       }
 
       // 18. NFC-es e NF-es
@@ -11744,8 +13284,9 @@ class DataService extends ChangeNotifier {
           NFCe.fromMap,
           nomeColecao: 'NFC-es',
         );
-        _mesclarSemRemover(_nfces, novos);
-        _marcarSujo(LocalStorageService.keyNFCes);
+        if (_mesclarSemRemover(_nfces, novos)) {
+          _marcarSujo(LocalStorageService.keyNFCes);
+        }
       }
       if (dados['nfes'] != null && dados['nfes'].isNotEmpty) {
         final novos = _parseListaSegura(
@@ -11753,8 +13294,9 @@ class DataService extends ChangeNotifier {
           NFCe.fromMap,
           nomeColecao: 'NF-es',
         );
-        _mesclarSemRemover(_nfes, novos);
-        _marcarSujo(LocalStorageService.keyNFEs);
+        if (_mesclarSemRemover(_nfes, novos)) {
+          _marcarSujo(LocalStorageService.keyNFEs);
+        }
       }
 
       // 19. Sangrias
@@ -11764,8 +13306,9 @@ class DataService extends ChangeNotifier {
           SangriaCaixa.fromMap,
           nomeColecao: 'Sangrias',
         );
-        _mesclarSemRemover(_sangrias, novos);
-        _marcarSujo(LocalStorageService.keySangriasField);
+        if (_mesclarSemRemover(_sangrias, novos)) {
+          _marcarSujo(LocalStorageService.keySangriasField);
+        }
       }
 
       // 20. Suprimentos
@@ -11775,8 +13318,9 @@ class DataService extends ChangeNotifier {
           SuprimentoCaixa.fromMap,
           nomeColecao: 'Suprimentos',
         );
-        _mesclarSemRemover(_suprimentos, novos);
-        _marcarSujo(LocalStorageService.keySuprimentosField);
+        if (_mesclarSemRemover(_suprimentos, novos)) {
+          _marcarSujo(LocalStorageService.keySuprimentosField);
+        }
       }
 
       // 21. Links de Vendedores
@@ -11787,8 +13331,9 @@ class DataService extends ChangeNotifier {
           LinkVendedor.fromMap,
           nomeColecao: 'Links de Vendedores',
         );
-        _mesclarSemRemover(_linksVendedores, novos);
-        _marcarSujo(LocalStorageService.keyLinksVendedores);
+        if (_mesclarSemRemover(_linksVendedores, novos)) {
+          _marcarSujo(LocalStorageService.keyLinksVendedores);
+        }
       }
 
       // 22. Comissões de Vendedores
@@ -11799,8 +13344,9 @@ class DataService extends ChangeNotifier {
           ComissaoVendedor.fromMap,
           nomeColecao: 'Comissões de Vendedores',
         );
-        _mesclarSemRemover(_comissoesVendedores, novos);
-        _marcarSujo(LocalStorageService.keyComissoesVendedores);
+        if (_mesclarSemRemover(_comissoesVendedores, novos)) {
+          _marcarSujo(LocalStorageService.keyComissoesVendedores);
+        }
       }
 
       // 23. Agendamentos
@@ -11814,6 +13360,17 @@ class DataService extends ChangeNotifier {
           ).map((a) => _vincularReferenciasAgendamento(a)).toList();
 
           for (final agendamento in novosAgendamentos) {
+            // REGRA "a nuvem nunca sobrescreve o local".
+            final indexLocal = _agendamentosServico.indexWhere(
+              (a) => a.id == agendamento.id,
+            );
+            if (indexLocal >= 0 &&
+                !_nuvemMaisNovaQueLocal(
+                  _agendamentosServico[indexLocal],
+                  agendamento,
+                )) {
+              continue;
+            }
             _upsertAgendamentoLocal(agendamento);
           }
           _marcarSujo(LocalStorageService.keyAgendamentosServico);
@@ -11823,22 +13380,28 @@ class DataService extends ChangeNotifier {
         }
       }
 
-      _ultimaSincronizacaoSucesso = DateTime.now();
+      // Fim da aplicação dos dados da nuvem: voltou a valer a marcação normal.
+      _aplicandoDadosDaNuvem = false;
 
-      // Persistir timestamp de sucesso
-      if (_currentEmpresaId != null) {
-        final keySync = _getEmpresaKey('exodo_ultima_sincronizacao_sucesso');
-        await _storage.salvar(
-          keySync,
-          _ultimaSincronizacaoSucesso!.toIso8601String(),
-        );
-        await _storage.remover(_getEmpresaKey('exodo_ultimo_erro_sync'));
+      if (!isPontual) {
+        _ultimaSincronizacaoSucesso = DateTime.now();
+
+        // Persistir timestamp de sucesso
+        if (_currentEmpresaId != null) {
+          final keySync = _getEmpresaKey('exodo_ultima_sincronizacao_sucesso');
+          await _storage.salvar(
+            keySync,
+            _ultimaSincronizacaoSucesso!.toIso8601String(),
+          );
+          await _storage.remover(_getEmpresaKey('exodo_ultimo_erro_sync'));
+        }
+
+        _ultimoErroSync = null;
+        _primeiraCargaAgendamentosRealizada = true;
       }
-
-      _ultimoErroSync = null;
-      _primeiraCargaAgendamentosRealizada = true;
       debugPrint(
-        '>>> [Sync] ✅ Sincronização concluída com sucesso às ${_ultimaSincronizacaoSucesso.toString()}',
+        '>>> [Sync] ✅ Sincronização concluída com sucesso às ${DateTime.now().toIso8601String()}'
+        '${isPontual ? ' (pontual: ${tabelas!.join(', ')})' : ''}',
       );
 
       final List<String> summary = [];
@@ -11927,16 +13490,25 @@ class DataService extends ChangeNotifier {
         addSyncLog("✅ Sincronização concluída com sucesso.");
       }
 
-      _sincronizarNotasComDrive();
+      // Tarefas de fechamento do ciclo COMPLETO. Numa puxada pontual (aviso do
+      // Realtime, uma tabela) elas só custariam tempo — o Drive chega a tentar
+      // login silencioso — e não têm o que fazer com o snapshot parcial.
+      if (!isPontual) {
+        _sincronizarNotasComDrive();
 
-      // A nuvem pode trazer de volta rascunhos `pend-` antigos (criados antes do
-      // DELETE local existir). Sem isso, a nota autorizada volta a aparecer como
-      // "Pendente" depois de cada sincronização.
-      await _limparRascunhosPendentesOrfaos();
+        // A nuvem pode trazer de volta rascunhos `pend-` antigos (criados antes
+        // do DELETE local existir). Sem isso, a nota autorizada volta a aparecer
+        // como "Pendente" depois de cada sincronização.
+        await _limparRascunhosPendentesOrfaos();
 
-      // Serviços antigos (lançados como pedido) trazidos da nuvem também
-      // viram Serviço Realizado.
-      await _migrarServicosRealizadosDePedidos();
+        // Serviços antigos (lançados como pedido) trazidos da nuvem também
+        // viram Serviço Realizado.
+        await _migrarServicosRealizadosDePedidos();
+
+        // Números SRV-/ORC-/AGD- que só existem na nuvem também travam os pisos
+        // locais: sem isso, duas máquinas podiam emitir o mesmo número.
+        unawaited(_elevarEPersistirPisosSerie());
+      }
     } catch (e, stackTrace) {
       _ultimoErroSync = e.toString();
       if (_currentEmpresaId != null) {
@@ -11950,6 +13522,7 @@ class DataService extends ChangeNotifier {
       debugPrint('>>> StackTrace: $stackTrace');
       rethrow;
     } finally {
+      _aplicandoDadosDaNuvem = false;
       _syncEmAndamento = false;
       // Notifica se a carga não é silenciosa (precisa apagar o indicador) ou se
       // algum dado mudou. Numa carga silenciosa SEM novidade nenhuma não
@@ -12028,6 +13601,19 @@ class DataService extends ChangeNotifier {
 
     final itens = <T>[];
     for (final registro in mapa) {
+      // Trava de empresa na ENTRADA: se o registro veio carimbado com outra
+      // empresa (cache antigo sem prefixo, backup, snapshot da web), ele não
+      // entra na memória da empresa aberta. Modelos sem `empresaId` dependem
+      // só desta checagem, por isso ela fica aqui (vale para todas as listas).
+      // Lê as DUAS grafias: o banco local devolve `empresaId` (camelCase) e
+      // checar só `empresa_id` deixava a trava cega em parte das origens.
+      final empresaDoRegistro =
+          (registro['empresa_id'] ?? registro['empresaId'])?.toString();
+      if (empresaDoRegistro != null &&
+          empresaDoRegistro.isNotEmpty &&
+          empresaDoRegistro != _currentEmpresaId) {
+        continue;
+      }
       try {
         final item = fromMap(registro);
         if (filtro == null || filtro(item)) itens.add(item);
@@ -12041,6 +13627,22 @@ class DataService extends ChangeNotifier {
     // Leitura toda ruim NÃO apaga o que já está em memória.
     if (itens.isEmpty) return;
 
+    // REGRA "O LOCAL MANDA": se esta coleção ainda tem gravação pendente no
+    // banco local, o snapshot que acabou de ser lido está ATRASADO em relação à
+    // memória. Trocar a lista inteira agora apagaria o que o usuário acabou de
+    // lançar (o lançamento saía da tela e, no flush seguinte, do disco).
+    // Mantém-se a memória até a gravação local concluir; na releitura seguinte
+    // — já sem pendência — o snapshot volta a valer, inclusive trazendo
+    // exclusões feitas por outra máquina.
+    if (_dirtyCollections.contains(chaveBase) ||
+        (_linhasLocaisPendentes[chaveBase]?.isNotEmpty ?? false)) {
+      debugPrint(
+        '>>> [Cache local] ⏳ $chaveBase com gravação local pendente: '
+        'memória preservada (snapshot do banco atrasado).',
+      );
+      return;
+    }
+
     destino.clear();
     destino.addAll(itens);
     if (ordenarPor != null) {
@@ -12051,6 +13653,15 @@ class DataService extends ChangeNotifier {
         });
       } catch (_) {}
     }
+  }
+
+  /// Um registro carimbado com OUTRA empresa não pertence à empresa aberta.
+  /// Registros sem carimbo são aceitos (dado legado), para migração.
+  bool _registroDaEmpresaAberta(Map<String, dynamic> registro) {
+    final empresaDoRegistro = (registro['empresa_id'] ?? registro['empresaId'])
+        ?.toString();
+    if (empresaDoRegistro == null || empresaDoRegistro.isEmpty) return true;
+    return _currentEmpresaId != null && empresaDoRegistro == _currentEmpresaId;
   }
 
   /// Carrega as coleções de CAIXA do banco local.
@@ -12110,6 +13721,14 @@ class DataService extends ChangeNotifier {
       );
       final stopwatch = Stopwatch()..start();
 
+      // REGRA "LOCAL PRIMEIRO" também na LEITURA: descarrega a gravação
+      // pendente ANTES de ler o banco. O snapshot lido abaixo substitui a lista
+      // inteira em memória (`_aplicarColecaoTolerante`): se ele ficasse atrás
+      // do que o usuário acabou de lançar, o lançamento sumia da tela e, no
+      // flush seguinte, também do disco (era assim que um serviço recém-criado
+      // desaparecia).
+      await _garantirGravacaoLocalPendente();
+
       // CAIXA PRIMEIRO: o fluxo de caixa precisa abrir SEM internet mesmo que
       // alguma das demais listas falhe depois (prioridade ao banco local).
       await _carregarCaixaLocal();
@@ -12141,6 +13760,9 @@ class DataService extends ChangeNotifier {
       );
       final notasMap = await _storage.carregarLista(
         _getEmpresaKey(LocalStorageService.keyNotasEntrada),
+      );
+      final pedidosCompraMap = await _storage.carregarLista(
+        _getEmpresaKey(LocalStorageService.keyPedidosCompra),
       );
       final funcionariosMap = await _storage.carregarLista(
         _getEmpresaKey(LocalStorageService.keyFuncionarios),
@@ -12293,6 +13915,14 @@ class DataService extends ChangeNotifier {
       if (agendamentosMap.isNotEmpty) {
         final novos = <AgendamentoServico>[];
         for (final registro in agendamentosMap) {
+          // Mesma trava de empresa das demais listas (aceita snake e camel).
+          final empresaDoRegistro =
+              (registro['empresa_id'] ?? registro['empresaId'])?.toString();
+          if (empresaDoRegistro != null &&
+              empresaDoRegistro.isNotEmpty &&
+              empresaDoRegistro != _currentEmpresaId) {
+            continue;
+          }
           try {
             novos.add(
               _vincularReferenciasAgendamento(
@@ -12340,6 +13970,15 @@ class DataService extends ChangeNotifier {
           notasMap,
           NotaEntrada.fromMap,
           _notasEntrada,
+        );
+      }
+
+      if (pedidosCompraMap.isNotEmpty) {
+        _aplicarColecaoTolerante(
+          LocalStorageService.keyPedidosCompra,
+          pedidosCompraMap,
+          PedidoCompra.fromMap,
+          _pedidosCompra,
         );
       }
 
@@ -12520,6 +14159,14 @@ class DataService extends ChangeNotifier {
       // Carregar mínimos de numeração (VND e PED) persistidos
       await carregarMinimosNumeracao();
 
+      // Sobe os pisos SRV/ORC/AGD a partir do que está em memória: qualquer
+      // número já emitido trava a série, mesmo que a lista ainda esteja vazia.
+      await _elevarEPersistirPisosSerie();
+
+      // Túmulo persistido: registros apagados continuam barrados mesmo depois
+      // de reiniciar o app (o túmulo de memória dura só 30 min).
+      await carregarTombstonesPersistidos();
+
       stopwatch.stop();
       print(
         '>>> ✓ CARREGAMENTO LOCAL COMPLETO: ${stopwatch.elapsedMilliseconds}ms',
@@ -12676,6 +14323,28 @@ class DataService extends ChangeNotifier {
     return null;
   }
 
+  /// REGRA "A NUVEM NUNCA SOBRESCREVE O LOCAL" — decide cada merge da nuvem.
+  ///
+  /// Devolve `true` somente quando a versão vinda da nuvem é **estritamente mais
+  /// nova** que a local. Empate, versão local mais nova ou instante que não dá
+  /// para comparar → `false`: quem manda é o LOCAL (a nuvem é espelho, a fonte
+  /// da verdade é o PostgreSQL local).
+  ///
+  /// O instante sai do [_tempoDoItem] (updatedAt → data → createdAt), então
+  /// modelos sem `updatedAt` também entram na comparação. Só quando NENHUM dos
+  /// dois lados tem data alguma é que a nuvem é deixada passar — sem data não
+  /// há como julgar antiguidade, e travar o sync dessas entidades seria pior.
+  static bool _nuvemMaisNovaQueLocal(dynamic local, dynamic nuvem) {
+    final tLocal = _tempoDoItem(local);
+    final tNuvem = _tempoDoItem(nuvem);
+    if (tLocal is! DateTime || tNuvem is! DateTime) {
+      // Nada a comparar: mantém o comportamento de sempre (nuvem aplica),
+      // mas NUNCA por cima de um local que sabemos ser igual ou mais novo.
+      return true;
+    }
+    return tNuvem.isAfter(tLocal);
+  }
+
   /// Aparador puro dos itens antigos: mantém os [limite] mais RECENTES e joga
   /// fora os mais velhos.
   ///
@@ -12734,117 +14403,17 @@ class DataService extends ChangeNotifier {
     apararItensAntigos(lista, limite);
   }
 
-  /// Método avançado para mesclar dados do Supabase com o estado local
-  /// Evita o "piscar" de dados e a perda de itens recém-criados localmente
-  void _mesclarListaSincronizada<T>(
-    List<T> listaLocal,
-    List<T> vindosDoSupabase,
-  ) {
-    if (vindosDoSupabase.isEmpty) {
-      if (_importandoExcel) {
-        debugPrint(
-          '>>> [Sync] 🛡️ Ignorando snapshot VAZIO durante importação ativa.',
-        );
-        return;
-      }
-
-      // PROTEÇÃO: Se a lista local é MUITO grande (ex: >100) e o Supabase retornou vazio,
-      // pode ser um erro de rede, delay de indexação ou snapshot parcial. Não limpar.
-      if (listaLocal.length > 100) {
-        debugPrint(
-          '>>> [Sync] 🛡️ Alerta: Supabase retornou vazio para lista com ${listaLocal.length} itens. Preservando dados locais.',
-        );
-        return;
-      }
-
-      listaLocal.clear();
-      return;
-    }
-
-    // PROTEÇÃO CONTRA DELAY DE INDEXAÇÃO / SNAPSHOT PARCIAL
-    // Se a lista local já tem conteúdo e o Supabase retornou algo MUITO menor (menos de 10% da local)
-    // Provavelmente é um snapshot inicial ou parcial. Não vamos deletar o restante ainda.
-    if (listaLocal.length > 100 &&
-        vindosDoSupabase.length < (listaLocal.length * 0.1)) {
-      debugPrint(
-        '>>> [Sync] 🛡️ Ignorando snapshot parcial suspeito: Local=${listaLocal.length}, Cloud=${vindosDoSupabase.length}. Preservando memória.',
-      );
-      // Ainda assim, atualizamos os que vieram
-      _mesclarSemRemover(listaLocal, vindosDoSupabase);
-      return;
-    }
-
-    // MAPA COM INDEX PARA BUSCA O(1)
-    final Map<String, int> indexMap = {
-      for (int i = 0; i < listaLocal.length; i++)
-        (listaLocal[i] as dynamic).id: i,
-    };
-
-    bool houveAlgumaMudanca = false;
-
-    for (final novo in vindosDoSupabase) {
-      final id = (novo as dynamic).id;
-      final idx = indexMap[id];
-
-      if (idx != null) {
-        // ATUALIZAÇÃO SÓ SE O TIMESTAMP FOR DIFERENTE
-        // Isso economiza MUITO processamento de UI em listas grandes (6k+ itens)
-        final local = listaLocal[idx];
-        if ((local as dynamic).updatedAt != (novo as dynamic).updatedAt) {
-          listaLocal[idx] = novo;
-          houveAlgumaMudanca = true;
-        }
-      } else {
-        // Adicionar novo vindo da nuvem
-        listaLocal.add(novo);
-        houveAlgumaMudanca = true;
-      }
-    }
-
-    // PROTEÇÃO ADICIONAL PARA REMOÇÃO (Só remove se não estiver no Supabase E passar no tempo de proteção)
-    final Set<String> idsSupabase = vindosDoSupabase
-        .map((e) => (e as dynamic).id as String)
-        .toSet();
-    final agora = DateTime.now();
-
-    final lenAntes = listaLocal.length;
-    listaLocal.removeWhere((item) {
-      final id = (item as dynamic).id;
-      if (idsSupabase.contains(id)) return false;
-
-      final createdAt = (item as dynamic).createdAt as DateTime?;
-      if (createdAt == null) return true;
-
-      // Se é muito recente, manter (pode estar subindo pro Supabase)
-      final idade = agora.difference(createdAt).inSeconds;
-      if (idade < 600) {
-        // 10 minutos de proteção
-        debugPrint(
-          '>>> [Sync] 🛡️ Mantendo item local recém-criado: $id (idade: ${idade}s)',
-        );
-        return false;
-      }
-
-      // PROTEÇÃO ADICIONAL: Se a lista vinda do Supabase é suspeitamente pequena
-      // comparada com a local (ex: menos de 10% da local) e a local é grande,
-      // não removemos itens antigos pois pode ser uma carga parcial/limitada.
-      if (listaLocal.length > 1000 &&
-          vindosDoSupabase.length < (listaLocal.length * 0.5)) {
-        // Se o item não está no Supabase, mas a carga parece parcial, mantemos.
-        return false;
-      }
-
-      return true;
-    });
-
-    if (lenAntes != listaLocal.length) houveAlgumaMudanca = true;
-  }
-
   /// Mescla dados vindos da nuvem sem remover os locais que não estão no snapshot
   /// Útil para snapshots parciais ou buscas limitadas. Protege edições locais mais novas usando o updatedAt.
-  void _mesclarSemRemover<T>(List<T> listaLocal, List<T> vindos) {
-    if (vindos.isEmpty) return;
+  ///
+  /// Retorna `true` quando alguma linha foi realmente adicionada/substituída.
+  /// Os chamadores usam isso para só marcar a coleção como suja (e reescrever a
+  /// tabela) quando houve novidade — num pulso de 10s sem mudanças, o catálogo
+  /// inteiro não precisa ser regravado.
+  bool _mesclarSemRemover<T>(List<T> listaLocal, List<T> vindos) {
+    if (vindos.isEmpty) return false;
 
+    var mudou = false;
     final Map<String, int> indexMap = {
       for (int i = 0; i < listaLocal.length; i++)
         (listaLocal[i] as dynamic).id: i,
@@ -12857,12 +14426,13 @@ class DataService extends ChangeNotifier {
         final local = listaLocal[index];
 
         try {
-          final DateTime localUpdated = (local as dynamic).updatedAt;
-          final DateTime novoUpdated = (novo as dynamic).updatedAt;
-          if (novoUpdated.isBefore(localUpdated)) {
-            // Ignora o item da nuvem se o local for mais novo
+          // REGRA "A NUVEM NUNCA SOBRESCREVE O LOCAL": a versão da nuvem só
+          // substitui a local quando é mais NOVA. Empate (ou local mais novo)
+          // → o local fica; antes, o empate deixava a nuvem vencer e a edição
+          // feita aqui era revertida pelo snapshot antigo.
+          if (!_nuvemMaisNovaQueLocal(local, novo)) {
             debugPrint(
-              '>>> [Sync] 🛡️ Ignorando item antigo da nuvem para $id. Local: $localUpdated, Cloud: $novoUpdated',
+              '>>> [Sync] 🛡️ Nuvem não é mais nova que o local ($id): local mantido.',
             );
             continue;
           }
@@ -12871,34 +14441,13 @@ class DataService extends ChangeNotifier {
         }
 
         listaLocal[index] = novo;
+        mudou = true;
       } else {
         listaLocal.add(novo);
+        mudou = true;
       }
     }
-  }
-
-  static void _atualizarListaInPlace<T>(
-    List<T> listaAtual,
-    List<T> novosItens,
-  ) {
-    if (novosItens.isEmpty) {
-      listaAtual.clear();
-      return;
-    }
-
-    // BARREIRA DE SEGURANÇA: Limite aumentado para 25.000 itens para suportar catálogos massivos
-    final List<T> itensSeguros = novosItens.length > 25000
-        ? novosItens.take(25000).toList()
-        : novosItens;
-
-    if (novosItens.length > 15000) {
-      debugPrint(
-        '>>> [Memória] 🛡️ Alerta: Lista com ${novosItens.length} itens. Mantendo até 25.000 para estabilidade.',
-      );
-    }
-
-    listaAtual.clear();
-    listaAtual.addAll(itensSeguros);
+    return mudou;
   }
 
   /// Parse seguro de uma lista de registros vindos do Supabase.
@@ -13044,6 +14593,7 @@ class DataService extends ChangeNotifier {
       _manterApenasRecentes(_servicosRealizados, 10000, 'Serviços Realizados');
       _manterApenasRecentes(_orcamentos, 10000, 'Orçamentos');
       _manterApenasRecentes(_notasEntrada, 100, 'Notas de Entrada');
+      _manterApenasRecentes(_pedidosCompra, 2000, 'Pedidos de Compra');
       _manterApenasRecentes(_trocasDevolucoes, 200, 'Trocas');
       _manterApenasRecentes(_agendamentosServico, 800, 'Agendamentos');
       _manterApenasRecentes(_nfces, 200, 'NFC-es');
@@ -13072,6 +14622,7 @@ class DataService extends ChangeNotifier {
           LocalStorageService.keyVendasBalcao: _vendasBalcao,
           LocalStorageService.keyAgendamentosServico: _agendamentosServico,
           LocalStorageService.keyNotasEntrada: _notasEntrada,
+          LocalStorageService.keyPedidosCompra: _pedidosCompra,
           LocalStorageService.keyFuncionarios: _funcionarios,
           LocalStorageService.keyTaxasEntrega: _taxasEntrega,
           LocalStorageService.keyContasPagar: _contasPagar,
@@ -13099,14 +14650,19 @@ class DataService extends ChangeNotifier {
         for (var entry in colecoes.entries) {
           final isDirty = _dirtyCollections.contains(entry.key);
           if (forcarTodos || isDirty) {
+            // Coleção suja por carga da nuvem: grava com sync_mode = 'on' para
+            // o trigger NÃO trocar updated_at por NOW() (senão o local fica
+            // eternamente "mais novo" que a nuvem e o site nunca chega aqui).
+            final veioDaNuvem = _colecoesSujasDaNuvem.contains(entry.key);
             try {
               await _storage.salvarLista(
                 _getEmpresaKey(entry.key),
                 entry.value,
-                isSync: isSync,
+                isSync: isSync || veioDaNuvem,
               );
               tabelasSalvasCount++;
               gravadas.add(entry.key);
+              _colecoesSujasDaNuvem.remove(entry.key);
             } catch (e) {
               // Uma tabela que falhou NÃO pode derrubar as demais (o await
               // solto aqui abortava o loop inteiro) nem ser marcada como
@@ -13165,7 +14721,7 @@ class DataService extends ChangeNotifier {
               ) >
               _intervaloSincronizacao;
 
-        if (nuvemHabilitada &&
+      if (nuvemHabilitada &&
           SupabaseService.isAvailable &&
           _currentEmpresaId != null &&
           deveSincronizarTotal) {
@@ -13287,6 +14843,7 @@ class DataService extends ChangeNotifier {
             motoristas: _motoristas,
             agendamentosServico: _agendamentosServico,
             notasEntrada: _notasEntrada,
+            pedidosCompra: _pedidosCompra,
             funcionarios: _funcionarios,
             romaneios: _romaneios,
             taxasEntrega: _taxasEntrega,
@@ -13353,7 +14910,9 @@ class DataService extends ChangeNotifier {
   /// Sincronização forçada iniciada pelo usuário
   Future<void> sincronizarManualmente() async {
     if (!nuvemHabilitada) {
-      addSyncLog('☁️ Sincronização não iniciada: nuvem desativada para esta empresa.');
+      addSyncLog(
+        '☁️ Sincronização não iniciada: nuvem desativada para esta empresa.',
+      );
       return;
     }
 
@@ -13378,7 +14937,9 @@ class DataService extends ChangeNotifier {
       throw Exception('Empresa não selecionada.');
     }
     if (!nuvemHabilitada) {
-      throw StateError('Nuvem desativada para esta empresa. Os dados continuam no PostgreSQL local.');
+      throw StateError(
+        'Nuvem desativada para esta empresa. Os dados continuam no PostgreSQL local.',
+      );
     }
     if (!SupabaseService.isAvailable) {
       throw Exception('Supabase não está disponível.');
@@ -13541,7 +15102,8 @@ class DataService extends ChangeNotifier {
   /// Incrementa um contador sync_version na tabela empresas do Supabase.
   /// Outras máquinas detectam a mudança e forçam full sync.
   Future<void> _incrementarSyncVersion() async {
-    if (!nuvemHabilitada || _currentEmpresaId == null || _empresaAtual == null) return;
+    if (!nuvemHabilitada || _currentEmpresaId == null || _empresaAtual == null)
+      return;
     try {
       final config = Map<String, dynamic>.from(
         _empresaAtual!.configuracoes ?? {},
@@ -13659,6 +15221,7 @@ class DataService extends ChangeNotifier {
     LocalStorageService.keyVendasBalcao,
     LocalStorageService.keyAgendamentosServico,
     LocalStorageService.keyNotasEntrada,
+    LocalStorageService.keyPedidosCompra,
     LocalStorageService.keyFuncionarios,
     LocalStorageService.keyTaxasEntrega,
     LocalStorageService.keyContasPagar,
@@ -13736,6 +15299,7 @@ class DataService extends ChangeNotifier {
     _ajustesEstoqueLote.clear();
     _lotesProdutos.clear();
     _notasEntrada.clear();
+    _pedidosCompra.clear();
     _agendamentosServico.clear();
     _funcionarios.clear();
     _taxasEntrega.clear();
@@ -13839,7 +15403,9 @@ class DataService extends ChangeNotifier {
     } catch (e) {
       _isLoading = false;
       notifyListeners();
-      debugPrint('>>> [DataService] ⛔ Puxar Nuvem abortado na pré-checagem: $e');
+      debugPrint(
+        '>>> [DataService] ⛔ Puxar Nuvem abortado na pré-checagem: $e',
+      );
       rethrow;
     }
 
@@ -13876,11 +15442,13 @@ class DataService extends ChangeNotifier {
         // falhar, o download da nuvem já garantiu os dados para repor, então a
         // operação segue — mas a cópia é sempre tentada).
         try {
-          await BackupRestoreService(this).criarBackupSqlDaEmpresa(
-            empresaId: _currentEmpresaId,
-          );
+          await BackupRestoreService(
+            this,
+          ).criarBackupSqlDaEmpresa(empresaId: _currentEmpresaId);
         } catch (e) {
-          debugPrint('>>> [DataService] ⚠️ Cópia antes do Puxar Nuvem falhou: $e');
+          debugPrint(
+            '>>> [DataService] ⚠️ Cópia antes do Puxar Nuvem falhou: $e',
+          );
         }
 
         final db = DatabaseService();
@@ -13990,10 +15558,9 @@ class DataService extends ChangeNotifier {
     // a limpeza é ABORTADA — os dados locais são sagrados e nunca podem ser
     // apagados sem uma cópia recuperável em C:\ExodoBackups.
     try {
-      final (okBackup, msgBackup, caminhoBackup) =
-          await BackupRestoreService(this).criarBackupSqlDaEmpresa(
-        empresaId: alvo,
-      );
+      final (okBackup, msgBackup, caminhoBackup) = await BackupRestoreService(
+        this,
+      ).criarBackupSqlDaEmpresa(empresaId: alvo);
       if (okBackup) {
         debugPrint(
           '>>> [DataService] 🛡️ Cópia automática antes de limpar: $caminhoBackup',
@@ -14008,8 +15575,7 @@ class DataService extends ChangeNotifier {
       }
     } catch (e) {
       // Se o próprio backup lançou, aborta a limpeza.
-      if (e is! Exception ||
-          !e.toString().contains('Limpeza ABORTADA')) {
+      if (e is! Exception || !e.toString().contains('Limpeza ABORTADA')) {
         _isLoading = false;
         notifyListeners();
         throw Exception(
@@ -14149,7 +15715,7 @@ class DataService extends ChangeNotifier {
     // Tentar sincronizar imediatamente se tiver conexão — e a nuvem não
     // estiver marcada como indisponível (evita churn durante a queda).
     if (nuvemHabilitada &&
-      SupabaseService.isAvailable &&
+        SupabaseService.isAvailable &&
         !SupabaseService.instance.servidorIndisponivel) {
       _syncQueue.forceSync().catchError((e) {
         debugPrint('>>> [Sync] ⚠️ Erro ao forçar sincronização: $e');
@@ -14194,11 +15760,57 @@ class DataService extends ChangeNotifier {
   final Map<String, DateTime> _idsRemovidosRecentemente = {};
   static const Duration _janelaTombstone = Duration(minutes: 30);
 
+  /// Túmulo PERSISTIDO na tabela `_exodo_deletados` (alimentada pelo trigger
+  /// de DELETE do banco local), carregado no boot/troca de empresa.
+  ///
+  /// É a correção da lacuna do túmulo "só de memória": ele expirava em 30 min
+  /// e morria junto com o app — depois de reiniciar, um upsert atrasado de
+  /// outro PC ressuscitava o registro apagado. Este sobrevive ao reinício e só
+  /// expira depois de [_janelaTombstonePersistido].
+  final Map<String, DateTime> _tombstonesPersistidos = {};
+  static const Duration _janelaTombstonePersistido = Duration(days: 90);
+
+  /// Carrega os túmulos da empresa atual do banco local (janela de 90 dias).
+  Future<void> carregarTombstonesPersistidos() async {
+    if (_currentEmpresaId == null) return;
+    try {
+      final linhas = await DatabaseService().carregarTombstones(
+        _currentEmpresaId!,
+        desde: DateTime.now().subtract(_janelaTombstonePersistido),
+      );
+      _tombstonesPersistidos.clear();
+      for (final linha in linhas) {
+        final id = linha['registro_id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        final bruto = linha['deletado_em'];
+        final quando = bruto is DateTime
+            ? bruto
+            : DateTime.tryParse(bruto?.toString() ?? '') ?? DateTime.now();
+        _tombstonesPersistidos[id] = quando;
+      }
+      debugPrint(
+        '>>> [DataService] 🪦 ${_tombstonesPersistidos.length} túmulos '
+        'carregados (empresa $_currentEmpresaId).',
+      );
+    } catch (e) {
+      debugPrint('>>> [DataService] ⚠️ Falha ao carregar túmulos: $e');
+    }
+  }
+
   bool _foiRemovidoRecentemente(String id) {
     final quando = _idsRemovidosRecentemente[id];
-    if (quando == null) return false;
-    if (DateTime.now().difference(quando) > _janelaTombstone) {
-      _idsRemovidosRecentemente.remove(id);
+    if (quando != null) {
+      if (DateTime.now().difference(quando) > _janelaTombstone) {
+        _idsRemovidosRecentemente.remove(id);
+      } else {
+        return true;
+      }
+    }
+    // Túmulo persistido: vale mesmo depois de reiniciar o app.
+    final persistido = _tombstonesPersistidos[id];
+    if (persistido == null) return false;
+    if (DateTime.now().difference(persistido) > _janelaTombstonePersistido) {
+      _tombstonesPersistidos.remove(id);
       return false;
     }
     return true;
@@ -14206,7 +15818,11 @@ class DataService extends ChangeNotifier {
 
   void _marcarRemovidoRecentemente(String id) {
     if (id.isEmpty) return;
-    _idsRemovidosRecentemente[id] = DateTime.now();
+    final agora = DateTime.now();
+    _idsRemovidosRecentemente[id] = agora;
+    // Vale imediatamente mesmo se o app fechar antes do próximo boot (o
+    // trigger grava a linha no banco, e esta cópia cobre a janela até lá).
+    _tombstonesPersistidos[id] = agora;
     // Limite de memória: descarta os túmulos mais antigos se passar de 5000.
     if (_idsRemovidosRecentemente.length > 5000) {
       final antigos = _idsRemovidosRecentemente.entries.toList()
@@ -14216,12 +15832,22 @@ class DataService extends ChangeNotifier {
         _idsRemovidosRecentemente.remove(antigos[i].key);
       }
     }
+    if (_tombstonesPersistidos.length > 5000) {
+      final antigos = _tombstonesPersistidos.entries.toList()
+        ..sort((a, b) => a.value.compareTo(b.value));
+      final excedente = _tombstonesPersistidos.length - 5000;
+      for (var i = 0; i < excedente; i++) {
+        _tombstonesPersistidos.remove(antigos[i].key);
+      }
+    }
   }
 
   /// Remove de um snapshot da nuvem os registros cujo id foi apagado aqui há
   /// pouco — impede que um pull mais antigo os ressuscite.
   void _descartarDeletadosRecentes(Map<String, dynamic> dados) {
-    if (_idsRemovidosRecentemente.isEmpty) return;
+    if (_idsRemovidosRecentemente.isEmpty && _tombstonesPersistidos.isEmpty) {
+      return;
+    }
     for (final chave in dados.keys.toList()) {
       final lista = dados[chave];
       if (lista is! List) continue;
@@ -14752,6 +16378,7 @@ class DataService extends ChangeNotifier {
       _sangrias.clear();
       _suprimentos.clear();
       _notasEntrada.clear();
+      _pedidosCompra.clear();
       _agendamentosServico.clear();
       _contasPagar.clear();
       _nfces.clear();
@@ -14887,6 +16514,11 @@ class DataService extends ChangeNotifier {
 
     // Removemos da lista local (permanente)
     _mesasComandas.removeWhere((m) => m.id == id);
+
+    // Exclusão REAL no banco local: sem isso a mesa/comanda apagada voltava
+    // no próximo boot (a linha continuava no PostgreSQL local e o snapshot do
+    // banco substituía a memória).
+    _removerLinhaLocal(LocalStorageService.keyMesasComandas, id);
 
     // MARCAR COMO SUJO para garantir que o salvamento em background ocorra
     _marcarSujo(LocalStorageService.keyMesasComandas);
@@ -15186,24 +16818,6 @@ class DataService extends ChangeNotifier {
     notifyListeners();
     debugPrint('>>> [LimparMesa] ✓ Processo concluído com sucesso');
     debugPrint('');
-  }
-
-  /// Converte uma string de forma de pagamento para o Enum TipoPagamento
-  TipoPagamento _getTipoPagamentoByString(String? forma) {
-    if (forma == null || forma.isEmpty) return TipoPagamento.dinheiro;
-
-    final f = forma.toLowerCase();
-    if (f.contains('pix')) return TipoPagamento.pix;
-    if (f.contains('dinheiro')) return TipoPagamento.dinheiro;
-    if (f.contains('cartão') || f.contains('cartao')) {
-      if (f.contains('deb')) return TipoPagamento.cartaoDebito;
-      return TipoPagamento.cartaoCredito;
-    }
-    if (f.contains('boleto')) return TipoPagamento.boleto;
-    if (f.contains('fiado')) return TipoPagamento.fiado;
-    if (f.contains('crediario')) return TipoPagamento.crediario;
-
-    return TipoPagamento.outro;
   }
 
   /// Atualiza o status de um item de mesa/comanda
@@ -15515,10 +17129,6 @@ class DataService extends ChangeNotifier {
     }
   }
 
-  void _reiniciarMonitorBridge() {
-    // Monitor de bridge desativado (era baseado em Supabase)
-  }
-
   /// Sincroniza notas fiscais com o Google Drive de forma automática e silenciosa
   Future<void> _sincronizarNotasComDrive() async {
     if (_empresaAtual == null) return;
@@ -15675,8 +17285,11 @@ class DataService extends ChangeNotifier {
 
   /// Retorna uma chave única para a empresa atual no LocalStorage
   String _getEmpresaKey(String baseKey) {
-    if (_currentEmpresaId == null || _currentEmpresaId!.isEmpty) return baseKey;
-    return 'empresa_${_currentEmpresaId}_$baseKey';
+    final empresaId = _currentEmpresaId;
+    if (empresaId == null || empresaId.isEmpty) {
+      return 'empresa_desconhecida_$baseKey';
+    }
+    return 'empresa_${empresaId}_$baseKey';
   }
 
   /// Helper: sanitiza dados de produto para o schema do Supabase
@@ -15840,15 +17453,16 @@ class DataService extends ChangeNotifier {
       );
       addSyncLog('📤 Iniciando migração completa Local → Nuvem...');
 
-      // PASSO 1: Verificar e criar tabelas ausentes no Supabase automaticamente (OPCIONAL)
-      // Se as variáveis SUPABASE_DB_HOST/SUPABASE_DB_PASSWORD não estiverem configuradas,
-      // a criação automática é pulada — a migração continua e pula tabelas que não existem.
+      // PASSO 1: Verificar e criar tabelas ausentes na NUVEM automaticamente (OPCIONAL)
+      // A nuvem é o Neon (Data API); o Supabase fica como segunda opção. Se
+      // nenhum dos dois estiver configurado, a criação automática é pulada —
+      // a migração continua e pula tabelas que não existem.
       debugPrint(
-        '>>> [Migrate] 🔍 Verificando tabelas no Supabase antes da migração...',
+        '>>> [Migrate] 🔍 Verificando tabelas na nuvem antes da migração...',
       );
-      addSyncLog('🔍 Verificando tabelas no Supabase...');
+      addSyncLog('🔍 Verificando tabelas na nuvem (Neon)...');
       try {
-        if (EnvConfig.supabaseDbAvailable) {
+        if (EnvConfig.neonDisponivel || EnvConfig.supabaseDbAvailable) {
           final (ok, logs) = await _supabaseService.criarTabelasNoSupabase();
           if (ok) {
             debugPrint('>>> [Migrate] ✅ Verificação de tabelas concluída');
@@ -15862,10 +17476,10 @@ class DataService extends ChangeNotifier {
           }
         } else {
           debugPrint(
-            '>>> [Migrate] ℹ️ Variáveis SUPABASE_DB_* não configuradas — criação automática de tabelas desabilitada',
+            '>>> [Migrate] ℹ️ Nuvem não configurada — criação automática de tabelas desabilitada',
           );
           addSyncLog(
-            'ℹ️ Criação automática de tabelas desabilitada (Configure SUPABASE_DB_HOST e SUPABASE_DB_PASSWORD no .env para ativar)',
+            'ℹ️ Criação automática de tabelas desabilitada (preencha o .env.neon; o Supabase, reserva, usa SUPABASE_DB_HOST/PASSWORD)',
           );
         }
       } catch (e) {
@@ -16224,7 +17838,10 @@ class DataService extends ChangeNotifier {
       return (false, 'Empresa não definida');
     }
     if (!nuvemHabilitada) {
-      return (false, 'Nuvem desativada para esta empresa. Dados mantidos localmente.');
+      return (
+        false,
+        'Nuvem desativada para esta empresa. Dados mantidos localmente.',
+      );
     }
     debugPrint('>>>> [EnvirLocalNuvem] Empresa: ' + _currentEmpresaId!);
 
@@ -16255,6 +17872,7 @@ class DataService extends ChangeNotifier {
       'servicos': LocalStorageService.keyServicos,
       'ordens_servico': LocalStorageService.keyOrdensServico,
       'notas_entrada': LocalStorageService.keyNotasEntrada,
+      'pedidos_compra': LocalStorageService.keyPedidosCompra,
       'funcionarios': LocalStorageService.keyFuncionarios,
       'agendamentos_servico': LocalStorageService.keyAgendamentosServico,
       'trocas_devolucoes': LocalStorageService.keyTrocasDevolucoes,
@@ -16570,60 +18188,6 @@ class DataService extends ChangeNotifier {
     return (tabelasComErro == 0, msg);
   }
 
-  /// Retorna os dados de uma tabela a partir das listas em memória (fallback)
-  List<Map<String, dynamic>> _dadosTabelaEmMemoria(String tabela) {
-    switch (tabela) {
-      case 'produtos':
-        return _produtos.map((p) => p.toMap()).toList();
-      case 'clientes':
-        return _clientes.map((c) => c.toMap()).toList();
-      case 'pedidos':
-        return _pedidos.map((p) => p.toMap()).toList();
-      case 'vendas_balcao':
-        return _vendasBalcao.map((v) => v.toMap()).toList();
-      case 'mesas_comandas':
-        return _mesasComandas.map((m) => m.toMap()).toList();
-      case 'servicos':
-        return _tiposServico.map((s) => s.toMap()).toList();
-      case 'ordens_servico':
-        return _ordensServico.map((o) => o.toMap()).toList();
-      case 'notas_entrada':
-        return _notasEntrada.map((n) => n.toMap()).toList();
-      case 'funcionarios':
-        return _funcionarios.map((f) => f.toMap()).toList();
-      case 'agendamentos_servico':
-        return _agendamentosServico.map((a) => a.toMap()).toList();
-      case 'trocas_devolucoes':
-        return _trocasDevolucoes.map((t) => t.toMap()).toList();
-      case 'comissoes_vendedores':
-        return _comissoesVendedores.map((c) => c.toMap()).toList();
-      case 'contas_pagar':
-        return _contasPagar.map((cp) => cp.toMap()).toList();
-      case 'romaneios':
-        return _romaneios.map((r) => r.toMap()).toList();
-      case 'aberturas_caixa':
-        return _aberturasCaixa.map((a) => a.toMap()).toList();
-      case 'fechamentos_caixa':
-        return _fechamentosCaixa.map((f) => f.toMap()).toList();
-      case 'sangrias_caixa':
-        return _sangrias.map((s) => s.toMap()).toList();
-      case 'suprimentos_caixa':
-        return _suprimentos.map((s) => s.toMap()).toList();
-      case 'nfces':
-        return _nfces.map((n) => n.toMap()).toList();
-      case 'taxas_entrega':
-        return _taxasEntrega.map((t) => t.toMap()).toList();
-      case 'links_vendedores':
-        return _linksVendedores.map((l) => l.toMap()).toList();
-      case 'estoque_historico':
-        return _estoqueHistorico.map((e) => e.toMap()).toList();
-      case 'ajustes_estoque_lote':
-        return _ajustesEstoqueLote.map((e) => e.toMap()).toList();
-      default:
-        return [];
-    }
-  }
-
   /// 🚀 Após restaurar um dump no PostgreSQL local, recarrega TODOS os dados
   /// do banco local para a memória do app e envia tudo para o Supabase.
   /// Assim a nuvem fica igual ao banco local restaurado — e as outras máquinas
@@ -16757,7 +18321,9 @@ class DataService extends ChangeNotifier {
   Future<void> restaurarLocalParaNuvem() async {
     if (_currentEmpresaId == null) return;
     if (!nuvemHabilitada) {
-      addSyncLog('☁️ Restauração para nuvem bloqueada: nuvem desativada para esta empresa.');
+      addSyncLog(
+        '☁️ Restauração para nuvem bloqueada: nuvem desativada para esta empresa.',
+      );
       return;
     }
 
@@ -16875,7 +18441,9 @@ class DataService extends ChangeNotifier {
       throw Exception('⚠️ Nenhuma empresa selecionada. Operação cancelada.');
     }
     if (!nuvemHabilitada) {
-      throw StateError('Nuvem desativada para esta empresa. Nenhum dado foi apagado.');
+      throw StateError(
+        'Nuvem desativada para esta empresa. Nenhum dado foi apagado.',
+      );
     }
     // PROTEÇÃO CRÍTICA: o id "1" é a empresa padrão e, no banco atual, TODAS
     // as empresas legadas estão gravadas sob esse id. Apagar por ele apagaria
@@ -17057,10 +18625,31 @@ class DataService extends ChangeNotifier {
     bool forcarPersistencia = false,
   }) async {
     if (_migrandoPerfisTributarios) return;
+    // Sem empresa definida, o cache cairia num namespace compartilhado e
+    // misturaria perfis de empresas diferentes. Melhor não migrar agora.
+    final empresaAlvo = _currentEmpresaId;
+    if (empresaAlvo == null || empresaAlvo.isEmpty) return;
+    if (_empresaAtual == null) return;
     _migrandoPerfisTributarios = true;
     try {
-      final chave = _getChaveComEmpresa('perfis_tributarios');
+      // A LEITURA é assíncrona e a empresa pode ser TROCADA no meio dela:
+      // `setEmpresaAtual` chama esta rotina com a empresa AINDA ANTERIOR (o
+      // `definirEmpresaAtual` só depois atualiza `_currentEmpresaId`). Fixamos
+      // a empresa NA ENTRADA: sem isso, os perfis da empresa anterior eram
+      // mesclados na lista da empresa nova e — pior — GRAVADOS nela (bug:
+      // "mudei o perfil numa empresa e mudou também na outra").
+      final chave = 'empresa_${empresaAlvo}_perfis_tributarios';
       final cached = await _storage.carregarLista(chave);
+      // A empresa mudou enquanto líamos o cache? O conteúdo é da anterior —
+      // descarta para não contaminar a empresa aberta agora.
+      if (_currentEmpresaId != empresaAlvo ||
+          _empresaAtual?.id != empresaAlvo) {
+        debugPrint(
+          '>>> [Perfis] Migração do cache descartada: a empresa aberta mudou '
+          '($empresaAlvo -> $_currentEmpresaId) durante a leitura.',
+        );
+        return;
+      }
       var mudou = false;
       if (cached.isNotEmpty) {
         // Restaura do cache local os perfis que NÃO existem na configuração
@@ -17276,6 +18865,15 @@ class DataService extends ChangeNotifier {
   Future<void> _persistirPerfisTributariosNaEmpresa() async {
     final empresa = _empresaAtual;
     if (empresa == null) return;
+    // Trava de isolamento: nunca gravar os perfis na empresa "errada" (ex.:
+    // _empresaAtual desatualizada em relação à empresa realmente aberta).
+    if (_currentEmpresaId == null || empresa.id != _currentEmpresaId) {
+      debugPrint(
+        '>>> [Perfis] Persistência ignorada: empresa aberta ($_currentEmpresaId) '
+        'difere da empresa em memória (${empresa.id}).',
+      );
+      return;
+    }
     if (_persistindoPerfisTributarios) return;
     _persistindoPerfisTributarios = true;
     try {
@@ -17372,7 +18970,12 @@ class DataService extends ChangeNotifier {
     // Garante os padrões (Cozinha e Bar) se a lista estiver vazia e persiste
     // apenas se algo foi adicionado (evita gravações desnecessárias no banco).
     final adicionouPadrao = _criarDepartamentosPadrao();
-    if (adicionouPadrao) {
+    // Dados antigos chegaram a gravar o MESMO departamento duas vezes na
+    // configuração da empresa (cache local mesclado em paralelo). A lista
+    // duplicada derrubava o DropdownButton do cadastro de produtos, então a
+    // limpeza acontece já na leitura e o resultado é regravado.
+    final removeuDuplicatas = _normalizarDepartamentos();
+    if (adicionouPadrao || removeuDuplicatas) {
       unawaited(_persistirDepartamentosNaEmpresa());
     }
     // Sempre confere o cache local por cima (última edição do usuário não some).
@@ -17383,9 +18986,27 @@ class DataService extends ChangeNotifier {
   /// Recupera departamentos salvos apenas no cache local (compatibilidade com
   /// versões que guardavam a lista fora da configuração da empresa).
   Future<void> _migrarDepartamentosDoCache() async {
+    // Duas migrações ao mesmo tempo (setEmpresaAtual + atualizarDadosEmpresa)
+    // liam o mesmo cache e as duas adicionavam o departamento: a lista ficava
+    // com o id repetido. Uma migração por vez resolve na origem.
+    if (_migrandoDepartamentos) return;
+    // A empresa é fixada NA ENTRADA: trocar de empresa no meio da leitura
+    // mesclaria os departamentos da empresa anterior na nova (mesmo defeito dos
+    // perfis tributários).
+    final empresaAlvo = _currentEmpresaId;
+    if (empresaAlvo == null || empresaAlvo.isEmpty) return;
+    _migrandoDepartamentos = true;
     try {
-      final chave = _getChaveComEmpresa('departamentos');
+      final chave = 'empresa_${empresaAlvo}_departamentos';
       final cache = await _storage.carregarLista(chave);
+      if (_currentEmpresaId != empresaAlvo ||
+          _empresaAtual?.id != empresaAlvo) {
+        debugPrint(
+          '>>> [Departamentos] Migração do cache descartada: a empresa aberta '
+          'mudou ($empresaAlvo -> $_currentEmpresaId) durante a leitura.',
+        );
+        return;
+      }
       if (cache is List && cache.isNotEmpty) {
         var mudou = false;
         for (final item in cache) {
@@ -17397,6 +19018,7 @@ class DataService extends ChangeNotifier {
             mudou = true;
           }
         }
+        if (_normalizarDepartamentos()) mudou = true;
         if (mudou) {
           await _persistirDepartamentosNaEmpresa();
         }
@@ -17405,7 +19027,51 @@ class DataService extends ChangeNotifier {
       debugPrint(
         '>>> [DataService] ⚠️ Erro ao migrar departamentos do cache: $e',
       );
+    } finally {
+      _migrandoDepartamentos = false;
+      // Notifica a UI mesmo se a persistência falhar, para o dropdown atualizar.
+      notifyListeners();
     }
+  }
+
+  /// Remove da lista os departamentos sem nome e os IDs repetidos, gerando um
+  /// id estável para registros antigos que foram salvos sem id.
+  ///
+  /// A lista é montada por três caminhos (configuração da empresa, cache local
+  /// e departamentos padrão) e a duplicata de ID quebrava o `DropdownButton` do
+  /// cadastro de produtos com "There should be exactly one item with
+  /// [DropdownButton]'s value". Retorna true se a lista foi alterada.
+  bool _normalizarDepartamentos() {
+    final normalizados = <Departamento>[];
+    final idsVistos = <String>{};
+    var mudou = false;
+    for (final dep in _departamentos) {
+      final nome = dep.nome.trim();
+      if (nome.isEmpty) {
+        mudou = true;
+        continue;
+      }
+      var id = dep.id.trim();
+      if (id.isEmpty) {
+        id = 'dep_${nome.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_')}';
+      }
+      if (!idsVistos.add(id)) {
+        mudou = true;
+        continue;
+      }
+      if (id != dep.id || nome != dep.nome) {
+        mudou = true;
+        normalizados.add(dep.copyWith(id: id, nome: nome));
+      } else {
+        normalizados.add(dep);
+      }
+    }
+    if (mudou) {
+      _departamentos
+        ..clear()
+        ..addAll(normalizados);
+    }
+    return mudou;
   }
 
   /// Garante os departamentos padrão (Cozinha e Bar) caso a empresa ainda não
@@ -17454,6 +19120,15 @@ class DataService extends ChangeNotifier {
   Future<void> _persistirDepartamentosNaEmpresa() async {
     final empresa = _empresaAtual;
     if (empresa == null) return;
+    // Trava de isolamento: nunca gravar na empresa "errada" (ex.: `_empresaAtual`
+    // desatualizada em relação à empresa realmente aberta).
+    if (_currentEmpresaId == null || empresa.id != _currentEmpresaId) {
+      debugPrint(
+        '>>> [Departamentos] Persistência ignorada: empresa aberta '
+        '($_currentEmpresaId) difere da empresa em memória (${empresa.id}).',
+      );
+      return;
+    }
     if (_persistindoDepartamentos) return;
     _persistindoDepartamentos = true;
     try {
@@ -17614,7 +19289,10 @@ class DataService extends ChangeNotifier {
   /// cancelado). Pago/Concluído já deu baixa real; Cancelado não vale mais.
   static bool _statusReservaEstoque(String status) {
     final s = status.trim().toLowerCase();
-    return s != 'pago' && s != 'concluído' && s != 'concluido' && s != 'cancelado';
+    return s != 'pago' &&
+        s != 'concluído' &&
+        s != 'concluido' &&
+        s != 'cancelado';
   }
 
   /// Núcleo PURO da reserva: soma a baixa dos itens de [produtoId] em todos os
@@ -17749,9 +19427,20 @@ class DataService extends ChangeNotifier {
 
   /// Recupera estoques salvos apenas no cache local (compatibilidade).
   Future<void> _migrarEstoquesDoCache() async {
+    // Mesma trava dos perfis/departamentos: a empresa é fixada na entrada.
+    final empresaAlvo = _currentEmpresaId;
+    if (empresaAlvo == null || empresaAlvo.isEmpty) return;
     try {
-      final chave = _getChaveComEmpresa('estoques');
+      final chave = 'empresa_${empresaAlvo}_estoques';
       final cache = await _storage.carregarLista(chave);
+      if (_currentEmpresaId != empresaAlvo ||
+          _empresaAtual?.id != empresaAlvo) {
+        debugPrint(
+          '>>> [Estoques] Migração do cache descartada: a empresa aberta mudou '
+          '($empresaAlvo -> $_currentEmpresaId) durante a leitura.',
+        );
+        return;
+      }
       if (cache is List && cache.isNotEmpty) {
         var mudou = false;
         for (final item in cache) {
@@ -17810,6 +19499,14 @@ class DataService extends ChangeNotifier {
   Future<void> _persistirEstoquesNaEmpresa() async {
     final empresa = _empresaAtual;
     if (empresa == null) return;
+    // Trava de isolamento: nunca gravar na empresa "errada".
+    if (_currentEmpresaId == null || empresa.id != _currentEmpresaId) {
+      debugPrint(
+        '>>> [Estoques] Persistência ignorada: empresa aberta '
+        '($_currentEmpresaId) difere da empresa em memória (${empresa.id}).',
+      );
+      return;
+    }
     if (_persistindoEstoques) return;
     _persistindoEstoques = true;
     try {
@@ -18259,6 +19956,77 @@ class DataService extends ChangeNotifier {
       if (p.id == idPadrao) return p;
     }
     return null;
+  }
+
+  /// Perfil que um produto SEM perfil cadastrado deve usar.
+  ///
+  /// Primeiro tenta o PADRÃO que combina com o código que o produto já tem
+  /// (para o vínculo não reescrever o imposto do cadastro na emissão); se o
+  /// produto não tem código nenhum, usa o PADRÃO do regime. Código sem padrão
+  /// equivalente (ex.: CSOSN 900) devolve `null`: melhor continuar manual do
+  /// que vinculá-lo a um perfil que manda outro código.
+  static PerfilTributario? perfilPadraoParaProduto(
+    Iterable<PerfilTributario> perfis, {
+    required bool paraSimples,
+    String? csosn,
+    String? cst,
+  }) {
+    final padraoDoCodigo = perfilPadraoParaCodigo(
+      perfis,
+      paraSimples: paraSimples,
+      csosn: csosn,
+      cst: cst,
+    );
+    if (padraoDoCodigo != null) return padraoDoCodigo;
+
+    final temCodigo =
+        _codigoOuNulo(csosn) != null || _codigoOuNulo(cst) != null;
+    if (temCodigo) return null;
+
+    return perfilPadraoDoRegime(perfis, paraSimples: paraSimples);
+  }
+
+  /// Devolve o produto já com o perfil PADRÃO quando ele NÃO tem perfil.
+  ///
+  /// Produto que já tem perfil (inclusive personalizado ou de outro regime)
+  /// não é tocado: o vínculo existente manda. Produto sem código fiscal
+  /// nenhum recebe também o CFOP e o CSOSN/CST do perfil; produto que já tem
+  /// código recebe só o vínculo, preservando o imposto do cadastro.
+  @visibleForTesting
+  static Produto produtoComPerfilTributarioPadrao(
+    Produto produto,
+    Iterable<PerfilTributario> perfis, {
+    required bool paraSimples,
+  }) {
+    if ((produto.perfilTributarioId ?? '').trim().isNotEmpty) return produto;
+
+    final perfil = perfilPadraoParaProduto(
+      perfis,
+      paraSimples: paraSimples,
+      csosn: produto.csosn,
+      cst: produto.icmsCst,
+    );
+    if (perfil == null) return produto;
+
+    final temCodigo =
+        _codigoOuNulo(produto.csosn) != null ||
+        _codigoOuNulo(produto.icmsCst) != null;
+    if (temCodigo) {
+      return produto.copyWith(perfilTributarioId: perfil.id);
+    }
+
+    return produto.copyWith(
+      perfilTributarioId: perfil.id,
+      cfop: _codigoOuNulo(produto.cfop) ??
+          _codigoOuNulo(perfil.cfop) ??
+          '5102',
+      csosn: paraSimples
+          ? (_codigoOuNulo(perfil.csosn) ?? '102')
+          : produto.csosn,
+      icmsCst: paraSimples
+          ? produto.icmsCst
+          : (_codigoOuNulo(perfil.icmsCst) ?? '00'),
+    );
   }
 
   /// ID do perfil tributário padrão equivalente no outro regime (se existir).

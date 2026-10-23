@@ -3,7 +3,7 @@ class EstoqueHistorico {
   final String produtoId;
   final DateTime data;
   final double quantidade;
-  final String tipo; // 'entrada', 'saida', 'ajuste'
+  final String tipo; // 'entrada', 'saida', 'ajuste', 'zerado'
   final String? usuario;
   final String? observacao;
   final String? fornecedorId;
@@ -30,6 +30,19 @@ class EstoqueHistorico {
   /// Quebras de mercadoria (saída de estoque lançada pelo PDV, não é venda)
   bool get ehQuebra => (motivo?.toLowerCase() == 'quebra') ||
       (observacao?.toLowerCase().contains('motivo: quebra') ?? false);
+
+  /// Movimento de ZERAMENTO: o saldo do produto foi levado a 0 de propósito.
+  ///
+  /// NÃO conta como entrada nem como saída nos totais das telas — é uma
+  /// conciliação de saldo (aparece como "Estoque zerado" na listagem). Um
+  /// produto com saldo negativo, por exemplo, ao ser zerado NÃO gera uma
+  /// "entrada" de 193: gera este registro, com o delta assinado em
+  /// [quantidade] (0 − saldo anterior), para o histórico continuar fechando.
+  bool get ehZeramento => tipo == 'zerado';
+
+  /// Saldo que o produto tinha ANTES do zeramento (quando o registro é um
+  /// zeramento). Ex.: delta +193 → o saldo anterior era −193.
+  double? get saldoAnteriorNoZeramento => ehZeramento ? -quantidade : null;
 
   /// Converte datas vinda de banco/nuvem (UTC) para hora local.
   static DateTime _paraLocal(dynamic v) {

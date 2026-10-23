@@ -368,7 +368,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   
   /// Retorna a chave de storage prefixada com o ID da empresa atual
   String _chavePDV(String baseKey) {
-    if (_empresaIdStorage == null) return baseKey;
+    if (_empresaIdStorage == null || _empresaIdStorage!.isEmpty) {
+      return 'empresa_desconhecida_$baseKey';
+    }
     return 'empresa_${_empresaIdStorage}_$baseKey';
   }
   
@@ -7139,9 +7141,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         await dataService.addVendaBalcao(vendaBalcao);
       }
 
-      // IMPRIMIR TICKETS DE PRODUÇÃO (SEMPRE, para qualquer venda direta)
+      // Impressão automática (configurável em Configurações da Empresa):
+      //  * imprimirProducaoAoSalvar -> vias de produção (cozinha/bar)
+      //  * imprimirCupomAoSalvar    -> cupom não fiscal do cliente
+      final empresaConfigImpressao = dataService.empresaAtual;
+      final imprimirProducaoAuto =
+          empresaConfigImpressao?.configuracoes?['imprimirProducaoAoSalvar'] ??
+              true;
+      final imprimirCupomAuto =
+          empresaConfigImpressao?.configuracoes?['imprimirCupomAoSalvar'] ??
+              false;
+
+      // IMPRIMIR TICKETS DE PRODUÇÃO (para qualquer venda direta, se ligado)
       // Criar itens de produção a partir do carrinho para impressão
-      {
+      if (imprimirProducaoAuto) {
         final produtosParaImprimir = <ItemPedido>[];
         for (final item in itensVenda) {
           if (!item.isServico) {
@@ -7329,6 +7342,23 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           infoExtra: 'GERADA NO HISTÓRICO!',
           voltarAoFechar: mesaParaLimparId != null,
         );
+      }
+
+      // IMPRESSÃO AUTOMÁTICA DO CUPOM (configurável) — o operador não precisa
+      // clicar em "Imprimir": ao concluir a venda o cupom sai sozinho.
+      if (imprimirCupomAuto && empresaConfigImpressao != null) {
+        try {
+          await VendaPDFService.imprimirPDFTermico(
+            venda: vendaBalcao,
+            empresa: empresaConfigImpressao,
+            context: context,
+          );
+          debugPrint('>>> [VendaDireta] ✓ Cupom impresso automaticamente '
+              '(venda ${vendaBalcao.numero})');
+        } catch (e) {
+          debugPrint(
+              '>>> [VendaDireta] ⚠️ Falha ao imprimir cupom automático: $e');
+        }
       }
     } catch (e, stackTrace) {
       debugPrint('>>> ❌ ERRO AO FINALIZAR: $e\n$stackTrace');
@@ -7718,7 +7748,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       // Se o pedido já existia (edição), ATUALIZA mantendo o mesmo número.
       await dataService.addOrUpdatePedido(pedidoVendaSalva);
 
-      // IMPRIMIR TICKETS DE PRODUÇÃO
+      // IMPRIMIR TICKETS DE PRODUÇÃO (a própria função respeita a configuração)
       await _imprimirTicketsProducaoVendaDireta(pedidoVendaSalva);
 
       // 2. CRIAR REGISTRO DE ENTREGA
@@ -9743,11 +9773,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       // Usar número reservado (de emissão com erro anterior) para não pular numeração
       final numeroReservado = await NfceContingenciaService.obterNumeroReservado(empresaFinal.id);
+      // Número ATÔMICO (bloco reservado na nuvem): dois caixas emitindo offline
+      // não chegam mais ao MESMO número fiscal (rejeição 539 da SEFAZ). Se a
+      // nuvem não responder, cai no cálculo local antigo.
+      final numeroAtomico = await dataService.reservarProximoNumeroNfce(
+        serie: serieUsuario?.toString() ?? '1',
+        numeroInicial: usuario?.numeroInicialNfce ?? 1,
+      );
       final numeroFinal = numeroOverride ?? 
-          (numeroReservado != null ? numeroReservado.toString() : dataService.getProximoNumeroNfce(
+          (numeroReservado != null ? numeroReservado.toString() : (numeroAtomico ??
+          dataService.getProximoNumeroNfce(
             serie: serieUsuario?.toString() ?? '1',
             numeroInicial: usuario?.numeroInicialNfce ?? 1,
-          ).toString());
+          )).toString());
 
       // Desconto total da venda (tabela de preços, promoções, desconto manual):
       // soma dos itens pelo preço de tabela/cadastro − total pago. Garante que o
@@ -10469,7 +10507,13 @@ recusando a emissão de NFC-e (erro 403).
       final empresa = dataService.empresaAtual;
       if (empresa == null) return;
 
-      // Usar itens do carrinho (produtos com departamento/setor)
+      // Respeita a configuração "Imprimir Tickets de Produção ao Finalizar a
+      // Venda" (Configurações da Empresa > Impressão). Padrão LIGADO.
+      if (empresa.configuracoes?['imprimirProducaoAoSalvar'] == false) {
+        debugPrint('>>> [Producao] Impressão de produção desativada nas '
+            'configurações da empresa. Nada a imprimir.');
+        return;
+      }
       final inputs = _carrinho
           .where((item) => !item.isServico)
           .map((item) => ItemProducaoInput(
@@ -10650,7 +10694,7 @@ recusando a emissão de NFC-e (erro 403).
       // SALVAR TUDO
       await dataService.addPedido(pedido);
 
-      // IMPRIMIR TICKETS DE PRODUÇÃO
+      // IMPRIMIR TICKETS DE PRODUÇÃO (a própria função respeita a configuração)
       await _imprimirTicketsProducaoVendaDireta(pedido);
 
       await _registrarComissaoVendedorSeAplicavel(
@@ -13729,10 +13773,17 @@ recusando a emissão de NFC-e (erro 403).
             Scaffold(
               backgroundColor: Colors.transparent,
               appBar: AppBar(
+                leading: Navigator.canPop(context)
+                    ? IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        tooltip: 'Voltar',
+                        onPressed: () => Navigator.maybePop(context),
+                      )
+                    : null,
                 title: _buildLogoEmpresa(context),
                 backgroundColor: Colors.transparent,
                 elevation: 0,
-                centerTitle: true,
+                centerTitle: false,
                 actions: [
                   const SyncStatusWidget(),
                   // Botão Configurações PDV
@@ -13856,7 +13907,7 @@ recusando a emissão de NFC-e (erro 403).
                   ),
                 ],
               ),
-              bottomNavigationBar: _carrinho.isNotEmpty ? Container(
+              bottomNavigationBar: _carrinho.isNotEmpty ? SafeArea(child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 height: isSmallHeight ? 60 : 70,
                 decoration: BoxDecoration(
@@ -13893,7 +13944,7 @@ recusando a emissão de NFC-e (erro 403).
                      )
                   ],
                 ),
-              ) : null,
+              )) : null,
             ),
           ],
         ),
@@ -13909,10 +13960,17 @@ recusando a emissão de NFC-e (erro 403).
             Scaffold(
               backgroundColor: Colors.transparent,
               appBar: AppBar(
+                leading: Navigator.canPop(context)
+                    ? IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        tooltip: 'Voltar',
+                        onPressed: () => Navigator.maybePop(context),
+                      )
+                    : null,
                 title: _buildLogoEmpresa(context),
                 backgroundColor: Colors.transparent,
                 elevation: 0,
-                centerTitle: true,
+                centerTitle: false,
                 toolbarHeight: isSmallHeight ? 48 : 56,
                 actions: [
                   const SyncStatusWidget(),
@@ -14140,7 +14198,10 @@ recusando a emissão de NFC-e (erro 403).
             );
           }
         },
-        child: Row(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          child: Row(
           children: [
             Icon(
               pendentes > 0 ? Icons.warning_amber_rounded : Icons.receipt_long,
@@ -14200,12 +14261,13 @@ recusando a emissão de NFC-e (erro 403).
               ),
             ],
             
-            const Spacer(),
+            const SizedBox(width: 12),
             Text(
               'Histórico  ›',
               style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -21610,6 +21672,118 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     return KeyEventResult.ignored;
   }
 
+  /// Monta os botões de ação do popup.
+  ///
+  /// [compacto] só é usado na versão WEB em tela de celular: diminui os
+  /// espaçamentos laterais para que os botões caibam em duas linhas dentro do
+  /// cartão, em vez de saírem para fora da tela. No PC e no APK nada muda.
+  List<Widget> _construirBotoesAcao({required bool compacto}) {
+    final EdgeInsets paddingNfce = compacto
+        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 12)
+        : const EdgeInsets.symmetric(horizontal: 24, vertical: 16);
+    final EdgeInsets paddingWhatsApp = compacto
+        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 12)
+        : const EdgeInsets.symmetric(horizontal: 20, vertical: 16);
+    final EdgeInsets paddingImprimir = compacto
+        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 12)
+        : const EdgeInsets.symmetric(horizontal: 20, vertical: 16);
+    final EdgeInsets paddingFechar = compacto
+        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 12)
+        : const EdgeInsets.symmetric(horizontal: 24, vertical: 16);
+
+    return <Widget>[
+      if (widget.onEmitirNFCe != null)
+        ElevatedButton.icon(
+          focusNode: _nfceNode,
+          onPressed: _emitir,
+          icon: const Icon(Icons.receipt, size: 20),
+          label: const Text(
+            'Emitir NFC-e',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.green.shade800,
+            elevation: _nfceNode.hasFocus ? 8 : 2,
+            padding: paddingNfce,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: _nfceNode.hasFocus
+                  ? BorderSide(color: Colors.green.shade900, width: 2)
+                  : BorderSide.none,
+            ),
+          ),
+        ),
+      if (widget.onWhatsApp != null)
+        ElevatedButton.icon(
+          focusNode: _whatsappNode,
+          onPressed: _whatsApp,
+          icon: const Icon(Icons.chat_bubble_outline, size: 20),
+          label: const Text('WhatsApp'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF25D366),
+            foregroundColor: Colors.white,
+            elevation: _whatsappNode.hasFocus ? 8 : 2,
+            padding: paddingWhatsApp,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: _whatsappNode.hasFocus
+                  ? const BorderSide(color: Colors.white, width: 2)
+                  : BorderSide.none,
+            ),
+          ),
+        ),
+      // Botão Imprimir Cupom Simples
+      if (widget.onImprimir != null)
+        ElevatedButton.icon(
+          focusNode: _imprimirNode,
+          onPressed: _imprimir,
+          icon: const Icon(Icons.print_rounded, size: 20),
+          label: const Text(
+            'Imprimir',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white.withOpacity(0.9),
+            foregroundColor: Colors.blue.shade800,
+            elevation: _imprimirNode.hasFocus ? 8 : 2,
+            padding: paddingImprimir,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: _imprimirNode.hasFocus
+                  ? BorderSide(color: Colors.blue.shade900, width: 2)
+                  : BorderSide.none,
+            ),
+          ),
+        ),
+      // Botão Fechar - Com foco
+      ElevatedButton(
+        focusNode: _fecharNode,
+        onPressed: _fechar,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white.withOpacity(0.25),
+          foregroundColor: Colors.white,
+          elevation: _fecharNode.hasFocus ? 8 : 0,
+          padding: paddingFechar,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: _fecharNode.hasFocus
+                ? const BorderSide(color: Colors.white, width: 2)
+                : BorderSide(
+                    color: Colors.white.withOpacity(0.3), width: 1),
+          ),
+        ),
+        child: const Text(
+          'Fechar',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    ];
+  }
+
   @override
   void dispose() {
     _scaleController.dispose();
@@ -21624,6 +21798,13 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
   @override
   Widget build(BuildContext context) {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+    // Ajuste exclusivo da versão WEB (hospedagem) em tela de celular.
+    // No aplicativo de PC e no APK o popup continua exatamente como era.
+    final bool celularWeb =
+        kIsWeb && MediaQuery.of(context).size.width < 750;
+    final List<Widget> botoesAcao =
+        _construirBotoesAcao(compacto: celularWeb);
 
     return Focus(
       focusNode: _tecladoNode,
@@ -21644,8 +21825,8 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
             child: ScaleTransition(
               scale: _scaleAnimation,
               child: Container(
-                margin: const EdgeInsets.all(32),
-                padding: const EdgeInsets.all(32),
+                margin: EdgeInsets.all(celularWeb ? 8 : 32),
+                padding: EdgeInsets.all(celularWeb ? 16 : 32),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
@@ -21846,116 +22027,27 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
                     const SizedBox(height: 24),
 
                     // Botões de ação
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (widget.onEmitirNFCe != null)
-                          ElevatedButton.icon(
-                            focusNode: _nfceNode,
-                            onPressed: _emitir,
-                            icon: const Icon(Icons.receipt, size: 20),
-                            label: const Text(
-                              'Emitir NFC-e',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.green.shade800,
-                              elevation: _nfceNode.hasFocus ? 8 : 2,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 16,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                side: _nfceNode.hasFocus 
-                                  ? BorderSide(color: Colors.green.shade900, width: 2)
-                                  : BorderSide.none,
-                              ),
-                            ),
-                          ),
-                        if (widget.onEmitirNFCe != null)
-                          const SizedBox(width: 16),
-                        
-                        if (widget.onWhatsApp != null)
-                          ElevatedButton.icon(
-                            focusNode: _whatsappNode,
-                            onPressed: _whatsApp,
-                            icon: const Icon(Icons.chat_bubble_outline, size: 20),
-                            label: const Text('WhatsApp'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF25D366),
-                              foregroundColor: Colors.white,
-                              elevation: _whatsappNode.hasFocus ? 8 : 2,
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                side: _whatsappNode.hasFocus 
-                                  ? const BorderSide(color: Colors.white, width: 2)
-                                  : BorderSide.none,
-                              ),
-                            ),
-                          ),
-
-                        if (widget.onWhatsApp != null)
-                          const SizedBox(width: 16),
-                        
-                        // Botão Imprimir Cupom Simples
-                        if (widget.onImprimir != null)
-                          ElevatedButton.icon(
-                            focusNode: _imprimirNode,
-                            onPressed: _imprimir,
-                            icon: const Icon(Icons.print_rounded, size: 20),
-                            label: const Text(
-                              'Imprimir',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white.withOpacity(0.9),
-                              foregroundColor: Colors.blue.shade800,
-                              elevation: _imprimirNode.hasFocus ? 8 : 2,
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                side: _imprimirNode.hasFocus 
-                                  ? BorderSide(color: Colors.blue.shade900, width: 2)
-                                  : BorderSide.none,
-                              ),
-                            ),
-                          ),
-
-                        if (widget.onImprimir != null)
-                          const SizedBox(width: 16),
-                        
-                        // Botão Fechar - Com foco
-                        ElevatedButton(
-                          focusNode: _fecharNode,
-                          onPressed: _fechar,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(0.25),
-                            foregroundColor: Colors.white,
-                            elevation: _fecharNode.hasFocus ? 8 : 0,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 24,
-                              vertical: 16,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                              side: _fecharNode.hasFocus 
-                                ? const BorderSide(color: Colors.white, width: 2)
-                                : BorderSide(color: Colors.white.withOpacity(0.3), width: 1),
-                            ),
-                          ),
-                          child: const Text(
-                            'Fechar',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                    if (celularWeb)
+                      SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: botoesAcao,
                         ),
-                      ],
-                    ),
+                      )
+                    else
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (int i = 0; i < botoesAcao.length; i++) ...[
+                            if (i > 0) const SizedBox(width: 16),
+                            botoesAcao[i],
+                          ],
+                        ],
+                      ),
                   ],
                 ),
               ),

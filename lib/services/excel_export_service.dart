@@ -221,7 +221,9 @@ class ExcelExportService {
         
         final movimentosDepois = historico.where((h) => h.produtoId == p.id && h.data.isAfter(dataAlvo));
         for (final m in movimentosDepois) {
-          if (m.tipo == 'entrada') {
+          if (m.tipo == 'entrada' || m.tipo == 'zerado') {
+            // 'zerado' guarda o delta assinado (0 − saldo anterior), igual à
+            // entrada: subtrai o delta para reconstituir o saldo da data.
             qtyCalculada -= m.quantidade;
           } else if (m.tipo == 'saida' || m.tipo == 'venda') {
             qtyCalculada += m.quantidade;

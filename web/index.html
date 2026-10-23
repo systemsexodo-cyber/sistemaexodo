@@ -19,6 +19,18 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+
+  <!-- =================================================================
+       VIEWPORT MOBILE - SOMENTE WEB / FIREBASE HOSTING
+       Sem esta meta o navegador do celular renderiza o site na largura
+       de desktop (aprox. 980px) e depois encolhe. Por isso, no celular,
+       a tela abria "espremida" no layout de PC e os botoes de VOLTAR e
+       FINALIZAR VENDA ficavam fora da area visivel.
+       Esta alteracao mexe apenas no site (Flutter Web / Firebase
+       Hosting). O aplicativo Windows NAO usa este arquivo, entao nada
+       muda na versao instalada.
+       ================================================================= -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="description" content="Sistema Êxodo - Sistema de gestão empresarial completo">
   <meta name="google-signin-client_id"
     content="767835275358-ar47lvn9uboh1b12s2tvqli7epq8ttu0.apps.googleusercontent.com">
@@ -43,6 +55,19 @@
 
   <title>Êxodo Systems</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #0b0d13;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+  </style>
 </head>
 
 <body>

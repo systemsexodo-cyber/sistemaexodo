@@ -14,10 +14,13 @@ import 'package:sistema_exodo_novo/services/cliente_auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
 import 'package:sistema_exodo_novo/services/theme_service.dart';
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
+import 'package:sistema_exodo_novo/services/env_config.dart';
+import 'package:sistema_exodo_novo/services/config_servidor_mobile.dart';
 import 'package:sistema_exodo_novo/services/app_update_service.dart';
 import 'package:sistema_exodo_novo/services/nfce_contingencia_service.dart';
 import 'package:sistema_exodo_novo/services/clock_check_service.dart';
 import 'package:sistema_exodo_novo/services/diagnostico_layout_service.dart';
+import 'package:sistema_exodo_novo/services/app_log_service.dart';
 
 import 'dart:async';
 import 'dart:io';
@@ -31,7 +34,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'package:sistema_exodo_novo/pages/loja_publica_wrapper.dart';
 import 'package:sistema_exodo_novo/pages/html_helper_stub.dart'
-    if (dart.library.html) 'package:sistema_exodo_novo/pages/html_helper_web.dart' as html_helper;
+    if (dart.library.html) 'package:sistema_exodo_novo/pages/html_helper_web.dart'
+    as html_helper;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -43,7 +47,9 @@ Future<void> _corrigirSharedPreferencesCorrompido() async {
     if (await file.exists()) {
       final size = await file.length();
       if (size == 0) {
-        debugPrint('>>> [AutoRepair] 🛠️ Corrigindo shared_preferences.json vazio (0 bytes)...');
+        debugPrint(
+          '>>> [AutoRepair] 🛠️ Corrigindo shared_preferences.json vazio (0 bytes)...',
+        );
         await file.writeAsString('{}');
         return;
       }
@@ -51,12 +57,16 @@ Future<void> _corrigirSharedPreferencesCorrompido() async {
         final content = await file.readAsString();
         jsonDecode(content);
       } catch (_) {
-        debugPrint('>>> [AutoRepair] 🛠️ Corrigindo shared_preferences.json corrompido...');
+        debugPrint(
+          '>>> [AutoRepair] 🛠️ Corrigindo shared_preferences.json corrompido...',
+        );
         await file.writeAsString('{}');
       }
     }
   } catch (e) {
-    debugPrint('>>> [AutoRepair] ⚠️ Erro ao verificar/corrigir SharedPreferences: $e');
+    debugPrint(
+      '>>> [AutoRepair] ⚠️ Erro ao verificar/corrigir SharedPreferences: $e',
+    );
   }
 }
 
@@ -69,8 +79,9 @@ Future<void> _logBoot(String msg) async {
     final supportDir = await getApplicationSupportDirectory();
     final logFile = File(p.join(supportDir.path, 'boot.log'));
     await logFile.writeAsString(
-        '${DateTime.now().toIso8601String()} - $msg\n',
-        mode: FileMode.append);
+      '${DateTime.now().toIso8601String()} - $msg\n',
+      mode: FileMode.append,
+    );
   } catch (_) {}
 }
 
@@ -87,10 +98,13 @@ Future<void> _filaDoLogDeErros = Future<void>.value();
 /// diretório do boot.log, com o contexto (widget que estava sendo construído)
 /// e a pilha completa. Sem isto o erro só existe no console do `flutter run` —
 /// quando o app é fechado (ou quando se olha só a tela) a causa se perde.
-Future<void> _logErroFramework(FlutterErrorDetails details,
-    {String origem = 'FLUTTER'}) {
-  final gravar = _filaDoLogDeErros
-      .then((_) => _gravarErroFramework(details, origem: origem));
+Future<void> _logErroFramework(
+  FlutterErrorDetails details, {
+  String origem = 'FLUTTER',
+}) {
+  final gravar = _filaDoLogDeErros.then(
+    (_) => _gravarErroFramework(details, origem: origem),
+  );
   _filaDoLogDeErros = gravar.catchError((_) {});
   return gravar;
 }
@@ -103,8 +117,10 @@ Future<void> _logErroFramework(FlutterErrorDetails details,
 /// estourar. Antes, uma falha no diagnóstico levava junto a mensagem do erro —
 /// a causa raiz se perdia no meio do caminho. Agora o essencial (erro +
 /// contexto) é gravado primeiro, e só depois vêm os enfeites.
-Future<void> _gravarErroFramework(FlutterErrorDetails details,
-    {String origem = 'FLUTTER'}) async {
+Future<void> _gravarErroFramework(
+  FlutterErrorDetails details, {
+  String origem = 'FLUTTER',
+}) async {
   if (kIsWeb) return;
   late final File logFile;
   try {
@@ -115,7 +131,9 @@ Future<void> _gravarErroFramework(FlutterErrorDetails details,
       await logFile.writeAsString('');
     }
     final buffer = StringBuffer()
-      ..writeln('════════════════ ${DateTime.now().toIso8601String()} [$origem] ════════════════')
+      ..writeln(
+        '════════════════ ${DateTime.now().toIso8601String()} [$origem] ════════════════',
+      )
       ..writeln('Erro: ${details.exception.runtimeType}: ${details.exception}')
       ..writeln('Contexto: ${details.context?.toString() ?? '(sem contexto)'}')
       ..writeln('Biblioteca: ${details.library}');
@@ -160,15 +178,66 @@ Future<void> _gravarErroFramework(FlutterErrorDetails details,
   debugPrint('>>>>> [ERRO GLOBAL] log gravado em ${logFile.path}');
 }
 
-void main() async {
+void main() {
+  runZonedGuarded<void>(
+    () async => _main(),
+    (Object error, StackTrace stack) {
+      unawaited(
+        AppLogService.registrar('$error\nPilha:\n$stack', nivel: 'UNHANDLED'),
+      );
+      unawaited(
+        _logErroFramework(
+          FlutterErrorDetails(exception: error, stack: stack),
+          origem: 'UNHANDLED',
+        ),
+      );
+    },
+    zoneSpecification: ZoneSpecification(
+      print: (self, parent, zone, line) {
+        parent.print(zone, line);
+        unawaited(AppLogService.registrar(line, nivel: 'PRINT'));
+      },
+    ),
+  );
+}
+
+Future<void> _main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await _logBoot('BOOT iniciando (versao ${AppUpdateService.currentAppVersion})');
-  
+  await AppLogService.inicializar();
+  AppLogService.instalarHookDebugPrint();
+
+  await _logBoot(
+    'BOOT iniciando (versao ${AppUpdateService.currentAppVersion})',
+  );
+
+  // Carrega o `.env` EMPACOTADO no aplicativo (usado no celular, onde não há
+  // `.env` no disco). No PC o `.env` do disco tem prioridade e é lido sozinho;
+  // aqui garantimos que a configuração exista cedo, antes do login e do banco.
+  await EnvConfig.carregarDoAsset();
+  await _logBoot('Configuracao (.env) verificada');
+
+  // No CELULAR o endereço do banco pode ter sido informado pelo usuário na
+  // tela "Configurar servidor". Esses valores têm prioridade sobre o `.env`
+  // empacotado — é o que permite o MESMO APK funcionar em qualquer loja.
+  try {
+    final configCelular = await ConfigServidorMobile.carregar();
+    if (configCelular.isNotEmpty) {
+      EnvConfig.aplicarOverrides(configCelular);
+      await _logBoot(
+        'Servidor do celular: ${configCelular['DB_HOST']}:${configCelular['DB_PORT']}',
+      );
+    }
+  } catch (e) {
+    await _logBoot('Falha ao ler configuracao do celular: $e');
+  }
+
   // CAPTURAR ERROS GLOBAIS PARA DEBUG
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
-    debugPrint('>>>>> [ERRO GLOBAL] ${details.exception.runtimeType}: ${details.exception}');
+    debugPrint(
+      '>>>>> [ERRO GLOBAL] ${details.exception.runtimeType}: ${details.exception}',
+    );
     debugPrint('>>>>> Stack trace completo:');
     debugPrint(details.stack.toString());
     debugPrint('>>>>> FIM DO STACK TRACE');
@@ -177,13 +246,15 @@ void main() async {
   PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
     debugPrint('>>>>> [ERRO PLATFORM] $error');
     debugPrint('>>>>> Stack: $stack');
-    unawaited(_logErroFramework(
-      FlutterErrorDetails(exception: error, stack: stack),
-      origem: 'PLATFORM',
-    ));
+    unawaited(
+      _logErroFramework(
+        FlutterErrorDetails(exception: error, stack: stack),
+        origem: 'PLATFORM',
+      ),
+    );
     return true;
   };
-  
+
   // Corrigir arquivo corrompido de shared_preferences se houver
   await _corrigirSharedPreferencesCorrompido();
   await _logBoot('SharedPreferences verificado');
@@ -203,11 +274,13 @@ void main() async {
         .timeout(const Duration(seconds: 15))
         .then((_) => _logBoot('Supabase inicializado'))
         .catchError((Object e) {
-      debugPrint('>>> [SISTEMA] ⚠️ Supabase timeout/erro (app segue offline): $e');
-      _logBoot('Supabase timeout/erro (offline): $e');
-    }),
+          debugPrint(
+            '>>> [SISTEMA] ⚠️ Supabase timeout/erro (app segue offline): $e',
+          );
+          _logBoot('Supabase timeout/erro (offline): $e');
+        }),
   );
-  
+
   if (kIsWeb) {
     try {
       print('>>> [SISTEMA] Iniciando Boot em modo Web');
@@ -226,15 +299,17 @@ void main() async {
     }
   }
 
-  print('>>> [APLICATIVO] Iniciando Versão ${AppUpdateService.currentAppVersion} (Fix: Cache & Sync)...');
-  
+  print(
+    '>>> [APLICATIVO] Iniciando Versão ${AppUpdateService.currentAppVersion} (Fix: Cache & Sync)...',
+  );
+
   if (kIsWeb) {
     // No Web, podemos tentar usar o pathUrlStrategy se necessário,
-    // mas para evitar crash nativo, vamos apenas comentar ou remover 
+    // mas para evitar crash nativo, vamos apenas comentar ou remover
     // até que esteja corretamente isolado.
     // usePathUrlStrategy();
   }
-  
+
   debugPrint('>>> [SISTEMA] Sistema inicializado com Supabase');
 
   // Inicializa os serviços
@@ -242,6 +317,11 @@ void main() async {
   final authService = AuthService();
   final clienteAuthService = ClienteAuthService();
   final carrinhoService = CarrinhoService();
+
+  // Mantém a empresa do AuthService em sincronia quando o DataService persiste
+  // mudanças de configuração (ex.: perfil tributário padrão). Evita que a
+  // config antiga seja reaplicada ao reabrir/trocar a empresa.
+  dataService.onEmpresaAtualizada = authService.sincronizarEmpresaEmMemoria;
 
   // Inicializa o serviço de contingência (nunca deve impedir o app de abrir)
   try {
@@ -302,60 +382,113 @@ void main() async {
   );
 }
 
-
-
 class AppRouter {
   static const internos = {
-    'login', 'home', 'dashboard', 'admin', 'auth', 'selecionar-empresa', 'debug',
-    'clientes', 'produtos', 'servicos', 'servico', 'pedidos', 'venda-direta', 'pdv',
-    'entrada-mercadorias', 'contas-pagar', 'agenda-contas', 'cozinha-bar',
-    'mesas', 'links-vendedores', 'vendedor-dashboard', 'funcionarios',
-    'personalizar-loja', 'agenda-pet', 'gerenciar-imagens', 'caixa',
-    'comissoes', 'entregas', 'historico-vendas', 'historico-operacoes',
-    'gerenciar-usuarios', 'trocas-devolucoes', 'configuracoes-agenda',
-    'taxas-entrega', 'empresas', 'gerenciar-permissoes', 'nfe', 'portal-contador'
+    'login',
+    'home',
+    'dashboard',
+    'admin',
+    'auth',
+    'selecionar-empresa',
+    'debug',
+    'clientes',
+    'produtos',
+    'servicos',
+    'servico',
+    'pedidos',
+    'venda-direta',
+    'pdv',
+    'entrada-mercadorias',
+    'pedidos-compra',
+    'pedidos_compra',
+    'contas-pagar',
+    'agenda-contas',
+    'cozinha-bar',
+    'mesas',
+    'links-vendedores',
+    'vendedor-dashboard',
+    'funcionarios',
+    'personalizar-loja',
+    'agenda-pet',
+    'gerenciar-imagens',
+    'caixa',
+    'comissoes',
+    'entregas',
+    'historico-vendas',
+    'historico-operacoes',
+    'gerenciar-usuarios',
+    'trocas-devolucoes',
+    'configuracoes-agenda',
+    'taxas-entrega',
+    'empresas',
+    'gerenciar-permissoes',
+    'nfe',
+    'portal-contador',
   };
 
   static Map<String, dynamic> analisarUrl() {
-    if (!kIsWeb) return {'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': null};
-    
+    if (!kIsWeb)
+      return {
+        'publico': false,
+        'slug': null,
+        'agenda': false,
+        'loja': false,
+        'interna': null,
+      };
+
     try {
-      final String href = html_helper.getWindowOrigin(); 
+      final String href = html_helper.getWindowOrigin();
       final String pathOrig = html_helper.getWindowPathname();
       final String path = pathOrig.toLowerCase();
       final String hashOrig = ""; // Simplificado para Windows
-      final String hash = ""; 
-      
+      final String hash = "";
+
       debugPrint('>>> [AppRouter] ANÁLISE URL:');
       debugPrint('    href: $href');
       debugPrint('    path: $pathOrig');
-      
+
       final List<String> segmentsOrig = [];
       segmentsOrig.addAll(pathOrig.split('/').where((s) => s.isNotEmpty));
-      
+
       String cleanHashOrig = hashOrig.replaceAll(RegExp(r'^[#!/? ]+'), '');
       if (cleanHashOrig.isNotEmpty) {
-        segmentsOrig.addAll(cleanHashOrig.split('/').where((s) => s.isNotEmpty));
+        segmentsOrig.addAll(
+          cleanHashOrig.split('/').where((s) => s.isNotEmpty),
+        );
       }
 
-      final List<String> segmentsLower = segmentsOrig.map((s) => s.toLowerCase()).toList();
+      final List<String> segmentsLower = segmentsOrig
+          .map((s) => s.toLowerCase())
+          .toList();
 
       debugPrint('    segments: $segmentsOrig');
 
       if (segmentsOrig.isEmpty) {
         debugPrint('    RESULTADO: Home (sem segmentos)');
         return {
-          'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': 'home', 'href': href
+          'publico': false,
+          'slug': null,
+          'agenda': false,
+          'loja': false,
+          'interna': 'home',
+          'href': href,
         };
       }
 
       // Detecção de Agendamento
       if (segmentsLower.contains('agendamento')) {
         int idx = segmentsLower.indexOf('agendamento');
-        String? slug = (idx != -1 && idx + 1 < segmentsOrig.length) ? segmentsOrig[idx + 1] : null;
+        String? slug = (idx != -1 && idx + 1 < segmentsOrig.length)
+            ? segmentsOrig[idx + 1]
+            : null;
         debugPrint('    RESULTADO: Agendamento Público | Slug: $slug');
         return {
-          'publico': true, 'slug': slug, 'agenda': true, 'loja': false, 'interna': null, 'href': href
+          'publico': true,
+          'slug': slug,
+          'agenda': true,
+          'loja': false,
+          'interna': null,
+          'href': href,
         };
       }
 
@@ -363,10 +496,17 @@ class AppRouter {
       if (segmentsLower.contains('loja') || segmentsLower.contains('shop')) {
         int idx = segmentsLower.indexOf('loja');
         if (idx == -1) idx = segmentsLower.indexOf('shop');
-        String? slug = (idx != -1 && idx + 1 < segmentsOrig.length) ? segmentsOrig[idx + 1] : null;
+        String? slug = (idx != -1 && idx + 1 < segmentsOrig.length)
+            ? segmentsOrig[idx + 1]
+            : null;
         debugPrint('    RESULTADO: Loja Pública | Slug: $slug');
         return {
-          'publico': true, 'slug': slug, 'agenda': false, 'loja': true, 'interna': null, 'href': href
+          'publico': true,
+          'slug': slug,
+          'agenda': false,
+          'loja': true,
+          'interna': null,
+          'href': href,
         };
       }
 
@@ -375,19 +515,37 @@ class AppRouter {
       if (internos.contains(firstLower)) {
         debugPrint('    RESULTADO: Rota Interna | Rota: $firstLower');
         return {
-          'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': firstLower, 'href': href
+          'publico': false,
+          'slug': null,
+          'agenda': false,
+          'loja': false,
+          'interna': firstLower,
+          'href': href,
         };
       }
 
       // Fallback para Loja por Slug Direto (ex: /petshop)
       final firstOrig = segmentsOrig[0];
-      debugPrint('    RESULTADO: Loja Pública por Slug Direto | Slug: $firstOrig');
+      debugPrint(
+        '    RESULTADO: Loja Pública por Slug Direto | Slug: $firstOrig',
+      );
       return {
-        'publico': true, 'slug': firstOrig, 'agenda': false, 'loja': true, 'interna': null, 'href': href
+        'publico': true,
+        'slug': firstOrig,
+        'agenda': false,
+        'loja': true,
+        'interna': null,
+        'href': href,
       };
     } catch (e) {
       debugPrint('>>> [AppRouter] Erro ao analisar URL: $e');
-      return {'publico': false, 'slug': null, 'agenda': false, 'loja': false, 'interna': null};
+      return {
+        'publico': false,
+        'slug': null,
+        'agenda': false,
+        'loja': false,
+        'interna': null,
+      };
     }
   }
 }
@@ -410,20 +568,27 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    
+
     // PERSISTÊNCIA GARANTIDA: ao fechar o app, força o salvamento de todas as
     // coleções pendentes no PostgreSQL local (nada fica só em memória).
     // O DataService é acessado via Provider no momento do evento (context ainda válido).
     if (!kIsWeb) {
       _lifecycleListener = AppLifecycleListener(
         onExitRequested: () async {
-          debugPrint('>>> [Lifecycle] App fechando — forçando persistência final...');
+          debugPrint(
+            '>>> [Lifecycle] App fechando — forçando persistência final...',
+          );
           try {
             if (!mounted) return AppExitResponse.exit;
-            final dataService = Provider.of<DataService>(context, listen: false);
+            final dataService = Provider.of<DataService>(
+              context,
+              listen: false,
+            );
             await dataService.salvarDadosAgora();
           } catch (e) {
-            debugPrint('>>> [Lifecycle] ⚠️ Erro ao salvar dados no fechamento: $e');
+            debugPrint(
+              '>>> [Lifecycle] ⚠️ Erro ao salvar dados no fechamento: $e',
+            );
           }
           return AppExitResponse.exit;
         },
@@ -467,7 +632,7 @@ class _MyAppState extends State<MyApp> {
       builder: (context, authService, themeService, _) {
         // 1. USAR ROTA CACHEADA - Não recalcular a cada rebuild do Consumer!
         final rotaMap = _rotaInicialCache ?? AppRouter.analisarUrl();
-        
+
         final bool mostrarPublico = rotaMap['publico'] ?? false;
         final String? slugEmpresa = rotaMap['slug'];
         final bool isAgendamentoRoute = rotaMap['agenda'] ?? false;
@@ -477,8 +642,14 @@ class _MyAppState extends State<MyApp> {
         // 2. CONFIGURAR TEMA (Baseado no ThemeService e empresa)
         final empresaCores = authService.empresaAtual;
         final config = themeService.getThemeConfig(
-          AppTheme.getCoresEmpresa(empresaCores?.corPrimaria, empresaCores?.corSecundaria)['primaria'],
-          AppTheme.getCoresEmpresa(empresaCores?.corPrimaria, empresaCores?.corSecundaria)['secundaria'],
+          AppTheme.getCoresEmpresa(
+            empresaCores?.corPrimaria,
+            empresaCores?.corSecundaria,
+          )['primaria'],
+          AppTheme.getCoresEmpresa(
+            empresaCores?.corPrimaria,
+            empresaCores?.corSecundaria,
+          )['secundaria'],
         );
 
         // LOG DE DIAGNÓSTICO FINAL
@@ -506,13 +677,16 @@ class _MyAppState extends State<MyApp> {
                   forceAgendamento: isAgendamentoRoute,
                 )
               : (subRotaInterna == 'portal-contador'
-                  ? const PortalContadorPage()
-                  : AuthWrapper(subRota: subRotaInterna)),
+                    ? const PortalContadorPage()
+                    : AuthWrapper(subRota: subRotaInterna)),
           builder: (context, child) {
-            if (child == null) return const Center(child: CircularProgressIndicator());
-            
+            if (child == null)
+              return const Center(child: CircularProgressIndicator());
+
             return MediaQuery(
-              data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.noScaling),
               child: child,
             );
           },
@@ -552,7 +726,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (!Platform.isWindows) return;
 
     setState(() {
-      _verificandoAtualizacao = false; // Mudar para false: inicia o sistema local na hora
+      _verificandoAtualizacao =
+          false; // Mudar para false: inicia o sistema local na hora
       _erroAtualizacao = '';
     });
 
@@ -577,23 +752,26 @@ class _AuthWrapperState extends State<AuthWrapper> {
           });
 
           // Busca os detalhes em paralelo: se demorar, o download já começou.
-          unawaited(AppUpdateService.buscarNotas(downloadUrl).then((texto) {
-            if (mounted && texto != null && texto.isNotEmpty) {
-              setState(() => _notasAtualizacao = texto);
-            }
-          }));
-
-          final (success, motivo) =
-              await AppUpdateService.baixarEAplicarAtualizacao(
-            downloadUrl,
-            (progress) {
-              if (mounted) {
-                setState(() {
-                  _progressoAtualizacao = progress;
-                });
+          unawaited(
+            AppUpdateService.buscarNotas(downloadUrl).then((texto) {
+              if (mounted && texto != null && texto.isNotEmpty) {
+                setState(() => _notasAtualizacao = texto);
               }
-            },
+            }),
           );
+
+          final (
+            success,
+            motivo,
+          ) = await AppUpdateService.baixarEAplicarAtualizacao(downloadUrl, (
+            progress,
+          ) {
+            if (mounted) {
+              setState(() {
+                _progressoAtualizacao = progress;
+              });
+            }
+          });
 
           if (!success && mounted) {
             setState(() {
@@ -606,8 +784,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 context: context,
                 builder: (context) => AlertDialog(
                   backgroundColor: const Color(0xFF1E1E2E),
-                  title: const Text('Atualização não aplicada',
-                      style: TextStyle(color: Colors.white)),
+                  title: const Text(
+                    'Atualização não aplicada',
+                    style: TextStyle(color: Colors.white),
+                  ),
                   content: Text(
                     '$motivo\n\nVocê continua na versão atual. Avise o suporte.',
                     style: const TextStyle(color: Colors.white70),
@@ -637,14 +817,20 @@ class _AuthWrapperState extends State<AuthWrapper> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const ExodoLogo(fontSize: 60, showSubtitle: true, showPhoenix: true),
+              const ExodoLogo(
+                fontSize: 60,
+                showSubtitle: true,
+                showPhoenix: true,
+              ),
               const SizedBox(height: 48),
               SizedBox(
                 width: 40,
                 height: 40,
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFFF9800)),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFFFF9800),
+                  ),
                   backgroundColor: const Color(0xFFFF9800).withOpacity(0.15),
                 ),
               ),
@@ -670,14 +856,23 @@ class _AuthWrapperState extends State<AuthWrapper> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const ExodoLogo(fontSize: 60, showSubtitle: true, showPhoenix: true),
+              const ExodoLogo(
+                fontSize: 60,
+                showSubtitle: true,
+                showPhoenix: true,
+              ),
               const SizedBox(height: 48),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFF9800).withOpacity(0.15),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFFF9800).withOpacity(0.3)),
+                  border: Border.all(
+                    color: const Color(0xFFFF9800).withOpacity(0.3),
+                  ),
                 ),
                 child: Text(
                   'Nova Versão Disponível: $_versaoRemota',
@@ -701,7 +896,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   height: 8,
                   child: LinearProgressIndicator(
                     value: _progressoAtualizacao,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFFF9800)),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Color(0xFFFF9800),
+                    ),
                     backgroundColor: Colors.white.withOpacity(0.1),
                   ),
                 ),
@@ -808,7 +1005,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFFF9800),
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
                       ),
                       onPressed: _checarAtualizacoes,
                       child: const Text('Tentar Novamente'),
@@ -817,7 +1017,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     OutlinedButton(
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Colors.white30),
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
                       ),
                       onPressed: () {
                         setState(() {
@@ -857,9 +1060,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
           try {
             // Se o AuthService está carregando dados iniciais, mostrar loading
             if (authService.isCarregandoDados == true) {
-              return const ExodoLoading(mensagem: 'Carregando dados de autenticação...');
+              return const ExodoLoading(
+                mensagem: 'Carregando dados de autenticação...',
+              );
             }
-            
+
             // Se o DataService está carregando, mostrar loading
             if (dataService.isLoading == true) {
               return ExodoLoading(
@@ -880,7 +1085,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 onPular: dataService.pularEsperaSincronizacaoInicial,
               );
             }
-            
+
             // Se não está autenticado, mostra a página de login
             if (authService.isAuthenticated != true) {
               // Limpar empresa do DataService se não estiver autenticado
@@ -902,7 +1107,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
             // Se está autenticado e tem empresa, definir empresa no DataService e mostrar home
             final empresaAtual = authService.empresaAtual;
-            if (empresaAtual != null && dataService.currentEmpresaId != empresaAtual.id) {
+            if (empresaAtual != null &&
+                dataService.currentEmpresaId != empresaAtual.id) {
               // Só dispara o setup se realmente a empresa mudou
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (dataService.currentEmpresaId != empresaAtual.id) {
@@ -913,27 +1119,29 @@ class _AuthWrapperState extends State<AuthWrapper> {
               // Retornar loading enquanto o setup acontece (evita flash de tela)
               return const ExodoLoading(mensagem: 'Sincronizando empresa...');
             }
-            
+
             // Garantir que a empresa está sincronizada sem disparar rebuild infinito
-            if (empresaAtual != null && dataService.empresaAtual?.id != empresaAtual.id) {
-               WidgetsBinding.instance.addPostFrameCallback((_) {
-                 dataService.setEmpresaAtual(empresaAtual);
-               });
+            if (empresaAtual != null &&
+                dataService.empresaAtual?.id != empresaAtual.id) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                dataService.setEmpresaAtual(empresaAtual);
+              });
             }
 
             // Sincronizar o usuário logado no DataService para auditoria
-            if (authService.isAuthenticated && authService.usuarioAtual != null) {
+            if (authService.isAuthenticated &&
+                authService.usuarioAtual != null) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 dataService.setUsuarioAtual(authService.usuarioAtual);
               });
             }
 
-            
-            
             // VALIDAR SE É O USUÁRIO MASTER / SUPORTE DO SISTEMA
             final usuario = authService.usuarioAtual;
             final email = usuario?.email.toLowerCase() ?? '';
-            final isMaster = usuario != null && (email == 'user' || email == 'admin' || email == 'suporte');
+            final isMaster =
+                usuario != null &&
+                (email == 'user' || email == 'admin' || email == 'suporte');
 
             // Usuário Master entra DIRETO no Portal Êxodo (SelecionarEmpresaPage)
             if (isMaster) {
@@ -947,9 +1155,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
               final motivo = empresaLocal.verificarMotivoBloqueio(
                 ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
                 ultimaDataExecucao: dataService.ultimaDataExecucao,
-                limiteDiasOffline: 5,
               );
-              if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+              if (motivo != MotivoBloqueioEmpresa.nenhum &&
+                  !dataService.liberacaoProvisoriaAtiva) {
                 return BloqueioMensalidadePage(
                   configs: empresaLocal.configuracoes ?? {},
                   motivoBloqueio: motivo,
@@ -988,10 +1196,15 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 onPressed: () {
                   // Tentar novamente - recarregar a página
                   Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (context) => const AuthWrapper()),
+                    MaterialPageRoute(
+                      builder: (context) => const AuthWrapper(),
+                    ),
                   );
                 },
-                child: const Text('Tentar Novamente', style: TextStyle(color: Colors.blue)),
+                child: const Text(
+                  'Tentar Novamente',
+                  style: TextStyle(color: Colors.blue),
+                ),
               ),
             ],
           ),

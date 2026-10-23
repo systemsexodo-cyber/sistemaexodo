@@ -68,6 +68,11 @@ local.properties
 .env
 .env.*
 .env.local
+# Excecao: os TEMPLATES precisam ser versionados. O instalador (Inno Setup)
+# usa os dois para criar o `.env` e o `.env.neon` do cliente; sem eles num
+# clone limpo, a compilacao do instalador falha (Source: nao encontrado).
+!.env.example
+!.env.neon.example
 
 # Arquivos de cache
 *.cache
@@ -165,3 +170,17 @@ scratch/
 # Nunca versionar: contém a service_role key, a senha do banco e o token do
 # Supabase. O GitHub bloqueia o push e o segredo fica exposto no histórico.
 sincronizador_local_supabase.py
+.neon
+
+# Neon: contexto do projeto (org/projeto/branch) e env do Neon
+.env.neon
+
+# Skills locais do agente (Neon agent-skills / MCP)
+.agents/
+
+# Config empacotada no APK (celular): senha do banco local, senha da nuvem
+# (Funnel/Supabase local), chaves S3 do Neon e o segredo do Realtime.
+# Versionar isto expoe tudo; o .gitignore de cima nao pega porque o arquivo
+# se chama `app.env` e nao `.env`.
+assets/app.env
+assets/app.env.*

@@ -232,3 +232,46 @@ CREATE POLICY "service_role_full_access" ON trocas_devolucoes
 -- ALTER TABLE notas_entrada ALTER COLUMN empresa_id SET NOT NULL;
 -- ALTER TABLE ordens_servico ALTER COLUMN empresa_id SET NOT NULL;
 -- ALTER TABLE trocas_devolucoes ALTER COLUMN empresa_id SET NOT NULL;
+
+-- ============================================================
+-- 5. POL?TICAS DE TENANT PARA TODAS AS DEMAIS TABELAS DO APP
+-- ============================================================
+-- O bloco 3 acima cobre s? 10 tabelas. As demais ficavam com RLS ligado mas
+-- SEM pol?tica de empresa ? o isolamento dependia 100% do app. Este bloco
+-- fecha essa lacuna de forma idempotente e gen?rica: gera a pol?tica
+-- `empresa_id = auth.jwt()->>'empresa_id'` para TODA tabela do app que existir.
+-- (Tabelas inexistentes s?o puladas, ent?o o script pode rodar num banco novo.)
+
+DO $$
+DECLARE
+  t TEXT;
+  tabelas TEXT[] := ARRAY[
+    'servicos_realizados','orcamentos','entregas','motoristas','estoque_historico',
+    'ajustes_estoque_lote','lotes_produto','produto_historico','funcionarios',
+    'taxas_entrega','contas_pagar','nfces','nfes','links_vendedores',
+    'comissoes_vendedores','romaneios','aberturas_caixa','fechamentos_caixa',
+    'sangrias_caixa','suprimentos_caixa','perfis_tributarios','departamentos',
+    'imagens','mesas_comandas','agendamentos_servico'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tabelas LOOP
+    IF to_regclass('public.' || t) IS NULL THEN
+      CONTINUE;
+    END IF;
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format(
+      'DROP POLICY IF EXISTS %I ON public.%I',
+      t || '_isolar_empresa', t
+    );
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR ALL USING (empresa_id = auth.jwt()->>%L) WITH CHECK (empresa_id = auth.jwt()->>%L)',
+      t || '_isolar_empresa', t, 'empresa_id', 'empresa_id'
+    );
+  END LOOP;
+END $$;
+
+-- IMPORTANTE: o app usa service_role (que ignora RLS). Estas pol?ticas s?o a
+-- camada de DEFESA se um dia for trocado para usu?rio comum (anon/authenticated):
+-- sem elas, qualquer sess?o autenticada leria/gravaria dados de TODAS as empresas.
+-- Depois de migrar os dados legados, prefer?vel tamb?m:
+--   ALTER TABLE <tabela> ALTER COLUMN empresa_id SET NOT NULL;

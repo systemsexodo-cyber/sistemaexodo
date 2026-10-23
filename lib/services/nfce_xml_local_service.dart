@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' show FileOptions;
+import 'neon_storage.dart' show FileOptions;
 import '../models/nfce.dart';
 import '../models/empresa.dart';
 import 'supabase_service.dart';

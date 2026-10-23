@@ -432,46 +432,6 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _cest = null;
       _csosn = '102';
       _simplesNacionalAliquota = null;
-      // Aplica automaticamente o perfil tributário PADRÃO do regime atual da
-      // empresa (ex.: Tributado 5102/102 no Simples ou 5102/00 no Regime Normal).
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        try {
-          final service = Provider.of<DataService>(context, listen: false);
-          final perfis = service.perfisTributariosDoRegime;
-          PerfilTributario? padrao;
-          for (final p in perfis) {
-            if (p.isDefault) { padrao = p; break; }
-          }
-          padrao ??= perfis.isNotEmpty ? perfis.first : null;
-          if (padrao != null) {
-            // Variável final local: permite type promotion dentro do closure
-            // do setState (Dart não promove variáveis capturadas por closures).
-            final perfil = padrao;
-            setState(() {
-              _perfilTributarioId = perfil.id;
-              _cfop = perfil.cfop;
-              _cfopController.text = perfil.cfop;
-              _csosn = perfil.csosn;
-              _csosnController.text = perfil.csosn ?? '';
-              _icmsCst = perfil.icmsCst;
-              _icmsCstController.text = perfil.icmsCst ?? '';
-              _ncm = perfil.ncm ?? _ncm;
-              _ncmController.text = _ncm ?? '';
-              _pisCst = perfil.pisCst;
-              _pisCstController.text = perfil.pisCst ?? '';
-              _cofinsCst = perfil.cofinsCst;
-              _cofinsCstController.text = perfil.cofinsCst ?? '';
-              _icmsAliquota = perfil.aliquotaIcms;
-              _icmsAliquotaController.text = perfil.aliquotaIcms?.toString() ?? '';
-              _pisAliquota = perfil.aliquotaPis;
-              _pisAliquotaController.text = perfil.aliquotaPis?.toString() ?? '';
-              _cofinsAliquota = perfil.aliquotaCofins;
-              _cofinsAliquotaController.text = perfil.aliquotaCofins?.toString() ?? '';
-            });
-          }
-        } catch (_) {}
-      });
       _paraCozinha = false;
       _paraBar = false;
       _departamentoId = null;
@@ -561,6 +521,80 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     _cestController.text = _cest ?? '';
     _csosnController.text = _csosn ?? '';
     _simplesNacionalAliquotaController.text = _simplesNacionalAliquota?.toString() ?? '';
+
+    // Produto SEM perfil tributário usa o PADRÃO do regime atual. Vale para o
+    // cadastro NOVO e para o catálogo antigo, que foi salvo sem vínculo; assim
+    // o padrão também é gravado no PostgreSQL local e na nuvem ao salvar.
+    // Roda depois do primeiro frame para o Provider/lista de perfis estarem
+    // prontos e os controllers já preenchidos.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _aplicarPerfilTributarioPadrao(preencherCampos: widget.item == null);
+    });
+  }
+
+  /// Perfil PADRÃO que o formulário deve usar quando o produto ainda NÃO tem
+  /// perfil tributário vinculado.
+  ///
+  /// Mesma regra do serviço: primeiro o padrão que combina com o código fiscal
+  /// que o produto já tem (não reescreve o imposto do cadastro); sem código
+  /// nenhum, o padrão do regime atual. `null` quando o produto já tem perfil
+  /// ou quando não há padrão aplicável (ex.: CSOSN 900).
+  PerfilTributario? _perfilPadraoDoProduto(DataService service) {
+    if ((_perfilTributarioId ?? '').trim().isNotEmpty) return null;
+    return DataService.perfilPadraoParaProduto(
+      service.perfisTributariosDoRegime,
+      paraSimples: service.empresaRegimeSimples,
+      csosn: _csosn,
+      cst: _icmsCst,
+    );
+  }
+
+  /// Aplica o perfil PADRÃO no estado do formulário.
+  ///
+  /// [preencherCampos] força copiar o imposto do perfil (produto NOVO). Em
+  /// produto existente só preenche quando ele não tem código fiscal nenhum —
+  /// produto com CSOSN/CST próprio continua com o código dele.
+  void _aplicarPerfilTributarioPadrao({
+    bool preencherCampos = false,
+    bool notificar = true,
+  }) {
+    if (!mounted) return;
+    final service = Provider.of<DataService>(context, listen: false);
+    final padrao = _perfilPadraoDoProduto(service);
+    if (padrao == null) return;
+
+    void aplicar() {
+      _perfilTributarioId = padrao.id;
+      final semCodigo = (_csosn?.trim().isEmpty ?? true) &&
+          (_icmsCst?.trim().isEmpty ?? true);
+      if (!preencherCampos && !semCodigo) return;
+      _cfop = padrao.cfop;
+      _cfopController.text = padrao.cfop;
+      _csosn = padrao.csosn;
+      _csosnController.text = padrao.csosn ?? '';
+      _icmsCst = padrao.icmsCst;
+      _icmsCstController.text = padrao.icmsCst ?? '';
+      _ncm = padrao.ncm ?? _ncm;
+      _ncmController.text = _ncm ?? '';
+      _pisCst = padrao.pisCst;
+      _pisCstController.text = padrao.pisCst ?? '';
+      _cofinsCst = padrao.cofinsCst;
+      _cofinsCstController.text = padrao.cofinsCst ?? '';
+      _icmsAliquota = padrao.aliquotaIcms;
+      _icmsAliquotaController.text = padrao.aliquotaIcms?.toString() ?? '';
+      _pisAliquota = padrao.aliquotaPis;
+      _pisAliquotaController.text = padrao.aliquotaPis?.toString() ?? '';
+      _cofinsAliquota = padrao.aliquotaCofins;
+      _cofinsAliquotaController.text =
+          padrao.aliquotaCofins?.toString() ?? '';
+    }
+
+    if (notificar) {
+      setState(aplicar);
+    } else {
+      aplicar();
+    }
   }
   
   @override
@@ -717,8 +751,202 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     return '💰 $status: R\$ ${lucro.toStringAsFixed(2)} | 📊 Margem: ${margemPercentual.toStringAsFixed(2)}%';
   }
 
+  /// No celular o cabeçalho vira duas linhas: título e, abaixo, os botões
+  /// Cancelar/Salvar em tamanho de toque. No desktop segue tudo numa linha.
+  Widget _buildCabecalho(bool isMobile) {
+    final titulo = Row(
+      children: [
+        Container(
+          padding: EdgeInsets.all(isMobile ? 8 : 10),
+          decoration: BoxDecoration(
+            color: Colors.blueAccent.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            widget.item == null ? Icons.add_rounded : Icons.edit_rounded,
+            color: Colors.blueAccent,
+            size: isMobile ? 20 : 24,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.item == null ? 'Novo Produto' : 'Editar Produto',
+                style: TextStyle(
+                  fontSize: isMobile ? 16 : 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              Text(
+                _nome.isEmpty ? 'Preencha os dados' : _nome,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white.withOpacity(0.5),
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    final botaoSalvar = ElevatedButton(
+      onPressed: _validarESalvar,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.blueAccent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        minimumSize: Size(0, isMobile ? 48 : 44),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Text(
+        isMobile
+            ? (widget.item == null ? 'SALVAR PRODUTO' : 'ATUALIZAR PRODUTO')
+            : (widget.item == null ? 'SALVAR' : 'ATUALIZAR'),
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+    );
+
+    return Container(
+      padding: isMobile
+          ? const EdgeInsets.fromLTRB(16, 14, 16, 12)
+          : const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withOpacity(0.05)),
+        ),
+      ),
+      child: isMobile
+          ? Column(
+              children: [
+                titulo,
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                          minimumSize: const Size(0, 48),
+                          side: BorderSide(color: Colors.white.withOpacity(0.2)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: const Text('Cancelar'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(flex: 2, child: botaoSalvar),
+                  ],
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(child: titulo),
+                const SizedBox(width: 12),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    'Cancelar',
+                    style: TextStyle(color: Colors.white.withOpacity(0.5)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                botaoSalvar,
+              ],
+            ),
+    );
+  }
+
+  /// Conteúdo das abas. No celular ocupa toda a altura restante do modal
+  /// (encolhe quando o teclado abre) e usa margens mais estreitas.
+  Widget _buildAbasConteudo(bool isMobile) {
+    final base = EdgeInsets.symmetric(
+      horizontal: isMobile ? 12 : 20,
+      vertical: 16,
+    );
+    final padding = isMobile
+        ? base.add(EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom))
+        : base;
+    const tecladoAoRolar = ScrollViewKeyboardDismissBehavior.onDrag;
+
+    return TabBarView(
+      controller: _tabController,
+      children: [
+        SingleChildScrollView(
+          padding: padding,
+          keyboardDismissBehavior: tecladoAoRolar,
+          child: _buildAbaInformacoes(),
+        ),
+        SingleChildScrollView(
+          padding: padding,
+          keyboardDismissBehavior: tecladoAoRolar,
+          child: _buildAbaImpostos(),
+        ),
+        SingleChildScrollView(
+          padding: padding,
+          keyboardDismissBehavior: tecladoAoRolar,
+          child: _buildAbaEcommerce(),
+        ),
+        SingleChildScrollView(
+          padding: padding,
+          keyboardDismissBehavior: tecladoAoRolar,
+          child: _buildAbaEstoque(),
+        ),
+        SingleChildScrollView(
+          padding: padding,
+          keyboardDismissBehavior: tecladoAoRolar,
+          child: _buildAbaComposicao(),
+        ),
+        SingleChildScrollView(
+          padding: padding,
+          keyboardDismissBehavior: tecladoAoRolar,
+          child: _buildAbaAdicionais(),
+        ),
+        if (widget.item != null)
+          SingleChildScrollView(
+            padding: padding,
+            keyboardDismissBehavior: tecladoAoRolar,
+            child: _buildAbaHistoricoAlteracoes(),
+          )
+        else
+          const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.history, size: 48, color: Colors.white24),
+                SizedBox(height: 16),
+                Text(
+                  'Histórico disponível após salvar o produto',
+                  style: TextStyle(color: Colors.white38, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Valida o formulário e só então salva — usado pelo botão do topo.
+  void _validarESalvar() {
+    if (_formKey.currentState?.validate() ?? false) {
+      _salvarProduto();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < 700;
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0F172A), // Deep Midnight Blue
@@ -736,85 +964,14 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Header Minimalista
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: Colors.white.withOpacity(0.05)),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.blueAccent.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        widget.item == null ? Icons.add_rounded : Icons.edit_rounded,
-                        color: Colors.blueAccent,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.item == null ? 'Novo Produto' : 'Editar Produto',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          Text(
-                            _nome.isEmpty ? 'Preencha os dados' : _nome,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.white.withOpacity(0.5),
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Ações Rápidas no Header
-                    Row(
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: Text('Cancelar', style: TextStyle(color: Colors.white.withOpacity(0.5))),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          onPressed: () {
-                            if (_formKey.currentState?.validate() ?? false) {
-                              _salvarProduto();
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                          child: Text(widget.item == null ? 'SALVAR' : 'ATUALIZAR', 
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              _buildCabecalho(isMobile),
               // TabBar Minimalista
               TabBar(
                 controller: _tabController,
+                isScrollable: isMobile,
+                tabAlignment: isMobile ? TabAlignment.start : TabAlignment.fill,
+                padding: isMobile ? const EdgeInsets.symmetric(horizontal: 8) : null,
+                labelPadding: isMobile ? const EdgeInsets.symmetric(horizontal: 14) : null,
                 indicatorColor: Colors.blueAccent,
                 indicatorWeight: 3,
                 dividerColor: Colors.transparent,
@@ -832,57 +989,13 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                 ],
               ),
               // Conteúdo
-              SizedBox(
-                height: MediaQuery.of(context).size.height * 0.75,
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      child: _buildAbaInformacoes(),
-                    ),
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      child: _buildAbaImpostos(),
-                    ),
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      child: _buildAbaEcommerce(),
-                    ),
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      child: _buildAbaEstoque(),
-                    ),
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      child: _buildAbaComposicao(),
-                    ),
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      child: _buildAbaAdicionais(),
-                    ),
-                    if (widget.item != null)
-                      SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                        child: _buildAbaHistoricoAlteracoes(),
-                      )
-                    else
-                      const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.history, size: 48, color: Colors.white24),
-                            SizedBox(height: 16),
-                            Text(
-                              'Histórico disponível após salvar o produto',
-                              style: TextStyle(color: Colors.white38, fontSize: 14),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
+              if (isMobile)
+                Flexible(child: _buildAbasConteudo(isMobile))
+              else
+                SizedBox(
+                  height: MediaQuery.of(context).size.height * 0.75,
+                  child: _buildAbasConteudo(isMobile),
                 ),
-              ),
             ],
           ),
         ),
@@ -1030,6 +1143,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         ..._formasVenda.skip(1),
       ];
     }
+
+    // PRODUTO SEM PERFIL: aplica o PADRÃO antes de montar o objeto. Cobre tanto
+    // o catálogo antigo (salvo sem vínculo) quanto o caso em que a lista de
+    // perfis só carregou depois que o formulário abriu. O `perfilTributarioId`
+    // vai no toMap() e é persistido no PostgreSQL local e na nuvem.
+    _aplicarPerfilTributarioPadrao(notificar: false);
 
     final produto = Produto(
       id: _produtoIdParaLotes,
@@ -1554,6 +1673,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   }
 
   Widget _buildSection(String title, List<Widget> children) {
+    final compacto = MediaQuery.sizeOf(context).width < 700;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1570,7 +1690,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           ),
         ),
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(compacto ? 12 : 16),
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.03),
             borderRadius: BorderRadius.circular(16),
@@ -2425,25 +2545,27 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     required Widget child,
     bool last = false,
   }) {
+    final compacto = MediaQuery.sizeOf(context).width < 700;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
         child,
         if (!last) ...[
-          Divider(color: Colors.white.withOpacity(0.05), height: 32),
+          Divider(color: Colors.white.withOpacity(0.05), height: compacto ? 24 : 32),
         ],
       ],
     );
   }
 
   InputDecoration _minimalInput(String hint) {
+    final compacto = MediaQuery.sizeOf(context).width < 700;
     return InputDecoration(
       hintText: hint,
       hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
       border: InputBorder.none,
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+      contentPadding: EdgeInsets.symmetric(vertical: compacto ? 11 : 8),
       errorStyle: const TextStyle(fontSize: 10),
     );
   }
@@ -2974,9 +3096,11 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                   children: [
                     Icon(Icons.food_bank_outlined, color: Colors.orangeAccent, size: 18),
                     SizedBox(width: 8),
-                    Text(
-                      'Departamento de Preparação',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    Expanded(
+                      child: Text(
+                        'Departamento de Preparação',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
                     ),
                   ],
                 ),
@@ -2988,7 +3112,17 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                 const SizedBox(height: 10),
                 Builder(builder: (context) {
                   final ds = Provider.of<DataService>(context, listen: false);
-                  final deps = ds.departamentos;
+                  // IDs únicos: a lista de departamentos pode chegar com o mesmo
+                  // id repetido (cache local mesclado por versões antigas e/ou
+                  // config da empresa gravada em duplicidade). O DropdownButton
+                  // exige EXATAMENTE um item por valor e, com dois `dep_bar`,
+                  // derrubava a tela: "There should be exactly one item with
+                  // [DropdownButton]'s value: dep_bar".
+                  final idsDeps = <String>{};
+                  final deps = [
+                    for (final d in ds.departamentos)
+                      if (d.id.trim().isNotEmpty && idsDeps.add(d.id)) d,
+                  ];
                   // Fallback de compatibilidade: produtos antigos com paraCozinha/paraBar
                   // mas sem departamentoId selecionado.
                   if (_departamentoId == null && deps.isNotEmpty) {
@@ -3000,8 +3134,19 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                       _departamentoId = dep.id;
                     }
                   }
+                  // O valor do dropdown só pode ser um id que EXISTE na lista:
+                  // produto apontando para departamento excluído/sincronizado de
+                  // outro PC também quebrava o DropdownButton (zero itens com o
+                  // valor). Sem departamento válido, mostra "Nenhum departamento".
+                  final valorSelecionado =
+                      _departamentoId != null && idsDeps.contains(_departamentoId)
+                          ? _departamentoId
+                          : null;
                   return DropdownButtonFormField<String?>(
-                    value: _departamentoId,
+                    initialValue: valorSelecionado,
+                    // Em telas estreitas o nome do departamento não cabe no
+                    // campo e o Row interno estoura; deixar expandir resolve.
+                    isExpanded: true,
                     dropdownColor: const Color(0xFF2A2D3E),
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                     decoration: InputDecoration(
@@ -3058,9 +3203,11 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                     children: [
                       Icon(Icons.print, color: Colors.blueAccent, size: 18),
                       SizedBox(width: 8),
-                      Text(
-                        'Impressão de Produção',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      Expanded(
+                        child: Text(
+                          'Impressão de Produção',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
                       ),
                     ],
                   ),
@@ -3302,7 +3449,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                                     backgroundColor: const Color(0xFF1E1E2E),
                                     title: const Text('Zerar Estoque', style: TextStyle(color: Colors.white)),
                                     content: const Text(
-                                      'Tem certeza que deseja zerar o estoque deste produto? Isso registrará um movimento de saída correspondente.',
+                                      'Tem certeza que deseja zerar o estoque deste produto? O movimento fica registrado no histórico como ESTOQUE ZERADO (não conta como entrada nem como saída).',
                                       style: TextStyle(color: Colors.white70),
                                     ),
                                     actions: [
@@ -3411,17 +3558,19 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                                                           produtoId: widget.item.id,
                                                           quantidade: e.value,
                                                           fornecedorNome: e.key,
-                                                          motivo: 'ajuste',
-                                                          observacao: 'Zerar estoque individual do fornecedor "${e.key}" por $nomeUsuario',
+                                                          motivo: 'zerar_estoque',
+                                                          observacao: 'Estoque zerado (de ${e.value.toStringAsFixed(2)} para 0) do fornecedor "${e.key}" por $nomeUsuario',
                                                           usuario: nomeUsuario,
+                                                          tipoHistorico: 'zerado',
                                                         );
                                                       } else {
                                                         await dataService.registrarEntradaEstoque(
                                                           produtoId: widget.item.id,
                                                           quantidade: e.value.abs(),
                                                           fornecedorNome: e.key,
-                                                          observacao: 'Zerar estoque individual (entrada) do fornecedor "${e.key}" por $nomeUsuario',
+                                                          observacao: 'Estoque zerado (de ${e.value.toStringAsFixed(2)} para 0) do fornecedor "${e.key}" por $nomeUsuario',
                                                           usuario: nomeUsuario,
+                                                          tipoHistorico: 'zerado',
                                                         );
                                                       }
                                                       
@@ -4670,11 +4819,23 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               builder: (context, service, _) {
               // Mostra apenas os perfis do regime tributário atual da empresa
               final perfis = service.perfisTributariosDoRegime;
+              // Produto SEM perfil abre já mostrando o PADRÃO do regime (ou o
+              // padrão que combina com o código fiscal dele). Sem isso o
+              // dropdown exibia "Sem Perfil / Manual" e o produto era salvo
+              // sem vínculo nenhum.
+              final idAtual = (_perfilTributarioId ?? '').trim();
+              final padrao = DataService.perfilPadraoParaProduto(
+                perfis,
+                paraSimples: service.empresaRegimeSimples,
+                csosn: _csosn,
+                cst: _icmsCst,
+              );
+              final perfilSelecionado = idAtual.isNotEmpty
+                  ? (perfis.any((p) => p.id == idAtual) ? idAtual : null)
+                  : padrao?.id;
               return DropdownButtonFormField<String?>(
               // Guard: se o perfil salvo foi excluído da lista, cai em "Sem Perfil"
-              value: perfis.any((p) => p.id == _perfilTributarioId)
-                  ? _perfilTributarioId
-                  : null,
+              value: perfilSelecionado,
               dropdownColor: const Color(0xFF1E1E2E),
               style: const TextStyle(color: Colors.white, fontSize: 14),
               decoration: InputDecoration(
@@ -5116,16 +5277,13 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       );
     }
     
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildCentralEstoqueMinimo(),
-          const SizedBox(height: 8),
-          _buildConteudoHistoricoEstoque(),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildCentralEstoqueMinimo(),
+        const SizedBox(height: 8),
+        _buildConteudoHistoricoEstoque(),
+      ],
     );
   }
 
@@ -5426,6 +5584,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               DropdownMenuItem(value: null, child: Text('Todos')),
               DropdownMenuItem(value: 'entrada', child: Text('Entrada')),
               DropdownMenuItem(value: 'saida', child: Text('Saída')),
+              DropdownMenuItem(value: 'zerado', child: Text('Estoque zerado')),
             ],
             onChanged: (v) => setState(() => _estoqueTipoFiltro = v),
           ),
@@ -5467,14 +5626,19 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   }
 
   Widget _buildResumoEstoque(List<EstoqueHistorico> lista) {
-    final double ent = lista.where((h) => h.tipo == 'entrada').fold<double>(0.0, (p, e) => p + e.quantidade);
-    final double sai = lista.where((h) => h.tipo == 'saida').fold<double>(0.0, (p, e) => p + e.quantidade);
+    // Saídas são gravadas negativas: soma valores absolutos para o card não
+    // aparecer negativo. Zeramentos ficam de fora (card próprio abaixo).
+    final double ent = lista.where((h) => h.tipo == 'entrada').fold<double>(0.0, (p, e) => p + e.quantidade.abs());
+    final double sai = lista.where((h) => h.tipo == 'saida').fold<double>(0.0, (p, e) => p + e.quantidade.abs());
+    final int zerados = lista.where((h) => h.ehZeramento).length;
 
     return Row(
       children: [
         _cardResumoPequeno('ENTRADAS', ent.toInt(), Colors.greenAccent),
         const SizedBox(width: 12),
         _cardResumoPequeno('SAÍDAS', sai.toInt(), Colors.redAccent),
+        const SizedBox(width: 12),
+        _cardResumoPequeno('ZERADOS', zerados, Colors.amberAccent),
       ],
     );
   }
@@ -5497,9 +5661,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
 
   Widget _buildItemHistoricoMelhorado(EstoqueHistorico h, Produto? p) {
     final isEntrada = h.tipo == 'entrada';
+    final ehZeramento = h.ehZeramento;
     final ehQuebra = (h.observacao?.toLowerCase().contains('quebra') ?? false) ||
         (h.observacao?.toLowerCase().contains('motivo: quebra') ?? false);
-    final cor = isEntrada
+    final cor = ehZeramento
+        ? Colors.amberAccent
+        : isEntrada
         ? Colors.greenAccent
         : (ehQuebra ? Colors.orangeAccent : Colors.redAccent);
     final temCusto = h.valorCusto != null && h.valorCusto! > 0;
@@ -5507,14 +5674,28 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: ehQuebra ? Colors.orange.withOpacity(0.06) : Colors.white.withOpacity(0.03),
+        color: ehZeramento
+            ? Colors.amber.withOpacity(0.06)
+            : ehQuebra
+            ? Colors.orange.withOpacity(0.06)
+            : Colors.white.withOpacity(0.03),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ehQuebra ? Colors.orange.withOpacity(0.25) : Colors.white.withOpacity(0.03)),
+        border: Border.all(
+          color: ehZeramento
+              ? Colors.amber.withOpacity(0.3)
+              : ehQuebra
+              ? Colors.orange.withOpacity(0.25)
+              : Colors.white.withOpacity(0.03),
+        ),
       ),
       child: Row(
         children: [
           Icon(
-            ehQuebra ? Icons.broken_image_rounded : (isEntrada ? Icons.arrow_downward : Icons.arrow_upward),
+            ehZeramento
+                ? Icons.playlist_remove_rounded
+                : ehQuebra
+                ? Icons.broken_image_rounded
+                : (isEntrada ? Icons.arrow_downward : Icons.arrow_upward),
             color: cor.withOpacity(0.7),
             size: 16,
           ),
@@ -5539,6 +5720,14 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                     ),
                   ],
                 ),
+                if (ehZeramento)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'ESTOQUE ZERADO',
+                      style: TextStyle(color: Colors.amberAccent, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.8),
+                    ),
+                  ),
                 if (ehQuebra)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -5558,7 +5747,12 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               ],
             ),
           ),
-          Text('${isEntrada ? "+" : "-"}${h.quantidade}', style: TextStyle(color: cor, fontWeight: FontWeight.bold, fontSize: 14)),
+          Text(
+            ehZeramento
+                ? '${(-h.quantidade).toStringAsFixed(2)} → 0'
+                : '${isEntrada ? "+" : "-"}${h.quantidade.abs()}',
+            style: TextStyle(color: cor, fontWeight: FontWeight.bold, fontSize: 14),
+          ),
         ],
       ),
     );

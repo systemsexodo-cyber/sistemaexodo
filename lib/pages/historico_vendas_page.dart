@@ -6167,10 +6167,19 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       final usuario = authService.usuarioAtual;
       final serieUsuario = usuario?.serieNfce;
 
-      final nextNfceNumero = dataService.getProximoNumeroNfce(
+      // Número ATÔMICO (bloco reservado na nuvem por série): reemissão não pode
+      // colidir com um caixa offline (rejeição 539 da SEFAZ). Sem nuvem, cai no
+      // cálculo local antigo.
+      final numeroAtomicoNfce = await dataService.reservarProximoNumeroNfce(
         serie: serieUsuario?.toString() ?? '1',
         numeroInicial: usuario?.numeroInicialNfce ?? 1,
-      ).toString();
+      );
+      final nextNfceNumero = (numeroAtomicoNfce ??
+              dataService.getProximoNumeroNfce(
+                serie: serieUsuario?.toString() ?? '1',
+                numeroInicial: usuario?.numeroInicialNfce ?? 1,
+              ))
+          .toString();
 
       // ===== AJUSTE FISCAL: Taxa de Entrega e Serviço do Garçom =====
       double ajusteFiscal = 0.0;

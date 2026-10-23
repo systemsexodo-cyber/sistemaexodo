@@ -17,7 +17,7 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.53"
+#define MyAppVersion "1.0.56"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
@@ -187,22 +187,30 @@ Source: "RESTAURAR_BACKUP.ps1"; DestDir: "{app}"; Flags: ignoreversion skipifsou
 ; apagaria a configuracao da loja e o sistema voltaria sem sincronizar.
 Source: ".env.example"; DestDir: "{app}"; DestName: ".env"; Flags: ignoreversion onlyifdoesntexist
 
+; O `.env.neon` leva as credenciais da NUVEM (Neon): senha do Postgres, chave
+; secreta do Object Storage e segredo do Auth. Mesma regra do `.env`: nunca
+; sobrescrever numa atualizacao. Vai o TEMPLATE (valores vazios) para uma
+; instalacao nova ter o arquivo no lugar certo (AO LADO do exe, que e onde o
+; app procura); sem ele o aplicativo cai em modo local SEM avisar.
+Source: ".env.neon.example"; DestDir: "{app}"; DestName: ".env.neon"; Flags: ignoreversion onlyifdoesntexist
+
 ; ============================================================================
 ; ATALHOS
 ; ============================================================================
 
 [Icons]
 ; Menu Iniciar
-Name: "{group}\⚡ Sistema Êxodo"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "Sistema de Gestão e PDV"
+Name: "{group}\⚡ Sistema Êxodo"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "Sistema de Gestão e PDV"; Flags: runmaximized
 Name: "{group}\🌐 Bridge NFC-e"; Filename: "{app}\bridge\ExodoNfceBridge.exe"; WorkingDir: "{app}\bridge"; Comment: "Configurar Bridge NFC-e"
 Name: "{group}\🔄 Sincronizador Nuvem"; Filename: "{app}\SincronizadorNuvem.exe"; WorkingDir: "{app}"; Comment: "Sincronizador em segundo plano"
 Name: "{group}\📊 pgAdmin 4 - Ver Banco"; Filename: "{app}\scripts\abrir_pgadmin.bat"; WorkingDir: "{app}"; Comment: "Visualizar dados do banco"
 Name: "{group}\🔧 Reparar Banco (criar exodo_db)"; Filename: "{app}\scripts\reparar_banco.bat"; WorkingDir: "{app}\scripts"; Comment: "Cria o banco exodo_db e as tabelas se nao existirem"
 Name: "{group}\📁 Pasta do Sistema"; Filename: "{app}"; WorkingDir: "{app}"
+Name: "{group}\📄 Abrir logs do aplicativo"; Filename: "{sys}\explorer.exe"; Parameters: """{userappdata}\sistema_exodo_novo"""; WorkingDir: "{userappdata}"; Comment: "Abrir app_runtime.log, erro_flutter.log e boot.log"
 Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 
 ; Área de Trabalho (criado SEMPRE)
-Name: "{commondesktop}\⚡ Sistema Êxodo"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "Sistema de Gestão e PDV"
+Name: "{commondesktop}\⚡ Sistema Êxodo"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "Sistema de Gestão e PDV"; Flags: runmaximized
 Name: "{group}\🛠 Iniciar PostgreSQL"; Filename: "{app}\scripts\iniciar_postgres.bat"; WorkingDir: "{app}\scripts"; Comment: "Iniciar banco de dados manualmente"; Flags: runminimized
 Name: "{group}\🌐 Preparar este PC na rede"; Filename: "{app}\PREPARAR_REDE_LOCAL.bat"; WorkingDir: "{app}"; Comment: "Libera o banco para os outros PCs da loja ( rode em cada computador )"
 

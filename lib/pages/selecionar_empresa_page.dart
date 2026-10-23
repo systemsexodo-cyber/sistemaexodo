@@ -66,99 +66,230 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
 
+    if (authService.empresas.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nenhuma empresa carregada para simular.'),
+        ),
+      );
+      return;
+    }
+
+    // Empresa alvo: a que estiver aberta ou a primeira da lista.
+    Empresa alvo =
+        dataService.empresaAtual ??
+        authService.empresaAtual ??
+        authService.empresas.first;
+    if (!authService.empresas.any((e) => e.id == alvo.id)) {
+      alvo = authService.empresas.first;
+    }
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.science, color: Colors.blueAccent),
-            SizedBox(width: 10),
-            Text('Simulador de Licença Offline', style: TextStyle(color: Colors.white, fontSize: 16)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Escolha um teste para simular o comportamento offline:', style: TextStyle(color: Colors.white70, fontSize: 13)),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.wifi_off, color: Colors.orangeAccent),
-              title: const Text('Simular 6 dias sem Internet', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-              subtitle: const Text('Simula que a última validação online foi há mais de 5 dias.', style: TextStyle(color: Colors.white54, fontSize: 11)),
-              onTap: () async {
-                Navigator.pop(ctx);
-                await dataService.simularDiasOffline(6);
-                authService.notificarMudancas();
-                final emp = dataService.empresaAtual ?? authService.empresaAtual ?? (authService.empresas.isNotEmpty ? authService.empresas.first : null);
-                if (emp != null && context.mounted) {
-                  final motivo = emp.verificarMotivoBloqueio(
-                    ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
-                    ultimaDataExecucao: dataService.ultimaDataExecucao,
-                    limiteDiasOffline: 5,
-                  );
-                  if (motivo != MotivoBloqueioEmpresa.nenhum) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => BloqueioMensalidadePage(
-                          configs: emp.configuracoes ?? {},
-                          motivoBloqueio: motivo,
-                        ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final limite = alvo.limiteDiasOffline;
+          final nomeEmpresa = alvo.nomeFantasia ?? alvo.razaoSocial;
+
+          Future<void> simular(int dias) async {
+            Navigator.pop(ctx);
+            await dataService.simularDiasOffline(dias);
+            authService.notificarMudancas();
+            if (!context.mounted) return;
+            final motivo = alvo.verificarMotivoBloqueio(
+              ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+              ultimaDataExecucao: dataService.ultimaDataExecucao,
+            );
+            if (motivo != MotivoBloqueioEmpresa.nenhum) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => BloqueioMensalidadePage(
+                    configs: alvo.configuracoes ?? {},
+                    motivoBloqueio: motivo,
+                  ),
+                ),
+              );
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    '$nomeEmpresa simulado com $dias dia(s) offline. O limite '
+                    'configurado é $limite dia(s), então ainda não pede a '
+                    'chave.',
+                  ),
+                ),
+              );
+            }
+          }
+
+          Widget opcao({
+            required IconData icone,
+            required Color cor,
+            required String titulo,
+            required String subtitulo,
+            required VoidCallback onTap,
+          }) {
+            return ListTile(
+              leading: Icon(icone, color: cor),
+              title: Text(
+                titulo,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                subtitulo,
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+              onTap: onTap,
+            );
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.science, color: Colors.blueAccent),
+                SizedBox(width: 10),
+                Text(
+                  'Simulador de Licença Offline',
+                  style: TextStyle(color: Colors.white, fontSize: 16),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Empresa a simular:',
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                    const SizedBox(height: 4),
+                    DropdownButton<Empresa>(
+                      value: alvo,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF2A2A3E),
+                      underline: const SizedBox.shrink(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
                       ),
-                    );
-                  }
-                }
-              },
-            ),
-            const Divider(color: Colors.white10),
-            ListTile(
-              leading: const Icon(Icons.access_time_filled, color: Colors.redAccent),
-              title: const Text('Simular Relógio Adulterado', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-              subtitle: const Text('Simula que a data do sistema foi alterada para o passado.', style: TextStyle(color: Colors.white54, fontSize: 11)),
-              onTap: () async {
-                Navigator.pop(ctx);
-                await dataService.simularRelogioAdulterado();
-                authService.notificarMudancas();
-                final emp = dataService.empresaAtual ?? authService.empresaAtual ?? (authService.empresas.isNotEmpty ? authService.empresas.first : null);
-                if (emp != null && context.mounted) {
-                  final motivo = emp.verificarMotivoBloqueio(
-                    ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
-                    ultimaDataExecucao: dataService.ultimaDataExecucao,
-                    limiteDiasOffline: 5,
-                  );
-                  if (motivo != MotivoBloqueioEmpresa.nenhum) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => BloqueioMensalidadePage(
-                          configs: emp.configuracoes ?? {},
-                          motivoBloqueio: motivo,
-                        ),
+                      items: authService.empresas
+                          .map(
+                            (e) => DropdownMenuItem<Empresa>(
+                              value: e,
+                              child: Text(
+                                e.nomeFantasia ?? e.razaoSocial,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (e) {
+                        if (e == null) return;
+                        setDialogState(() => alvo = e);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Limite configurado: $limite dia(s) sem internet antes '
+                      'de pedir a chave de liberação offline.',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
                       ),
-                    );
-                  }
-                }
-              },
+                    ),
+                    const SizedBox(height: 12),
+                    opcao(
+                      icone: Icons.wifi_off,
+                      cor: Colors.orangeAccent,
+                      titulo: 'Simular 7 dias sem Internet',
+                      subtitulo:
+                          'Última validação online há 7 dias. Só bloqueia se o '
+                          'limite da empresa for menor que 7.',
+                      onTap: () => simular(7),
+                    ),
+                    opcao(
+                      icone: Icons.wifi_off,
+                      cor: Colors.deepOrangeAccent,
+                      titulo: 'Simular ${limite + 1} dias (acima do limite)',
+                      subtitulo:
+                          'Passa do limite de $nomeEmpresa — aciona o pedido '
+                          'da chave de liberação offline.',
+                      onTap: () => simular(limite + 1),
+                    ),
+                    opcao(
+                      icone: Icons.wifi_off,
+                      cor: Colors.amberAccent,
+                      titulo: 'Simular 6 dias sem Internet',
+                      subtitulo: 'Última validação online há 6 dias.',
+                      onTap: () => simular(6),
+                    ),
+                    const Divider(color: Colors.white10),
+                    opcao(
+                      icone: Icons.access_time_filled,
+                      cor: Colors.redAccent,
+                      titulo: 'Simular Relógio Adulterado',
+                      subtitulo:
+                          'Simula que a data do sistema foi alterada para o '
+                          'passado.',
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        await dataService.simularRelogioAdulterado();
+                        authService.notificarMudancas();
+                        if (!context.mounted) return;
+                        final motivo = alvo.verificarMotivoBloqueio(
+                          ultimaValidacaoOnline:
+                              dataService.ultimaValidacaoOnline,
+                          ultimaDataExecucao: dataService.ultimaDataExecucao,
+                        );
+                        if (motivo != MotivoBloqueioEmpresa.nenhum) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => BloqueioMensalidadePage(
+                                configs: alvo.configuracoes ?? {},
+                                motivoBloqueio: motivo,
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                    const Divider(color: Colors.white10),
+                    opcao(
+                      icone: Icons.refresh,
+                      cor: Colors.greenAccent,
+                      titulo: 'Restaurar / Limpar Simulação',
+                      subtitulo: 'Restaura o estado normal de validação.',
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        await dataService.resetarSimulacoesLicenca();
+                        authService.notificarMudancas();
+                      },
+                    ),
+                  ],
+                ),
+              ),
             ),
-            const Divider(color: Colors.white10),
-            ListTile(
-              leading: const Icon(Icons.refresh, color: Colors.greenAccent),
-              title: const Text('Restaurar / Limpar Simulação', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-              subtitle: const Text('Restaura o estado normal de validação.', style: TextStyle(color: Colors.white54, fontSize: 11)),
-              onTap: () async {
-                Navigator.pop(ctx);
-                await dataService.resetarSimulacoesLicenca();
-                authService.notificarMudancas();
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fechar')),
-        ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Fechar'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -188,6 +319,24 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
             ),
           ),
           actions: [
+            if (authService.usuarioAtual?.isMaster == true ||
+                authService.usuarioAtual?.email.toLowerCase() == 'user')
+              IconButton(
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.orangeAccent.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.science,
+                    color: Colors.orangeAccent,
+                    size: 20,
+                  ),
+                ),
+                tooltip: 'Simulador de Licença Offline',
+                onPressed: () => _abrirDialogoSimulacao(context),
+              ),
             if (authService.usuarioAtual?.email.toLowerCase() == 'user')
               IconButton(
                 icon: Container(
@@ -753,7 +902,6 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               final motivo = empAtualizada.verificarMotivoBloqueio(
                 ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
                 ultimaDataExecucao: dataService.ultimaDataExecucao,
-                limiteDiasOffline: 5,
               );
 
               final usuario = authService.usuarioAtual;
@@ -1525,7 +1673,6 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       final motivo = empresaAtualizada.verificarMotivoBloqueio(
                         ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
                         ultimaDataExecucao: dataService.ultimaDataExecucao,
-                        limiteDiasOffline: 5,
                       );
 
                       if (context.mounted) {

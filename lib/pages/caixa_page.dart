@@ -136,6 +136,34 @@ class _CaixaPageState extends State<CaixaPage> {
             final aberturaAtual = dataService.aberturaCaixaAtual;
             final aberturasAbertas = dataService.aberturasCaixaAbertas;
 
+            // "Ver todos os caixas abertos": quando há 2+ caixas abertos, o
+            // gestor junta as movimentações e os totais de todos numa só lista.
+            // É a visão "em tempo real" dos operadores lado a lado — o que faz
+            // sentido ao vivo, quando cada um opera num terminal diferente.
+            final podeJuntarCaixas = aberturasAbertas.length > 1 &&
+                caixaAberto &&
+                aberturaAtual != null;
+            final modoTodosCaixas = _mostrarTodosCaixas && podeJuntarCaixas;
+            // Conjunto somado no cabeçalho de totais (Resumo): todos os caixas no
+            // modo juntado, senão apenas o caixa selecionado.
+            final aberturasResumo = modoTodosCaixas
+                ? aberturasAbertas
+                : (aberturaAtual != null
+                    ? <AberturaCaixa>[aberturaAtual]
+                    : <AberturaCaixa>[]);
+
+            // Painéis operacionais (o card azul com Pagamento/Suprimento/Fechar).
+            // No modo "juntar caixas" mostra um painel para CADA caixa aberto —
+            // o do próprio usuário primeiro, depois os dos outros operadores.
+            final paineisCaixa = <AberturaCaixa?>[
+              if (caixaAberto && aberturaAtual != null) ...[
+                aberturaAtual,
+                if (modoTodosCaixas)
+                  ...aberturasAbertas.where((a) => a.id != aberturaAtual.id),
+              ] else
+                null,
+            ];
+
             // Movimentações do fluxo calculadas UMA vez por build. Antes a barra
             // de filtros e a lista chamavam `_movimentacoesFluxoBase` cada uma,
             // varrendo vendas, mesas/comandas e sangrias duas vezes por rebuild.
@@ -231,15 +259,34 @@ class _CaixaPageState extends State<CaixaPage> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      child: _buildCaixasAbertosSection(dataService, aberturasAbertas, usuarioLogado),
+                      child: _buildCaixasAbertosSection(
+                          dataService,
+                          aberturasAbertas,
+                          usuarioLogado,
+                          permitirJuntar: podeJuntarCaixas),
                     ),
                   ),
 
-                // 1. Card de Status do Caixa
+                // 1. Card(s) de Status do Caixa — um por caixa aberto no modo
+                //    "juntar caixas" (o do usuário primeiro), senão só o dele.
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
-                    child: _buildStatusHeader(caixaAberto, aberturaAtual, dataService),
+                    child: Column(
+                      children: [
+                        for (int i = 0; i < paineisCaixa.length; i++)
+                          Padding(
+                            padding: EdgeInsets.only(
+                                bottom:
+                                    i == paineisCaixa.length - 1 ? 0 : 16),
+                            child: _buildStatusHeader(
+                              paineisCaixa[i] != null,
+                              paineisCaixa[i],
+                              dataService,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
 
@@ -249,7 +296,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
                       child: _buildResumoSession(
-                          dataService, aberturaAtual, podeVerTotais, podeVerFormasPagamento),
+                          dataService, aberturasResumo, podeVerTotais, podeVerFormasPagamento),
                     ),
                   ),
 
@@ -285,7 +332,9 @@ class _CaixaPageState extends State<CaixaPage> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              'Sessão Atual',
+                              modoTodosCaixas
+                                  ? 'Todos os caixas (${aberturasAbertas.length})'
+                                  : 'Sessão Atual',
                               style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
                             ),
                           ),
@@ -296,7 +345,7 @@ class _CaixaPageState extends State<CaixaPage> {
 
                 // 5. Lista do Fluxo de Caixa Atual
                 if (caixaAberto && aberturaAtual != null)
-                  _buildSliverFluxoLista(movsFluxoFiltradas),
+                  _buildSliverFluxoLista(movsFluxoFiltradas, mostrarCaixa: modoTodosCaixas),
 
                 // 5.1 Total do que está sendo exibido (respeita os filtros)
                 if (caixaAberto && aberturaAtual != null)
@@ -349,7 +398,12 @@ class _CaixaPageState extends State<CaixaPage> {
   /// Operador comum (não gestor) SÓ vê os caixas abertos dele mesmo — antes a
   /// seção listava todos os caixas de todos os usuários da empresa (ex.: o
   /// CAIXA-037 do 'user' aparecia para o carlos, que achava que era o caixa dele).
-  Widget _buildCaixasAbertosSection(DataService ds, List<AberturaCaixa> abertas, Usuario? usuarioLogado) {
+  Widget _buildCaixasAbertosSection(
+    DataService ds,
+    List<AberturaCaixa> abertas,
+    Usuario? usuarioLogado, {
+    bool permitirJuntar = false,
+  }) {
     final ehGestor = usuarioLogado != null &&
         (usuarioLogado.isAdmin ||
             usuarioLogado.isMaster ||
@@ -391,6 +445,25 @@ class _CaixaPageState extends State<CaixaPage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
+            // Atalho bem visível para a visão "os dois juntos": antes o gestor
+            // só descobria isso marcando uma caixinha no fim dos filtros e o
+            // cabeçalho de totais continuava somando um caixa só.
+            if (permitirJuntar) ...[
+              const Spacer(),
+              Text(
+                'Juntar caixas',
+                style: TextStyle(
+                  color: _mostrarTodosCaixas ? Colors.blueAccent : Colors.white54,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Switch(
+                value: _mostrarTodosCaixas,
+                activeColor: Colors.blueAccent,
+                onChanged: (v) => setState(() => _mostrarTodosCaixas = v),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 12),
@@ -708,7 +781,7 @@ class _CaixaPageState extends State<CaixaPage> {
               ],
             ),
           ),
-          _buildQuickActions(aberto, ds),
+          _buildQuickActions(aberto, ds, abertura: abertura),
         ],
       ),
     );
@@ -828,7 +901,8 @@ class _CaixaPageState extends State<CaixaPage> {
     super.dispose();
   }
 
-  Widget _buildQuickActions(bool aberto, DataService ds) {
+  Widget _buildQuickActions(bool aberto, DataService ds,
+      {AberturaCaixa? abertura}) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.3),
@@ -859,21 +933,24 @@ class _CaixaPageState extends State<CaixaPage> {
               label: 'Pagamento',
               icon: Icons.remove_circle_rounded,
               color: Colors.orangeAccent,
-              onTap: () => _mostrarDialogoSangria(context, ds, isPagamento: true),
+              onTap: () => _mostrarDialogoSangria(context, ds,
+                  isPagamento: true, aberturaParam: abertura),
             ),
             const SizedBox(width: 12),
             _buildActionButton(
               label: 'Suprimento',
               icon: Icons.add_circle_rounded,
               color: Colors.lightBlueAccent,
-              onTap: () => _mostrarDialogoSuprimento(context, ds),
+              onTap: () =>
+                  _mostrarDialogoSuprimento(context, ds, aberturaParam: abertura),
             ),
             const SizedBox(width: 12),
             _buildActionButton(
               label: 'Fechar',
               icon: Icons.stop_circle_rounded,
               color: Colors.redAccent,
-              onTap: () => _mostrarDialogoFechamento(context, ds),
+              onTap: () => _mostrarDialogoFechamento(context, ds,
+                  aberturaParam: abertura),
             ),
           ],
         ],
@@ -915,24 +992,54 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildResumoSession(DataService ds, AberturaCaixa abertura, bool podeVerTotais, bool podeVerFormasPagamento) {
-    // Pegar totais reais do DS (apenas do caixa em questão)
-    final sangrias = ds.getSangriasDoCaixa(abertura);
-    final suprimentos = ds.getSuprimentosDoCaixa(abertura);
-    final totalSangrias = sangrias.fold(0.0, (sum, s) => sum + s.valor);
-    final totalSuprimentos = suprimentos.fold(0.0, (sum, s) => sum + s.valor);
+  Widget _buildResumoSession(
+    DataService ds,
+    List<AberturaCaixa> aberturas,
+    bool podeVerTotais,
+    bool podeVerFormasPagamento,
+  ) {
+    // Soma os totais reais do DS de UM ou de VÁRIOS caixas abertos. Com um só
+    // elemento o resultado é idêntico ao de antes; no modo "juntar caixas" o
+    // cabeçalho passa a refletir os dois operadores somados.
+    double totalSangrias = 0.0;
+    double totalSuprimentos = 0.0;
+    double totalVendas = 0.0;
+    double saldo = 0.0;
+    final acumuladoFormas = <String, ResumoFormaPagamento>{};
 
-    // Calcular Vendas (do caixa em questão)
-    final vendas = ds.getVendasDoCaixa(abertura);
-    final totalVendas = vendas.fold(0.0, (sum, v) => sum + v.valorTotal);
+    for (final abertura in aberturas) {
+      final totalSang = ds
+          .getSangriasDoCaixa(abertura)
+          .fold(0.0, (sum, s) => sum + s.valor);
+      final totalSup = ds
+          .getSuprimentosDoCaixa(abertura)
+          .fold(0.0, (sum, s) => sum + s.valor);
+      final totalVen = ds
+          .getVendasDoCaixa(abertura)
+          .fold(0.0, (sum, v) => sum + v.valorTotal);
 
-    // Saldo Atual
-    final saldo = abertura.valorInicial + totalVendas + totalSuprimentos - totalSangrias;
+      totalSangrias += totalSang;
+      totalSuprimentos += totalSup;
+      totalVendas += totalVen;
+      saldo += abertura.valorInicial + totalVen + totalSup - totalSang;
+
+      if (podeVerFormasPagamento) {
+        for (final r in ds.calcularResumoFormaPagamentoDoCaixa(abertura)) {
+          final chave = '${r.tipo.name}|${r.rotulo.toLowerCase()}';
+          final atual = acumuladoFormas[chave];
+          acumuladoFormas[chave] = ResumoFormaPagamento(
+            rotulo: r.rotulo,
+            tipo: r.tipo,
+            valor: (atual?.valor ?? 0.0) + r.valor,
+            quantidade: (atual?.quantidade ?? 0) + r.quantidade,
+          );
+        }
+      }
+    }
 
     // Separação do que entrou por Dinheiro, PIX, Cartão, etc.
-    final resumoFormas = podeVerFormasPagamento
-        ? ds.calcularResumoFormaPagamentoDoCaixa(abertura)
-        : <ResumoFormaPagamento>[];
+    final resumoFormas = acumuladoFormas.values.toList()
+      ..sort((a, b) => b.valor.compareTo(a.valor));
 
     return Column(
       children: [
@@ -1196,7 +1303,10 @@ class _CaixaPageState extends State<CaixaPage> {
     return out;
   }
 
-  Widget _buildSliverFluxoLista(List<Map<String, dynamic>> movs) {
+  Widget _buildSliverFluxoLista(
+    List<Map<String, dynamic>> movs, {
+    bool mostrarCaixa = false,
+  }) {
     if (movs.isEmpty) {
       final temFiltro = _temFiltroFluxo;
       return SliverToBoxAdapter(
@@ -1222,7 +1332,7 @@ class _CaixaPageState extends State<CaixaPage> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
-          (context, index) => _buildMovCard(movs[index]),
+          (context, index) => _buildMovCard(movs[index], mostrarCaixa: mostrarCaixa),
           childCount: movs.length,
         ),
       ),
@@ -1234,7 +1344,7 @@ class _CaixaPageState extends State<CaixaPage> {
   /// Mesas/comandas com valor "a receber" (ainda não pagas) aparecem
   /// esmaecidas e marcadas — elas NÃO entram nos totais do caixa, então não
   /// podem parecer uma entrada já realizada.
-  Widget _buildMovCard(Map<String, dynamic> m) {
+  Widget _buildMovCard(Map<String, dynamic> m, {bool mostrarCaixa = false}) {
     final contabilizado = m['contabilizado'] != false;
     final valor = (m['valor'] as double?) ?? 0.0;
     return Opacity(
@@ -1276,6 +1386,28 @@ class _CaixaPageState extends State<CaixaPage> {
                     'A RECEBER',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.6),
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              ],
+              // No modo "juntar caixas" identifica de QUAL caixa é cada linha,
+              // senão as movimentações dos dois operadores ficam indistinguíveis.
+              if (mostrarCaixa &&
+                  (m['caixaNumero']?.toString().isNotEmpty ?? false)) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    m['caixaNumero'].toString(),
+                    style: const TextStyle(
+                      color: Colors.blueAccent,
                       fontSize: 8,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.4,
@@ -2942,6 +3074,11 @@ class _CaixaPageState extends State<CaixaPage> {
       });
     }
 
+    // Guarda de qual caixa é cada linha — usado no modo "juntar caixas" para
+    // etiquetar as movimentações dos dois operadores.
+    for (final mov in list) {
+      mov['caixaNumero'] = ab.numero;
+    }
     list.sort((a, b) => (b['data'] as DateTime).compareTo(a['data'] as DateTime));
     return list;
   }
@@ -4261,7 +4398,8 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  void _mostrarDialogoSangria(BuildContext context, DataService dataService, {bool isPagamento = false}) {
+  void _mostrarDialogoSangria(BuildContext context, DataService dataService,
+      {bool isPagamento = false, AberturaCaixa? aberturaParam}) {
     final valorController = TextEditingController();
     final motivoController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -4413,6 +4551,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     responsavel: responsavelController.text.trim().isEmpty
                         ? null
                         : responsavelController.text.trim(),
+                    aberturaParam: aberturaParam,
                   );
 
                   if (context.mounted) {
@@ -4448,7 +4587,8 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  void _mostrarDialogoSuprimento(BuildContext context, DataService dataService) {
+  void _mostrarDialogoSuprimento(BuildContext context, DataService dataService,
+      {AberturaCaixa? aberturaParam}) {
     final valorController = TextEditingController();
     final motivoController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -4600,6 +4740,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     responsavel: responsavelController.text.trim().isEmpty
                         ? null
                         : responsavelController.text.trim(),
+                    aberturaParam: aberturaParam,
                   );
 
                   if (context.mounted) {

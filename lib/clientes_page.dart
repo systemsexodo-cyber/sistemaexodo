@@ -86,7 +86,7 @@ class _ClientesPageState extends State<ClientesPage> {
         backgroundColor: Colors.transparent,
         appBar: AppBar(
           title: const Text('Clientes'),
-          centerTitle: true,
+          centerTitle: MediaQuery.of(context).size.width >= 700,
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: Navigator.canPop(context)

@@ -27,6 +27,8 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
   bool _sincronizando = false;
   bool _liberandoCortesia = false;
   String? _mensagemSync;
+  final _codigoOfflineController = TextEditingController();
+  String? _erroCodigoOffline;
 
   // Payload Pix estático estruturado da chave celular 12996435372
   final String _pixCopiaCola = "00020101021126360014br.gov.bcb.pix0111129964353725204000053039865802BR5910Charles%20P6009Sao%20Paulo62070503***6304ED22";
@@ -210,6 +212,65 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
     }
   }
 
+  Future<void> _liberarComCodigoOffline() async {
+    final esperado =
+        widget.configs['codigo_liberacao_offline']?.toString().trim().toUpperCase();
+    if (esperado == null || esperado.isEmpty) {
+      setState(() {
+        _erroCodigoOffline =
+            'Codigo nao cadastrado para esta empresa. Fale com o suporte.';
+      });
+      return;
+    }
+    if (_codigoOfflineController.text.trim().toUpperCase() != esperado) {
+      setState(() {
+        _erroCodigoOffline = 'Codigo invalido. Verifique e tente novamente.';
+      });
+      return;
+    }
+
+    setState(() {
+      _liberandoCortesia = true;
+    });
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      await dataService.resetarSimulacoesLicenca();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Acesso liberado. Conecte a internet em ate 7 dias.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const SelecionarEmpresaPage()),
+          (route) => false,
+        );
+        authService.notificarMudancas();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao liberar: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _liberandoCortesia = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _codigoOfflineController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -293,7 +354,7 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
                       if (widget.motivoBloqueio == MotivoBloqueioEmpresa.excessoDiasOffline) {
                         iconData = Icons.wifi_off_rounded;
                         titulo = 'Sincronização Offline Necessária';
-                        mensagem = 'O sistema esteve sem conexão com a internet por mais de 5 dias. Conecte-se à internet para sincronizar os dados e validar sua licença.';
+                        mensagem = 'O sistema esteve sem conexão com a internet por mais de 7 dias. Conecte-se à internet para sincronizar os dados e validar sua licença.';
                       } else if (widget.motivoBloqueio == MotivoBloqueioEmpresa.relogioAdulterado) {
                         iconData = Icons.access_time_filled_rounded;
                         titulo = 'Data do Computador Incorreta';
@@ -474,6 +535,40 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
                   ),
                   const SizedBox(height: 16),
                   
+                   if (widget.motivoBloqueio == MotivoBloqueioEmpresa.excessoDiasOffline) ...[
+                     const SizedBox(height: 8),
+                     TextField(
+                       controller: _codigoOfflineController,
+                       decoration: InputDecoration(
+                         labelText: 'Codigo de Liberacao Offline',
+                         hintText: 'Digite o codigo fornecido pelo suporte',
+                         errorText: _erroCodigoOffline,
+                         border: const OutlineInputBorder(),
+                       ),
+                       textCapitalization: TextCapitalization.characters,
+                     ),
+                     const SizedBox(height: 8),
+                     SizedBox(
+                       width: double.infinity,
+                       height: 44,
+                       child: ElevatedButton.icon(
+                         style: ElevatedButton.styleFrom(
+                           backgroundColor: Colors.orange.shade700,
+                           foregroundColor: Colors.white,
+                           shape: RoundedRectangleBorder(
+                             borderRadius: BorderRadius.circular(12),
+                           ),
+                         ),
+                         onPressed: _liberandoCortesia ? null : _liberarComCodigoOffline,
+                         icon: const Icon(Icons.vpn_key_rounded, size: 18),
+                         label: const Text(
+                           'LIBERAR COM CODIGO OFFLINE',
+                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                         ),
+                       ),
+                     ),
+                     const SizedBox(height: 16),
+                   ],
                   // Ações de Liberação (APENAS PARA USUÁRIO MASTER / SUPORTE)
                   if (isMaster) ...[
                     // Botão de Dar OK de Pagamento do Mês Atual

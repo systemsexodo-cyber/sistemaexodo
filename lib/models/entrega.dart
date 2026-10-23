@@ -1,5 +1,23 @@
 export 'package:sistema_exodo_novo/models/motorista.dart';
 
+/// Lê a taxa da entrega do mapa, aceitando os nomes de coluna usados pelos
+/// bancos que guardam entregas.
+///
+/// `taxaEntrega` é o nome do modelo (e do JSON antigo); `valorFrete`/`valor_frete`
+/// são as colunas numéricas da tabela LOCAL `entregas` (as únicas que existem
+/// lá) e `taxa_entrega` é a coluna da NUVEM. Lendo só `taxaEntrega`, a taxa
+/// voltava NULL para TODA entrega gravada e a comissão por entrega (% sobre a
+/// taxa) saía R$ 0,00 na tela de Comissões.
+double? _taxaDoMap(Map<String, dynamic> map) {
+  final valor = map['taxaEntrega'] ??
+      map['valorFrete'] ??
+      map['valor_frete'] ??
+      map['taxa_entrega'];
+  if (valor == null) return null;
+  if (valor is num) return valor.toDouble();
+  return double.tryParse(valor.toString().replaceAll(',', '.'));
+}
+
 /// Status possíveis de uma entrega
 enum StatusEntrega {
   aguardando, // Aguardando entrega
@@ -237,7 +255,7 @@ class Entrega {
       veiculoPlaca: map['veiculoPlaca'],
       ordemRota: map['ordemRota'],
       codigoRastreio: map['codigoRastreio'],
-      taxaEntrega: map['taxaEntrega']?.toDouble(),
+      taxaEntrega: _taxaDoMap(map),
       tipoEntrega: map['tipoEntrega'],
       periodoEntrega: map['periodoEntrega'],
       assinaturaRecebedor: map['assinaturaRecebedor'],
@@ -283,6 +301,16 @@ class Entrega {
       'ordemRota': ordemRota,
       'codigoRastreio': codigoRastreio,
       'taxaEntrega': taxaEntrega,
+      // A taxa da entrega é o que a tela de Comissões usa para pagar o motoboy
+      // (% sobre a taxa). Cada banco guarda isso numa coluna com nome
+      // diferente — a tabela LOCAL `entregas` em `valorFrete`/`valor_frete` e a
+      // NUVEM em `taxa_entrega`. Mandando os quatro nomes, quem grava escolhe a
+      // coluna que existe (a camada de gravação descarta as demais). Sem isso a
+      // taxa nunca saía daqui, ficava NULL no banco e a comissão por entrega
+      // saía R$ 0,00.
+      'valorFrete': taxaEntrega,
+      'valor_frete': taxaEntrega,
+      'taxa_entrega': taxaEntrega,
       'tipoEntrega': tipoEntrega,
       'periodoEntrega': periodoEntrega,
       'assinaturaRecebedor': assinaturaRecebedor,
@@ -336,6 +364,10 @@ class Entrega {
     List<EventoEntrega>? historico,
     double? quantidadeVolumes,
     double? pesoTotal,
+    /// Zera [dataEntrega] (desfazer uma entrega concluída).
+    ///
+    /// Existe porque `copyWith` não consegue gravar null por parâmetro.
+    bool limparDataEntrega = false,
   }) {
     return Entrega(
       id: id ?? this.id,
@@ -352,7 +384,7 @@ class Entrega {
       status: status ?? this.status,
       dataCriacao: dataCriacao ?? this.dataCriacao,
       dataPrevisao: dataPrevisao ?? this.dataPrevisao,
-      dataEntrega: dataEntrega ?? this.dataEntrega,
+      dataEntrega: limparDataEntrega ? null : (dataEntrega ?? this.dataEntrega),
       motoristaId: motoristaId ?? this.motoristaId,
       motoristaNome: motoristaNome ?? this.motoristaNome,
       motoristaTelefone: motoristaTelefone ?? this.motoristaTelefone,

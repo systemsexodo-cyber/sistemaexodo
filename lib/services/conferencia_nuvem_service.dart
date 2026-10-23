@@ -6,6 +6,7 @@ import 'package:postgres/postgres.dart';
 
 import '../utils/win1252.dart';
 import 'env_config.dart';
+import 'neon_config.dart';
 
 /// Uma linha da conferência: quantas linhas existem na tabela, naquela empresa,
 /// no banco LOCAL e na NUVEM.
@@ -555,36 +556,57 @@ class ConferenciaNuvemService {
   // Conexões
   // ───────────────────────────────────────────────────────────────────────────
 
+  /// Abre a conexão com o banco da NUVEM (Neon PRINCIPAL; Supabase é a
+  /// reserva) ou com o banco local.
   Future<Connection> _abrir({required bool nuvem}) async {
-    if (nuvem && !EnvConfig.backupBancoNuvemConfigurado) {
-      throw StateError('Nuvem não configurada no .env '
-          '(SUPABASE_POOLER_HOST / SUPABASE_POOLER_PASSWORD).');
+    if (!nuvem) {
+      return Connection.open(
+        Endpoint(
+          host: EnvConfig.dbHost.toLowerCase() == 'localhost'
+              ? '127.0.0.1'
+              : EnvConfig.dbHost,
+          port: EnvConfig.dbPort,
+          database: EnvConfig.dbName,
+          username: EnvConfig.dbUser,
+          password: EnvConfig.dbPassword,
+        ),
+        // O banco local do app não usa SSL.
+        settings: const ConnectionSettings(sslMode: SslMode.disable),
+      ).timeout(_tempoLimite);
     }
 
-    final endpoint = nuvem
-        ? Endpoint(
-            host: EnvConfig.supabasePoolerHost,
-            port: EnvConfig.supabasePoolerPort,
-            database: EnvConfig.supabaseDbNameFinal,
-            username: EnvConfig.supabasePoolerUser,
-            password: EnvConfig.supabasePoolerPassword,
-          )
-        : Endpoint(
-            host: EnvConfig.dbHost.toLowerCase() == 'localhost'
-                ? '127.0.0.1'
-                : EnvConfig.dbHost,
-            port: EnvConfig.dbPort,
-            database: EnvConfig.dbName,
-            username: EnvConfig.dbUser,
-            password: EnvConfig.dbPassword,
-          );
+    // Neon primeiro: é a nuvem atual (DATABASE_URL no .env.neon).
+    final neon = NeonConfig.postgresNuvem;
+    if (neon.host.isNotEmpty) {
+      return Connection.open(
+        Endpoint(
+          host: neon.host,
+          port: neon.porta,
+          database: neon.banco,
+          username: neon.usuario,
+          password: neon.senha,
+        ),
+        settings: const ConnectionSettings(sslMode: SslMode.require),
+      ).timeout(_tempoLimite);
+    }
+
+    // Segunda opção: o Supabase (Session pooler IPv4) do .env.
+    if (!EnvConfig.backupBancoNuvemConfigurado) {
+      throw StateError('Nuvem não configurada (Neon: DATABASE_URL no '
+          '.env.neon; Supabase: SUPABASE_POOLER_HOST / SUPABASE_POOLER_PASSWORD '
+          'no .env).');
+    }
 
     return Connection.open(
-      endpoint,
-      // A nuvem (Supabase) exige TLS; o banco local do app não usa SSL.
-      settings: ConnectionSettings(
-        sslMode: nuvem ? SslMode.require : SslMode.disable,
+      Endpoint(
+        host: EnvConfig.supabasePoolerHost,
+        port: EnvConfig.supabasePoolerPort,
+        database: EnvConfig.supabaseDbNameFinal,
+        username: EnvConfig.supabasePoolerUser,
+        password: EnvConfig.supabasePoolerPassword,
       ),
+      // A nuvem (Neon e Supabase) exige TLS.
+      settings: const ConnectionSettings(sslMode: SslMode.require),
     ).timeout(_tempoLimite);
   }
 

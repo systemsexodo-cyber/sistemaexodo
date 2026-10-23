@@ -18,7 +18,7 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
   late TabController _tabController;
   DateTime? _dataInicial;
   DateTime? _dataFinal;
-  String? _tipoFiltro; // null = todos, 'entrada', 'saida', 'ajuste'
+  String? _tipoFiltro; // null = todos, 'entrada', 'saida', 'ajuste', 'zerado'
   String? _fornecedorFiltro;
   String? _desempenhoFiltro; // null = todos, 'sem_giro', 'giro_normal', 'giro_rapido'
   String _buscaProduto = '';
@@ -79,8 +79,16 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
 
     filtrado.sort((a, b) => b.data.compareTo(a.data));
 
-    final totalEntradas = filtrado.where((h) => h.tipo == 'entrada').fold<double>(0.0, (p, e) => p + e.quantidade);
-    final totalSaidas = filtrado.where((h) => h.tipo == 'saida').fold<double>(0.0, (p, e) => p + e.quantidade);
+    final totalEntradas = filtrado
+        .where((h) => h.tipo == 'entrada')
+        .fold<double>(0.0, (p, e) => p + e.quantidade.abs());
+    // Saídas são gravadas com quantidade negativa: soma os valores ABSOLUTOS
+    // (senão o card "SAÍDAS" aparecia negativo, ex.: -24).
+    final totalSaidas = filtrado
+        .where((h) => h.tipo == 'saida')
+        .fold<double>(0.0, (p, e) => p + e.quantidade.abs());
+    // Zeramentos não entram em entradas/saídas: aparecem em um card próprio.
+    final totalZeramentos = filtrado.where((h) => h.ehZeramento).length;
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -103,7 +111,7 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
             Column(
               children: [
                 _buildFiltros(fornecedores, true),
-                _buildResumoMovimentacao(totalEntradas.toInt(), totalSaidas.toInt()),
+                _buildResumoMovimentacao(totalEntradas.toInt(), totalSaidas.toInt(), totalZeramentos),
                 const SizedBox(height: 10),
                 Expanded(
                   child: filtrado.isEmpty
@@ -454,6 +462,7 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
             DropdownMenuItem(value: 'entrada', child: Text('Entradas')),
             DropdownMenuItem(value: 'saida', child: Text('Saídas')),
             DropdownMenuItem(value: 'quebra', child: Text('Quebras')),
+            DropdownMenuItem(value: 'zerado', child: Text('Estoque zerado')),
           ],
           onChanged: (v) => setState(() => _tipoFiltro = v),
         ),
@@ -461,7 +470,7 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
     );
   }
 
-  Widget _buildResumoMovimentacao(int ent, int sai) {
+  Widget _buildResumoMovimentacao(int ent, int sai, int zerados) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
@@ -469,6 +478,8 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
           _cardRes('ENTRADAS', ent, Colors.greenAccent),
           const SizedBox(width: 12),
           _cardRes('SAÍDAS', sai, Colors.redAccent),
+          const SizedBox(width: 12),
+          _cardRes('ZERADOS', zerados, Colors.amberAccent),
         ],
       ),
     );
@@ -493,18 +504,40 @@ class _EstoqueRelatorioGeralPageState extends State<EstoqueRelatorioGeralPage> w
     final p = produtos.firstWhere((prod) => prod.id == h.produtoId, orElse: () => _produtoExcluido());
     final isEntrada = h.tipo == 'entrada';
     final ehQuebra = h.ehQuebra;
-    final cor = ehQuebra ? Colors.orangeAccent : (isEntrada ? Colors.greenAccent : Colors.redAccent);
+    final ehZeramento = h.ehZeramento;
+    final cor = ehZeramento
+        ? Colors.amberAccent
+        : ehQuebra
+        ? Colors.orangeAccent
+        : (isEntrada ? Colors.greenAccent : Colors.redAccent);
     return ListTile(
       leading: Icon(
-        ehQuebra ? Icons.broken_image_outlined : (isEntrada ? Icons.add_circle_outline : Icons.remove_circle_outline),
+        ehZeramento
+            ? Icons.playlist_remove_rounded
+            : ehQuebra
+            ? Icons.broken_image_outlined
+            : (isEntrada ? Icons.add_circle_outline : Icons.remove_circle_outline),
         color: cor,
       ),
       title: Text(p.nome, style: const TextStyle(color: Colors.white, fontSize: 14)),
       subtitle: Text(
-        '${DateFormat('dd/MM/yy HH:mm').format(h.data)}${ehQuebra ? ' • QUEBRA' : ''}',
-        style: TextStyle(color: ehQuebra ? Colors.orange.withOpacity(0.6) : Colors.white30, fontSize: 11),
+        '${DateFormat('dd/MM/yy HH:mm').format(h.data)}'
+        '${ehZeramento ? ' • ESTOQUE ZERADO' : ehQuebra ? ' • QUEBRA' : ''}',
+        style: TextStyle(
+          color: ehZeramento
+              ? Colors.amberAccent.withOpacity(0.6)
+              : ehQuebra
+              ? Colors.orange.withOpacity(0.6)
+              : Colors.white30,
+          fontSize: 11,
+        ),
       ),
-      trailing: Text('${isEntrada ? "+" : "-"}${h.quantidade}', style: TextStyle(color: cor, fontWeight: FontWeight.bold)),
+      trailing: Text(
+        ehZeramento
+            ? '${(-h.quantidade).toStringAsFixed(2)} → 0'
+            : '${isEntrada ? "+" : "-"}${h.quantidade.abs()}',
+        style: TextStyle(color: cor, fontWeight: FontWeight.bold),
+      ),
     );
   }
 

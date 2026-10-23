@@ -4,6 +4,15 @@ import 'item_material.dart';
 
 class Servico {
   final String id;
+
+  /// Empresa DONA do serviço (carimbo `empresa_id`).
+  ///
+  /// Sem este campo o serviço não tinha como provar de quem era: ao ser lido de
+  /// uma origem não filtrada (cache antigo, snapshot da web, backup) ele era
+  /// adotado pela empresa aberta e, ao ser gravado, trocava de dono — era assim
+  /// que "os serviços apareciam em todas as empresas". O `Produto` já carrega o
+  /// dele; o serviço segue a mesma regra.
+  final String? empresaId;
   final String nome;
   final String? descricao;
   final double preco;
@@ -20,6 +29,7 @@ class Servico {
 
   Servico({
     required this.id,
+    this.empresaId,
     required this.nome,
     this.descricao,
     required this.preco,
@@ -47,6 +57,10 @@ class Servico {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      // Vai SEMPRE (mesmo nula): o banco usa o carimbo para recusar a gravação
+      // cruzada entre empresas. Sem a chave, o serviço era adotado pela empresa
+      // aberta no momento da gravação.
+      'empresa_id': empresaId,
       'nome': nome,
       'descricao': descricao,
       'preco': preco,
@@ -83,6 +97,7 @@ class Servico {
 
     return Servico(
       id: map['id']?.toString() ?? '',
+      empresaId: (map['empresa_id'] ?? map['empresaId'])?.toString(),
       nome: map['nome']?.toString() ?? '',
       descricao: map['descricao']?.toString(),
       preco: (getNum('preco', 'preco') ?? 0.0).toDouble(),
@@ -104,6 +119,7 @@ class Servico {
 
   Servico copyWith({
     String? id,
+    String? empresaId,
     String? nome,
     String? descricao,
     double? preco,
@@ -120,6 +136,7 @@ class Servico {
   }) {
     return Servico(
       id: id ?? this.id,
+      empresaId: empresaId ?? this.empresaId,
       nome: nome ?? this.nome,
       descricao: descricao ?? this.descricao,
       preco: preco ?? this.preco,

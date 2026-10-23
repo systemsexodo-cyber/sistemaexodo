@@ -646,12 +646,56 @@ class Empresa {
     return false;
   }
 
-  /// Verifica se há algum motivo de bloqueio (Inadimplência, > 5 dias offline ou relógio alterado)
+  /// Limite padrão de dias sem internet antes de exigir a chave de liberação.
+  static const int limiteDiasOfflinePadrao = 7;
+
+  /// Gera um novo código de liberação offline no padrão `EXO-XXXXXXXX`.
+  ///
+  /// É a licença que o suporte entrega ao cliente quando ele passa do limite de
+  /// dias sem internet. A validação é só comparação de texto (a tela de bloqueio
+  /// compara com `configuracoes['codigo_liberacao_offline']`), então o código
+  /// não carrega assinatura nem validade — gerar um novo invalida o anterior.
+  ///
+  /// [agora] existe para deixar a geração determinística nos testes.
+  static String gerarCodigoLiberacaoOffline({DateTime? agora}) {
+    final base = (agora ?? DateTime.now()).millisecondsSinceEpoch;
+    return 'EXO-${base.toRadixString(36).toUpperCase()}';
+  }
+
+  /// Decide o código que deve ser gravado na empresa: mantém o que já foi
+  /// informado (normalizado como a tela de bloqueio compara) e gera um novo
+  /// quando nada foi informado. É o que a tela de empresa salva.
+  static String normalizarCodigoLiberacaoOffline(String? informado) {
+    final texto = (informado ?? '').trim();
+    return texto.isEmpty ? gerarCodigoLiberacaoOffline() : texto.toUpperCase();
+  }
+
+  /// Dias que a empresa pode ficar sem sincronizar online antes de exigir a
+  /// chave de liberação offline. É configurável por empresa em
+  /// `configuracoes['limite_dias_offline']`; quando ausente/inválido usa
+  /// [limiteDiasOfflinePadrao].
+  int get limiteDiasOffline {
+    final bruto = configuracoes?['limite_dias_offline'];
+    if (bruto == null) return limiteDiasOfflinePadrao;
+    // O valor pode vir como int, double (JSON/Supabase) ou String.
+    final numero = bruto is num
+        ? bruto.round()
+        : int.tryParse(bruto.toString().trim());
+    if (numero == null || numero <= 0) return limiteDiasOfflinePadrao;
+    return numero;
+  }
+
+  /// Verifica se há algum motivo de bloqueio (Inadimplência, excesso de dias
+  /// offline ou relógio alterado).
+  ///
+  /// [limiteDiasOffline] permite forçar um limite específico; quando omitido,
+  /// usa o limite configurado da própria empresa (`limiteDiasOffline`).
   MotivoBloqueioEmpresa verificarMotivoBloqueio({
     DateTime? ultimaValidacaoOnline,
     DateTime? ultimaDataExecucao,
-    int limiteDiasOffline = 5,
+    int? limiteDiasOffline,
   }) {
+    final limiteEfetivo = limiteDiasOffline ?? this.limiteDiasOffline;
     // 1. Anti-Adulteração de Relógio do Sistema (voltar data)
     if (ultimaDataExecucao != null) {
       final agora = DateTime.now();
@@ -672,7 +716,7 @@ class Empresa {
       final diferencaDias = DateTime.now()
           .difference(ultimaValidacaoOnline)
           .inDays;
-      if (diferencaDias > limiteDiasOffline) {
+      if (diferencaDias > limiteEfetivo) {
         return MotivoBloqueioEmpresa.excessoDiasOffline;
       }
     }

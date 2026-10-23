@@ -24,9 +24,9 @@ class EstoqueHistoricoPage extends StatelessWidget {
               h.observacao != null &&
               NumeracaoVenda.numeroNaObservacao(h.observacao) != null,
         )
-        .fold<int>(0, (sum, h) => sum + h.quantidade);
+        .fold<double>(0.0, (sum, h) => sum + h.quantidade.abs());
     // ...continuação do método...
-    final tipos = ['todos', 'entrada', 'saida', 'ajuste'];
+    final tipos = ['todos', 'entrada', 'saida', 'ajuste', 'zerado'];
     ValueNotifier<String> tipoSelecionado = ValueNotifier<String>('todos');
     ValueNotifier<DateTime?> dataInicial = ValueNotifier<DateTime?>(null);
     ValueNotifier<DateTime?> dataFinal = ValueNotifier<DateTime?>(null);
@@ -62,7 +62,7 @@ class EstoqueHistoricoPage extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    '$totalVendido',
+                    '${totalVendido.toStringAsFixed(0)}',
                     style: const TextStyle(
                       color: Colors.yellow,
                       fontSize: 22,
@@ -244,6 +244,7 @@ class EstoqueHistoricoPage extends StatelessWidget {
                             itemCount: historico.length,
                             itemBuilder: (context, i) {
                               final h = historico[i];
+                              final ehZeramento = h.ehZeramento;
                               String? numeroVenda;
                               if (h.tipo == 'saida' && h.observacao != null) {
                                 numeroVenda =
@@ -252,7 +253,9 @@ class EstoqueHistoricoPage extends StatelessWidget {
                               return Container(
                                 margin: const EdgeInsets.symmetric(vertical: 8),
                                 decoration: BoxDecoration(
-                                  color: h.tipo == 'entrada'
+                                  color: ehZeramento
+                                      ? Colors.amber.shade900.withOpacity(0.25)
+                                      : h.tipo == 'entrada'
                                       ? Colors.green.shade900.withOpacity(0.25)
                                       : h.tipo == 'saida'
                                       ? Colors.red.shade900.withOpacity(0.25)
@@ -261,7 +264,9 @@ class EstoqueHistoricoPage extends StatelessWidget {
                                         ),
                                   borderRadius: BorderRadius.circular(16),
                                   border: Border.all(
-                                    color: h.tipo == 'entrada'
+                                    color: ehZeramento
+                                        ? Colors.amber.shade400
+                                        : h.tipo == 'entrada'
                                         ? Colors.green.shade400
                                         : h.tipo == 'saida'
                                         ? Colors.red.shade400
@@ -281,7 +286,12 @@ class EstoqueHistoricoPage extends StatelessWidget {
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
                                       gradient: LinearGradient(
-                                        colors: h.tipo == 'entrada'
+                                        colors: ehZeramento
+                                            ? [
+                                                Colors.amber.shade400,
+                                                Colors.amber.shade700,
+                                              ]
+                                            : h.tipo == 'entrada'
                                             ? [
                                                 Colors.green.shade400,
                                                 Colors.green.shade700,
@@ -301,7 +311,9 @@ class EstoqueHistoricoPage extends StatelessWidget {
                                     ),
                                     padding: const EdgeInsets.all(8),
                                     child: Icon(
-                                      h.tipo == 'entrada'
+                                      ehZeramento
+                                          ? Icons.playlist_remove_rounded
+                                          : h.tipo == 'entrada'
                                           ? Icons.arrow_downward
                                           : h.tipo == 'saida'
                                           ? Icons.arrow_upward
@@ -311,7 +323,9 @@ class EstoqueHistoricoPage extends StatelessWidget {
                                     ),
                                   ),
                                   title: Text(
-                                    '${h.tipo[0].toUpperCase()}${h.tipo.substring(1)} de estoque',
+                                    ehZeramento
+                                        ? 'Estoque zerado'
+                                        : '${h.tipo[0].toUpperCase()}${h.tipo.substring(1)} de estoque',
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: Colors.white,
@@ -350,7 +364,9 @@ class EstoqueHistoricoPage extends StatelessWidget {
                                             ),
                                             const SizedBox(width: 4),
                                             Text(
-                                              ' Quantidade: ${h.quantidade}',
+                                              ehZeramento
+                                                  ? ' Estoque zerado: ${(-h.quantidade).toStringAsFixed(2)} → 0'
+                                                  : ' Quantidade: ${h.quantidade}',
                                               style: const TextStyle(
                                                 fontSize: 12,
                                                 color: Colors.white70,

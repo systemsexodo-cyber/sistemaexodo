@@ -15,7 +15,46 @@ import 'process_utils.dart';
 /// tooltip e no log) e o rótulo CURTO ([DatabaseService.rotuloCurtoDoErroLocal],
 /// que vai no chip do topo) saírem da MESMA classificação — assim os dois nunca
 /// dizem coisas diferentes sobre o mesmo erro.
-enum _MotivoFalhaLocal { semResposta, senha, desligado, lento, naoExiste, generico }
+enum _MotivoFalhaLocal {
+  semResposta,
+  senha,
+  desligado,
+  lento,
+  naoExiste,
+  generico,
+}
+
+/// Um banco candidato na ordem de tentativa de conexão.
+///
+/// O celular começa pelo PC da loja (nome), depois o IP e, por último, a
+/// nuvem configurada em `DB_CLOUD_*` (usada quando o aparelho está fora da
+/// loja). Quem responder primeiro vence.
+class _DestinoBanco {
+  const _DestinoBanco({
+    required this.host,
+    required this.port,
+    required this.database,
+    required this.username,
+    required this.password,
+    required this.ssl,
+    required this.timeout,
+    this.directTls = false,
+  });
+
+  final String host;
+  final int port;
+  final String database;
+  final String username;
+  final String password;
+  final SslMode ssl;
+
+  /// Quando true, o TLS é negociado imediatamente (sem o `SSLRequest` do
+  /// PostgreSQL). Necessário para o Funnel, que espera TLS como primeiros bytes.
+  final bool directTls;
+
+  /// Quanto esperar por ESTE destino antes de passar para o próximo.
+  final Duration timeout;
+}
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
@@ -45,6 +84,18 @@ class DatabaseService {
       _pgConnection = null;
       _pgConnectionFuture = null;
     }
+  }
+
+  /// Fecha e esquece a conexão atual.
+  ///
+  /// Usado quando o endereço do banco muda (tela "Configurar servidor" no
+  /// celular): sem isso, o app continuaria preso à conexão antiga até fechar.
+  void resetarConexao() {
+    try {
+      _pgConnection?.close();
+    } catch (_) {}
+    _pgConnection = null;
+    _pgConnectionFuture = null;
   }
 
   Future<T> _enqueue<T>(Future<T> Function() action) {
@@ -115,34 +166,58 @@ class DatabaseService {
   }
 
   Future<Connection> _connect() async {
-    debugPrint('>>> [PostgreSQL] 🔌 Conectando ao PostgreSQL local...');
-    final host = _hostLocal();
+    debugPrint('>>> [PostgreSQL] 🔌 Conectando...');
 
-    Future<Connection> abrir(String banco) => Connection.open(
-      Endpoint(
-        host: host,
-        port: EnvConfig.dbPort,
-        database: banco,
-        username: EnvConfig.dbUser,
-        password: EnvConfig.dbPassword,
-      ),
-      settings: const ConnectionSettings(sslMode: SslMode.disable),
-    );
+    // Ordem de tentativa (a primeira que responder vence):
+    //   1. DB_HOST           -> nome do PC (ex.: DESKTOP-86UT1R1)
+    //   2. DB_HOST_FALLBACK  -> IP do PC (Android não resolve nome sem DNS local)
+    //   3. DB_CLOUD_HOST     -> nuvem (quando o celular está fora da loja)
+    final destinos = _destinos();
+
+    Future<Connection> abrir() async {
+      Object? ultimoErro;
+      for (final d in destinos) {
+        try {
+          return await Connection.open(
+            Endpoint(
+              host: d.host,
+              port: d.port,
+              database: d.database,
+              username: d.username,
+              password: d.password,
+            ),
+            settings: ConnectionSettings(
+              sslMode: d.ssl,
+              directTls: d.directTls,
+            ),
+          ).timeout(d.timeout);
+        } catch (e) {
+          ultimoErro = e;
+          if (destinos.length > 1) {
+            debugPrint(
+              '>>> [PostgreSQL] "${d.host}:${d.port}" não respondeu '
+              '($e). Tentando o próximo...',
+            );
+          }
+        }
+      }
+      throw ultimoErro ??
+          Exception('Nenhum endereço de PostgreSQL configurado');
+    }
 
     Connection conn;
     try {
-      conn = await abrir(EnvConfig.dbName);
+      conn = await abrir();
     } catch (e) {
       if (_classificarFalhaLocal(e) == _MotivoFalhaLocal.desligado) {
         // SERVIÇO PARADO: "connection refused" significa que o PostgreSQL
         // DESTE computador está desligado. Sem ligar, toda leitura devolve
         // lista vazia e as telas abrem sem os dados locais (principalmente o
         // Fluxo de Caixa). O próprio app tenta subir o serviço e reconectar.
-        final (iniciado, mensagem) =
-            await PostgresLocalStarter.tentarIniciar();
+        final (iniciado, mensagem) = await PostgresLocalStarter.tentarIniciar();
         debugPrint('>>> [PostgreSQL] $mensagem');
         if (!iniciado) rethrow;
-        conn = await abrir(EnvConfig.dbName);
+        conn = await abrir();
       } else if (_erroDeBancoInexistente(e)) {
         // Banco apagado (ou instalação que parou no meio): cria o banco e as
         // tabelas sozinho, em vez de deixar o sistema sem abrir.
@@ -151,7 +226,7 @@ class DatabaseService {
         );
         final (criado, _) = await criarBancoLocal();
         if (!criado) rethrow;
-        conn = await abrir(EnvConfig.dbName);
+        conn = await abrir();
       } else {
         rethrow;
       }
@@ -166,10 +241,64 @@ class DatabaseService {
     return conn;
   }
 
+  /// Monta a lista de bancos a tentar, na ordem: PC (nome), PC (IP), nuvem.
+  List<_DestinoBanco> _destinos() {
+    final lista = <_DestinoBanco>[
+      _DestinoBanco(
+        host: _hostLocal(),
+        port: EnvConfig.dbPort,
+        database: EnvConfig.dbName,
+        username: EnvConfig.dbUser,
+        password: EnvConfig.dbPassword,
+        ssl: SslMode.disable,
+        timeout: const Duration(seconds: 4),
+      ),
+    ];
+
+    final ip = _hostFallback();
+    if (ip.isNotEmpty && ip != lista.first.host) {
+      lista.add(
+        _DestinoBanco(
+          host: ip,
+          port: EnvConfig.dbPort,
+          database: EnvConfig.dbName,
+          username: EnvConfig.dbUser,
+          password: EnvConfig.dbPassword,
+          ssl: SslMode.disable,
+          timeout: const Duration(seconds: 4),
+        ),
+      );
+    }
+
+    final nuvem = EnvConfig.dbCloudHost;
+    if (nuvem.isNotEmpty) {
+      lista.add(
+        _DestinoBanco(
+          host: nuvem,
+          port: EnvConfig.dbCloudPort,
+          database: EnvConfig.dbCloudName,
+          username: EnvConfig.dbCloudUser,
+          password: EnvConfig.dbCloudPassword,
+          ssl: EnvConfig.dbCloudSsl ? SslMode.require : SslMode.disable,
+          directTls: EnvConfig.dbCloudSsl,
+          timeout: const Duration(seconds: 15),
+        ),
+      );
+    }
+
+    return lista;
+  }
+
   /// Host do PostgreSQL local. `localhost` vira `127.0.0.1` para o driver não
   /// tentar IPv6 (que não existe neste servidor).
   String _hostLocal() {
     final host = EnvConfig.dbHost;
+    return host.toLowerCase() == 'localhost' ? '127.0.0.1' : host;
+  }
+
+  /// IP de reserva quando o nome configurado em `DB_HOST` não resolve na rede.
+  String _hostFallback() {
+    final host = EnvConfig.dbHostFallback;
     return host.toLowerCase() == 'localhost' ? '127.0.0.1' : host;
   }
 
@@ -443,7 +572,9 @@ class DatabaseService {
       candidatos.add(p.join(base, 'scripts', 'migrations'));
       candidatos.add(p.join(base, '..', 'scripts', 'migrations'));
     } catch (_) {}
-    candidatos.add(p.join(cwd ?? Directory.current.path, 'scripts', 'migrations'));
+    candidatos.add(
+      p.join(cwd ?? Directory.current.path, 'scripts', 'migrations'),
+    );
 
     for (final caminho in candidatos) {
       try {
@@ -503,9 +634,11 @@ class DatabaseService {
         if (!e.path.toLowerCase().endsWith('.sql')) continue;
         final versao = versaoDoArquivoMigracao(e.path);
         if (versao == null) continue;
-        arquivos.add(
-          (versao: versao, caminho: e.path, nome: p.basename(e.path)),
-        );
+        arquivos.add((
+          versao: versao,
+          caminho: e.path,
+          nome: p.basename(e.path),
+        ));
       }
     } catch (e) {
       log('❌ Não consegui listar $dir: $e');
@@ -534,7 +667,9 @@ class DatabaseService {
       ''');
 
       final aplicadas = <int>{};
-      final res = await conexao.execute('SELECT versao FROM public.schema_migrations');
+      final res = await conexao.execute(
+        'SELECT versao FROM public.schema_migrations',
+      );
       for (final row in res) {
         final v = row[0];
         if (v is int) {
@@ -543,10 +678,13 @@ class DatabaseService {
           aplicadas.add(int.tryParse(v.toString()) ?? -1);
         }
       }
-      ultimaVersaoSchema = aplicadas.isEmpty ? null : aplicadas.reduce((a, b) => a > b ? a : b);
+      ultimaVersaoSchema = aplicadas.isEmpty
+          ? null
+          : aplicadas.reduce((a, b) => a > b ? a : b);
 
-      final pendentes =
-          arquivos.where((a) => !aplicadas.contains(a.versao)).toList();
+      final pendentes = arquivos
+          .where((a) => !aplicadas.contains(a.versao))
+          .toList();
       if (pendentes.isEmpty) {
         log('✅ Schema em dia (última versão: ${ultimaVersaoSchema ?? 0}).');
         _migracoesAplicadas = true;
@@ -563,8 +701,7 @@ class DatabaseService {
 
       for (final mig in pendentes) {
         log('▶️ Aplicando ${mig.nome}...');
-        final (ok, erro) =
-            await _executarSqlMigracao(psqlPath, mig.caminho);
+        final (ok, erro) = await _executarSqlMigracao(psqlPath, mig.caminho);
         if (!ok) {
           log('❌ Falha em ${mig.nome}: $erro');
           return (false, logs);
@@ -581,7 +718,9 @@ class DatabaseService {
         log('✅ ${mig.nome} aplicada.');
       }
 
-      log('✅ Migrações concluídas. Schema na versão ${ultimaVersaoSchema ?? 0}.');
+      log(
+        '✅ Migrações concluídas. Schema na versão ${ultimaVersaoSchema ?? 0}.',
+      );
       _migracoesAplicadas = true;
       return (true, logs);
     } catch (e) {
@@ -600,21 +739,28 @@ class DatabaseService {
       ambiente['PGPASSWORD'] = EnvConfig.dbPassword;
       ambiente['PGCLIENTENCODING'] = 'UTF8';
 
-      final result = await runProcessHidden(psqlPath, <String>[
-        '-h', _hostLocal(),
-        '-p', '${EnvConfig.dbPort}',
-        '-U', EnvConfig.dbUser,
-        '-d', EnvConfig.dbName,
-        '--no-psqlrc',
-        '-v', 'ON_ERROR_STOP=1',
-        '--single-transaction',
-        '-f', arquivo,
-      ], environment: ambiente).timeout(
-        const Duration(minutes: 10),
-        onTimeout: () => throw TimeoutException(
-          'A migração ${p.basename(arquivo)} excedeu 10 minutos',
-        ),
-      );
+      final result =
+          await runProcessHidden(psqlPath, <String>[
+            '-h',
+            _hostLocal(),
+            '-p',
+            '${EnvConfig.dbPort}',
+            '-U',
+            EnvConfig.dbUser,
+            '-d',
+            EnvConfig.dbName,
+            '--no-psqlrc',
+            '-v',
+            'ON_ERROR_STOP=1',
+            '--single-transaction',
+            '-f',
+            arquivo,
+          ], environment: ambiente).timeout(
+            const Duration(minutes: 10),
+            onTimeout: () => throw TimeoutException(
+              'A migração ${p.basename(arquivo)} excedeu 10 minutos',
+            ),
+          );
 
       if (result.exitCode != 0) {
         final erro = '${result.stderr}'.trim().replaceAll(RegExp(r'\s+'), ' ');
@@ -712,6 +858,65 @@ class DatabaseService {
     'empresas',
     'usuarios',
   };
+
+  /// Tabelas que PERTENCEM a uma empresa — as que o app SEMPRE lê com
+  /// `WHERE empresa_id = <aberta>`.
+  ///
+  /// A lista é fixa de propósito: antes o filtro só era montado quando o
+  /// *schema cache* (`information_schema`) dizia que a tabela tinha a coluna
+  /// `empresa_id`. Numa base que nasceu de um schema antigo (sem a coluna nas
+  /// tabelas de caixa), o cache não trazia a coluna, o `WHERE` era omitido e a
+  /// leitura devolvia as linhas de TODAS as empresas — era assim que o Fluxo de
+  /// Caixa aparecia misturado. Com a lista canônica o filtro não depende mais do
+  /// cache (e a migração em [_inicializarColunas] garante a coluna).
+  static const Set<String> tabelasPorEmpresa = {
+    'produtos',
+    'clientes',
+    'pedidos',
+    'vendas_balcao',
+    'mesas_comandas',
+    'servicos',
+    'servicos_realizados',
+    'orcamentos',
+    'ordens_servico',
+    'entregas',
+    'motoristas',
+    'trocas_devolucoes',
+    'estoque_historico',
+    'ajustes_estoque_lote',
+    'lotes_produto',
+    'produto_historico',
+    'notas_entrada',
+    'pedidos_compra',
+    'funcionarios',
+    'taxas_entrega',
+    'contas_pagar',
+    'nfces',
+    'nfes',
+    'agendamentos_servico',
+    'links_vendedores',
+    'comissoes_vendedores',
+    'romaneios',
+    'aberturas_caixa',
+    'fechamentos_caixa',
+    'sangrias_caixa',
+    'suprimentos_caixa',
+  };
+
+  /// A leitura desta tabela precisa do filtro por empresa?
+  ///
+  /// `true` para tabelas da lista canônica (mesmo que o schema cache esteja
+  /// vazio/torto) e para qualquer tabela que o schema diga ter `empresa_id`.
+  /// `false` para as globais (`empresas`, `usuarios`) e para as tabelas fora da
+  /// lista cuja coluna não existe.
+  static bool deveFiltrarPorEmpresa(
+    String tabela,
+    Map<String, String>? colunas,
+  ) {
+    if (tabelasGlobaisSemFiltroDeEmpresa.contains(tabela)) return false;
+    if (tabelasPorEmpresa.contains(tabela)) return true;
+    return colunas != null && colunas.containsKey('empresa_id');
+  }
 
   /// Colunas DUPLICADAS (camelCase) que o app IGNORA ao LER uma tabela.
   ///
@@ -860,7 +1065,8 @@ class DatabaseService {
     for (final row in lista) {
       final snake = row['empresa_id']?.toString();
       final camel = row['empresaId']?.toString();
-      final jaCarimbado = (snake != null && snake.isNotEmpty) ||
+      final jaCarimbado =
+          (snake != null && snake.isNotEmpty) ||
           (camel != null && camel.isNotEmpty);
       if (!jaCarimbado) {
         row['empresa_id'] = empresa;
@@ -1133,6 +1339,7 @@ class DatabaseService {
         await _garantirAgendamentosServico(conn);
         await _garantirServicosRealizados(conn);
         await _garantirOrcamentos(conn);
+        await _garantirPedidosCompra(conn);
 
         // Histórico de estoque: preservar fornecedor/observação/usuario localmente
         await conn.execute(
@@ -1154,6 +1361,24 @@ class DatabaseService {
         await conn.execute(
           'ALTER TABLE estoque_historico ADD COLUMN IF NOT EXISTS valor_custo NUMERIC;',
         );
+
+        // ISOLAMENTO POR EMPRESA: garante a coluna `empresa_id` em TODA tabela
+        // por empresa. Numa base antiga, as tabelas de caixa não tinham a coluna
+        // e a leitura não conseguia filtrar (nem a gravação carimbar) — as telas
+        // mostravam os dados de todas as empresas juntos. O `IF NOT EXISTS`
+        // torna a migração idempotente.
+        for (final tabela in tabelasPorEmpresa) {
+          try {
+            await conn.execute(
+              'ALTER TABLE "$tabela" ADD COLUMN IF NOT EXISTS empresa_id TEXT;',
+            );
+          } catch (e) {
+            // Tabela ausente/criada depois: não pode derrubar as demais.
+            debugPrint(
+              '>>> [PostgreSQL] ⚠️ empresa_id não garantido em $tabela: $e',
+            );
+          }
+        }
 
         _tableColumnTypes.clear();
 
@@ -1200,6 +1425,8 @@ class DatabaseService {
           'idx_nfces_empresa_id ON nfces(empresa_id)',
           'idx_nfes_empresa_id ON nfes(empresa_id)',
           'idx_notas_entrada_empresa_id ON notas_entrada(empresa_id)',
+          'idx_pedidos_compra_empresa_id ON pedidos_compra(empresa_id)',
+          'idx_pedidos_compra_status ON pedidos_compra(status)',
           'idx_ordens_servico_empresa_id ON ordens_servico(empresa_id)',
           'idx_produto_historico_empresa_id ON produto_historico(empresa_id)',
           'idx_romaneios_empresa_id ON romaneios(empresa_id)',
@@ -1215,9 +1442,7 @@ class DatabaseService {
         ];
         for (final indice in indicesEmpresa) {
           try {
-            await conn.execute(
-              'CREATE INDEX IF NOT EXISTS $indice;',
-            );
+            await conn.execute('CREATE INDEX IF NOT EXISTS $indice;');
           } catch (e) {
             // Tabela ausente/criada depois: não pode derrubar as demais.
             debugPrint('>>> [PostgreSQL] ⚠️ Índice não criado ($indice): $e');
@@ -1700,6 +1925,109 @@ END;
     }
   }
 
+  Future<void> _garantirPedidosCompra(Connection conn) async {
+    try {
+      await conn.execute('''
+        CREATE TABLE IF NOT EXISTS pedidos_compra (
+          id TEXT PRIMARY KEY,
+          empresa_id TEXT NOT NULL DEFAULT '',
+          numero TEXT DEFAULT '',
+          fornecedor_id TEXT DEFAULT '',
+          fornecedor_nome TEXT DEFAULT '',
+          fornecedor_cnpj TEXT DEFAULT '',
+          fornecedor_telefone TEXT DEFAULT '',
+          status TEXT DEFAULT 'rascunho',
+          itens JSONB DEFAULT '[]'::jsonb,
+          observacao TEXT DEFAULT '',
+          usuario TEXT DEFAULT '',
+          estoque_destino_id TEXT DEFAULT '',
+          estoque_destino_nome TEXT DEFAULT '',
+          data_criacao TIMESTAMPTZ DEFAULT NOW(),
+          data_envio TIMESTAMPTZ,
+          previsao_entrega TIMESTAMPTZ,
+          data_recebimento TIMESTAMPTZ,
+          data_cancelamento TIMESTAMPTZ,
+          motivo_cancelamento TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      ''');
+      // Bases que já tinham a tabela (versões anteriores do recurso) recebem
+      // as colunas que faltarem — a migração é idempotente.
+      const colunas = <String>[
+        'numero TEXT DEFAULT \'\'',
+        'fornecedor_id TEXT DEFAULT \'\'',
+        'fornecedor_nome TEXT DEFAULT \'\'',
+        'fornecedor_cnpj TEXT DEFAULT \'\'',
+        'fornecedor_telefone TEXT DEFAULT \'\'',
+        'status TEXT DEFAULT \'rascunho\'',
+        'itens JSONB DEFAULT \'[]\'::jsonb',
+        'observacao TEXT DEFAULT \'\'',
+        'usuario TEXT DEFAULT \'\'',
+        'estoque_destino_id TEXT DEFAULT \'\'',
+        'estoque_destino_nome TEXT DEFAULT \'\'',
+        'data_criacao TIMESTAMPTZ DEFAULT NOW()',
+        'data_envio TIMESTAMPTZ',
+        'previsao_entrega TIMESTAMPTZ',
+        'data_recebimento TIMESTAMPTZ',
+        'data_cancelamento TIMESTAMPTZ',
+        'motivo_cancelamento TEXT DEFAULT \'\'',
+        'created_at TIMESTAMPTZ DEFAULT NOW()',
+        'updated_at TIMESTAMPTZ DEFAULT NOW()',
+      ];
+      for (final coluna in colunas) {
+        try {
+          await conn.execute(
+            'ALTER TABLE pedidos_compra ADD COLUMN IF NOT EXISTS $coluna;',
+          );
+        } catch (e) {
+          debugPrint(
+            '>>> [PostgreSQL] ⚠️ Coluna de pedidos_compra não criada '
+            '($coluna): $e',
+          );
+        }
+      }
+      // A tabela criada pelo scripts/init_db.sql antigo não tinha PK. Sem ela
+      // o `ON CONFLICT (id)` do upsert falha e nenhum pedido é gravado.
+      try {
+        await conn.execute(r'''
+          DO $$ BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conname = 'pedidos_compra_pkey'
+                AND connamespace = 'public'::regnamespace
+            ) THEN
+              ALTER TABLE ONLY public.pedidos_compra
+                ADD CONSTRAINT pedidos_compra_pkey PRIMARY KEY (id);
+            END IF;
+          END $$;
+        ''');
+      } catch (e) {
+        debugPrint('>>> [PostgreSQL] ⚠️ PK de pedidos_compra não criada: $e');
+      }
+      await conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pedidos_compra_empresa_id ON pedidos_compra(empresa_id);',
+      );
+      await conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pedidos_compra_status ON pedidos_compra(status);',
+      );
+      await conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pedidos_compra_fornecedor ON pedidos_compra(fornecedor_nome);',
+      );
+
+      await conn.execute(
+        'DROP TRIGGER IF EXISTS trg_exodo_sync_log_pedidos_compra ON pedidos_compra;',
+      );
+      await conn.execute('''
+        CREATE TRIGGER trg_exodo_sync_log_pedidos_compra
+        AFTER INSERT OR DELETE OR UPDATE ON public.pedidos_compra
+        FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+      ''');
+    } catch (e) {
+      debugPrint('>>> [PostgreSQL] ❌ Erro ao garantir pedidos_compra: $e');
+    }
+  }
+
   Future<void> _garantirServicosRealizados(Connection conn) async {
     try {
       await conn.execute('''
@@ -1844,6 +2172,87 @@ END;
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )
       ''');
+
+      // ⚠️ MIGRAÇÃO DE COLUNAS FALTANTES.
+      //
+      // O CREATE TABLE acima só roda quando a tabela NÃO existe. Bases criadas
+      // por `scripts/init_db.sql` (herdado do pg_dump antigo) ficaram com a
+      // estrutura de 16 colunas — sem `data_agendamento`, sem `servicos_ids`,
+      // sem `materiais` etc. O `_upsertRows` descarta em silêncio qualquer
+      // chave do model sem coluna correspondente, e foi exatamente isso que
+      // apagou a DATA dos agendamentos: `dataAgendamento` virava
+      // `data_agendamento`, a coluna não existia, o valor sumia — e na leitura
+      // `DateParser.parse(null)` devolvia `DateTime.now()`, fazendo TODOS os
+      // agendamentos aparecerem em "hoje", todo dia.
+      //
+      // `ADD COLUMN IF NOT EXISTS` torna a migração idempotente. Os tipos
+      // seguem o CREATE TABLE acima. Roda antes de `_tableColumnTypes.clear()`
+      // em [_inicializarColunas], então o schema cache é recarregado com as
+      // colunas novas e a gravação volta a funcionar no mesmo boot.
+      const colunasAgendamento = <String, String>{
+        'servico_id': 'TEXT',
+        'servicos_ids': "JSONB DEFAULT '[]'",
+        'data_agendamento': 'TIMESTAMPTZ',
+        'duracao_minutos': 'INT DEFAULT 60',
+        'intervalo_minutos': 'INT DEFAULT 0',
+        'tipo_entrega': 'TEXT',
+        'valor_taxi_dog': 'NUMERIC',
+        'bairro_entrega': 'TEXT',
+        'pedido_id': 'TEXT',
+        'numero_pedido': 'TEXT',
+        'recebido': 'BOOLEAN DEFAULT FALSE',
+        'data_recebimento': 'TIMESTAMPTZ',
+        'cliente_telefone': 'TEXT',
+        'endereco': 'TEXT',
+        'numero_endereco': 'TEXT',
+        'complemento': 'TEXT',
+        'ponto_referencia': 'TEXT',
+        'excluido': 'BOOLEAN DEFAULT FALSE',
+        'travado': 'BOOLEAN DEFAULT FALSE',
+        'funcionario_id': 'TEXT',
+        'funcionario_nome': 'TEXT',
+        'recorrente': 'BOOLEAN DEFAULT FALSE',
+        'is_pago': 'BOOLEAN DEFAULT FALSE',
+        'pagamento_info': 'TEXT',
+        'materiais': "JSONB DEFAULT '[]'",
+      };
+      for (final entry in colunasAgendamento.entries) {
+        try {
+          await conn.execute(
+            'ALTER TABLE agendamentos_servico '
+            'ADD COLUMN IF NOT EXISTS ${entry.key} ${entry.value};',
+          );
+        } catch (e) {
+          debugPrint(
+            '>>> [PostgreSQL] ⚠️ Coluna ${entry.key} não garantida '
+            'em agendamentos_servico: $e',
+          );
+        }
+      }
+
+      // Retropreenche `data_agendamento` a partir do legado `data_hora` quando
+      // ele tiver valor (a maioria das bases ficou com NULL, mas se existir
+      // data em texto não pode se perder). Bloco com TRY/CATCH: formato
+      // inesperado em `data_hora` não pode derrubar o boot.
+      await conn.execute(r'''
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_schema = 'public'
+                       AND table_name = 'agendamentos_servico'
+                       AND column_name = 'data_hora') THEN
+            UPDATE agendamentos_servico
+               SET data_agendamento = data_hora::timestamptz
+             WHERE data_agendamento IS NULL
+               AND data_hora IS NOT NULL
+               AND data_hora <> ''
+               AND data_hora ~ '^\d{4}-\d{2}-\d{2}';
+          END IF;
+        EXCEPTION WHEN OTHERS THEN
+          RAISE NOTICE 'backfill data_agendamento ignorado: %', SQLERRM;
+        END $$;
+      ''');
+
       await conn.execute(
         'CREATE INDEX IF NOT EXISTS idx_agendamentos_empresa_id ON agendamentos_servico(empresa_id);',
       );
@@ -2021,6 +2430,14 @@ END;
     // era gravado na tabela 'produtos' (nome null) e travava o sincronizador
     // (erro 23502 'null value in column nome').
     if (chave.contains('lotes_produtos')) return 'lotes_produto';
+    // ⚠️ ANTES de 'pedidos': 'exodo_pedidos_compra' contém a substring
+    // 'pedidos' e seria gravado na tabela de PEDIDOS DE VENDA.
+    if (chave.contains('pedidos_compra')) return 'pedidos_compra';
+    // ⚠️ ANTES de 'estoque_historico'-genéricos: os ajustes em lote têm tabela
+    // própria desde a migração 005, mas ficavam caindo em `cache_dados` (JSON
+    // reescrito inteiro) — e o aparador de memória cortava para ~100 itens,
+    // PERDENDO histórico de ajuste no banco local.
+    if (chave.contains('ajustes_estoque_lote')) return 'ajustes_estoque_lote';
     // ⚠️ ANTES de 'servicos': 'servicos_realizados' contém a substring
     // 'servicos' e seria gravado na tabela de CATÁLOGO de serviços.
     if (chave.contains('servicos_realizados')) return 'servicos_realizados';
@@ -2164,10 +2581,43 @@ END;
       return;
     }
 
+    // ⛔ DUPLICATAS DE `id` NO MESMO LOTE — trava do PostgreSQL.
+    //
+    // O lote vira UM único comando (`INSERT ... VALUES (várias linhas) ON
+    // CONFLICT (id) DO UPDATE`). Se a lista trouxer o MESMO id duas vezes, o
+    // Postgres recusa o comando inteiro com SQLSTATE 21000 ("ON CONFLICT DO
+    // UPDATE command cannot affect row a second time"): ele não pode atualizar a
+    // mesma linha duas vezes dentro da mesma instrução. O erro derrubava a
+    // gravação de TODO o lote — nenhum produto era salvo.
+    //
+    // A lista pode vir com id repetido quando a coleção em memória tem o mesmo
+    // produto duas vezes (carga da nuvem + edição local, importação etc.).
+    // Ficamos com a ÚLTIMA ocorrência de cada id: é exatamente o resultado que
+    // teria gravando linha a linha, na ordem da lista.
+    final porId = <String, Map<String, dynamic>>{};
+    final semId = <Map<String, dynamic>>[];
+    for (final item in lista) {
+      final id = item['id']?.toString();
+      if (id == null || id.isEmpty) {
+        semId.add(item); // a normalização logo abaixo já descarta estas linhas
+      } else {
+        porId[id] = item; // última ocorrência vence
+      }
+    }
+    if (porId.length != lista.length - semId.length) {
+      debugPrint(
+        '>>> [PostgreSQL] ♻️ $tabela: ${lista.length - porId.length - semId.length} id(s) '
+        'repetido(s) no lote — mantida a última versão de cada um.',
+      );
+    }
+    final listaUnica = <Map<String, dynamic>>[...porId.values, ...semId];
+
     final chunkSize = 100;
-    for (var i = 0; i < lista.length; i += chunkSize) {
-      final end = (i + chunkSize < lista.length) ? i + chunkSize : lista.length;
-      final chunk = lista.sublist(i, end);
+    for (var i = 0; i < listaUnica.length; i += chunkSize) {
+      final end = (i + chunkSize < listaUnica.length)
+          ? i + chunkSize
+          : listaUnica.length;
+      final chunk = listaUnica.sublist(i, end);
 
       await conn.runTx((session) async {
         await session.execute(
@@ -2372,33 +2822,42 @@ END;
             .map((c) => '"$c" = EXCLUDED."$c"')
             .join(', ');
 
-        // 🔒 TRAVA DE EMPRESA NO CONFLITO DE ID (a mais importante).
+        // ⛔ SÓ ATUALIZA QUANDO ALGO MUDOU DE VERDADE.
         //
-        // O `ON CONFLICT (id)` casa pela chave primária `id`, que NÃO inclui a
-        // empresa. Sem esta condição, gravar um registro cujo `id` já existe em
-        // OUTRA empresa atualizava a linha existente — inclusive o `empresa_id` —
-        // e o dado "mudava de dono". Foi exatamente assim que itens apareceram na
-        // empresa errada (ids fixos/curtos, como o produto "Diversos"
-        // `produto-diversos-9999` ou os ids '1'..'15' de demonstração, repetidos
-        // em toda empresa).
+        // O flush grava a COLEÇÃO INTEIRA (milhares de produtos) mesmo quando o
+        // usuário editou um único registro. Sem esta condição, o `ON CONFLICT
+        // DO UPDATE` tocava TODAS as linhas e o trigger `set_updated_at`
+        // carimbava `updated_at = NOW()` em cada uma. Resultado: depois de
+        // qualquer edição local, o catálogo inteiro ficava "mais novo" que a
+        // nuvem e as alterações feitas no site eram recusadas para sempre
+        // ("Nuvem não é mais nova que o local").
         //
-        // Com o `WHERE`, o UPDATE do conflito só acontece quando a empresa do
-        // registro que já está no banco é a MESMA da linha que chegou. Se for de
-        // outra empresa, o UPDATE não roda — a linha de origem fica intacta. (O
-        // `_carimbarEmpresaId` + as regras do `_upsertRows` já garantem que, na
-        // operação normal, a empresa sempre coincide; esta trava fecha o caso de
-        // `id` compartilhado, que escapava.)
-        final guardaEmpresa =
-            (columns.containsKey('empresa_id') &&
-                !tabelasGlobaisSemFiltroDeEmpresa.contains(tabela))
-            ? ' WHERE "$tabela"."empresa_id" = EXCLUDED."empresa_id"'
-            : '';
+        // Com o WHERE, linha idêntica não é atualizada (trigger não dispara) e
+        // o `updated_at` real de cada registro é preservado.
+        // 🔒 TRAVA DE EMPRESA NO CONFLITO DE ID: o `ON CONFLICT (id)` casa pela
+        // chave primária, que NÃO inclui a empresa. Sem esta condição, gravar um
+        // registro cujo `id` já existe em OUTRA empresa atualizava a linha
+        // existente (inclusive `empresa_id`) e o dado "mudava de dono". O UPDATE
+        // do conflito só roda quando a empresa do registro no banco é a MESMA da
+        // linha que chegou.
+        final comparacaoLinha =
+            '(ROW(${colList.map((c) => '"$tabela"."$c"').join(', ')}) '
+            'IS DISTINCT FROM '
+            'ROW(${colList.map((c) => 'EXCLUDED."$c"').join(', ')}))';
+        final condicoesWhere = <String>[
+          if (columns.containsKey('empresa_id') &&
+              !tabelasGlobaisSemFiltroDeEmpresa.contains(tabela))
+            '"$tabela"."empresa_id" = EXCLUDED."empresa_id"',
+          comparacaoLinha,
+        ];
+
+        final clausulaWhere = ' WHERE ${condicoesWhere.join(' AND ')}';
 
         final sql =
             '''
           INSERT INTO "$tabela" ($colsSql)
           VALUES ${valsSqlRows.join(", ")}
-          ON CONFLICT (id) DO UPDATE SET $updSql$guardaEmpresa
+          ON CONFLICT (id) DO UPDATE SET $updSql$clausulaWhere
         ''';
 
         await session.execute(Sql.named(sql), parameters: params);
@@ -2625,7 +3084,8 @@ END;
     // 'column does not exist' é erro de SQL e cai no texto genérico.
     final falouDoBanco =
         minusculo.contains('database') || minusculo.contains('banco');
-    final naoExiste = minusculo.contains('does not exist') ||
+    final naoExiste =
+        minusculo.contains('does not exist') ||
         minusculo.contains('não existe') ||
         minusculo.contains('nao existe');
     if (falouDoBanco && naoExiste) return _MotivoFalhaLocal.naoExiste;
@@ -2679,8 +3139,12 @@ END;
     }
   }
 
-  void _anotarFalhaLocal(String chave, Object erro, StackTrace? st,
-      {String acao = 'ler'}) {
+  void _anotarFalhaLocal(
+    String chave,
+    Object erro,
+    StackTrace? st, {
+    String acao = 'ler',
+  }) {
     _ultimaFalhaLocal = erro.toString();
     _chaveDaUltimaFalhaLocal = chave;
     debugPrint('>>> [PostgreSQL] ❌ Erro ao $acao $chave: $erro');
@@ -2708,15 +3172,18 @@ END;
   }
 
   Future<List<Map<String, dynamic>>> _lerDoBancoComRetentativa(
-      String chave) async {
+    String chave,
+  ) async {
     Object? ultimoErro;
     StackTrace? ultimaPilha;
-    for (var tentativa = 1;; tentativa++) {
+    for (var tentativa = 1; ; tentativa++) {
       try {
         final dados = await _carregarListaDoBanco(chave);
         if (tentativa > 1) {
-          debugPrint('>>> [PostgreSQL] ✅ "$chave" respondeu na '
-              '${tentativa}ª tentativa — banco local em uso.');
+          debugPrint(
+            '>>> [PostgreSQL] ✅ "$chave" respondeu na '
+            '${tentativa}ª tentativa — banco local em uso.',
+          );
         }
         _leituraLocalConcluida = true;
         limparFalhaDoBancoLocal();
@@ -2743,129 +3210,124 @@ END;
   /// Corpo da leitura, SEM a fila: quem enfileira é o `carregarLista` (assim a
   /// segunda tentativa não fica presa esperando a primeira na mesma fila).
   Future<List<Map<String, dynamic>>> _carregarListaDoBanco(String chave) async {
-      final tabela = _mapearChaveParaTabela(chave);
-      try {
-        final conn = await connection;
-        if (tabela == null) {
-          await _garantirCacheDados(conn);
-          final result = await conn.execute(
-            Sql.named(
-              'SELECT valor_json FROM cache_dados WHERE chave = @chave',
-            ),
-            parameters: <String, Object?>{'chave': chave},
+    final tabela = _mapearChaveParaTabela(chave);
+    try {
+      final conn = await connection;
+      if (tabela == null) {
+        await _garantirCacheDados(conn);
+        final result = await conn.execute(
+          Sql.named('SELECT valor_json FROM cache_dados WHERE chave = @chave'),
+          parameters: <String, Object?>{'chave': chave},
+        );
+        if (result.isEmpty) return [];
+        final valorJson = result.first[0] as String?;
+        if (valorJson == null || valorJson.isEmpty) return [];
+        final decoded = jsonDecode(valorJson);
+        if (decoded is List) {
+          return decoded.cast<Map<String, dynamic>>();
+        }
+        return [];
+      }
+
+      await _inicializarColunas(conn);
+      String sql = 'SELECT * FROM "$tabela"';
+      final params = <String, Object?>{};
+
+      final columns = _tableColumnTypes[tabela];
+      if (deveFiltrarPorEmpresa(tabela, columns)) {
+        // Tabela POR EMPRESA: sem empresa definida não pode consultar sem
+        // filtro. Sem o WHERE, o SELECT * traria as linhas de TODAS as
+        // empresas e o app mostraria dados misturados.
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ carregarLista($tabela) devolvendo vazio: nenhuma empresa '
+            'selecionada (sem filtro viriam os dados de todas as empresas).',
           );
-          if (result.isEmpty) return [];
-          final valorJson = result.first[0] as String?;
-          if (valorJson == null || valorJson.isEmpty) return [];
-          final decoded = jsonDecode(valorJson);
-          if (decoded is List) {
-            return decoded.cast<Map<String, dynamic>>();
-          }
           return [];
         }
+        sql += ' WHERE empresa_id = @empresaId';
+        params['empresaId'] = _empresaId;
+      }
 
-        await _inicializarColunas(conn);
-        String sql = 'SELECT * FROM "$tabela"';
-        final params = <String, Object?>{};
+      if (tabela == 'vendas_balcao' || tabela == 'pedidos') {
+        sql += ' ORDER BY created_at DESC';
+      }
 
-        final columns = _tableColumnTypes[tabela];
-        if (columns != null &&
-            columns.containsKey('empresa_id') &&
-            !tabelasGlobaisSemFiltroDeEmpresa.contains(tabela)) {
-          // Tabela POR EMPRESA: sem empresa definida não pode consultar sem
-          // filtro. Sem o WHERE, o SELECT * traria as linhas de TODAS as
-          // empresas e o app mostraria dados misturados.
-          if (_empresaId == null || _empresaId!.isEmpty) {
-            debugPrint(
-              '>>> [PostgreSQL] ⛔ carregarLista($tabela) devolvendo vazio: nenhuma empresa '
-              'selecionada (sem filtro viriam os dados de todas as empresas).',
-            );
-            return [];
+      final result = await conn.execute(Sql.named(sql), parameters: params);
+      final ignoradas = colunasIgnoradasNaLeitura[tabela] ?? const <String>{};
+      final list = <Map<String, dynamic>>[];
+      for (final row in result) {
+        final rowMap = row.toColumnMap();
+        final convertedMap = <String, dynamic>{};
+        for (final entry in rowMap.entries) {
+          var k = entry.key;
+          // Duplicata em camelCase: a informação vem pela coluna snake_case
+          // equivalente — ler as duas é o que já quebrou o caixa.
+          if (ignoradas.contains(k)) continue;
+          if (k.contains('_')) {
+            final parts = k.split('_');
+            k =
+                parts[0] +
+                parts
+                    .skip(1)
+                    .map(
+                      (p) =>
+                          p.isEmpty ? '' : p[0].toUpperCase() + p.substring(1),
+                    )
+                    .join();
           }
-          sql += ' WHERE empresa_id = @empresaId';
-          params['empresaId'] = _empresaId;
-        }
 
-        if (tabela == 'vendas_balcao' || tabela == 'pedidos') {
-          sql += ' ORDER BY created_at DESC';
-        }
+          var val = entry.value;
 
-        final result = await conn.execute(Sql.named(sql), parameters: params);
-        final ignoradas = colunasIgnoradasNaLeitura[tabela] ?? const <String>{};
-        final list = <Map<String, dynamic>>[];
-        for (final row in result) {
-          final rowMap = row.toColumnMap();
-          final convertedMap = <String, dynamic>{};
-          for (final entry in rowMap.entries) {
-            var k = entry.key;
-            // Duplicata em camelCase: a informação vem pela coluna snake_case
-            // equivalente — ler as duas é o que já quebrou o caixa.
-            if (ignoradas.contains(k)) continue;
-            if (k.contains('_')) {
-              final parts = k.split('_');
-              k =
-                  parts[0] +
-                  parts
-                      .skip(1)
-                      .map(
-                        (p) => p.isEmpty
-                            ? ''
-                            : p[0].toUpperCase() + p.substring(1),
-                      )
-                      .join();
+          // Garantir que DateTime vindos do PostgreSQL sejam sempre local
+          // (TIMESTAMP sem tz pode voltar como UTC pelo driver)
+          if (val is DateTime && !val.isUtc) {
+            // Já é local, ok
+          } else if (val is DateTime && val.isUtc) {
+            val = val.toLocal();
+          }
+
+          if (val is String && columns != null) {
+            final colType = columns[entry.key]?.toUpperCase() ?? '';
+            if (colType.contains('NUMERIC') ||
+                colType.contains('DECIMAL') ||
+                colType.contains('REAL') ||
+                colType.contains('DOUBLE')) {
+              val = num.tryParse(val) ?? val;
             }
+          }
 
-            var val = entry.value;
-
-            // Garantir que DateTime vindos do PostgreSQL sejam sempre local
-            // (TIMESTAMP sem tz pode voltar como UTC pelo driver)
-            if (val is DateTime && !val.isUtc) {
-              // Já é local, ok
-            } else if (val is DateTime && val.isUtc) {
-              val = val.toLocal();
-            }
-
-            if (val is String && columns != null) {
-              final colType = columns[entry.key]?.toUpperCase() ?? '';
-              if (colType.contains('NUMERIC') ||
-                  colType.contains('DECIMAL') ||
-                  colType.contains('REAL') ||
-                  colType.contains('DOUBLE')) {
-                val = num.tryParse(val) ?? val;
-              }
-            }
-
-            if (val is String && (val.startsWith('[') || val.startsWith('{'))) {
-              try {
-                val = jsonDecode(val);
-              } catch (_) {}
-            }
-            if (convertedMap.containsKey(k)) {
-              // Nunca deixar uma coluna duplicada (camelCase) sobrescrever um
-              // valor string já lido — ex.: fechamentos_caixa tem
-              // "aberturaCaixaId" TIMESTAMP (migração antiga, tipo errado) que
-              // vinha DEPOIS de abertura_caixa_id TEXT e sobrescrevia o id com
-              // uma data, quebrando o vínculo fechamento→abertura (caixa que
-              // nunca fechava). Se o atual é uma string não vazia e o novo é
-              // DateTime/num, mantém o string (o id real).
-              final atual = convertedMap[k];
-              final mantemAtual =
-                  atual is String && atual.isNotEmpty && val is! String;
-              if (!mantemAtual && val != null) {
-                convertedMap[k] = val;
-              }
-            } else {
+          if (val is String && (val.startsWith('[') || val.startsWith('{'))) {
+            try {
+              val = jsonDecode(val);
+            } catch (_) {}
+          }
+          if (convertedMap.containsKey(k)) {
+            // Nunca deixar uma coluna duplicada (camelCase) sobrescrever um
+            // valor string já lido — ex.: fechamentos_caixa tem
+            // "aberturaCaixaId" TIMESTAMP (migração antiga, tipo errado) que
+            // vinha DEPOIS de abertura_caixa_id TEXT e sobrescrevia o id com
+            // uma data, quebrando o vínculo fechamento→abertura (caixa que
+            // nunca fechava). Se o atual é uma string não vazia e o novo é
+            // DateTime/num, mantém o string (o id real).
+            final atual = convertedMap[k];
+            final mantemAtual =
+                atual is String && atual.isNotEmpty && val is! String;
+            if (!mantemAtual && val != null) {
               convertedMap[k] = val;
             }
+          } else {
+            convertedMap[k] = val;
           }
-          list.add(convertedMap);
         }
-        return list;
-      } catch (e, st) {
-        // Quem decide o que fazer com a falha (registrar/insistir) é o
-        // `_lerDoBancoComRetentativa`, que chamou este método.
-        Error.throwWithStackTrace(e, st);
+        list.add(convertedMap);
       }
+      return list;
+    } catch (e, st) {
+      // Quem decide o que fazer com a falha (registrar/insistir) é o
+      // `_lerDoBancoComRetentativa`, que chamou este método.
+      Error.throwWithStackTrace(e, st);
+    }
   }
 
   Future<List<Map<String, dynamic>>> buscarProdutos(String termo) {
@@ -3395,6 +3857,45 @@ END;
           '>>> [PostgreSQL] ❌ Erro ao remover item da tabela $tabela: $e',
         );
         if (lancarSeFalhar) rethrow;
+      }
+    });
+  }
+
+  /// Lê os TÚMULOS da empresa (`_exodo_deletados`): ids apagados localmente
+  /// que ainda devem barrar a ressurreição vinda da nuvem.
+  ///
+  /// O trigger de DELETE da tabela preenche `_exodo_deletados` sozinho. Aqui a
+  /// leitura é só para o app carregar o túmulo em memória no boot — antes ele
+  /// morria junto com o processo (janela de 30 min) e um upsert atrasado de
+  /// outro PC trazia o registro apagado de volta depois de reiniciar.
+  Future<List<Map<String, dynamic>>> carregarTombstones(
+    String empresaId, {
+    DateTime? desde,
+    int limite = 5000,
+  }) {
+    return _enqueue(() async {
+      try {
+        final conn = await connection;
+        await _garantirTombstones(conn);
+        final params = <String, Object?>{
+          'empresaId': empresaId,
+          'limite': limite,
+        };
+        var sql =
+            "SELECT registro_id, tabela, deletado_em FROM _exodo_deletados "
+            "WHERE (empresa_id = @empresaId OR empresa_id IS NULL OR empresa_id = '')";
+        if (desde != null) {
+          sql += ' AND deletado_em >= @desde';
+          params['desde'] = desde;
+        }
+        sql += ' ORDER BY deletado_em DESC LIMIT @limite';
+        final result = await conn.execute(Sql.named(sql), parameters: params);
+        return [for (final row in result) row.toColumnMap()];
+      } catch (e) {
+        debugPrint(
+          '>>> [PostgreSQL] ⚠️ Falha ao ler túmulos (_exodo_deletados): $e',
+        );
+        return <Map<String, dynamic>>[];
       }
     });
   }

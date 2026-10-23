@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import '../models/status_sync.dart';
 import 'supabase_service.dart';
+import 'bridge_management_service.dart';
 
 /// Servico de monitoramento de sincronizacao
 /// Envia eventos de sync para as tabelas sync_logs e sync_status no Supabase
@@ -239,6 +240,45 @@ class SyncMonitorService {
       debugPrint('>>> [SyncMonitor] Erro ao buscar logs: $e');
       return [];
     }
+  }
+
+  /// Conflitos publicados pelos sincronizadores dos PCs desta empresa.
+  static Future<List<Map<String, dynamic>>> buscarConflitosEmpresa(
+    String empresaId, {
+    int limite = 100,
+  }) async {
+    if (!SupabaseService.isAvailable || empresaId.isEmpty) return [];
+    try {
+      return await SupabaseService.instance.select(
+        'sync_conflicts',
+        filters: {'empresa_id': empresaId, 'resolvido': false},
+        orderBy: 'visto_em',
+        descending: true,
+        limit: limite,
+      );
+    } catch (e) {
+      debugPrint('>>> [SyncMonitor] Erro ao buscar conflitos: $e');
+      return [];
+    }
+  }
+
+  /// Solicita ao PC de origem que aplique a decisão no banco local.
+  static Future<void> resolverConflitoRemoto({
+    required String conflitoId,
+    required String pcName,
+    required bool manterLocal,
+  }) async {
+    if (conflitoId.isEmpty || pcName.isEmpty) {
+      throw ArgumentError('Conflito ou computador inválido.');
+    }
+    await BridgeManagementService.instance.enviarComando(
+      'resolve_conflict',
+      targetPc: pcName,
+      extraData: {
+        'conflito_id': conflitoId,
+        'decisao': manterLocal ? 'local' : 'nuvem',
+      },
+    );
   }
 
   /// Para o monitoramento

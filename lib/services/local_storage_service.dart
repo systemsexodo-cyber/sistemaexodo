@@ -183,6 +183,7 @@ class LocalStorageService {
   static const String _keyAberturasCaixa = 'exodo_aberturas_caixa';
   static const String _keyFechamentosCaixa = 'exodo_fechamentos_caixa';
   static const String _keyNotasEntrada = 'exodo_notas_entrada';
+  static const String _keyPedidosCompra = 'exodo_pedidos_compra';
   static const String _keyAgendamentosServico = 'exodo_agendamentos_servico';
   static const String _keyFuncionarios = 'exodo_funcionarios';
   static const String _keyTaxasEntrega = 'exodo_taxas_entrega';
@@ -199,6 +200,7 @@ class LocalStorageService {
 
   
   static String get keyNotasEntrada => _keyNotasEntrada;
+  static String get keyPedidosCompra => _keyPedidosCompra;
   static String get keyLinksVendedores => _keyLinksVendedores;
   static String get keyComissoesVendedores => _keyComissoesVendedores;
   static String get keyAgendamentosServico => _keyAgendamentosServico;
@@ -422,6 +424,8 @@ class LocalStorageService {
       _keyFechamentosCaixa,
       _keySangrias,
       _keySuprimentos,
+      _keyNotasEntrada,
+      _keyPedidosCompra,
     ];
 
     for (final key in keys) {
@@ -580,7 +584,7 @@ class LocalStorageService {
         _keyOrdensServico, _keyEntregas, _keyVendasBalcao, _keyAberturasCaixa,
         _keyFechamentosCaixa, _keyNotasEntrada, _keyAgendamentosServico,
         _keyFuncionarios, _keyTaxasEntrega, _keyContasPagar, _keyNFCes,
-        _keyLotesProdutos
+        _keyLotesProdutos, _keyPedidosCompra
       ];
 
       final Map<String, dynamic> backup = {};

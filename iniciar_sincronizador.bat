@@ -2,7 +2,7 @@
 title Exodo - Sincronizador Nuvem
 color 0B
 echo ========================================================
-echo     SISTEMA EXODO - SINCRONIZADOR LOCAL PARA SUPABASE
+echo     SISTEMA EXODO - SINCRONIZADOR LOCAL <-> NUVEM (NEON)
 echo ========================================================
 echo.
 echo Iniciando o agente de sincronizacao em background...

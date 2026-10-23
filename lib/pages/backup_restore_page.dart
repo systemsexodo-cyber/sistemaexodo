@@ -281,7 +281,6 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       final motivo = empAtualizada.verificarMotivoBloqueio(
         ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
         ultimaDataExecucao: dataService.ultimaDataExecucao,
-        limiteDiasOffline: 5,
       );
       final usuario = authService.usuarioAtual;
       final isMaster = usuario?.isMaster == true || usuario?.email.toLowerCase() == 'user';
@@ -531,7 +530,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
 
     final confirmar = await _confirmar(
       'Enviar para Nuvem',
-      'Enviar o último dump local para a nuvem (Supabase Storage)?',
+      'Enviar o último dump local para a nuvem (Neon Storage)?',
     );
     if (!confirmar) return;
 
@@ -790,7 +789,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     final empresa = _nomeEmpresaComId();
     final confirmar = await _confirmar(
       'Backup SÓ desta empresa, tirado da NUVEM',
-      'Baixar uma foto dos dados de $empresa que estão NA NUVEM (Supabase)?\n\n'
+      'Baixar uma foto dos dados de $empresa que estão NA NUVEM (Neon)?\n\n'
       '• Salva um .sql em C:\\ExodoBackups\\nuvem\\empresas — só desta empresa.\n'
       '• Não altera nada, nem aqui nem na nuvem.\n\n'
       'É diferente do "Backup PostgreSQL na Nuvem" (seção de cima): aquele é gerado do banco '
@@ -921,7 +920,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   Future<void> _baixarBackupBancoNuvem() async {
     final confirmar = await _confirmar(
       'Backup do banco da nuvem',
-      'Vai baixar uma cópia COMPLETA do banco da nuvem (Supabase) — todos os dados de TODAS as empresas.\n\n'
+      'Vai baixar uma cópia COMPLETA do banco da nuvem (Neon) — todos os dados de TODAS as empresas.\n\n'
       'O arquivo é salvo em C:\\ExodoBackups\\nuvem e pode demorar alguns minutos. Continuar?',
     );
     if (!confirmar) return;
@@ -1118,7 +1117,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   Future<void> _restaurarBackupCompletoNaNuvem(String storagePath, String nome) async {
     final confirmar1 = await _confirmar(
       '⚠️ RESTAURAR BANCO DA NUVEM',
-      'Isso vai SUBSTITUIR TODOS os dados do banco Supabase (todas as tabelas, '
+      'Isso vai SUBSTITUIR TODOS os dados do banco da nuvem — Neon (todas as tabelas, '
       'de TODAS as empresas) pelo conteúdo do backup:\n\n$nome\n\n'
       'A restauração é IRREVERSÍVEL. Um novo backup completo (manual ou automático) '
       'é a única forma de recuperar o estado atual.\n\n'
@@ -3165,7 +3164,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
               const SizedBox(width: 10),
               Expanded(
                 child: _quadroBanco(
-                  '☁️ NUVEM — Supabase',
+                  '☁️ NUVEM — Neon',
                   c?.totalNuvem,
                   EnvConfig.supabaseDbNameFinal,
                   Colors.purpleAccent,
@@ -4443,7 +4442,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       icon: Icons.sync_alt,
       cor: Colors.tealAccent,
       titulo: 'Sincronizar com Nuvem',
-      subtitulo: 'Enviar dados locais para o Supabase',
+      subtitulo: 'Enviar dados locais para a nuvem (Neon)',
       children: [
         _botao(
           icon: Icons.sync,
@@ -4457,7 +4456,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
         _botao(
           icon: Icons.cloud_upload,
           label: _isEnviandoLocalNuvem ? 'Enviando...' : 'Enviar Local → Nuvem',
-          desc: 'Envia todas as tabelas locais para o Supabase',
+          desc: 'Envia todas as tabelas locais para a nuvem (Neon)',
           cor: Colors.orangeAccent,
           loading: _isEnviandoLocalNuvem,
           onTap: (_isEnviandoLocalNuvem || _isSincronizandoCompleto) ? null : _enviarLocalNuvem,
@@ -4465,7 +4464,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
         const SizedBox(height: 12),
         _botao(
           icon: Icons.table_chart,
-          label: _isCriandoTabelas ? 'Comparando...' : 'Criar Tabelas no Supabase',
+          label: _isCriandoTabelas ? 'Comparando...' : 'Criar Tabelas na Nuvem (Neon)',
           desc: 'Compara o banco local com a nuvem e cria as tabelas e colunas que faltam lá',
           cor: Colors.amberAccent,
           loading: _isCriandoTabelas,
@@ -4576,7 +4575,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     );
   }
 
-  /// SEÇÃO 5: Backup do banco inteiro da NUVEM (Supabase)
+  /// SEÇÃO 5: Backup do banco inteiro da NUVEM (Neon principal; Supabase reserva)
   Widget _buildSecaoBackupBancoNuvem() {
     final configurado = EnvConfig.backupBancoNuvemConfigurado;
     final intervaloHoras = EnvConfig.backupCompletoNuvemHoras;
@@ -4587,7 +4586,8 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
       icon: Icons.cloud_download,
       cor: Colors.purpleAccent,
       titulo: 'Backup do Banco da Nuvem',
-      subtitulo: 'Cópia completa do Supabase (todas as empresas) + foto da nuvem por empresa',
+      subtitulo: 'Cópia completa do banco da nuvem — Neon (Supabase como reserva) — '
+          'de todas as empresas + foto da nuvem por empresa',
       children: [
         _botao(
           icon: Icons.download_for_offline,
@@ -4682,9 +4682,10 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Para funcionar, preencha SUPABASE_POOLER_PASSWORD no arquivo .env com a senha do BANCO do '
-                    'Supabase (painel → Project Settings → Database → Database password). As chaves de API '
-                    '\"sb_secret_...\" não servem como senha.',
+                    'Para funcionar, preencha o .env.neon (Neon é a nuvem principal: rode '
+                    '\"neon env pull --file .env.neon\"). A reserva, se um dia for usada, é o '
+                    'Supabase com SUPABASE_POOLER_PASSWORD no .env (a senha do BANCO, não as chaves '
+                    '\"sb_secret_...\").',
                     style: TextStyle(color: Colors.orangeAccent, fontSize: 11),
                   ),
                 ),
@@ -4734,11 +4735,11 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Lê o banco do SUPABASE e salva o que $empresa tem lá hoje. '
+                'Lê o banco da NUVEM (Neon; Supabase como reserva) e salva o que $empresa tem lá hoje. '
                 'O "Backup PostgreSQL na Nuvem" da seção de cima é gerado do banco LOCAL e só '
                 'depois arquivado — se o local estiver errado, ele não devolve a nuvem. '
                 'Este aqui é a foto do estado real da nuvem: é a rede de segurança para reverter '
-                'o Supabase sem depender deste computador.',
+                'a nuvem sem depender deste computador.',
                 style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.35),
               ),
               const SizedBox(height: 12),
@@ -4747,7 +4748,7 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
                 label: _isBaixandoSnapshotNuvem
                     ? 'Baixando da nuvem...'
                     : 'Baixar Backup Desta Empresa da Nuvem',
-                desc: 'Salva um .sql com os dados desta empresa que estão no Supabase '
+                desc: 'Salva um .sql com os dados desta empresa que estão na nuvem '
                     '(C:\\ExodoBackups\\nuvem\\empresas) — não altera nada',
                 cor: Colors.orangeAccent,
                 loading: _isBaixandoSnapshotNuvem,
