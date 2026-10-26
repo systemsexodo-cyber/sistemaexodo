@@ -3,6 +3,7 @@
 
 analyzer:
   exclude:
+    - "legacy/**"
     - "backend_nfce/**"
     - "backend_pynfe/**"
     - "backend_php/**"

@@ -475,6 +475,7 @@ class _CaixaPageState extends State<CaixaPage> {
   Widget _buildCardCaixaAberto(DataService ds, AberturaCaixa ab, bool ehGestor) {
     final saldo = ds.calcularSaldoDoCaixa(ab);
     final ehSelecionado = ds.aberturaCaixaAtual?.id == ab.id;
+    final resumoFormas = ds.calcularResumoFormaPagamentoDoCaixa(ab);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
@@ -523,6 +524,52 @@ class _CaixaPageState extends State<CaixaPage> {
                   'Aberto ${formatoData.format(ab.dataAbertura.toLocal())}',
                   style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
                 ),
+                if (ehGestor && resumoFormas.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Por Forma de Pagamento:',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  ...resumoFormas.map((r) => Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: r.tipo.cor.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(r.tipo.icone, color: r.tipo.cor, size: 10),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            r.rotulo,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          formatoMoeda.format(r.valor),
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+                ],
               ],
             ),
           ),
@@ -542,15 +589,23 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  /// Abre o modal com as vendas realizadas em um caixa (o que foi vendido)
+  /// Abre o modal com o HISTÓRICO das vendas realizadas em um caixa.
+  ///
+  /// Usado tanto no caixa ABERTO (card "Caixas Abertos") quanto no caixa
+  /// FECHADO (Histórico de Encerramentos e "VER VENDAS" dos detalhes).
+  /// Além da lista (mais recente primeiro), traz busca por número, cliente,
+  /// item ou operador e a separação dos totais por forma de pagamento, com
+  /// chips que filtram a lista ao tocar.
   void _mostrarVendasDoCaixa(DataService ds, AberturaCaixa ab,
       {FechamentoCaixa? fechamento}) {
     // Para caixas ja fechados, limita as vendas ate o encerramento
-    final vendas = ds.getVendasDoCaixa(ab)
-        .where((v) => fechamento == null ||
-            v.dataVenda.isBefore(
-                fechamento!.dataFechamento.add(const Duration(seconds: 1))))
-        .toList();
+    final vendas = (ds.getVendasDoCaixa(ab)
+            .where((v) => fechamento == null ||
+                v.dataVenda.isBefore(
+                    fechamento!.dataFechamento.add(const Duration(seconds: 1))))
+            .toList())
+      // Histórico: mais recentes primeiro (antes aparecia na ordem de gravação)
+      ..sort((a, b) => b.dataVenda.compareTo(a.dataVenda));
     final totalVendas = vendas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
     final nomeResp = ab.responsavel ?? '—';
     final titulo = 'Vendas do ' + ab.numero;
@@ -566,6 +621,27 @@ class _CaixaPageState extends State<CaixaPage> {
         ' • ' + vendas.length.toString() + ' venda(s) • Total: ' +
         formatoMoeda.format(totalVendas);
 
+    // Separação das vendas DESTE caixa por forma de pagamento (Dinheiro, PIX,
+    // Cartão...) — mesma chave do DataService.calcularResumoFormaPagamentoDoCaixa.
+    final resumoFormas = _resumoFormasDasVendas(vendas);
+    // Estado dos filtros do modal (busca por texto + forma de pagamento).
+    const chaveTodas = '__todas__';
+    String filtroFormaChave = chaveTodas;
+    final buscaController = TextEditingController();
+
+    List<VendaBalcao> aplicarFiltros(String termo, String chave) {
+      final t = termo.trim().toLowerCase();
+      return vendas.where((v) {
+        if (chave != chaveTodas && !_vendaTemForma(v, chave)) return false;
+        if (t.isEmpty) return true;
+        if (v.numero.toLowerCase().contains(t)) return true;
+        if ((v.clienteNome ?? '').toLowerCase().contains(t)) return true;
+        if ((v.operador ?? '').toLowerCase().contains(t)) return true;
+        if ((v.origem ?? '').toLowerCase().contains(t)) return true;
+        return v.itens.any((i) => i.nome.toLowerCase().contains(t));
+      }).toList();
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -574,67 +650,223 @@ class _CaixaPageState extends State<CaixaPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) {
-        return SizedBox(
-          height: MediaQuery.of(sheetContext).size.height * 0.8,
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.shopping_basket_rounded, color: Colors.blueAccent, size: 26),
-                    const SizedBox(width: 12),
-                    Expanded(
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            final filtradas = aplicarFiltros(buscaController.text, filtroFormaChave);
+            final filtrando = filtroFormaChave != chaveTodas ||
+                buscaController.text.trim().isNotEmpty;
+            final totalFiltrado =
+                filtradas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
+            return SizedBox(
+              height: MediaQuery.of(sheetContext).size.height * 0.85,
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.shopping_basket_rounded, color: Colors.blueAccent, size: 26),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(titulo,
+                                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                              Text(subtitulo,
+                                  style: TextStyle(color: Colors.white54, fontSize: 13)),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white54),
+                          onPressed: () => Navigator.pop(sheetContext),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(color: Colors.white12, height: 1),
+                  // Entradas por forma de pagamento — chips clicáveis filtram a lista
+                  if (resumoFormas.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(titulo,
-                              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text(subtitulo,
-                              style: TextStyle(color: Colors.white54, fontSize: 13)),
+                          Row(
+                            children: [
+                              const Icon(Icons.pie_chart_outline_rounded,
+                                  color: Colors.blueAccent, size: 16),
+                              const SizedBox(width: 8),
+                              Text('Entradas por Forma de Pagamento',
+                                  style: TextStyle(
+                                      color: Colors.white.withOpacity(0.6),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            height: 46,
+                            child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              children: [
+                                _chipFormaModal(
+                                  rotulo: 'Todas',
+                                  tipo: null,
+                                  quantidade: vendas.length,
+                                  valor: totalVendas,
+                                  selecionado: filtroFormaChave == chaveTodas,
+                                  onTap: () => setModalState(
+                                      () => filtroFormaChave = chaveTodas),
+                                ),
+                                ...resumoFormas.map((r) {
+                                  final chave =
+                                      '${r.tipo.name}|${r.rotulo.toLowerCase()}';
+                                  return _chipFormaModal(
+                                    rotulo: r.rotulo,
+                                    tipo: r.tipo,
+                                    quantidade: r.quantidade,
+                                    valor: r.valor,
+                                    selecionado: filtroFormaChave == chave,
+                                    onTap: () => setModalState(
+                                        () => filtroFormaChave = chave),
+                                  );
+                                }),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white54),
-                      onPressed: () => Navigator.pop(sheetContext),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(color: Colors.white12, height: 1),
-              Expanded(
-                child: vendas.isEmpty
-                    ? Center(
-                        child: Text('Nenhuma venda neste caixa',
-                            style: TextStyle(color: Colors.white30)),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: vendas.length,
-                        itemBuilder: (context, i) {
-                          final v = vendas[i];
-                          return _buildCardVendaModal(v);
-                        },
+                  // Busca da venda (número, cliente, item, operador ou origem)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: TextField(
+                      controller: buscaController,
+                      onChanged: (_) => setModalState(() {}),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Buscar venda por número, cliente, item...',
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                        prefixIcon: const Icon(Icons.search, color: Colors.white24, size: 20),
+                        suffixIcon: buscaController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.close, color: Colors.white38, size: 18),
+                                onPressed: () => setModalState(() => buscaController.clear()),
+                              )
+                            : null,
+                        filled: true,
+                        fillColor: const Color(0xFF2D2D44),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: EdgeInsets.zero,
+                        isDense: true,
                       ),
+                    ),
+                  ),
+                  // Contagem e total do que está sendo exibido (respeita os filtros)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Row(
+                      children: [
+                        Text(
+                          filtrando
+                              ? '${filtradas.length} de ${vendas.length} venda(s)'
+                              : '${vendas.length} venda(s)',
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.4), fontSize: 12),
+                        ),
+                        const Spacer(),
+                        Text(
+                          formatoMoeda.format(filtrando ? totalFiltrado : totalVendas),
+                          style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold),
+                        ),
+                        if (filtrando)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: GestureDetector(
+                              onTap: () => setModalState(() {
+                                filtroFormaChave = chaveTodas;
+                                buscaController.clear();
+                              }),
+                              child: Text('Limpar filtros',
+                                  style: TextStyle(
+                                      color: Colors.blueAccent.withOpacity(0.9),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Divider(color: Colors.white12, height: 1),
+                  Expanded(
+                    child: vendas.isEmpty
+                        ? Center(
+                            child: Text('Nenhuma venda neste caixa',
+                                style: TextStyle(color: Colors.white30)),
+                          )
+                        : filtradas.isEmpty
+                            ? Center(
+                                child: Text(
+                                    'Nenhuma venda encontrada para a busca/filtro',
+                                    style: TextStyle(color: Colors.white30)),
+                              )
+                            : ListView.builder(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                itemCount: filtradas.length,
+                                itemBuilder: (context, i) {
+                                  final v = filtradas[i];
+                                  return _buildCardVendaModal(v);
+                                },
+                              ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
-    );
+    ).whenComplete(buscaController.dispose);
   }
 
   Widget _buildCardVendaModal(VendaBalcao v) {
+    // Histórico da venda: cliente (com telefone), origem (Venda Direta, Mesa,
+    // Delivery...) e operador responsável — quando registrados na venda.
+    final detalhesVenda = [
+      if ((v.clienteNome ?? '').trim().isNotEmpty)
+        ((v.clienteTelefone ?? '').trim().isNotEmpty)
+            ? '${v.clienteNome!.trim()} • ${v.clienteTelefone!.trim()}'
+            : v.clienteNome!.trim(),
+      if ((v.origem ?? '').trim().isNotEmpty) v.origem!.trim(),
+      if ((v.operador ?? '').trim().isNotEmpty) 'Operador: ${v.operador!.trim()}',
+    ].join('  •  ');
+    // Formas exibidas no card: cada forma do pagamento dividido (split) com o
+    // valor recebido em cada, ou a forma principal quando não há split.
+    final chipsFormas = v.pagamentos.isNotEmpty
+        ? v.pagamentos
+            .map((p) => _badgeForma(
+                  p.nomeExibicao,
+                  p.tipo.cor,
+                  valor: v.pagamentos.length > 1 ? p.valor : null,
+                ))
+            .toList()
+        : [_badgeForma(_formatForma(v.tipoPagamento), v.tipoPagamento.cor)];
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       padding: const EdgeInsets.all(14),
@@ -654,15 +886,12 @@ class _CaixaPageState extends State<CaixaPage> {
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: Colors.blueAccent.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _formatForma(v.tipoPagamento),
-                  style: const TextStyle(color: Colors.blueAccent, fontSize: 11, fontWeight: FontWeight.w600),
+              Flexible(
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.end,
+                  children: chipsFormas,
                 ),
               ),
             ],
@@ -672,6 +901,15 @@ class _CaixaPageState extends State<CaixaPage> {
             formatoData.format(v.dataVenda.toLocal()),
             style: TextStyle(color: Colors.white38, fontSize: 11),
           ),
+          if (detalhesVenda.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              detalhesVenda,
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
           const SizedBox(height: 10),
           ...v.itens.map((item) {
             final qtdStr = item.quantidade % 1 == 0
@@ -715,6 +953,135 @@ class _CaixaPageState extends State<CaixaPage> {
         ],
       ),
     );
+  }
+
+  /// Chip clicável de forma de pagamento no modal de vendas (inclusive
+  /// "Todas", com [tipo] nulo). Mostra o total recebido na forma e filtra a
+  /// lista ao tocar; tocar de novo no mesmo chip limpa o filtro.
+  Widget _chipFormaModal({
+    required String rotulo,
+    required TipoPagamento? tipo,
+    required int quantidade,
+    required double valor,
+    required bool selecionado,
+    required VoidCallback onTap,
+  }) {
+    final cor = tipo?.cor ?? Colors.blueAccent;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: cor.withOpacity(selecionado ? 0.20 : 0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: cor.withOpacity(selecionado ? 0.85 : 0.25)),
+          ),
+          child: Row(
+            children: [
+              Icon(tipo?.icone ?? Icons.all_inclusive, color: cor, size: 14),
+              const SizedBox(width: 6),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    rotulo.toUpperCase(),
+                    style: TextStyle(color: cor, fontSize: 9, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    formatoMoeda.format(valor),
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              if (quantidade > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Text(
+                    '${quantidade}x',
+                    style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 10),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Badge curto de uma forma de pagamento no card da venda — no pagamento
+  /// dividido (split) mostra o valor recebido em cada forma.
+  Widget _badgeForma(String rotulo, Color cor, {double? valor}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        valor != null ? '$rotulo ${formatoMoeda.format(valor)}' : rotulo,
+        style: TextStyle(color: cor, fontSize: 11, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  /// Chave de agrupamento de uma forma de pagamento — a MESMA usada pelo
+  /// [DataService.calcularResumoFormaPagamentoDoCaixa] (tipo + nome exibível,
+  /// para não misturar formas personalizadas como "Caju", "VR" etc.).
+  String _chaveFormaPagamento(TipoPagamento tipo, String? nomeForma) {
+    final rotulo = (nomeForma != null && nomeForma.trim().isNotEmpty)
+        ? nomeForma.trim()
+        : tipo.nome;
+    return '${tipo.name}|${rotulo.toLowerCase()}';
+  }
+
+  /// Resumo do valor vendido separado por forma de pagamento, calculado sobre
+  /// UMA lista de vendas já recortada (ex.: as vendas de um caixa fechado até
+  /// o horário do encerramento) — mesma regra do
+  /// [DataService.calcularResumoFormaPagamentoDoCaixa].
+  List<ResumoFormaPagamento> _resumoFormasDasVendas(List<VendaBalcao> vendas) {
+    final acumulado = <String, ResumoFormaPagamento>{};
+    void acumular(TipoPagamento tipo, String? nomeForma, double valor) {
+      if (valor <= 0) return;
+      final rotulo = (nomeForma != null && nomeForma.trim().isNotEmpty)
+          ? nomeForma.trim()
+          : tipo.nome;
+      final chave = _chaveFormaPagamento(tipo, nomeForma);
+      final atual = acumulado[chave];
+      acumulado[chave] = ResumoFormaPagamento(
+        rotulo: rotulo,
+        tipo: tipo,
+        valor: (atual?.valor ?? 0.0) + valor,
+        quantidade: (atual?.quantidade ?? 0) + 1,
+      );
+    }
+
+    for (final v in vendas) {
+      if (v.pagamentos.isNotEmpty) {
+        for (final p in v.pagamentos) {
+          acumular(p.tipo, p.nomeForma, p.valor);
+        }
+      } else {
+        acumular(v.tipoPagamento, null, v.valorTotal);
+      }
+    }
+
+    final lista = acumulado.values.toList()
+      ..sort((a, b) => b.valor.compareTo(a.valor));
+    return lista;
+  }
+
+  /// Verifica se a venda tem a forma de pagamento identificada por [chave]
+  /// (usada pelos chips de filtro do modal — cobre pagamento dividido/split).
+  bool _vendaTemForma(VendaBalcao v, String chave) {
+    if (v.pagamentos.isNotEmpty) {
+      return v.pagamentos
+          .any((p) => _chaveFormaPagamento(p.tipo, p.nomeForma) == chave);
+    }
+    return _chaveFormaPagamento(v.tipoPagamento, null) == chave;
   }
 
   Widget _buildStatusHeader(bool aberto, AberturaCaixa? abertura, DataService ds) {

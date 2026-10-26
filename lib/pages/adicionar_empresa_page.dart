@@ -358,6 +358,15 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _exigirSenhaCancelarPedido =
         empresa.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
 
+    // Cash back (fidelidade)
+    _cashbackTaxaController.text =
+        (empresa.configuracoes?['cashback_taxa_percentual'] ?? 5).toString();
+    _cashbackLimiteUsoController.text =
+        (empresa.configuracoes?['cashback_limite_uso_percentual'] ?? 100)
+            .toString();
+    _cashbackValidadeController.text =
+        (empresa.configuracoes?['cashback_validade_dias'] ?? 0).toString();
+
     if (empresa.configuracoes?['pagamentos'] != null) {
       _pagamentosConfig = Map<String, Map<String, dynamic>>.from(
         (empresa.configuracoes!['pagamentos'] as Map).map(
@@ -378,6 +387,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
   // Licença offline: dias tolerados sem internet (configurável por empresa)
   final _limiteDiasOfflineController = TextEditingController();
+
+  // Cash back (fidelidade)
+  final _cashbackTaxaController = TextEditingController();
+  final _cashbackLimiteUsoController = TextEditingController();
+  final _cashbackValidadeController = TextEditingController();
 
   /// Licença offline da empresa: o código que o suporte entrega ao cliente.
   /// Fica visível nesta tela (antes só aparecia uma vez, no cadastro) e é
@@ -423,6 +437,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _nfceFonteEscalaController.dispose();
     _senhaAdminController.dispose();
     _limiteDiasOfflineController.dispose();
+    _cashbackTaxaController.dispose();
+    _cashbackLimiteUsoController.dispose();
+    _cashbackValidadeController.dispose();
 
     super.dispose();
   }
@@ -608,6 +625,22 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'limite_dias_offline':
               int.tryParse(_limiteDiasOfflineController.text.trim()) ??
               Empresa.limiteDiasOfflinePadrao,
+
+          // Cash back (fidelidade) — lidos pelo CashBackService
+          'cashback_taxa_percentual':
+              double.tryParse(
+                    _cashbackTaxaController.text.trim().replaceAll(',', '.'),
+                  ) ??
+                  5.0,
+          'cashback_limite_uso_percentual':
+              double.tryParse(
+                    _cashbackLimiteUsoController.text
+                        .trim()
+                        .replaceAll(',', '.'),
+                  ) ??
+                  100.0,
+          'cashback_validade_dias':
+              int.tryParse(_cashbackValidadeController.text.trim()) ?? 0,
           'perfis_preco': _configPerfisPreco,
           'pagamentos': _pagamentosConfig,
           'formas_pagamento_custom': _formasPagamentoCustom
@@ -2396,6 +2429,90 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                       onChanged: (value) =>
                           setState(() => _exigirSenhaCancelarPedido = value),
                       color: Colors.redAccent,
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              _buildSectionTitle('Cash Back (Fidelidade)'),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade900.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.amber.withOpacity(0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.local_atm,
+                          color: Colors.amber,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Programa de Fidelidade',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'A cada venda identificada o cliente acumula saldo em R\$ que pode usar como pagamento',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.white24),
+                    const SizedBox(height: 12),
+                    _buildTextField(
+                      controller: _cashbackTaxaController,
+                      label: 'Percentual por venda (%)',
+                      icon: Icons.percent,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      helperText:
+                          'Quanto o cliente ganha por venda. Ex: 5 = 5% (padrão)',
+                    ),
+                    _buildTextField(
+                      controller: _cashbackLimiteUsoController,
+                      label: 'Limite de uso por venda (% do total)',
+                      icon: Icons.percent_outlined,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      helperText:
+                          'Máximo do total que pode ser pago com cash back. 100 = sem limite extra (padrão)',
+                    ),
+                    _buildTextField(
+                      controller: _cashbackValidadeController,
+                      label: 'Validade do saldo (dias)',
+                      icon: Icons.timer_outlined,
+                      keyboardType: TextInputType.number,
+                      helperText:
+                          '0 = saldo não expira (padrão). Ex: 90 = saldo vence em 90 dias',
                     ),
                   ],
                 ),

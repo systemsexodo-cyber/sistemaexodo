@@ -36,6 +36,7 @@ HTTPS para ele (a porta 10000 do Postgres continua igual).
 from __future__ import annotations
 
 import argparse
+import gzip
 import http.client
 import mimetypes
 import os
@@ -86,6 +87,84 @@ TIPOS_EXTRAS = {
 # Arquivos que NUNCA podem ficar em cache: sem isso o navegador continua
 # rodando um build antigo depois de uma atualizacao.
 SEM_CACHE = {"index.html", "app.env", "flutter_bootstrap.js", "version.json"}
+
+# Payloads menores que isto nao compensam o custo de comprimir/decomprimir.
+TAMANHO_MINIMO_GZIP = 1024
+
+
+def _tipo_compresseivel(tipo: str) -> bool:
+    """True para tipos textuais (vale comprimir); False para binarios que ja
+    vem compactados (imagem, midia), onde so gastaria CPU.
+    """
+    t = tipo.lower().split(";")[0].strip()
+    if t.startswith("text/"):
+        return True
+    return t in (
+        "application/javascript",
+        "application/json",
+        "application/manifest+json",
+        "application/wasm",
+        "image/svg+xml",
+        "font/otf",
+        "font/ttf",
+        "font/woff",
+    )
+
+
+def _comprimir_se_vale_a_pena(
+    dados: bytes, tipo: str, aceita_gzip: bool, ja_codificado: str | None
+) -> tuple[bytes, bool]:
+    """Comprime payload de texto quando faz sentido.
+
+    Devolve (dados_finais, comprimido). Nao mexe em resposta que ja veio
+    codificada (o remetente ja cuidou disso) e so troca quando o resultado
+    fica realmente menor.
+
+    POR QUE ISSO EXISTE: o `main.dart.js` tem ~11 MB e o Funnel do Tailscale
+    nao comprime. Sem gzip o celular fora da loja fica preso numa tela preta
+    esperando o bundle inteiro baixar.
+    """
+    if ja_codificado:
+        return dados, False
+    if not aceita_gzip or len(dados) < TAMANHO_MINIMO_GZIP:
+        return dados, False
+    if not _tipo_compresseivel(tipo):
+        return dados, False
+    compactado = gzip.compress(dados, 6)
+    if len(compactado) >= len(dados):
+        return dados, False
+    return compactado, True
+
+
+# Comprimir o main.dart.js (~11 MB) custa ~0,6 s de CPU por acesso. Guardamos
+# o resultado por arquivo para nao recomprimir a cada visitante; invalida so
+# quando o proprio arquivo muda (mtime/tamanho).
+_cache_gzip: dict[str, tuple[int, int, bytes]] = {}
+
+
+def _comprimir_arquivo(
+    arquivo: Path, dados: bytes, tipo: str, aceita_gzip: bool
+) -> tuple[bytes, bool]:
+    """Igual [_comprimir_se_vale_a_pena], mas memoriza por arquivo."""
+    if not aceita_gzip:
+        return dados, False
+    try:
+        st = arquivo.stat()
+        chave = str(arquivo.resolve())
+        mtime, tamanho = st.st_mtime_ns, st.st_size
+    except OSError:
+        return _comprimir_se_vale_a_pena(dados, tipo, aceita_gzip, None)
+
+    guardado = _cache_gzip.get(chave)
+    if guardado is not None and guardado[0] == mtime and guardado[1] == tamanho:
+        return guardado[2], True
+
+    comprimido, ok = _comprimir_se_vale_a_pena(dados, tipo, aceita_gzip, None)
+    if ok:
+        if len(_cache_gzip) > 64:
+            _cache_gzip.clear()
+        _cache_gzip[chave] = (mtime, tamanho, comprimido)
+    return comprimido, ok
 
 
 class ServidorPortal(BaseHTTPRequestHandler):
@@ -180,6 +259,15 @@ class ServidorPortal(BaseHTTPRequestHandler):
         except (ValueError, OSError):
             return b""
 
+    def _aceita_gzip(self) -> bool:
+        """O cliente aceita gzip? Navegador sempre manda; ferramentas nem sempre."""
+        aceita = self.headers.get("Accept-Encoding", "")
+        for item in aceita.split(","):
+            codigo = item.split(";")[0].strip().lower()
+            if codigo in ("gzip", "*"):
+                return True
+        return False
+
     def _proxy(self, metodo: str, com_corpo: bool) -> None:
         corpo = self._corpo_da_requisicao()
         cabecalhos = {}
@@ -197,11 +285,24 @@ class ServidorPortal(BaseHTTPRequestHandler):
             conexao.request(metodo, self.path, body=corpo, headers=cabecalhos)
             resposta = conexao.getresponse()
             dados = resposta.read()
+            # A carga inicial baixa ~30 tabelas de uma vez e o Kong local nao
+            # comprime; sem gzip isso segurava o primeiro desenho da tela.
+            dados, comprimido = _comprimir_se_vale_a_pena(
+                dados,
+                resposta.getheader("Content-Type") or "",
+                self._aceita_gzip(),
+                resposta.getheader("Content-Encoding"),
+            )
             self.send_response(resposta.status, resposta.reason)
             for chave, valor in resposta.getheaders():
                 if chave.lower() in HOP_BY_HOP or chave.lower() == "content-length":
                     continue
+                if comprimido and chave.lower() == "content-encoding":
+                    continue
                 self.send_header(chave, valor)
+            if comprimido:
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Vary", "Accept-Encoding")
             self.send_header("Content-Length", str(len(dados)))
             self.end_headers()
             if com_corpo:
@@ -241,8 +342,15 @@ class ServidorPortal(BaseHTTPRequestHandler):
         if tipo is None:
             tipo = mimetypes.guess_type(arquivo.name)[0] or "application/octet-stream"
 
+        dados, comprimido = _comprimir_arquivo(
+            arquivo, dados, tipo, self._aceita_gzip()
+        )
+
         self.send_response(200)
         self.send_header("Content-Type", tipo)
+        if comprimido:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(dados)))
         if arquivo.name in SEM_CACHE:
             self.send_header(

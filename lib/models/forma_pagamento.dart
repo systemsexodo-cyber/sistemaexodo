@@ -12,6 +12,10 @@ enum TipoPagamento {
   outro,
   alimentacao,
   transferencia,
+  /// Saldo interno de cash back / bundle do cliente (pontos convertidos em R$).
+  /// Usado como forma de pagamento alternativa ao PIX, dinheiro ou cartão.
+  /// Não é emitido consecupção/serie — é apenas movimento interno de crédito.
+  cashBack,
 }
 
 /// Extensão para obter informações do tipo de pagamento
@@ -38,6 +42,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return 'Alimentação';
       case TipoPagamento.transferencia:
         return 'Transferência';
+      case TipoPagamento.cashBack:
+        return 'Cash Back';
     }
   }
 
@@ -63,6 +69,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm; // futuro: ícone próprio de cash-back
     }
   }
 
@@ -88,6 +96,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return Colors.teal;
       case TipoPagamento.transferencia:
         return Colors.blueAccent;
+      case TipoPagamento.cashBack:
+        return Colors.amber; // diferencial visual para saldo interno
     }
   }
 
@@ -97,7 +107,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         this == TipoPagamento.pix ||
         this == TipoPagamento.cartaoCredito ||
         this == TipoPagamento.cartaoDebito ||
-        this == TipoPagamento.alimentacao;
+        this == TipoPagamento.alimentacao ||
+        this == TipoPagamento.cashBack;
   }
 
   /// Verifica se é pagamento a prazo (fiado, boleto, crediário)

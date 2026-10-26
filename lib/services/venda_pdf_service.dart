@@ -838,6 +838,8 @@ class VendaPDFService {
         return 'Ticket/Alimentação';
       case TipoPagamento.transferencia:
         return 'Transferência';
+      case TipoPagamento.cashBack:
+        return 'Cash Back';
     }
   }
 

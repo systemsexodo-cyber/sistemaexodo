@@ -14,6 +14,9 @@ class ItemPedido {
   final double? quantidadeBaixa;
   // Preço base ANTES das promoções (para exibir o desconto no cupom/recibo)
   final double? precoSemPromocao;
+  // Premiação/brinde: item com valor ZERO (saí do estoque mas não entra no
+  // total da venda). O preço de tabela fica guardado em [precoSemPromocao].
+  final bool isBonus;
 
   ItemPedido({
     required this.id,
@@ -27,6 +30,7 @@ class ItemPedido {
     this.unidadeVenda,
     this.quantidadeBaixa,
     this.precoSemPromocao,
+    this.isBonus = false,
   }) : adicionais = adicionais ?? [];
 
   /// Cópia do item com os campos alterados — usado para editar a quantidade
@@ -43,6 +47,7 @@ class ItemPedido {
     String? unidadeVenda,
     double? quantidadeBaixa,
     double? precoSemPromocao,
+    bool? isBonus,
   }) {
     return ItemPedido(
       id: id ?? this.id,
@@ -56,6 +61,7 @@ class ItemPedido {
       unidadeVenda: unidadeVenda ?? this.unidadeVenda,
       quantidadeBaixa: quantidadeBaixa ?? this.quantidadeBaixa,
       precoSemPromocao: precoSemPromocao ?? this.precoSemPromocao,
+      isBonus: isBonus ?? this.isBonus,
     );
   }
 
@@ -78,6 +84,7 @@ class ItemPedido {
       precoSemPromocao: map['precoSemPromocao'] != null
           ? (map['precoSemPromocao'] as num).toDouble()
           : null,
+      isBonus: map['isBonus'] == true || map['is_bonus'] == true,
     );
   }
 
@@ -94,6 +101,8 @@ class ItemPedido {
       'unidadeVenda': unidadeVenda,
       'quantidadeBaixa': quantidadeBaixa,
       'precoSemPromocao': precoSemPromocao,
+      'isBonus': isBonus,
+      'is_bonus': isBonus,
     };
   }
 }

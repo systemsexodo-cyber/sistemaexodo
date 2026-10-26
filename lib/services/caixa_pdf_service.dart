@@ -403,6 +403,7 @@ class CaixaPDFService {
       case TipoPagamento.outro: return 'Outro';
       case TipoPagamento.alimentacao: return 'Ticket/Aliment.';
       case TipoPagamento.transferencia: return 'Transferência';
+      case TipoPagamento.cashBack: return 'Cash Back';
     }
   }
 }

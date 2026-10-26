@@ -14,6 +14,8 @@ import 'package:uuid/uuid.dart';
 import 'package:sistema_exodo_novo/models/conta_pagar.dart';
 
 import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/cash_back_service.dart';
+import 'package:sistema_exodo_novo/widgets/cash_back_badge.dart';
 import 'package:sistema_exodo_novo/services/local_storage_service.dart';
 import 'package:sistema_exodo_novo/services/balanca_service.dart';
 import 'package:sistema_exodo_novo/services/impressao_service.dart';
@@ -7623,7 +7625,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       numero: numeroFinal,
       dataVenda: _pedidoOriginal?.dataPedido ?? DateTime.now(),
       clienteId: _clienteSelecionado?.id,
-      clienteNome: _clienteSelecionado?.nome ?? (nomeIdentificacao?.isNotEmpty == true ? nomeIdentificacao : (mesaNumero != null ? 'Mesa $mesaNumero' : null)),
+      clienteNome: _clienteSelecionado?.nome ?? (nomeIdentificacao?.isNotEmpty == true ? nomeIdentificacao : (dataService.nomeDoCaixa.isNotEmpty ? dataService.nomeDoCaixa : (mesaNumero != null ? 'Mesa $mesaNumero' : null))),
       clienteTelefone: _clienteSelecionado?.telefone,
       vendedorId: vendedorSelecionadoCapturado?.id,
       vendedorNome: vendedorSelecionadoCapturado?.nome,
@@ -12491,6 +12493,8 @@ recusando a emissão de NFC-e (erro 403).
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm;
     }
   }
 
@@ -15231,10 +15235,14 @@ recusando a emissão de NFC-e (erro 403).
 
   /// Atalho do PDV: digita o número e abre a tela de controle já naquela
   /// mesa/comanda. Se o número não existir, cria e abre na hora.
+  /// Também aceita o nome do cliente para localizar vendas salvas (pedidos)
+  /// e abrir a escolhida direto no PDV.
   Future<void> _abrirMesaComandaPorNumero(DataService dataService) async {
     final controller = TextEditingController();
     var tipoSelecionado = TipoControle.comanda;
     String? mesaVinculadaId;
+    var termoBusca = '';
+    var resultadosBusca = <Pedido>[];
     final mesasAbertas = dataService.mesasComandas
         .where((m) => m.tipo == TipoControle.mesa && m.status == 'Aberta')
         .toList();
@@ -15275,21 +15283,43 @@ recusando a emissão de NFC-e (erro 403).
                   controller: controller,
                   autofocus: true,
                   style: const TextStyle(color: Colors.white),
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.go,
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.search,
                   decoration: const InputDecoration(
-                    labelText: 'Número',
-                    hintText: 'Ex.: 2',
-                    prefixIcon: Icon(Icons.numbers),
+                    labelText: 'Número ou nome do cliente',
+                    hintText: 'Ex.: 2 ou João',
+                    prefixIcon: Icon(Icons.search),
                     labelStyle: TextStyle(color: Colors.white70),
                     hintStyle: TextStyle(color: Colors.white38),
                   ),
-                  onSubmitted: (_) => Navigator.pop(ctx, {
-                    'numero': controller.text,
-                    'tipo': tipoSelecionado,
-                    'mesaId': mesaVinculadaId,
+                  onChanged: (valor) => setDialogState(() {
+                    termoBusca = valor.trim();
+                    resultadosBusca = _ehBuscaPorNome(termoBusca)
+                        ? _buscarVendasSalvas(termoBusca, dataService)
+                        : <Pedido>[];
                   }),
+                  onSubmitted: (_) => _finalizarDialogoAbrir(
+                    ctx,
+                    texto: controller.text,
+                    tipo: tipoSelecionado,
+                    mesaId: mesaVinculadaId,
+                    resultados: resultadosBusca,
+                  ),
                 ),
+                // Busca por nome: lista as vendas salvas encontradas
+                if (_ehBuscaPorNome(termoBusca)) ...[
+                  const SizedBox(height: 12),
+                  if (resultadosBusca.isNotEmpty)
+                    _buildResultadosVendasSalvas(ctx, resultadosBusca)
+                  else
+                    Text(
+                      termoBusca.length < 2
+                          ? 'Digite pelo menos 2 letras para buscar vendas salvas.'
+                          : 'Nenhuma venda salva encontrada para "${termoBusca}".',
+                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
+                ],
                 if (tipoSelecionado == TipoControle.comanda &&
                     mesasAbertas.isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -15326,11 +15356,13 @@ recusando a emissão de NFC-e (erro 403).
               child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
             ),
             ElevatedButton.icon(
-              onPressed: () => Navigator.pop(ctx, {
-                'numero': controller.text,
-                'tipo': tipoSelecionado,
-                'mesaId': mesaVinculadaId,
-              }),
+              onPressed: () => _finalizarDialogoAbrir(
+                ctx,
+                texto: controller.text,
+                tipo: tipoSelecionado,
+                mesaId: mesaVinculadaId,
+                resultados: resultadosBusca,
+              ),
               icon: const Icon(Icons.open_in_new),
               label: const Text('ABRIR'),
             ),
@@ -15341,6 +15373,18 @@ recusando a emissão de NFC-e (erro 403).
 
     controller.dispose();
     if (dadosEntrada == null) return;
+
+    // Venda salva escolhida na busca por nome: abre direto no PDV.
+    final pedidoEscolhido = dadosEntrada['pedido'] as Pedido?;
+    if (pedidoEscolhido != null) {
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => PdvPage(pedidoInicial: pedidoEscolhido)),
+      );
+      return;
+    }
+
     final texto = (dadosEntrada['numero'] as String? ?? '').trim();
     if (texto.isEmpty) return;
 
@@ -15395,6 +15439,279 @@ recusando a emissão de NFC-e (erro 403).
     );
   }
 
+  /// Fecha o diálogo de abertura: para números retorna os dados da comanda/
+  /// mesa; para busca por nome, com um único resultado já abre direto e com
+  /// vários mantém o diálogo aberto para o usuário escolher na lista.
+  void _finalizarDialogoAbrir(
+    BuildContext ctx, {
+    required String texto,
+    required TipoControle tipo,
+    required String? mesaId,
+    required List<Pedido> resultados,
+  }) {
+    if (_ehBuscaPorNome(texto)) {
+      if (resultados.length == 1) {
+        Navigator.pop(ctx, {'pedido': resultados.first});
+      }
+      return;
+    }
+    Navigator.pop(ctx, {
+      'numero': texto,
+      'tipo': tipo,
+      'mesaId': mesaId,
+    });
+  }
+
+  /// Indica se o texto digitado é uma busca por nome (qualquer coisa que não
+  /// seja apenas números).
+  bool _ehBuscaPorNome(String texto) {
+    final t = texto.trim();
+    if (t.isEmpty) return false;
+    return !RegExp(r'^[0-9]+$').hasMatch(t);
+  }
+
+  /// Busca vendas salvas pelo nome do cliente ou pelo número, sem diferenciar
+  /// acentos e maiúsculas/minúsculas.
+  ///
+  /// Lista APENAS pedidos em aberto (Pendente / Parcialmente Pago /
+  /// Em Andamento): cancelados e quitados ('Pago' ou totalmente recebidos)
+  /// ficam de fora.
+  ///
+  /// Procura em DOIS lugares, porque uma venda balcão salva no PDV nasce
+  /// apenas como [VendaBalcao] (o Pedido só é gravado no delivery):
+  ///  1. `dataService.pedidos`       -> pedidos (delivery, fiado, etc.)
+  ///  2. `dataService.vendasBalcao`  -> vendas balcão salvas no PDV
+  /// Sem o item 2 a busca por nome não achava nada para venda balcão.
+  List<Pedido> _buscarVendasSalvas(String termo, DataService dataService) {
+    final t = _semAcentos(termo.trim().toLowerCase());
+    if (t.length < 2) return [];
+
+    final digitos = t.replaceAll(RegExp(r'[^0-9]'), '');
+
+    bool bate(Pedido pedido) {
+      final status = pedido.status.toLowerCase().trim();
+      if (status == 'cancelado') return false;
+
+      // Só pedidos em aberto: quitados não entram na lista.
+      // (totalRecebido > 0 evita tratar pedido sem itens/total zero como pago.)
+      final quitado = status == 'pago' ||
+          (pedido.totalRecebido > 0 && pedido.totalmenteRecebido);
+      if (quitado) return false;
+
+      final nome = _semAcentos((pedido.clienteNome ?? '').toLowerCase());
+      if (nome.isNotEmpty && nome.contains(t)) return true;
+
+      if (digitos.isNotEmpty) {
+        final numero = _semAcentos(pedido.numero.toLowerCase());
+        if (numero.contains(t) ||
+            numero.replaceAll(RegExp(r'[^0-9]'), '').contains(digitos)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    final pedidos = dataService.pedidos.where(bate).toList();
+
+    // Venda balcão costuma dividir o número com o pedido gerado a partir
+    // dela; já coberta acima, não deve aparecer em duplicidade.
+    final numerosCobertos = pedidos.map((p) => p.numero).toSet();
+
+    final vendasBalcao = dataService.vendasBalcao
+        .where((v) => !v.isCancelada && !numerosCobertos.contains(v.numero))
+        .map(_pedidoAPartirDaVenda)
+        .where(bate)
+        .toList();
+
+    final resultados = [...pedidos, ...vendasBalcao]
+      ..sort((a, b) => b.dataPedido.compareTo(a.dataPedido));
+    return resultados;
+  }
+
+  /// Converte uma venda balcão salva num [Pedido] em memória, para que ela
+  /// possa ser aberta no PDV (`PdvPage` recebe apenas pedidos).
+  ///
+  /// Mantém o MESMO id e número da venda: ao receber o pagamento o PDV chama
+  /// `_syncVendaBalcao`, que localiza a VendaBalcao por id/número e atualiza
+  /// aquela venda original em vez de criar uma duplicata.
+  Pedido _pedidoAPartirDaVenda(VendaBalcao venda) {
+    final produtos = <ItemPedido>[];
+    final servicos = <ItemServico>[];
+
+    for (final item in venda.itens) {
+      if (item.isServico) {
+        servicos.add(ItemServico(
+          id: item.id,
+          descricao: item.nome,
+          valor: item.precoUnitario,
+          valorAdicional: 0.0,
+          dataAgendamento: venda.dataVenda,
+          observacao: item.observacao,
+        ));
+      } else {
+        produtos.add(ItemPedido(
+          id: item.id,
+          nome: item.nome,
+          preco: item.precoUnitario,
+          quantidade: item.quantidade,
+          observacao: item.observacao,
+          fornecedorNome: item.fornecedorNome,
+          adicionais: item.adicionais,
+          unidadeVenda: item.unidadeVenda,
+          quantidadeBaixa: item.quantidadeBaixa,
+          precoSemPromocao: item.precoSemPromocao,
+        ));
+      }
+    }
+
+    return Pedido(
+      id: venda.id,
+      numero: venda.numero,
+      clienteId: venda.clienteId,
+      clienteNome: venda.clienteNome,
+      clienteTelefone: venda.clienteTelefone,
+      dataPedido: venda.dataVenda,
+      status: venda.valorRecebido != null ? 'Pago' : 'Pendente',
+      total: venda.valorTotal,
+      produtos: produtos,
+      servicos: servicos,
+      pagamentos: venda.pagamentos,
+      observacoes: venda.observacoes,
+      deliveryInfo: venda.deliveryInfo,
+      vendedorId: venda.vendedorId,
+      vendedorNome: venda.vendedorNome,
+    );
+  }
+
+  /// Remove acentuação para a busca encontrar o mesmo resultado com ou sem
+  /// acento (ex.: "jose" encontra "José").
+  String _semAcentos(String texto) {
+    const acentos = {
+      'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
+      'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+      'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+      'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
+      'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+      'ç': 'c',
+      'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A',
+      'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
+      'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
+      'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O',
+      'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
+      'Ç': 'C',
+    };
+    var resultado = texto;
+    acentos.forEach((acento, semAcento) {
+      resultado = resultado.replaceAll(acento, semAcento);
+    });
+    return resultado;
+  }
+
+  /// Lista as vendas salvas encontradas na busca por nome dentro do diálogo
+  /// de abertura. Ao tocar em uma delas, ela é aberta no PDV.
+  Widget _buildResultadosVendasSalvas(
+      BuildContext ctx, List<Pedido> resultados) {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 260),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.shopping_bag_outlined,
+                    size: 14,
+                    color: Colors.cyanAccent.withOpacity(0.8),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'VENDAS SALVAS (${resultados.length})',
+                    style: TextStyle(
+                      color: Colors.cyanAccent.withOpacity(0.8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            for (final pedido in resultados) _buildItemVendaSalva(ctx, pedido),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Linha de uma venda salva na lista de resultados da busca por nome.
+  Widget _buildItemVendaSalva(BuildContext ctx, Pedido pedido) {
+    final nome = (pedido.clienteNome ?? '').trim();
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => Navigator.pop(ctx, {'pedido': pedido}),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 15,
+                backgroundColor: Colors.cyanAccent.withOpacity(0.15),
+                child: const Icon(Icons.person, size: 16, color: Colors.cyanAccent),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      nome.isEmpty ? 'Sem nome' : nome,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${pedido.numero}  •  ${DateFormat('dd/MM/yyyy HH:mm').format(pedido.dataPedido)}  •  ${pedido.status}',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _formatoMoeda.format(pedido.totalGeral),
+                style: const TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBotaoAbrirPorNumero(DataService dataService,
       {bool compact = false}) {
     return IconButton(
@@ -15410,7 +15727,7 @@ recusando a emissão de NFC-e (erro 403).
         ),
         child: Icon(Icons.dialpad, color: Colors.cyanAccent, size: compact ? 18 : 22),
       ),
-      tooltip: 'Abrir mesa/comanda por número',
+      tooltip: 'Abrir comanda/mesa por número ou buscar venda salva',
     );
   }
 
@@ -19354,7 +19671,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       valorASugerir += acrescimoAplicadoLocal;
     }
 
-    final valorSugerido = valorASugerir;
+    double valorSugerido = valorASugerir;
 
     if (_valorRestante <= 0 && tipo != TipoPagamento.outro) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -19501,7 +19818,46 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       }
     }
 
+    // Validação especial para Cash Back: exige cliente identificado e saldo
+    if (tipo == TipoPagamento.cashBack) {
+      if (widget.cliente == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Para usar Cash Back, selecione um cliente identificado.'),
+            backgroundColor: Colors.amber,
+          ),
+        );
+        return;
+      }
+      final saldoDisp = CashBackService.maximoUsavel(
+        saldo: widget.cliente!.saldoCashback,
+        totalVenda: valorSugerido,
+      );
+      if (saldoDisp <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Este cliente não tem saldo de Cash Back disponível.'),
+            backgroundColor: Colors.amber,
+          ),
+        );
+        return;
+      }
+      // Sugere no máximo o saldo disponível do cliente
+      if (valorSugerido > saldoDisp) {
+        valorSugerido = saldoDisp;
+      }
+    }
+
     _mostrarDialogPagamento(tipo, valorSugerido, descontoCalc: descontoAplicadoLocal, acrescimoCalc: acrescimoAplicadoLocal);
+  }
+
+  /// Saldo de cash back do cliente selecionado nesta venda (lido do
+  /// DataService para refletir créditos/debites já feitos em outras vendas).
+  double _saldoCashbackDoClienteSelecionado(DataService dataService) {
+    final cliente = widget.cliente;
+    if (cliente == null) return 0.0;
+    final idx = dataService.clientes.indexWhere((c) => c.id == cliente.id);
+    return idx == -1 ? cliente.saldoCashback : dataService.clientes[idx].saldoCashback;
   }
 
   // Mostra mensagem de erro centralizada quando tenta usar crediário sem cliente
@@ -19918,6 +20274,41 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 ) ??
                 0;
             if (valorOriginal <= 0) return;
+
+            // Cash Back: valor não pode passar do saldo do cliente
+            // (descontando o que já foi lançado nesta mesma venda)
+            if (tipo == TipoPagamento.cashBack) {
+              final dataSvc = Provider.of<DataService>(context, listen: false);
+              double saldo = 0.0;
+              if (widget.cliente != null) {
+                final idx = dataSvc.clientes.indexWhere(
+                  (c) => c.id == widget.cliente!.id,
+                );
+                if (idx != -1) saldo = dataSvc.clientes[idx].saldoCashback;
+              }
+              double jaLancado = 0.0;
+              for (final p in _pagamentos) {
+                if (p.tipo == TipoPagamento.cashBack &&
+                    p.id != pagamentoExistente?.id) {
+                  jaLancado += p.valor;
+                }
+              }
+              final disponivel = CashBackService.maximoUsavel(
+                saldo: saldo,
+                totalVenda: saldo - jaLancado,
+              );
+              if (valorOriginal > disponivel + 0.01) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Saldo de Cash Back insuficiente — disponível: R\$ ${disponivel.toStringAsFixed(2)}',
+                    ),
+                    backgroundColor: Colors.amber,
+                  ),
+                );
+                return;
+              }
+            }
 
             final String? obs = observacaoController.text.isNotEmpty
                 ? observacaoController.text
@@ -20847,6 +21238,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         return Colors.teal;
       case TipoPagamento.transferencia:
         return Colors.blueAccent;
+      case TipoPagamento.cashBack:
+        return Colors.amber;
     }
   }
 
@@ -20872,6 +21265,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm;
     }
   }
 
@@ -21078,6 +21473,17 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 10),
+                  // Saldo de cash back do cliente identificado
+                  if (widget.cliente != null) ...[
+                    CashBackBadge(
+                      saldo: _saldoCashbackDoClienteSelecionado(
+                        Provider.of<DataService>(context, listen: true),
+                      ),
+                      tituloExtra: 'Saldo Cash Back',
+                      somenteVisu: true,
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,

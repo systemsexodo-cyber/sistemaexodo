@@ -31,6 +31,13 @@ class EstoqueHistorico {
   bool get ehQuebra => (motivo?.toLowerCase() == 'quebra') ||
       (observacao?.toLowerCase().contains('motivo: quebra') ?? false);
 
+  /// Consumo interno da loja (uso próprio/descarte controlado), lançado no
+  /// PDV ou manualmente. Conta como custo operacional — não é venda nem quebra.
+  bool get ehConsumoInterno => motivo?.toLowerCase() == 'consumo_interno';
+
+  /// Premiação/brinde entregue sem cobrança (valor zero no PDV).
+  bool get ehPremiacao => motivo?.toLowerCase() == 'premiacao';
+
   /// Movimento de ZERAMENTO: o saldo do produto foi levado a 0 de propósito.
   ///
   /// NÃO conta como entrada nem como saída nos totais das telas — é uma

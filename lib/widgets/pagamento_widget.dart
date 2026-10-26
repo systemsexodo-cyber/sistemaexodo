@@ -5,6 +5,8 @@ import '../models/forma_pagamento_custom.dart';
 import '../services/taxa_pagamento_service.dart';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/cash_back_service.dart';
+import 'cash_back_badge.dart';
 /// Widget para seleção e exibição de formas de pagamento
 class PagamentoWidget extends StatefulWidget {
   final double totalPedido;
@@ -36,6 +38,36 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
 
   bool get _pagamentoCompleto => _valorRestante <= 0.01;
 
+  /// Saldo de cash back do cliente selecionado (0 se não houver cliente).
+  double _saldoCashbackDoCliente(DataService dataService) {
+    final id = widget.clienteId;
+    if (id == null || id.isEmpty) return 0.0;
+    final idx = dataService.clientes.indexWhere((c) => c.id == id);
+    if (idx == -1) return 0.0;
+    return dataService.clientes[idx].saldoCashback;
+  }
+
+  /// Se o cliente identificado tem o programa de cash back ativado.
+  bool _clienteCashbackAtivo(DataService dataService) {
+    final id = widget.clienteId;
+    if (id == null || id.isEmpty) return false;
+    final idx = dataService.clientes.indexWhere((c) => c.id == id);
+    if (idx == -1) return false;
+    return dataService.clientes[idx].cashbackAtivo;
+  }
+
+  void _mostrarErroCashbackInativo() {
+    ScaffoldMessenger.of(this.context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Este cliente está com o Cash Back desativado no cadastro',
+        ),
+        backgroundColor: Colors.redAccent,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
   void _adicionarPagamento(TipoPagamento tipo) {
     // Validação: Crediário e Fiado requerem cliente selecionado
     if ((tipo == TipoPagamento.crediario || tipo == TipoPagamento.fiado) &&
@@ -44,7 +76,21 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
       return;
     }
 
+    // Validação: Cash Back também exige cliente identificado
+    if (tipo == TipoPagamento.cashBack &&
+        (widget.clienteId == null || widget.clienteId!.isEmpty)) {
+      _mostrarErroSemCliente(tipo);
+      return;
+    }
+
     final dataService = Provider.of<DataService>(context, listen: false);
+
+    // Validação: cliente com cash back desativado não pode usá-lo como pagamento
+    if (tipo == TipoPagamento.cashBack &&
+        !_clienteCashbackAtivo(dataService)) {
+      _mostrarErroCashbackInativo();
+      return;
+    }
     final pagamentosConfig = dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
     final config = pagamentosConfig?[tipo.name] as Map?;
     final descontoPerc = (config?['descontoPerc'] as num?)?.toDouble() ?? 0.0;
@@ -63,12 +109,45 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
       valorSugerido += acrescimoAplicado;
     }
 
+    // Cash Back: propõe no máximo o saldo disponível do cliente
+    if (tipo == TipoPagamento.cashBack) {
+      final saldo = _saldoCashbackDoCliente(dataService);
+      if (saldo <= 0) {
+        _mostrarErroSemSaldoCashBack();
+        return;
+      }
+      valorSugerido = CashBackService.maximoUsavel(
+        saldo: saldo,
+        totalVenda: valorSugerido,
+        limiteUsoPercentual: CashBackService.limiteUsoPercentualParaEmpresa(
+          dataService.empresaAtual,
+        ),
+      );
+    }
+
     _mostrarDialogPagamento(tipo, valorSugerido, descontoCalc: descontoAplicado, acrescimoCalc: acrescimoAplicado);
+  }
+
+  // Erro quando o cliente identificado não tem saldo de cash back
+  void _mostrarErroSemSaldoCashBack() {
+    ScaffoldMessenger.of(this.context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Este cliente não tem saldo de Cash Back disponível',
+        ),
+        backgroundColor: Colors.amber,
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
 
   // Mostra mensagem de erro quando tenta usar crediário/fiado sem cliente
   void _mostrarErroSemCliente(TipoPagamento tipo) {
-    final tipoNome = tipo == TipoPagamento.crediario ? 'Crediário' : 'Fiado';
+    final tipoNome = tipo == TipoPagamento.crediario
+        ? 'Crediário'
+        : tipo == TipoPagamento.cashBack
+            ? 'Cash Back'
+            : 'Fiado';
     final corTipo = tipo == TipoPagamento.crediario ? Colors.pink : Colors.red;
 
     showDialog(
@@ -592,6 +671,38 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                       ),
                     );
                     return;
+                  }
+
+                  // Cash Back: valor não pode passar do saldo do cliente
+                  // (descontando o que já foi lançado nesta mesma venda)
+                  if (tipo == TipoPagamento.cashBack) {
+                    final dataSvc = Provider.of<DataService>(
+                      this.context,
+                      listen: false,
+                    );
+                    final saldo = _saldoCashbackDoCliente(dataSvc);
+                    double jaLancado = 0.0;
+                    for (final p in widget.pagamentos) {
+                      if (p.tipo == TipoPagamento.cashBack &&
+                          p.id != pagamentoExistente?.id) {
+                        jaLancado += p.valor;
+                      }
+                    }
+                    final disponivel = CashBackService.maximoUsavel(
+                      saldo: saldo,
+                      totalVenda: saldo - jaLancado,
+                    );
+                    if (valor > disponivel + 0.01) {
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Saldo de Cash Back insuficiente — disponível: R\$ ${disponivel.toStringAsFixed(2)}',
+                          ),
+                          backgroundColor: Colors.amber,
+                        ),
+                      );
+                      return;
+                    }
                   }
 
                   final String? obs = observacaoController.text.isNotEmpty
@@ -1390,15 +1501,34 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
   }
 
   Widget _buildBotoesPagamento() {
-    final dataService = Provider.of<DataService>(context, listen: false);
+    final dataService = Provider.of<DataService>(context, listen: true);
     final formasCustom =
         TaxaPagamentoService.formasPersonalizadasAtivas(dataService.empresaAtual);
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+    final temCliente =
+        widget.clienteId != null && widget.clienteId!.isNotEmpty;
+    final saldoCashBack = _saldoCashbackDoCliente(dataService);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ...TipoPagamento.values.map((tipo) => _buildBotaoTipoPagamento(tipo)),
-        ...formasCustom.map((forma) => _buildBotaoFormaCustom(forma)),
+        // Saldo de cash back do cliente identificado (o operador vê antes
+        // de escolher a forma de pagamento).
+        if (temCliente) ...[
+          CashBackBadge(
+            saldo: saldoCashBack,
+            tituloExtra: 'Saldo Cash Back',
+            somenteVisu: true,
+          ),
+          const SizedBox(height: 8),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ...TipoPagamento.values.map((tipo) => _buildBotaoTipoPagamento(tipo)),
+            ...formasCustom.map((forma) => _buildBotaoFormaCustom(forma)),
+          ],
+        ),
       ],
     );
   }
@@ -2162,6 +2292,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Colors.teal;
       case TipoPagamento.transferencia:
         return Colors.blueAccent;
+      case TipoPagamento.cashBack:
+        return Colors.amber;
     }
   }
 
@@ -2187,6 +2319,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm;
     }
   }
 }

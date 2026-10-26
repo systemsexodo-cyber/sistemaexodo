@@ -18,6 +18,7 @@ import 'entrada_rapida_produtos_page.dart';
 import 'estoque_relatorio_geral_page.dart';
 import 'estoque_reposicao_page.dart';
 import 'quebras_page.dart';
+import 'consumo_interno_page.dart';
 import 'inventario_page.dart';
 import '../services/inventario_print_service.dart';
 import 'producao_page.dart';
@@ -1017,6 +1018,18 @@ class _ProdutosPageState extends State<ProdutosPage> {
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const QuebrasPage()),
+          );
+        },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Consumo Interno da Loja',
+        icone: Icons.store_mall_directory_outlined,
+        cor: Colors.lightBlueAccent,
+        permissao: TipoPermissao.estoqueVisualizar,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ConsumoInternoPage()),
           );
         },
       ),

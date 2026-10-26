@@ -1211,7 +1211,7 @@ class _PedidosPageState extends State<PedidosPage> {
   ) {
     final isCancelado = pedido.status.toLowerCase() == 'cancelado';
     // Pedidos cancelados não são considerados como pagos, mesmo que tenham recebido
-    final isPago = !isCancelado && pedido.totalmenteRecebido;
+    final isPago = !isCancelado && (pedido.totalmenteRecebido || pedido.status.toLowerCase().trim() == 'pago');
     final isParcialmentePago = !isCancelado && pedido.totalRecebido > 0 && !isPago;
     final isSelecionado = _selecionadosIds.contains(pedido.id);
     // No celular (< 700px) os blocos laterais descem para o card.

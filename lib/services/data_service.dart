@@ -37,8 +37,10 @@ import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
 import 'package:sistema_exodo_novo/models/item_pedido.dart';
 import 'package:sistema_exodo_novo/models/item_servico.dart';
 import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
+import 'package:sistema_exodo_novo/services/cash_back_service.dart';
 import 'package:sistema_exodo_novo/models/link_vendedor.dart';
 import 'package:sistema_exodo_novo/models/comissao_vendedor.dart';
+import 'package:sistema_exodo_novo/models/cash_back_movimento.dart';
 import 'package:sistema_exodo_novo/models/motorista.dart';
 import 'package:sistema_exodo_novo/models/romaneio.dart';
 import 'package:sistema_exodo_novo/models/perfil_tributario.dart';
@@ -222,6 +224,7 @@ class DataService extends ChangeNotifier {
   final List<MesaComanda> _mesasComandas = [];
   final List<LinkVendedor> _linksVendedores = [];
   final List<ComissaoVendedor> _comissoesVendedores = [];
+  final List<CashBackMovimento> _movimentosCashBack = [];
   final List<Romaneio> _romaneios = [];
   final List<PerfilTributario> _perfisTributarios = [];
   bool _migrandoPerfisTributarios =
@@ -790,6 +793,7 @@ class DataService extends ChangeNotifier {
   List<NFCe> get nfces => _nfces;
   List<NFCe> get nfes => _nfes;
   List<VendaBalcao> get vendasBalcao => _vendasBalcao;
+  List<CashBackMovimento> get movimentosCashBack => _movimentosCashBack;
   List<Pedido> get pedidos => _pedidos;
   List<ServicoRealizado> get servicosRealizados => _servicosRealizados;
   List<Orcamento> get orcamentos => _orcamentos;
@@ -1513,6 +1517,15 @@ class DataService extends ChangeNotifier {
             evento,
             dados,
             MesaComanda.fromMap,
+          );
+          break;
+
+        case 'cash_back_movimentos':
+          _aplicarEmLista<CashBackMovimento>(
+            _movimentosCashBack,
+            evento,
+            dados,
+            CashBackMovimento.fromMap,
           );
           break;
 
@@ -7619,6 +7632,57 @@ class DataService extends ChangeNotifier {
     );
   }
 
+  // ============ CONSUMO INTERNO DA LOJA ============
+
+  /// Lança uma saída de estoque como consumo interno da loja (uso próprio,
+  /// descarte controlado). Diferente da venda, não gera faturamento; diferente
+  /// da quebra, é um consumo operacional planejado. Cada saída vira registro
+  /// no histórico com motivo 'consumo_interno' — a tela de consumo interno
+  /// filtra por ele e soma o valor de custo consumido.
+  Future<void> registrarConsumoInterno({
+    required String produtoId,
+    required double quantidade,
+    String? observacao,
+    String? usuario,
+  }) async {
+    final produtoIndex = _produtos.indexWhere((p) => p.id == produtoId);
+    if (produtoIndex == -1) return;
+    final produto = _produtos[produtoIndex];
+    final motivoTexto = (observacao ?? '').trim();
+    await registrarSaidaEstoque(
+      produtoId: produtoId,
+      quantidade: quantidade,
+      motivo: 'consumo_interno',
+      observacao: motivoTexto.isEmpty
+          ? 'Consumo interno da loja'
+          : 'Consumo interno: $motivoTexto',
+      usuario: usuario,
+      fornecedorNome: produto.fornecedorNome,
+      custoUnitarioOverride:
+          (produto.precoCusto ?? 0) > 0 ? produto.precoCusto : null,
+    );
+    debugPrint(
+      '>>> [ConsumoInterno] ✓ ${produto.nome}: ${quantidade}un',
+    );
+  }
+
+  /// Totais de consumo interno da loja (para o dashboard): quantidade de
+  /// lançamentos, unidades consumidas e valor de custo.
+  ({int lancamentos, double unidades, double custo}) totaisConsumoInterno(
+    List<EstoqueHistorico> movimentos,
+  ) {
+    int lancamentos = 0;
+    double unidades = 0;
+    double custo = 0;
+    for (final h in movimentos) {
+      if (!h.ehConsumoInterno) continue;
+      lancamentos++;
+      unidades += h.quantidade.abs();
+      custo += h.valorCusto ?? 0.0;
+    }
+    return (lancamentos: lancamentos, unidades: unidades, custo: custo);
+  }
+
   // ============ INVENTÁRIO (Contagem da Loja) ============
 
   /// Aplica o resultado de um inventário de conferência: corrige o estoque de
@@ -10691,6 +10755,275 @@ class DataService extends ChangeNotifier {
 
   // ============ CRUD Venda Balcão ============
 
+  /// Vendas cujo cash back já foi computado nesta sessão (evita crédito
+  /// duplicado quando uma mesma venda é regravada no fluxo).
+  final Set<String> _vendasCashbackProcessadas = <String>{};
+
+  /// Aplica as regras de cash back de uma venda finalizada:
+  /// - debita do saldo do cliente o que foi pago com Cash Back;
+  /// - credita o percentual sobre o valor realmente pago sem cash back.
+  ///
+  /// Sem cliente identificado não faz nada (cash back é fidelidade por cliente).
+  /// Movimentos de cash back de um cliente (extrato).
+  List<CashBackMovimento> movimentosDoCliente(String clienteId) =>
+      _movimentosCashBack.where((m) => m.clienteId == clienteId).toList();
+
+  /// Persiste movimentos de cash back: grava/atualiza na lista local, marca a
+  /// coleção suja e envia cada linha para a nuvem.
+  Future<void> _persistirMovimentosCashBack(
+    List<CashBackMovimento> movimentos,
+  ) async {
+    if (movimentos.isEmpty) return;
+    for (final m in movimentos) {
+      final idx = _movimentosCashBack.indexWhere((x) => x.id == m.id);
+      if (idx >= 0) {
+        _movimentosCashBack[idx] = m;
+      } else {
+        _movimentosCashBack.add(m);
+      }
+    }
+    _marcarSujo(LocalStorageService.keyCashBackMovimentos);
+    notifyListeners();
+    for (final m in movimentos) {
+      await enviarMudancaParaSupabase(
+        SupabaseService.tableCashBackMovimentos,
+        m.toMap(),
+      );
+    }
+  }
+
+  /// Créditos do cliente com `consumido` atualizado por [consumirDosCreditos],
+  /// devolvendo só as linhas que realmente mudaram (para regravar na nuvem).
+  List<CashBackMovimento> _creditosConsumidos(
+    List<CashBackMovimento> movimentos,
+    double valorUsado,
+  ) {
+    final originais = {for (final m in movimentos) m.id: m};
+    final atualizados =
+        CashBackService.consumirDosCreditos(movimentos, valorUsado);
+    return atualizados
+        .where((m) => (originais[m.id]?.consumido ?? 0) != m.consumido)
+        .toList();
+  }
+
+  Future<void> aplicarCashbackDaVenda(VendaBalcao venda) async {
+    try {
+      if (venda.cancelado || venda.valorTotal <= 0) return;
+      final clienteId = venda.clienteId;
+      if (clienteId == null || clienteId.isEmpty) return;
+      // Trava de processamento único (evita crédito duplicado). Marcada só
+      // antes do crédito efetivo — vendas puladas por falta de recebimento
+      // podem ser reprocessadas quando forem pagas.
+      if (_vendasCashbackProcessadas.contains(venda.id)) return;
+
+      final index = _clientes.indexWhere((c) => c.id == clienteId);
+      if (index == -1) {
+        debugPrint('>>> [CashBack] ⚠️ Cliente $clienteId não encontrado — saldo não creditado');
+        return;
+      }
+
+      final cliente = _clientes[index];
+
+      // Gate por cliente: cash back desativado não acumula nem usa.
+      if (!cliente.cashbackAtivo) {
+        debugPrint('>>> [CashBack] ⏭️ ${cliente.nome} com cash back desativado');
+        return;
+      }
+
+      final agora = DateTime.now();
+      var movimentos = movimentosDoCliente(clienteId);
+
+      // 1) Débito: quanto desta venda foi pago com o próprio cash back
+      double usado = 0.0;
+      for (final p in venda.pagamentos) {
+        if (p.tipo == TipoPagamento.cashBack) usado += p.valor;
+      }
+      usado = CashBackService.maximoUsavel(
+        saldo: cliente.saldoCashback,
+        totalVenda: usado,
+      );
+
+      // Sem recebimento confirmado não credita: cobre a venda "restante"
+      // do dividir-conta (criada ainda não paga) e vendas zeradas. O uso de
+      // cash back (usado > 0) já implica que a venda tinha pagamento.
+      final recebeu =
+          (venda.valorRecebido ?? 0) > 0 || venda.pagamentos.isNotEmpty;
+      if (usado <= 0 && !recebeu) return;
+
+      double saldoCorrente = cliente.saldoCashback;
+      final novosMovimentos = <CashBackMovimento>[];
+
+      // 1a) Expiração: créditos vencidos saem do saldo com o motivo no extrato
+      final vencido = CashBackService.saldoVencido(
+        movimentos,
+        clienteId: clienteId,
+        agora: agora,
+      );
+      if (vencido > 0) {
+        saldoCorrente = CashBackService.arredondar2(saldoCorrente - vencido);
+        novosMovimentos.add(
+          CashBackMovimento(
+            id: uuid.v4(),
+            clienteId: clienteId,
+            tipo: CashBackMovimentoTipo.debito,
+            valor: vencido,
+            saldoApos: saldoCorrente,
+            data: agora,
+            observacao: 'Crédito expirado',
+          ),
+        );
+        // Os créditos vencidos passam a contar como totalmente consumidos
+        movimentos = movimentos
+            .map((m) =>
+                (m.tipo == CashBackMovimentoTipo.credito &&
+                        m.expiraEm != null &&
+                        !m.expiraEm!.isAfter(agora))
+                    ? m.copyWith(consumido: m.valor)
+                    : m)
+            .toList();
+      }
+
+      // 1b) Uso: consome dos créditos (FIFO por vencimento) e registra o débito
+      final creditosConsumidos = <CashBackMovimento>[];
+      if (usado > 0) {
+        creditosConsumidos.addAll(_creditosConsumidos(movimentos, usado));
+        movimentos = CashBackService.consumirDosCreditos(movimentos, usado);
+        saldoCorrente = CashBackService.arredondar2(saldoCorrente - usado);
+        novosMovimentos.add(
+          CashBackMovimento(
+            id: uuid.v4(),
+            clienteId: clienteId,
+            tipo: CashBackMovimentoTipo.debito,
+            valor: usado,
+            saldoApos: saldoCorrente,
+            vendaId: venda.id,
+            vendaNumero: venda.numero,
+            data: agora,
+            observacao: 'Usado como pagamento na venda ${venda.numero}',
+          ),
+        );
+      }
+
+      // 2) Crédito: % sobre o valor pago SEM cash back (não gera cash back
+      //    sobre cash back). A taxa vem da configuração da empresa.
+      final valorPagoReal = venda.valorTotal - usado;
+      final ganho = CashBackService.ganhoPorVenda(
+        valorPagoReal,
+        taxa: CashBackService.taxaParaEmpresa(_empresaAtual),
+      );
+      if (ganho > 0) {
+        saldoCorrente = CashBackService.arredondar2(saldoCorrente + ganho);
+        final pct = (CashBackService.taxaParaEmpresa(_empresaAtual) * 100)
+            .toStringAsFixed(0);
+        novosMovimentos.add(
+          CashBackMovimento(
+            id: uuid.v4(),
+            clienteId: clienteId,
+            tipo: CashBackMovimentoTipo.credito,
+            valor: ganho,
+            saldoApos: saldoCorrente,
+            vendaId: venda.id,
+            vendaNumero: venda.numero,
+            data: agora,
+            expiraEm: CashBackService.dataExpiracao(
+              agora,
+              validadeDias:
+                  CashBackService.validadeDiasParaEmpresa(_empresaAtual),
+            ),
+            observacao: 'Cash back $pct% da venda ${venda.numero}',
+          ),
+        );
+      }
+
+      if (novosMovimentos.isEmpty) {
+        _vendasCashbackProcessadas.add(venda.id);
+        return;
+      }
+
+      _vendasCashbackProcessadas.add(venda.id);
+      await _persistirMovimentosCashBack([
+        ...creditosConsumidos,
+        ...novosMovimentos,
+      ]);
+      await updateCliente(
+        cliente.copyWith(saldoCashback: saldoCorrente < 0 ? 0.0 : saldoCorrente),
+      );
+      debugPrint(
+        '>>> [CashBack] ✓ ${cliente.nome}: -R\$$usado (uso) +R\$$ganho (ganho) → saldo R\$$saldoCorrente (venda ${venda.numero})',
+      );
+    } catch (e) {
+      // Cash back nunca pode derrubar a venda — erro fica só no log.
+      debugPrint('>>> [CashBack] ❌ Erro ao processar venda ${venda.numero}: $e');
+    }
+  }
+
+  /// Lançamento manual de cash back (crédito de bonificação ou débito de
+  /// resgate/estorno) feito pelo operador na tela do cliente.
+  ///
+  /// Débito manual consome os créditos que vencem primeiro (mesmo FIFO da
+  /// venda). Crédito manual respeita a validade configurada na empresa.
+  Future<void> lancarMovimentoCashBack({
+    required String clienteId,
+    required CashBackMovimentoTipo tipo,
+    required double valor,
+    String? observacao,
+  }) async {
+    if (valor <= 0) return;
+    final index = _clientes.indexWhere((c) => c.id == clienteId);
+    if (index == -1) return;
+    final cliente = _clientes[index];
+    final agora = DateTime.now();
+
+    final movimentos = movimentosDoCliente(clienteId);
+    final vencido = CashBackService.saldoVencido(
+      movimentos,
+      clienteId: clienteId,
+      agora: agora,
+    );
+    double saldoCorrente = CashBackService.arredondar2(
+      cliente.saldoCashback - vencido,
+    );
+
+    List<CashBackMovimento> creditosConsumidos = [];
+    double valorLancado = valor;
+    if (tipo == CashBackMovimentoTipo.debito) {
+      // Débito não pode passar do saldo válido disponível
+      if (valorLancado > saldoCorrente) valorLancado = saldoCorrente;
+      if (valorLancado <= 0) return;
+      creditosConsumidos = _creditosConsumidos(movimentos, valorLancado);
+      saldoCorrente = CashBackService.arredondar2(saldoCorrente - valorLancado);
+    } else {
+      saldoCorrente = CashBackService.arredondar2(saldoCorrente + valorLancado);
+    }
+
+    final movimento = CashBackMovimento(
+      id: uuid.v4(),
+      clienteId: clienteId,
+      tipo: tipo,
+      valor: valorLancado,
+      saldoApos: saldoCorrente,
+      data: agora,
+      expiraEm: tipo == CashBackMovimentoTipo.credito
+          ? CashBackService.dataExpiracao(
+              agora,
+              validadeDias: CashBackService.validadeDiasParaEmpresa(_empresaAtual),
+            )
+          : null,
+      observacao: observacao ??
+          (tipo == CashBackMovimentoTipo.credito
+              ? 'Crédito manual'
+              : 'Débito manual'),
+    );
+
+    await _persistirMovimentosCashBack([...creditosConsumidos, movimento]);
+    await updateCliente(
+      cliente.copyWith(saldoCashback: saldoCorrente < 0 ? 0.0 : saldoCorrente),
+    );
+    debugPrint(
+      '>>> [CashBack] ✓ Lançamento manual ${tipo.name} R\$$valorLancado para ${cliente.nome} → saldo R\$$saldoCorrente',
+    );
+  }
+
   Future<void> addVendaBalcao(VendaBalcao venda) async {
     // Garantir operador na venda: caminhos que criam VendaBalcao sem preencher
     // `operador` (ex.: pedido pago no PDV, fechamento de mesa/comanda) deixam a
@@ -10711,12 +11044,20 @@ class DataService extends ChangeNotifier {
       '✓ Venda ${venda.numero} (ID: ${venda.id}) salva em memória @ ${DateTime.now()}',
     );
 
+    // Cash back: credita/debita o saldo do cliente identificado.
+    // Fire-and-forget: o próprio método engole erros e tem trava de
+    // processamento único por venda — não atrasa a finalização da venda.
+    aplicarCashbackDaVenda(venda);
+
     // GRAVAÇÃO LOCAL POR REGISTRO: a venda vai sozinha para o PostgreSQL, sem
     // reescrever a tabela inteira (ver _persistirLinhaLocal, mais abaixo).
     _persistirLinhaLocal(LocalStorageService.keyVendasBalcao, venda.toMap());
 
     // Baixar estoque automaticamente
     for (final item in venda.itens) {
+      // Premiação/bônus (valor zero): o estoque já saiu no momento do
+      // lançamento no PDV (motivo 'premiacao') — não baixa de novo aqui.
+      if (item.isBonus) continue;
       if (!item.isServico) {
         // Fator de baixa: usa a forma de venda escolhida no item (ex.: 1 caixa = 12 un.),
         // com fallback para o fator padrão do produto (produtos cadastrados antes das múltiplas formas).
@@ -13349,6 +13690,19 @@ class DataService extends ChangeNotifier {
         }
       }
 
+      // 22b. Movimentos de Cash Back (extrato de fidelidade)
+      if (dados['cash_back_movimentos'] != null &&
+          dados['cash_back_movimentos'].isNotEmpty) {
+        final novos = _parseListaSegura(
+          dados['cash_back_movimentos'] as List,
+          CashBackMovimento.fromMap,
+          nomeColecao: 'Movimentos de Cash Back',
+        );
+        if (_mesclarSemRemover(_movimentosCashBack, novos)) {
+          _marcarSujo(LocalStorageService.keyCashBackMovimentos);
+        }
+      }
+
       // 23. Agendamentos
       final agendamentosNoSupabase = dados['agendamentos_servico'] as List?;
       if (agendamentosNoSupabase != null && agendamentosNoSupabase.isNotEmpty) {
@@ -13477,6 +13831,11 @@ class DataService extends ChangeNotifier {
           (dados['comissoes_vendedores'] as List).isNotEmpty)
         summary.add(
           '${(dados['comissoes_vendedores'] as List).length} comissões',
+        );
+      if (dados['cash_back_movimentos'] != null &&
+          (dados['cash_back_movimentos'] as List).isNotEmpty)
+        summary.add(
+          '${(dados['cash_back_movimentos'] as List).length} cash back',
         );
       if (dados['agendamentos_servico'] != null &&
           (dados['agendamentos_servico'] as List).isNotEmpty)
@@ -13806,6 +14165,9 @@ class DataService extends ChangeNotifier {
       final romaneiosMap = await _storage.carregarLista(
         _getEmpresaKey(LocalStorageService.keyRomaneios),
       );
+      final movimentosCashBackMap = await _storage.carregarLista(
+        _getEmpresaKey(LocalStorageService.keyCashBackMovimentos),
+      );
 
       if (clientesMap.isNotEmpty) {
         _aplicarColecaoTolerante(
@@ -14110,6 +14472,16 @@ class DataService extends ChangeNotifier {
           romaneiosMap,
           Romaneio.fromMap,
           _romaneios,
+        );
+      }
+
+      if (movimentosCashBackMap.isNotEmpty) {
+        _aplicarColecaoTolerante(
+          LocalStorageService.keyCashBackMovimentos,
+          movimentosCashBackMap,
+          CashBackMovimento.fromMap,
+          _movimentosCashBack,
+          ordenarPor: (m) => m.data,
         );
       }
 
@@ -14641,6 +15013,7 @@ class DataService extends ChangeNotifier {
           LocalStorageService.keyLotesProdutos: _lotesProdutos,
           LocalStorageService.keyLinksVendedores: _linksVendedores,
           LocalStorageService.keyComissoesVendedores: _comissoesVendedores,
+          LocalStorageService.keyCashBackMovimentos: _movimentosCashBack,
           LocalStorageService.keyRomaneios: _romaneios,
           LocalStorageService.keyMotoristas:
               _motoristas, // Bug Fix: motoristas estavam ausentes do mapa
@@ -14855,6 +15228,7 @@ class DataService extends ChangeNotifier {
             linksVendedores: _linksVendedores,
             comissoesVendedores: _comissoesVendedores,
             mesasComandas: _mesasComandas,
+            movimentosCashBack: _movimentosCashBack,
             empresa: _empresaAtual,
           )
           .timeout(
@@ -16828,15 +17202,19 @@ class DataService extends ChangeNotifier {
     String? usuarioModificou,
     String? acaoRealizada,
   }) async {
+    debugPrint('>>> [DataService] atualizarStatusItemMesaComanda: mesa=$mesaComandaId item=$itemId novoStatus=$novoStatus');
     final mesaComanda = _mesasComandas.firstWhere(
       (m) => m.id == mesaComandaId,
-      orElse: () => throw Exception('Mesa/Comanda não encontrada'),
+      orElse: () => throw Exception('Mesa/Comanda não encontrada: $mesaComandaId (total: ${_mesasComandas.length})'),
     );
+    debugPrint('>>> [DataService] Mesa encontrada: ${mesaComanda.numero}, itens: ${mesaComanda.itens.length}');
 
     final itemIndex = mesaComanda.itens.indexWhere((i) => i.id == itemId);
     if (itemIndex == -1) {
-      throw Exception('Item não encontrado');
+      debugPrint('>>> [DataService] Itens na mesa: ${mesaComanda.itens.map((i) => '${i.nome}(${i.id})').join(', ')}');
+      throw Exception('Item não encontrado: $itemId na mesa ${mesaComanda.numero} (${mesaComanda.itens.length} itens)');
     }
+    debugPrint('>>> [DataService] Item encontrado no índice $itemIndex: ${mesaComanda.itens[itemIndex].nome}');
 
     final acao = acaoRealizada ?? _getAcaoPorStatus(novoStatus);
     final itemAtualizado = mesaComanda.itens[itemIndex].copyWith(
@@ -16853,14 +17231,20 @@ class DataService extends ChangeNotifier {
     itensAtualizados[itemIndex] = itemAtualizado;
 
     // Usar copyWith para preservar TODOS os campos, incluindo couvert, garçom, pagamentos, etc.
+    // Recalcular total com base nos itens atualizados
+    final mesaComTemp = mesaComanda.copyWith(
+      itens: itensAtualizados,
+    );
     final mesaComandaAtualizada = mesaComanda.copyWith(
       itens: itensAtualizados,
-      total: mesaComanda.totalCalculado,
+      total: mesaComTemp.totalCalculado,
       updatedAt: DateTime.now(),
       usuarioModificou: usuarioModificou,
     );
 
+    debugPrint('>>> [DataService] Atualizando mesa ${mesaComanda.numero} com item ${mesaComanda.itens[itemIndex].nome} -> status $novoStatus');
     await updateMesaComanda(mesaComandaAtualizada);
+    debugPrint('>>> [DataService] Mesa atualizada com sucesso');
   }
 
   Future<void> atualizarObservacaoItemMesaComanda(
@@ -17627,6 +18011,10 @@ class DataService extends ChangeNotifier {
           'comissoes_vendedores',
           _comissoesVendedores.map((c) => c.toMap()).toList(),
         ),
+        (
+          'cash_back_movimentos',
+          _movimentosCashBack.map((m) => m.toMap()).toList(),
+        ),
         ('contas_pagar', _contasPagar.map((cp) => cp.toMap()).toList()),
         ('romaneios', _romaneios.map((r) => r.toMap()).toList()),
         ('aberturas_caixa', _aberturasCaixa.map((a) => a.toMap()).toList()),
@@ -17877,6 +18265,7 @@ class DataService extends ChangeNotifier {
       'agendamentos_servico': LocalStorageService.keyAgendamentosServico,
       'trocas_devolucoes': LocalStorageService.keyTrocasDevolucoes,
       'comissoes_vendedores': LocalStorageService.keyComissoesVendedores,
+      'cash_back_movimentos': LocalStorageService.keyCashBackMovimentos,
       'contas_pagar': LocalStorageService.keyContasPagar,
       'romaneios': LocalStorageService.keyRomaneios,
       'aberturas_caixa': LocalStorageService.keyAberturasCaixa,

@@ -15,6 +15,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:sistema_exodo_novo/services/env_config.dart';
 import 'package:sistema_exodo_novo/services/postgres_local_starter.dart';
 
 void main() {
@@ -115,6 +116,53 @@ void main() {
       expect(
         await PostgresLocalStarter.portaAberta('127.0.0.1', portaFechada),
         isFalse,
+      );
+    });
+  });
+
+  group('só tenta ligar o banco quando o host é deste computador', () {
+    test('reconhece as formas de dizer "aqui mesmo"', () async {
+      for (final host in const ['', 'localhost', 'LOCALHOST', '127.0.0.1', '::1']) {
+        expect(
+          await PostgresLocalStarter.hostEhDesteComputador(host),
+          isTrue,
+          reason: 'o host "$host" é este computador',
+        );
+      }
+    });
+
+    test('recusa host remoto, inexistente e IP de outra máquina', () async {
+      for (final host in const [
+        'banco-de-teste.invalid',
+        'aws-1-us-west-2.pooler.supabase.com',
+        '203.0.113.9',
+      ]) {
+        expect(
+          await PostgresLocalStarter.hostEhDesteComputador(host),
+          isFalse,
+          reason: 'o host "$host" NÃO é este computador',
+        );
+      }
+    });
+
+    test('não gasta os minutos do start local quando o host não é local',
+        () async {
+      // Antes desta trava, `tentarIniciar` seguia para o serviço do Windows,
+      // o pg_ctl e a espera da porta — até ~2 minutos por tentativa, mesmo com
+      // DB_HOST apontando para fora. Agora volta na hora, sem tocar em processo.
+      EnvConfig.aplicarOverrides({'DB_HOST': 'banco-de-teste.invalid'});
+      addTearDown(EnvConfig.limparOverrides);
+
+      final relogio = Stopwatch()..start();
+      final (iniciado, mensagem) = await PostgresLocalStarter.tentarIniciar();
+      relogio.stop();
+
+      expect(iniciado, isFalse);
+      expect(mensagem, contains('não é este computador'));
+      expect(
+        relogio.elapsed,
+        lessThan(const Duration(seconds: 5)),
+        reason: 'nem tentar deve ser rápido quando o host é remoto',
       );
     });
   });

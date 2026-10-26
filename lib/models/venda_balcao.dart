@@ -27,6 +27,9 @@ class ItemVendaBalcao {
   // Forma de venda escolhida no PDV (unidade/caixa/pacote/saco) e sua baixa
   final String? unidadeVenda;
   final double? quantidadeBaixa;
+  // Premiação/brinde: item entregue com valor ZERO (saiu do estoque, não
+  // entrou no total da venda). O preço de tabela fica em [precoTabela].
+  final bool isBonus;
 
   ItemVendaBalcao({
     required this.id,
@@ -48,6 +51,7 @@ class ItemVendaBalcao {
     this.baixaProporcional = true,
     this.unidadeVenda,
     this.quantidadeBaixa,
+    this.isBonus = false,
   }) : adicionais = adicionais ?? [],
        opcoesCombo = opcoesCombo ?? [],
        variacoesSelecionadas = variacoesSelecionadas ?? [];
@@ -149,6 +153,7 @@ class ItemVendaBalcao {
       baixaProporcional: (get('baixaProporcional', 'baixa_proporcional') ?? true) == true,
       unidadeVenda: get('unidadeVenda', 'unidade_venda'),
       quantidadeBaixa: parseDouble(get('quantidadeBaixa', 'quantidade_baixa')),
+      isBonus: get('isBonus', 'is_bonus') == true,
     );
   }
 
@@ -175,6 +180,7 @@ class ItemVendaBalcao {
       'baixa_proporcional': baixaProporcional,
       'unidade_venda': unidadeVenda,
       'quantidade_baixa': quantidadeBaixa,
+      'is_bonus': isBonus,
     };
   }
 

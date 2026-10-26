@@ -86,6 +86,52 @@ class PostgresLocalStarter {
     ultimaMensagem = null;
   }
 
+  /// O host configurado aponta para ESTE computador?
+  ///
+  /// "Conexão recusada" só quer dizer "o serviço local está desligado" quando o
+  /// destino é a própria máquina. Com um host remoto (o PC de outra loja, um
+  /// servidor na nuvem, ou um endereço que nem existe) ligar o PostgreSQL daqui
+  /// não resolve nada — e custa caro: cada tentativa espera o serviço, o
+  /// `pg_ctl` e a porta, o que travava o app por até ~2 minutos antes de
+  /// desistir.
+  static Future<bool> hostEhDesteComputador(String host) async {
+    final limpo = host.trim().toLowerCase();
+    // Vazio = padrão do app, que é o banco desta máquina.
+    if (limpo.isEmpty) return true;
+    if (limpo == 'localhost' ||
+        limpo == '127.0.0.1' ||
+        limpo == '::1' ||
+        limpo == '[::1]') {
+      return true;
+    }
+    try {
+      final nomeDaMaquina = Platform.isWindows
+          ? Platform.localHostname.trim().toLowerCase()
+          : '';
+      if (nomeDaMaquina.isNotEmpty && limpo == nomeDaMaquina) {
+        return true;
+      }
+    } catch (_) {
+      // Sem nome de máquina: segue para a checagem por IP.
+    }
+    try {
+      // `DB_HOST_FALLBACK` costuma ser o IP da loja: se for um IP desta
+      // máquina, o banco também é local.
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: true,
+      );
+      for (final interface in interfaces) {
+        for (final endereco in interface.addresses) {
+          if (endereco.address == limpo) return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('>>> [PostgreSQL] Não consegui listar os IPs desta máquina: $e');
+    }
+    return false;
+  }
+
   /// Tenta ligar o PostgreSQL local.
   ///
   /// Devolve `(true, mensagem)` quando o servidor voltou a aceitar conexão na
@@ -96,6 +142,15 @@ class PostgresLocalStarter {
   }) async {
     if (!Platform.isWindows) {
       return (false, 'Ligar o banco local automaticamente só existe no Windows.');
+    }
+    // Antes de qualquer processo: o banco configurado é o DESTE computador?
+    // Se não for, subir o serviço local aqui é trabalho perdido (e demorado).
+    if (!await hostEhDesteComputador(EnvConfig.dbHost)) {
+      const mensagem =
+          'O banco configurado não é este computador — não adianta ligar o '
+          'PostgreSQL local.';
+      ultimaMensagem = mensagem;
+      return (false, mensagem);
     }
     if (_emAndamento) {
       return (false, 'Já existe uma tentativa de ligar o banco local em andamento.');

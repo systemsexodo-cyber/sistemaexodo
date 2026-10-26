@@ -27,6 +27,7 @@ import '../models/nfce.dart';
 import '../models/mesa_comanda.dart';
 import '../models/link_vendedor.dart';
 import '../models/comissao_vendedor.dart';
+import '../models/cash_back_movimento.dart';
 import 'package:sistema_exodo_novo/models/romaneio.dart';
 import 'package:postgres/postgres.dart';
 import 'package:postgrest/postgrest.dart' as pg;
@@ -252,6 +253,7 @@ class SupabaseService {
   static const String tableMesasComandas = 'mesas_comandas';
   static const String tableLinksVendedores = 'links_vendedores';
   static const String tableComissoesVendedores = 'comissoes_vendedores';
+  static const String tableCashBackMovimentos = 'cash_back_movimentos';
 
   /// Obtém dados filtrados por empresa_id
   pg.PostgrestQueryBuilder<void> _from(String table) {
@@ -330,6 +332,7 @@ class SupabaseService {
         tableMesasComandas: 'mesas_comandas',
         tableLinksVendedores: 'links_vendedores',
         tableComissoesVendedores: 'comissoes_vendedores',
+        tableCashBackMovimentos: 'cash_back_movimentos',
         tableRomaneios: 'romaneios',
       };
 
@@ -498,6 +501,7 @@ class SupabaseService {
     List<ComissaoVendedor>? comissoesVendedores,
     List<Romaneio>? romaneios,
     List<MesaComanda>? mesasComandas,
+    List<CashBackMovimento>? movimentosCashBack,
     Empresa? empresa,
   }) async {
     try {
@@ -546,6 +550,7 @@ class SupabaseService {
         tableComissoesVendedores: comissoesVendedores ?? [],
         tableRomaneios: romaneios ?? [],
         tableMesasComandas: mesasComandas ?? [],
+        tableCashBackMovimentos: movimentosCashBack ?? [],
       };
 
       for (var entry in colecoes.entries) {
@@ -1365,6 +1370,7 @@ class SupabaseService {
     'caixa',
     'clientes',
     'comissoes_vendedores',
+    'cash_back_movimentos',
     'contas_pagar',
     'departamentos',
     'empresas',
@@ -2066,6 +2072,7 @@ class SupabaseService {
 
     // Tabelas com empresa_id (ordem: filhas primeiro, depois pais)
     final tabelas = [
+      tableCashBackMovimentos,
       tableComissoesVendedores,
       tableLinksVendedores,
       tableSangrias,
@@ -2911,6 +2918,23 @@ class SupabaseService {
         ALTER TABLE public.comissoes_vendedores ENABLE ROW LEVEL SECURITY;
         DROP POLICY IF EXISTS service_role_comissoes ON public.comissoes_vendedores;
         CREATE POLICY service_role_comissoes ON public.comissoes_vendedores FOR ALL USING (auth.role() = 'service_role');
+      """,
+
+      'cash_back_movimentos': """
+        CREATE TABLE IF NOT EXISTS public.cash_back_movimentos (
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
+          cliente_id TEXT DEFAULT '', tipo TEXT DEFAULT 'credito',
+          valor NUMERIC(15,2) DEFAULT 0, saldo_apos NUMERIC(15,2) DEFAULT 0,
+          venda_id TEXT DEFAULT '', venda_numero TEXT DEFAULT '',
+          data TIMESTAMPTZ DEFAULT NOW(), observacao TEXT DEFAULT '',
+          expira_em TIMESTAMPTZ, consumido NUMERIC(15,2) DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_cash_back_movimentos_empresa ON public.cash_back_movimentos(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_cash_back_movimentos_cliente ON public.cash_back_movimentos(cliente_id);
+        ALTER TABLE public.cash_back_movimentos ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS service_role_cash_back ON public.cash_back_movimentos;
+        CREATE POLICY service_role_cash_back ON public.cash_back_movimentos FOR ALL USING (auth.role() = 'service_role');
       """,
 
       'links_vendedores': """

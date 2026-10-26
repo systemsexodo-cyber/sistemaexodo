@@ -67,10 +67,80 @@
       user-select: none;
       -webkit-user-select: none;
     }
+
+    /* ----------------------------------------------------------
+       TELA DE ESPERA
+       O body fica vazio ate o Flutter terminar de baixar/inicializar o
+       bundle (~11 MB). Sem isto o usuario via so o fundo #0b0d13 e achava
+       que o sistema estava travado ("tela so fica preta, nao inicia").
+       Some quando a <flutter-view> aparece.
+       ---------------------------------------------------------- */
+    #exodo-loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      background-color: #0b0d13;
+      z-index: 9999;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    #exodo-loading .anel {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 255, 255, 0.12);
+      border-top-color: #4cc2ff;
+      animation: exodo-girar 0.9s linear infinite;
+    }
+
+    #exodo-loading .texto {
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 13px;
+      letter-spacing: 1px;
+      text-align: center;
+      padding: 0 24px;
+    }
+
+    @keyframes exodo-girar {
+      to { transform: rotate(360deg); }
+    }
   </style>
 </head>
 
 <body>
+  <div id="exodo-loading" role="status" aria-live="polite">
+    <div class="anel"></div>
+    <div class="texto">Carregando sistema...</div>
+  </div>
+
+  <script>
+    // Esconde a tela de espera quando o Flutter cria a <flutter-view>.
+    (function () {
+      var el = document.getElementById("exodo-loading");
+      if (!el) return;
+
+      var vigia = setInterval(function () {
+        if (document.querySelector("flutter-view")) {
+          clearInterval(vigia);
+          setTimeout(function () {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          }, 150);
+        }
+      }, 100);
+
+      // Conexao lenta: avisa que ainda esta tentando em vez de deixar tudo
+      // preto sem explicacao (o vigia continua rodando ate o app abrir).
+      setTimeout(function () {
+        var tx = el.querySelector(".texto");
+        if (tx) tx.textContent = "Ainda carregando... verifique sua conexao";
+      }, 25000);
+    })();
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 

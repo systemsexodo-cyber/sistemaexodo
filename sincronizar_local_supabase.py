@@ -1236,13 +1236,45 @@ def _texto_win1252_seguro(texto):
     return texto.encode('cp1252', errors='replace').decode('cp1252')
 
 
+def _sem_nul(valor):
+    """Remove NUL (\\x00) de todas as strings do registro.
+
+    O `jsonb` do PostgreSQL recusa `\\u0000` com "sequência de escape Unicode
+    não tem suporte" — e um único caractere NUL num campo fazia o conflito
+    INTEIRO ser descartado. NUL não carrega informação útil em texto, então
+    apagar é melhor do que perder a edição do usuário.
+    """
+    if isinstance(valor, str):
+        return valor.replace('\x00', '')
+    if isinstance(valor, dict):
+        return {_sem_nul(chave): _sem_nul(item) for chave, item in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [_sem_nul(item) for item in valor]
+    return valor
+
+
 def _json_para_conflito(dados):
-    """Serializa um registro para jsonb (aceita dict, lista, texto ou None)."""
+    """Serializa um registro para jsonb (aceita dict, lista, texto ou None).
+
+    A nuvem manda o registro já em JSON, muitas vezes com `ensure_ascii=True`
+    ("\\ud83d\\udc36"). Esse escape é RECUSADO pelo jsonb de um banco com
+    `server_encoding = WIN1252` ("sequência de escape Unicode não tem
+    suporte") e o conflito nunca era parqueado — a edição do usuário sumia do
+    app sem aviso. Por isso o texto volta a ser objeto antes de serializar de
+    novo com `ensure_ascii=False`.
+    """
     if dados is None:
         return None
     if isinstance(dados, str):
-        return _texto_win1252_seguro(dados)
-    return _texto_win1252_seguro(json.dumps(dados, default=str, ensure_ascii=False))
+        try:
+            dados = json.loads(dados)
+        except Exception:
+            # Não é JSON: guarda como string JSON, que o jsonb sempre aceita.
+            dados = _sem_nul(dados)
+            return _texto_win1252_seguro(json.dumps(dados, ensure_ascii=False))
+    return _texto_win1252_seguro(
+        json.dumps(_sem_nul(dados), default=str, ensure_ascii=False)
+    )
 
 
 def ids_bloqueados_no_download(conn, incluir_pendentes=True):

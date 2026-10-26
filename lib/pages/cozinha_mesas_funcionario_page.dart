@@ -271,7 +271,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             onChanged: (value) => setState(() {}),
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
-              hintText: 'Buscar ${_tipoSelecionado == TipoControle.mesa ? "mesa" : "comanda"}...',
+              hintText: _tipoSelecionado == TipoControle.mesa
+                  ? 'Buscar mesa (número ou nome do cliente)...'
+                  : 'Buscar comanda (número ou nome do cliente)...',
               hintStyle: const TextStyle(color: Colors.grey),
               prefixIcon: Icon(Icons.search, color: _tipoSelecionado == TipoControle.mesa ? Colors.orange : Colors.purple),
               suffixIcon: _buscaController.text.isNotEmpty
@@ -2953,7 +2955,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
       final pagamentosVenda = converterPagamentosVendaMesa();
 
-      final numeroVenda = dataService.getProximoNumeroVenda();
+      final numeroVenda = await dataService.getProximoNumeroVendaSeguro();
       final vendaBalcao = VendaBalcao(
         id: uuid.v4(),
         numero: numeroVenda,
@@ -3603,7 +3605,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
           }
         }
 
-        final numeroVenda = dataService.getProximoNumeroVenda();
+        final numeroVenda = await dataService.getProximoNumeroVendaSeguro();
         final vendaId = uuid.v4();
         
         final vendaBalcao = VendaBalcao(

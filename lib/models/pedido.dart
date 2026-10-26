@@ -127,7 +127,7 @@ class Pedido {
   bool get pagamentoCompleto => valorRestante <= 0;
 
   // Verifica se todos os pagamentos foram recebidos
-  bool get totalmenteRecebido => totalRecebido >= totalGeral;
+  bool get totalmenteRecebido => totalRecebido >= totalGeral - 0.01;
 
   // Quantidade de parcelas pendentes
   int get parcelasPendentes => pagamentos.where((p) => !p.recebido).length;

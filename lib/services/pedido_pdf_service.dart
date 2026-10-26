@@ -465,7 +465,7 @@ class PedidoPDFService {
     // Adicionar produtos
     for (final produto in pedido.produtos) {
       todosItens.add(_ItemLinha(
-        nome: produto.nome,
+        nome: produto.isBonus ? '${produto.nome} (BRINDE)' : produto.nome,
         quantidade: produto.quantidade,
         precoUnitario: produto.preco,
         tipo: 'Produto',
@@ -896,6 +896,8 @@ class PedidoPDFService {
         return 'Ticket/Alimentação';
       case TipoPagamento.transferencia:
         return 'Transferência';
+      case TipoPagamento.cashBack:
+        return 'Cash Back';
     }
   }
 
@@ -1284,7 +1286,7 @@ class PedidoPDFService {
     // Adicionar produtos
     for (final produto in pedido.produtos) {
       todosItens.add(_ItemLinha(
-        nome: produto.nome,
+        nome: produto.isBonus ? '${produto.nome} (BRINDE)' : produto.nome,
         quantidade: produto.quantidade,
         precoUnitario: produto.preco,
         tipo: 'Produto',
@@ -1991,7 +1993,7 @@ class PedidoPDFService {
     // Adicionar produtos
     for (final produto in pedido.produtos) {
       todosItens.add(_ItemLinha(
-        nome: produto.nome,
+        nome: produto.isBonus ? '${produto.nome} (BRINDE)' : produto.nome,
         quantidade: produto.quantidade,
         precoUnitario: 0,
         tipo: 'Produto',

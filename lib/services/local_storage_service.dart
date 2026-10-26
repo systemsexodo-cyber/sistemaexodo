@@ -197,6 +197,7 @@ class LocalStorageService {
   static const String _keySuprimentos = 'exodo_suprimentos';
   static const String _keyRomaneios = 'exodo_romaneios';
   static const String _keyTabelasPreco = 'exodo_tabelas_preco';
+  static const String _keyCashBackMovimentos = 'exodo_cash_back_movimentos';
 
   
   static String get keyNotasEntrada => _keyNotasEntrada;
@@ -574,6 +575,7 @@ class LocalStorageService {
   static String get keySangriasField => _keySangrias;
   static String get keySuprimentosField => _keySuprimentos;
   static String get keyRomaneios => _keyRomaneios;
+  static String get keyCashBackMovimentos => _keyCashBackMovimentos;
 
   /// Exporta todos os dados locais para um arquivo JSON (Backup)
   Future<String?> exportarBackupJSON() async {

@@ -53,6 +53,7 @@ class RealtimeSyncService {
   // Todas têm `updated_at` no schema (`scripts/init_db.sql`).
   static const List<String> _tabelasCriticas = [
     'mesas_comandas',
+    'cash_back_movimentos',
     'vendas_balcao',
     'pedidos',
     'produtos',

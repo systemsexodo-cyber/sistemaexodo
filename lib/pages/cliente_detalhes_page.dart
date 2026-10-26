@@ -17,6 +17,8 @@ import '../models/item_material.dart';
 import '../models/endereco_cliente.dart';
 import '../services/data_service.dart';
 import '../services/auth_service.dart';
+import '../services/cash_back_service.dart';
+import '../models/cash_back_movimento.dart';
 import '../services/supabase_service.dart';
 import '../theme.dart';
 import 'venda_direta_page.dart';
@@ -1379,6 +1381,63 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           ),
 
           const SizedBox(height: 24),
+
+          // Cash Back acumulado (gerado pelo sistema — exibição, não editável)
+          if (widget.cliente != null) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.amber.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.amber.withOpacity(0.4)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.local_atm, color: Colors.amber, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Cash Back Acumulado',
+                          style: TextStyle(
+                            color: Colors.amber,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Crédito para usar nas próximas compras — gerado automaticamente a cada venda',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    'R\$ ${_saldoCashbackAtualForm.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      color: Colors.amber,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
 
           // Status
           _buildSecaoTitulo('Status', Icons.toggle_on),
@@ -4281,10 +4340,455 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              // Cash Back acumulado pelo cliente (fidelidade)
+              _buildCashBackCard(dataService, formatoMoeda),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  /// Saldo de cash back exibido no formulário do cadastro (snapshot carregado
+  /// ao abrir a tela).
+  double get _saldoCashbackAtualForm => widget.cliente?.saldoCashback ?? 0.0;
+
+  /// Saldo de cash back ATUAL do cliente (lido do DataService para refletir
+  /// créditos feitos em vendas recentes, não apenas o snapshot do widget).
+  double _saldoCashbackAtual(DataService dataService) {
+    final cliente = widget.cliente;
+    if (cliente == null) return 0.0;
+    final idx = dataService.clientes.indexWhere((c) => c.id == cliente.id);
+    return idx == -1
+        ? cliente.saldoCashback
+        : dataService.clientes[idx].saldoCashback;
+  }
+
+  /// Cliente atualizado lido do DataService (com saldo/cashbackAtivo vivos).
+  Cliente? _clienteAtualNoDataService(DataService dataService) {
+    final cliente = widget.cliente;
+    if (cliente == null) return null;
+    final idx = dataService.clientes.indexWhere((c) => c.id == cliente.id);
+    return idx == -1 ? cliente : dataService.clientes[idx];
+  }
+
+  /// Cartão de cash back: saldo, vencimento, ativação e botões de extrato e
+  /// lançamento manual.
+  Widget _buildCashBackCard(DataService dataService, NumberFormat formatoMoeda) {
+    final cliente = _clienteAtualNoDataService(dataService);
+    if (cliente == null) return const SizedBox.shrink();
+    final saldo = cliente.saldoCashback;
+    final movimentos = dataService.movimentosDoCliente(cliente.id);
+    final vencido = CashBackService.saldoVencido(
+      movimentos,
+      clienteId: cliente.id,
+    );
+    final cor = cliente.cashbackAtivo ? Colors.amber : Colors.grey;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cor.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cor.withOpacity(0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                cliente.cashbackAtivo
+                    ? Icons.local_atm
+                    : Icons.local_atm_outlined,
+                color: cor,
+                size: 24,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Cash Back: ${formatoMoeda.format(saldo)}',
+                      style: TextStyle(
+                        color: cor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (vencido > 0)
+                      Text(
+                        '${formatoMoeda.format(vencido)} já venceu',
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 11,
+                        ),
+                      ),
+                    Text(
+                      cliente.cashbackAtivo
+                          ? 'Programa ativo — cliente acumula nas vendas'
+                          : 'Programa desativado — não acumula nem usa',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                children: [
+                  Switch(
+                    value: cliente.cashbackAtivo,
+                    activeColor: Colors.amber,
+                    onChanged: (v) async {
+                      await dataService.updateCliente(
+                        cliente.copyWith(cashbackAtivo: v),
+                      );
+                    },
+                  ),
+                  Text(
+                    cliente.cashbackAtivo ? 'Ativo' : 'Inativo',
+                    style: TextStyle(
+                      color: cor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _abrirExtratoCashBack(dataService),
+                  icon: const Icon(Icons.receipt_long, size: 18),
+                  label: const Text('Extrato'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.amber,
+                    side: BorderSide(color: Colors.amber.withOpacity(0.5)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _abrirLancamentoCashBack(dataService),
+                  icon: const Icon(Icons.edit_note, size: 18),
+                  label: const Text('Lançar'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.amber,
+                    side: BorderSide(color: Colors.amber.withOpacity(0.5)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Extrato de movimentos de cash back do cliente (do mais recente ao mais
+  /// antigo), com origem, valor e validade dos créditos.
+  void _abrirExtratoCashBack(DataService dataService) {
+    final cliente = _clienteAtualNoDataService(dataService);
+    if (cliente == null) return;
+    final movimentos = dataService.movimentosDoCliente(cliente.id)
+      ..sort((a, b) => b.data.compareTo(a.data));
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.local_atm, color: Colors.amber, size: 22),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Cash Back de ${cliente.nome}')),
+          ],
+        ),
+        content: SizedBox(
+          width: 480,
+          child: movimentos.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Nenhum movimento ainda.\nO cash back é gerado a cada venda identificada.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: movimentos.length,
+                  itemBuilder: (context, i) {
+                    final m = movimentos[i];
+                    final vencido =
+                        m.tipo == CashBackMovimentoTipo.credito &&
+                            m.expiraEm != null &&
+                            m.expiraEm!.isBefore(DateTime.now()) &&
+                            m.restante > 0;
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(m.tipo.icone, color: m.tipo.cor),
+                      title: Text(
+                        m.observacao ?? m.tipo.nome,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                        ),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            DateFormat('dd/MM/yyyy HH:mm').format(m.data),
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                          if (m.tipo == CashBackMovimentoTipo.credito &&
+                              m.expiraEm != null)
+                            Text(
+                              vencido
+                                  ? 'Venceu em ${DateFormat('dd/MM/yyyy').format(m.expiraEm!)}'
+                                  : 'Vence em ${DateFormat('dd/MM/yyyy').format(m.expiraEm!)}',
+                              style: TextStyle(
+                                color: vencido
+                                    ? Colors.redAccent
+                                    : Colors.white38,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
+                      ),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            m.valorFormatado,
+                            style: TextStyle(
+                              color: m.tipo.cor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            'Saldo: R\$ ${m.saldoApos.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.white38,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text(
+              'Fechar',
+              style: TextStyle(color: Colors.amber),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Lançamento manual de cash back (crédito de bonificação ou débito de
+  /// resgate/estorno) feito pelo operador.
+  void _abrirLancamentoCashBack(DataService dataService) {
+    final cliente = _clienteAtualNoDataService(dataService);
+    if (cliente == null) return;
+    var tipo = CashBackMovimentoTipo.credito;
+    final valorController = TextEditingController();
+    final obsController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'Lançar Cash Back',
+            style: TextStyle(color: Colors.amber),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    cliente.nome,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Saldo atual: R\$ ${cliente.saldoCashback.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      color: Colors.amber,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Tipo: crédito (bonificação) ou débito (resgate/estorno)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: RadioListTile<CashBackMovimentoTipo>(
+                          value: CashBackMovimentoTipo.credito,
+                          groupValue: tipo,
+                          activeColor: Colors.green,
+                          dense: true,
+                          title: const Text(
+                            'Crédito',
+                            style: TextStyle(fontSize: 13),
+                          ),
+                          subtitle: const Text(
+                            'Bonificação',
+                            style: TextStyle(fontSize: 10),
+                          ),
+                          onChanged: (v) =>
+                              setState(() => tipo = v ?? tipo),
+                        ),
+                      ),
+                      Expanded(
+                        child: RadioListTile<CashBackMovimentoTipo>(
+                          value: CashBackMovimentoTipo.debito,
+                          groupValue: tipo,
+                          activeColor: Colors.redAccent,
+                          dense: true,
+                          title: const Text(
+                            'Débito',
+                            style: TextStyle(fontSize: 13),
+                          ),
+                          subtitle: const Text(
+                            'Resgate/estorno',
+                            style: TextStyle(fontSize: 10),
+                          ),
+                          onChanged: (v) =>
+                              setState(() => tipo = v ?? tipo),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: valorController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Valor (R\$)',
+                      labelStyle: const TextStyle(color: Colors.white54),
+                      prefixText: 'R\$ ',
+                      prefixStyle: const TextStyle(color: Colors.amber),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    validator: (v) {
+                      final valor = double.tryParse(
+                        (v ?? '').replaceAll(',', '.'),
+                      );
+                      if (valor == null || valor <= 0) {
+                        return 'Informe um valor válido';
+                      }
+                      if (tipo == CashBackMovimentoTipo.debito &&
+                          valor > cliente.saldoCashback) {
+                        return 'Máximo: R\$ ${cliente.saldoCashback.toStringAsFixed(2)}';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: obsController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Motivo (opcional)',
+                      labelStyle: const TextStyle(color: Colors.white54),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.white54),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!(formKey.currentState?.validate() ?? false)) return;
+                final valor = double.parse(
+                  valorController.text.replaceAll(',', '.'),
+                );
+                final navigator = Navigator.of(context);
+                final messenger = ScaffoldMessenger.of(this.context);
+                navigator.pop();
+                await dataService.lancarMovimentoCashBack(
+                  clienteId: cliente.id,
+                  tipo: tipo,
+                  valor: valor,
+                  observacao: obsController.text.trim().isEmpty
+                      ? null
+                      : obsController.text.trim(),
+                );
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      tipo == CashBackMovimentoTipo.credito
+                          ? 'Crédito de R\$ ${valor.toStringAsFixed(2)} lançado'
+                          : 'Débito de R\$ ${valor.toStringAsFixed(2)} lançado',
+                    ),
+                    backgroundColor: Colors.green.shade600,
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+              child: const Text(
+                'Lançar',
+                style: TextStyle(color: Colors.black),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -5324,6 +5828,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm;
     }
   }
 
@@ -5349,6 +5855,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Colors.teal;
       case TipoPagamento.transferencia:
         return Colors.blueAccent;
+      case TipoPagamento.cashBack:
+        return Colors.amber;
     }
   }
 

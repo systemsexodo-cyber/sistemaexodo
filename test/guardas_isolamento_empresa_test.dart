@@ -147,9 +147,9 @@ void main() {
     // 2. Baseline das OUTRAS empresas medido com a empresa alvo selecionada
     //    (por definicao, "outras" = todas menos a alvo).
     db.setEmpresaId(empresaSintetica);
-    final outrasAntes = await db.contarLinhasDeOutrasEmpresas(tabelas);
-    print('outras empresas antes: $outrasAntes linha(s)');
-    expect(outrasAntes, greaterThan(0));
+    final outrasAntes = await db.idsDeOutrasEmpresas(tabelas);
+    print('outras empresas antes: ${outrasAntes.length} linha(s)');
+    expect(outrasAntes, isNotEmpty);
 
     // 3. Coloca uma linha na empresa alvo para provar que ELA e apagada.
     await db.salvarLista('exodo_clientes', [
@@ -163,10 +163,14 @@ void main() {
         reason: 'a linha da empresa alvo deveria ter sido apagada');
 
     // 5. As OUTRAS empresas nao perderam NENHUMA linha.
-    final outrasDepois = await db.contarLinhasDeOutrasEmpresas(tabelas);
-    print('outras empresas depois: $outrasDepois linha(s)');
-    expect(outrasDepois, outrasAntes,
-        reason: 'a limpeza completo nao pode mexer em outra empresa');
+    //    Comparamos os IDs (nao a contagem): o sincronizador grava no banco em
+    //    paralelo, entao o total pode subir no meio do teste sem que nada tenha
+    //    sido apagado. O que nao pode acontecer e um ID que existia desaparecer.
+    final outrasDepois = await db.idsDeOutrasEmpresas(tabelas);
+    print('outras empresas depois: ${outrasDepois.length} linha(s)');
+    final sumiram = outrasAntes.difference(outrasDepois);
+    expect(sumiram, isEmpty,
+        reason: 'a limpeza completa apagou linha(s) de OUTRA empresa: $sumiram');
 
     // 6. E a BMJ continua com o mesmo numero de clientes.
     db.setEmpresaId(bmj);

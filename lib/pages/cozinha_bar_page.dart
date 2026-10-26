@@ -216,12 +216,16 @@ class _CozinhaBarPageState extends State<CozinhaBarPage>
   ) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     try {
+      debugPrint('>>> [CozinhaBarPage] Marcando item ${item.nome} (id: ${item.id}) como em preparo - Mesa: ${mesaComanda.id} (${mesaComanda.numero})');
       await dataService.atualizarStatusItemMesaComanda(
         mesaComanda.id,
         item.id,
         StatusItem.emPreparo,
       );
-      setState(() {});
+      debugPrint('>>> [CozinhaBarPage] Status atualizado com sucesso');
+      if (mounted) {
+        setState(() {});
+      }
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -232,12 +236,35 @@ class _CozinhaBarPageState extends State<CozinhaBarPage>
           ),
         );
       }
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('>>> [CozinhaBarPage] ERRO ao marcar em preparo: $e');
+      debugPrint('>>> [CozinhaBarPage] Stack: $stack');
+      // Tentar atualização direta como fallback
+      try {
+        final mesaAtual = dataService.mesasComandas.firstWhere((m) => m.id == mesaComanda.id);
+        final idx = mesaAtual.itens.indexWhere((i) => i.id == item.id);
+        if (idx >= 0) {
+          final itensAtualizados = List<ItemMesaComanda>.from(mesaAtual.itens);
+          itensAtualizados[idx] = itensAtualizados[idx].copyWith(status: StatusItem.emPreparo, dataModificacao: DateTime.now());
+          final mesaAtualizada = mesaAtual.copyWith(itens: itensAtualizados, updatedAt: DateTime.now());
+          await dataService.updateMesaComanda(mesaAtualizada);
+          if (mounted) setState(() {});
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('${item.nome} - Preparo iniciado'), backgroundColor: Colors.orange, duration: const Duration(seconds: 2)),
+            );
+          }
+          return;
+        }
+      } catch (e2) {
+        debugPrint('>>> [CozinhaBarPage] Fallback também falhou: $e2');
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao atualizar status: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
           ),
         );
       }

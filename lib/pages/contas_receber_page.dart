@@ -3031,6 +3031,8 @@ class _ContasReceberPageState extends State<ContasReceberPage> with SingleTicker
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm;
     }
   }
 
@@ -3056,6 +3058,8 @@ class _ContasReceberPageState extends State<ContasReceberPage> with SingleTicker
         return const Color(0xFF00897B);
       case TipoPagamento.transferencia:
         return const Color(0xFF42A5F5);
+      case TipoPagamento.cashBack:
+        return Colors.amber;
     }
   }
 

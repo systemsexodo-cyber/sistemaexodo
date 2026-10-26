@@ -477,8 +477,8 @@ class SyncTrayApp:
         while self.running:
             agora = time.time()
             # Evita loops frenéticos de frações de segundos caso a rede esteja offline ou haja falha de socket (select.select)
-            if agora - last_sync_time < 5.0:
-                time.sleep(1.0)
+            if agora - last_sync_time < 1.0:
+                time.sleep(0.2)
 
             # Upload prioritário: uma alteração feita no app não fica presa
             # atrás do download completo ou da análise de conflitos antigos.

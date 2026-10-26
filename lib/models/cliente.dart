@@ -53,6 +53,8 @@ class Cliente {
   // Crédito
   final double? limiteCredito;
   final double saldoDevedor; // Valor que o cliente está devendo (fiado)
+  final double saldoCashback; // Saldo de cash back acumulado (crédito para usar nas próximas compras)
+  final bool cashbackAtivo; // Se false, o cliente não acumula nem usa cash back
   final bool bloqueado;
   final String? motivoBloqueio;
 
@@ -97,6 +99,8 @@ class Cliente {
     List<Pet>? pets,
     this.limiteCredito,
     this.saldoDevedor = 0.0,
+    this.saldoCashback = 0.0,
+    this.cashbackAtivo = true,
     this.bloqueado = false,
     this.motivoBloqueio,
     this.senha,
@@ -244,6 +248,8 @@ class Cliente {
           : [],
       limiteCredito: getNum('limiteCredito', 'limite_credito')?.toDouble(),
       saldoDevedor: (getNum('saldoDevedor', 'saldo_devedor') ?? 0).toDouble(),
+      saldoCashback: (getNum('saldoCashback', 'saldo_cashback') ?? 0).toDouble(),
+      cashbackAtivo: getBool('cashbackAtivo', 'cashback_ativo') ?? true,
       bloqueado: getBool('bloqueado', 'bloqueado') ?? false,
       motivoBloqueio: getStr('motivoBloqueio', 'motivo_bloqueio'),
       senha: map['senha']?.toString(),
@@ -286,6 +292,8 @@ class Cliente {
       'enderecos': enderecos.map((e) => e.toMap()).toList(),
       'limite_credito': limiteCredito,
       'saldo_devedor': saldoDevedor,
+      'saldo_cashback': saldoCashback,
+      'cashback_ativo': cashbackAtivo,
       'bloqueado': bloqueado,
       'motivo_bloqueio': motivoBloqueio,
       'senha': senha,
@@ -326,6 +334,8 @@ class Cliente {
     List<EnderecoCliente>? enderecos,
     double? limiteCredito,
     double? saldoDevedor,
+    double? saldoCashback,
+    bool? cashbackAtivo,
     bool? bloqueado,
     String? motivoBloqueio,
     String? senha,
@@ -363,6 +373,8 @@ class Cliente {
       enderecos: enderecos ?? this.enderecos,
       limiteCredito: limiteCredito ?? this.limiteCredito,
       saldoDevedor: saldoDevedor ?? this.saldoDevedor,
+      saldoCashback: saldoCashback ?? this.saldoCashback,
+      cashbackAtivo: cashbackAtivo ?? this.cashbackAtivo,
       bloqueado: bloqueado ?? this.bloqueado,
       motivoBloqueio: motivoBloqueio ?? this.motivoBloqueio,
       senha: senha ?? this.senha,

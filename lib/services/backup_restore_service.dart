@@ -497,6 +497,7 @@ class BackupRestoreService {
       'taxas_entrega', 'contas_pagar', 'nfces', 'nfes',
       'sangrias_caixa', 'suprimentos_caixa', 'links_vendedores',
       'comissoes_vendedores', 'romaneios', 'mesas_comandas',
+      'cash_back_movimentos',
       'sync_status', 'sync_logs', 'exodo_config',
     ];
 

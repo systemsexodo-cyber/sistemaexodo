@@ -6,6 +6,10 @@ import 'package:path/path.dart' as p;
 import 'package:postgres/postgres.dart';
 import '../utils/win1252.dart';
 import 'env_config.dart';
+// No Web a configuração vai para o Hive (mesmo armazenamento das listas);
+// nas outras plataformas cai no stub vazio e o PostgreSQL é quem grava.
+import 'local_storage_service_stub.dart'
+    if (dart.library.html) 'local_storage_service_web_stub.dart';
 import 'postgres_local_starter.dart';
 import 'process_utils.dart';
 
@@ -896,6 +900,7 @@ class DatabaseService {
     'agendamentos_servico',
     'links_vendedores',
     'comissoes_vendedores',
+    'cash_back_movimentos',
     'romaneios',
     'aberturas_caixa',
     'fechamentos_caixa',
@@ -1340,6 +1345,7 @@ class DatabaseService {
         await _garantirServicosRealizados(conn);
         await _garantirOrcamentos(conn);
         await _garantirPedidosCompra(conn);
+        await _garantirCashBackMovimentos(conn);
 
         // Histórico de estoque: preservar fornecedor/observação/usuario localmente
         await conn.execute(
@@ -1414,6 +1420,7 @@ class DatabaseService {
           'idx_aberturas_caixa_empresa_id ON aberturas_caixa(empresa_id)',
           'idx_agendamentos_servico_empresa_id ON agendamentos_servico(empresa_id)',
           'idx_comissoes_vendedores_empresa_id ON comissoes_vendedores(empresa_id)',
+          'idx_cash_back_movimentos_empresa_id ON cash_back_movimentos(empresa_id)',
           'idx_contas_pagar_empresa_id ON contas_pagar(empresa_id)',
           'idx_entregas_empresa_id ON entregas(empresa_id)',
           'idx_fechamentos_caixa_empresa_id ON fechamentos_caixa(empresa_id)',
@@ -2028,6 +2035,48 @@ END;
     }
   }
 
+  /// Extrato de cash back: um lançamento por crédito/débito do saldo do
+  /// cliente. Tabela nova do recurso de fidelidade — criada idempotente para
+  /// bases antigas ganharem o extrato sem migração manual.
+  Future<void> _garantirCashBackMovimentos(Connection conn) async {
+    try {
+      await conn.execute('''
+        CREATE TABLE IF NOT EXISTS cash_back_movimentos (
+          id TEXT PRIMARY KEY,
+          empresa_id TEXT NOT NULL DEFAULT '',
+          cliente_id TEXT DEFAULT '',
+          tipo TEXT DEFAULT 'credito',
+          valor NUMERIC DEFAULT 0,
+          saldo_apos NUMERIC DEFAULT 0,
+          venda_id TEXT,
+          venda_numero TEXT,
+          data TIMESTAMPTZ DEFAULT NOW(),
+          observacao TEXT,
+          expira_em TIMESTAMPTZ,
+          consumido NUMERIC DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      ''');
+      await conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_cash_back_movimentos_cliente_id '
+        'ON cash_back_movimentos(cliente_id);',
+      );
+
+      await conn.execute(
+        'DROP TRIGGER IF EXISTS trg_exodo_sync_log_cash_back_movimentos '
+        'ON cash_back_movimentos;',
+      );
+      await conn.execute('''
+        CREATE TRIGGER trg_exodo_sync_log_cash_back_movimentos
+        AFTER INSERT OR DELETE OR UPDATE ON public.cash_back_movimentos
+        FOR EACH ROW EXECUTE FUNCTION public.log_sync_event();
+      ''');
+    } catch (e) {
+      debugPrint('>>> [PostgreSQL] ❌ Erro ao garantir cash_back_movimentos: $e');
+    }
+  }
+
   Future<void> _garantirServicosRealizados(Connection conn) async {
     try {
       await conn.execute('''
@@ -2316,11 +2365,33 @@ END;
   /// A regra fica em [Win1252] para o app e a conferência usarem a mesma.
   String _sanitizarWin1252(String texto) => Win1252.sanitizar(texto);
 
+  // ── Configuração no NAVEGADOR ────────────────────────────────────────────
+  // Não existe PostgreSQL local no Web: `connection` lança na hora e o valor
+  // se perdia (era o caso do nome do caixa, que voltava vazio a cada F5).
+  // Aqui a mesma chave/valor do `exodo_config` é gravada no Hive, que é o
+  // armazenamento que o Web já usa para as listas.
+  Future<void> _salvarConfigWeb(String chave, dynamic valor) {
+    final valorStr = valor is String ? valor : jsonEncode(_jsonSafe(valor));
+    return LocalStorageWeb.salvar(chave, valorStr);
+  }
+
+  Future<dynamic> _carregarConfigWeb(String chave) async {
+    final valor = await LocalStorageWeb.carregar(chave);
+    if (valor == null) return null;
+    if (valor.startsWith('[') || valor.startsWith('{')) {
+      try {
+        return jsonDecode(valor);
+      } catch (_) {}
+    }
+    return valor;
+  }
+
   Future<void> salvarConfig(
     String chave,
     dynamic valor, {
     bool lancarSeFalhar = false,
   }) {
+    if (kIsWeb) return _salvarConfigWeb(chave, valor);
     return _enqueue(() async {
       try {
         final conn = await connection;
@@ -2353,6 +2424,7 @@ END;
     String chave, {
     bool lancarSeFalhar = false,
   }) async {
+    if (kIsWeb) return _carregarConfigWeb(chave);
     return _enqueue(() async {
       try {
         final conn = await connection;
@@ -2379,6 +2451,7 @@ END;
   }
 
   Future<void> removerConfig(String chave) {
+    if (kIsWeb) return LocalStorageWeb.remover(chave);
     return _enqueue(() async {
       try {
         final conn = await connection;
@@ -2462,6 +2535,7 @@ END;
     if (chave.contains('nfces')) return 'nfces';
     if (chave.contains('nfes')) return 'nfes';
     if (chave.contains('comissoes_vendedores')) return 'comissoes_vendedores';
+    if (chave.contains('cash_back_movimentos')) return 'cash_back_movimentos';
     if (chave.contains('contas_pagar')) return 'contas_pagar';
     if (chave.contains('estoque_historico')) return 'estoque_historico';
     if (chave.contains('aberturas_caixa')) return 'aberturas_caixa';
@@ -3661,6 +3735,39 @@ END;
         total += (result.first.toColumnMap()['n'] as int?) ?? 0;
       }
       return total;
+    });
+  }
+
+  /// Snapshot dos ids das OUTRAS empresas nas tabelas informadas.
+  ///
+  /// Diferente de [contarLinhasDeOutrasEmpresas], que devolve só o total, este
+  /// método é imune a escrita concorrente (o sincronizador roda em paralelo e
+  /// insere linhas a cada ciclo). Comparar dois snapshots prova o que interessa:
+  /// nenhuma linha que JÁ existia foi apagada — mesmo que tenham entrado linhas
+  /// novas no meio. Formato de cada item: `"<tabela>|<id>"`.
+  Future<Set<String>> idsDeOutrasEmpresas(Iterable<String> tabelasChave) {
+    return _enqueue(() async {
+      final empresaId = _empresaId;
+      if (empresaId == null || empresaId.isEmpty) return <String>{};
+      final conn = await connection;
+      await _inicializarColunas(conn);
+      final ids = <String>{};
+      for (final chave in tabelasChave) {
+        final tabela = _mapearChaveParaTabela(chave) ?? chave;
+        final columns = _tableColumnTypes[tabela];
+        if (columns == null || !columns.containsKey('empresa_id')) continue;
+        final result = await conn.execute(
+          Sql.named(
+            'SELECT id::text AS id FROM "$tabela" '
+            'WHERE empresa_id IS DISTINCT FROM @empresaId',
+          ),
+          parameters: <String, Object?>{'empresaId': empresaId},
+        );
+        for (final row in result) {
+          ids.add('$tabela|${row.toColumnMap()['id']}');
+        }
+      }
+      return ids;
     });
   }
 

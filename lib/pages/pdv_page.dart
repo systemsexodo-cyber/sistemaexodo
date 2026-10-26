@@ -139,12 +139,19 @@ class _PdvPageState extends State<PdvPage> {
         .firstOrNull;
 
     if (vendaRelacionada != null) {
-      // Já existe, apenas atualizamos o tipo de pagamento e valor recebido
+      // Já existe, atualizamos tipo de pagamento, valor recebido e as formas
+      // reais (para o histórico e para o cash back enxergar o que foi pago).
       final vendaAtualizada = vendaRelacionada.copyWith(
         tipoPagamento: novoTipo ?? vendaRelacionada.tipoPagamento,
         valorRecebido: pedido.totalRecebido,
+        pagamentos: pedido.pagamentos.isNotEmpty
+            ? pedido.pagamentos
+            : vendaRelacionada.pagamentos,
       );
       dataService.updateVendaBalcao(vendaAtualizada);
+      // Cash back: primeira vez que a venda tem recebimento confirmado,
+      // credita o saldo do cliente (a trava por id evita duplicidade).
+      dataService.aplicarCashbackDaVenda(vendaAtualizada);
     } else if (pedido.totalmenteRecebido) {
       // Não existe e agora está 100% pago, criamos o registro para o histórico
       final novaVenda = VendaBalcao(
@@ -160,12 +167,16 @@ class _PdvPageState extends State<PdvPage> {
           precoUnitario: p.preco,
           quantidade: p.quantidade,
           isServico: false,
+          isBonus: p.isBonus,
           fornecedorNome: p.fornecedorNome,
           observacao: p.observacao,
           adicionais: p.adicionais,
           precoSemPromocao: p.precoSemPromocao,
         )).toList(),
         tipoPagamento: novoTipo ?? TipoPagamento.outro,
+        // Traz as formas reais do pedido: histórico completo do split e
+        // débito correto de cash back usado no pagamento.
+        pagamentos: pedido.pagamentos,
         valorTotal: pedido.totalGeral,
         valorRecebido: pedido.totalRecebido,
         troco: 0,
@@ -243,7 +254,7 @@ class _PdvPageState extends State<PdvPage> {
       
       // Adicionar pedidos pendentes (não pagos, não cancelados)
       for (final pedido in pedidos) {
-        final statusLower = pedido.status.toLowerCase();
+        final statusLower = pedido.status.toLowerCase().trim();
         final isPendenteExplicit = statusLower == 'pendente' || statusLower == 'aguardando' || statusLower.contains('preparo') || statusLower.contains('rota');
         final isPago = !isPendenteExplicit && (pedido.totalmenteRecebido || statusLower == 'pago');
         final isCancelado = statusLower == 'cancelado';
@@ -3284,6 +3295,10 @@ class _PdvPageState extends State<PdvPage> {
 
                         dataService.updatePedido(pedidoAtualizado);
 
+                        // Sincronizar com o historico (VendaBalcao) — sem isso o pedido pago
+                        // direto pelo PDV nao aparece no historico de vendas.
+                        _syncVendaBalcao(pedidoAtualizado, dataService, formaSelecionada);
+
                         // Se era fiado, atualizar saldo devedor do cliente
                         if (pagamento.tipo == TipoPagamento.fiado &&
                             pedido.clienteId != null) {
@@ -3365,6 +3380,8 @@ class _PdvPageState extends State<PdvPage> {
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm;
     }
   }
 
@@ -3390,6 +3407,8 @@ class _PdvPageState extends State<PdvPage> {
         return Colors.teal;
       case TipoPagamento.transferencia:
         return Colors.blueAccent;
+      case TipoPagamento.cashBack:
+        return Colors.amber;
     }
   }
 
@@ -3847,7 +3866,7 @@ class _PdvPageState extends State<PdvPage> {
             .where(
               (p) {
                 final isCancelado = p.status.toLowerCase() == 'cancelado';
-                final isPago = p.totalmenteRecebido;
+                final isPago = p.totalmenteRecebido || p.status.toLowerCase().trim() == 'pago';
                 
                 // Filtrar por data (data do pedido) - aplicar primeiro
                 if (_dataInicioFiltro != null) {
@@ -4011,7 +4030,7 @@ class _PdvPageState extends State<PdvPage> {
       0.0,
       (sum, p) {
         final isCancelado = p.status.toLowerCase() == 'cancelado';
-        final isPago = p.totalmenteRecebido;
+        final isPago = p.totalmenteRecebido || p.status.toLowerCase().trim() == 'pago';
         
         // Se está pago ou cancelado e o filtro não permite mostrar, não conta
         if (isCancelado && !_mostrarPedidosCancelados) return sum;
@@ -5139,6 +5158,10 @@ class _PdvPageState extends State<PdvPage> {
       );
 
       await dataService.updatePedido(pedidoAtualizado);
+
+      // Sincronizar com o historico (VendaBalcao) — sem isso o pedido pago
+      // direto pelo PDV nao aparece no historico de vendas.
+      _syncVendaBalcao(pedidoAtualizado, dataService, tipoPagamento);
     } catch (e) {
       debugPrint('Erro ao registrar recebimento: $e');
     }
@@ -5993,6 +6016,8 @@ class _PdvPageState extends State<PdvPage> {
         debugPrint('╚════════════════════════════════════════════════╝');
         
         for (final produtoItem in pedido.produtos) {
+          // Premiação/bônus (valor zero): o estoque já saiu no lançamento no PDV
+          if (produtoItem.isBonus) continue;
           try {
             final produto = dataService.produtos.firstWhere(
               (p) => p.id == produtoItem.id,
@@ -6021,6 +6046,10 @@ class _PdvPageState extends State<PdvPage> {
       }
 
       dataService.updatePedido(pedidoAtualizado);
+
+      // Sincronizar com o historico (VendaBalcao) — sem isso o pedido pago
+      // direto pelo PDV nao aparece no historico de vendas.
+      _syncVendaBalcao(pedidoAtualizado, dataService, formaRecebimento);
     }
 
     Navigator.pop(ctx);
@@ -6540,6 +6569,10 @@ class _PdvPageState extends State<PdvPage> {
       );
 
       dataService.updatePedido(pedidoAtualizado);
+
+      // Sincronizar com o historico (VendaBalcao) — sem isso o pedido pago
+      // direto pelo PDV nao aparece no historico de vendas.
+      _syncVendaBalcao(pedidoAtualizado, dataService, tipoCredito);
     }
 
     // Atualizar saldo devedor do cliente (apenas para fiado)
@@ -9709,6 +9742,193 @@ class _PdvPageState extends State<PdvPage> {
     await _persistirEdicaoItens(pedido, produtos, dataService);
   }
 
+  /// Lança um produto como PREMIAÇÃO/BÔNUS (valor zero) no pedido atual.
+  ///
+  /// O item entra no pedido com preco = 0 (não altera o total) e o estoque sai
+  /// NA HORA com motivo 'premiacao' — diferente dos itens normais, que só dão
+  /// baixa quando o pedido é pago. O preço de tabela fica guardado no item
+  /// para o cupom/histórico mostrar o valor presenteado.
+  Future<void> _abrirDialogPremiacao(
+    Pedido pedido,
+    DataService dataService,
+  ) async {
+    // 1) Selecionar o produto (busca por nome/código/barras)
+    final produto = await showDialog<Produto>(
+      context: context,
+      builder: (context) =>
+          _DialogSelecionarProdutoPremiacao(produtos: dataService.produtos),
+    );
+    if (produto == null || !mounted) return;
+
+    // 2) Quantidade premiada
+    final quantidadeController = TextEditingController(text: '1');
+    var quantidade = 1.0;
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.redeem,
+                  color: Colors.amber,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Premiação / Brinde',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  produto.nome,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Estoque: ${produto.estoque.toStringAsFixed(2)} • Cobrado: R\$ 0,00',
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Quantidade premiada:',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: quantidadeController,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    isDense: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onChanged: (v) {
+                    quantidade =
+                        double.tryParse(v.replaceAll(',', '.')) ?? 0;
+                    setDialogState(() {});
+                  },
+                ),
+                if (quantidade > produto.estoque) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '⚠ Estoque insuficiente (disponível: ${produto.estoque.toStringAsFixed(2)})',
+                    style: const TextStyle(
+                      color: Colors.orangeAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text(
+                'CANCELAR',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.redeem, size: 18),
+              onPressed: quantidade <= 0
+                  ? null
+                  : () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber,
+                foregroundColor: Colors.black,
+              ),
+              label: const Text('PREMIAR (R\$ 0,00)'),
+            ),
+          ],
+        ),
+      ),
+    );
+    quantidadeController.dispose();
+    if (confirmado != true || !mounted) return;
+
+    // 3) Estoque sai NA HORA como premiação (não espera o pagamento)
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final usuario =
+        authService.usuarioAtual?.nome ?? authService.usuarioAtual?.email;
+    await dataService.registrarSaidaEstoque(
+      produtoId: produto.id,
+      quantidade: quantidade * produto.fatorBaixaEstoque,
+      motivo: 'premiacao',
+      observacao: 'Premiação/brinde no pedido ${pedido.numero}',
+      usuario: usuario,
+      fornecedorNome: produto.fornecedorNome,
+      custoUnitarioOverride:
+          (produto.precoCusto ?? 0) > 0 ? produto.precoCusto : null,
+    );
+
+    // 4) Item entra no pedido com valor ZERO (preço de tabela guardado)
+    final novosProdutos = List<ItemPedido>.from(pedido.produtos)
+      ..add(
+        ItemPedido(
+          id: produto.id,
+          nome: produto.nome,
+          quantidade: quantidade,
+          preco: 0,
+          precoSemPromocao: produto.preco,
+          isBonus: true,
+          observacao: 'Premiação/brinde — valor R\$ 0,00',
+        ),
+      );
+    await _persistirEdicaoItens(pedido, novosProdutos, dataService);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '🎁 ${produto.nome}: ${quantidade}x premiado(s) por R\$ 0,00 (estoque baixado)',
+        ),
+        backgroundColor: Colors.amber,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   Widget _buildSecaoItens(Pedido pedido, DataService dataService) {
     final podeEditar = _podeEditarPedido(pedido);
     final totalItens = pedido.produtos.length + pedido.servicos.length;
@@ -9810,11 +10030,22 @@ class _PdvPageState extends State<PdvPage> {
                       ),
                     ] else
                       _buildChipQuantidadeItem('${item.quantidade}x'),
+                    if (podeEditar) ...[
+                      const SizedBox(width: 6),
+                      _buildBotaoEdicaoItem(
+                        Icons.redeem,
+                        item.isBonus ? Colors.amber : Colors.white38,
+                        () => _abrirDialogPremiacao(pedido, dataService),
+                        'Premiar (lançar como brinde R\$ 0,00)',
+                      ),
+                    ],
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        item.nome,
-                        style: const TextStyle(color: Colors.white),
+                        item.isBonus ? '${item.nome} 🎁' : item.nome,
+                        style: TextStyle(
+                          color: item.isBonus ? Colors.amber : Colors.white,
+                        ),
                       ),
                     ),
                     Text(
@@ -11379,7 +11610,7 @@ class _PdvPageState extends State<PdvPage> {
         .fold(0.0, (sum, p) => sum + p.valor);
     final todasParcelasRecebidas = novosPagamentos.every((p) => p.recebido);
     final ficaTotalmentePago =
-        totalRecebidoNovo >= pedido.totalGeral && todasParcelasRecebidas;
+        totalRecebidoNovo >= pedido.totalGeral - 0.01 && todasParcelasRecebidas;
 
     // Determinar status correto
     String novoStatus;
@@ -11409,6 +11640,8 @@ class _PdvPageState extends State<PdvPage> {
       debugPrint('╚════════════════════════════════════════════════╝');
       
       for (final produtoItem in pedido.produtos) {
+        // Premiação/bônus (valor zero): o estoque já saiu no lançamento no PDV
+        if (produtoItem.isBonus) continue;
         try {
           final produto = dataService.produtos.firstWhere(
             (p) => p.id == produtoItem.id,
@@ -12351,7 +12584,7 @@ class _PdvPageState extends State<PdvPage> {
         .fold(0.0, (sum, p) => sum + p.valor);
     final todasParcelasRecebidas = novosPagamentos.every((p) => p.recebido);
     final ficaTotalmentePago =
-        totalRecebidoNovo >= pedido.totalGeral && todasParcelasRecebidas;
+        totalRecebidoNovo >= pedido.totalGeral - 0.01 && todasParcelasRecebidas;
 
     // Determinar status correto
     String novoStatus;
@@ -12508,7 +12741,7 @@ class _PdvPageState extends State<PdvPage> {
         .fold(0.0, (sum, p) => sum + p.valor);
     final todasParcelasRecebidas = novosPagamentos.every((p) => p.recebido);
     final ficaTotalmentePago =
-        totalRecebidoNovo >= pedido.totalGeral && todasParcelasRecebidas;
+        totalRecebidoNovo >= pedido.totalGeral - 0.01 && todasParcelasRecebidas;
 
     // Se estornando e estava pago, volta para Pendente
     String novoStatus = pedido.status;
@@ -12539,6 +12772,8 @@ class _PdvPageState extends State<PdvPage> {
       debugPrint('╚════════════════════════════════════════════════╝');
       
       for (final produtoItem in pedido.produtos) {
+        // Premiação/bônus (valor zero): o estoque já saiu no lançamento no PDV
+        if (produtoItem.isBonus) continue;
         try {
           final produto = dataService.produtos.firstWhere(
             (p) => p.id == produtoItem.id,
@@ -12614,10 +12849,27 @@ class _PdvPageState extends State<PdvPage> {
           clienteId: pedido
               .clienteId, // Passa o clienteId para validação de crediário/fiado
           onPagamentosChanged: (novosPagamentos) {
+            final todosRecebidos = novosPagamentos.every((p) => p.recebido);
+            final algumRecebido = novosPagamentos.any((p) => p.recebido);
+            String novoStatus = pedido.status;
+            if (todosRecebidos && novosPagamentos.isNotEmpty) {
+              novoStatus = 'Pago';
+            } else if (algumRecebido) {
+              novoStatus = 'Parcialmente Pago';
+            }
+
             final pedidoAtualizado = pedido.copyWith(
               pagamentos: novosPagamentos,
+              status: novoStatus,
             );
             dataService.updatePedido(pedidoAtualizado);
+
+            // Sincronizar com o historico (VendaBalcao) — sem isso o pedido pago
+            // direto pelo PDV nao aparece no historico de vendas.
+            if (novoStatus == 'Pago') {
+              _syncVendaBalcao(pedidoAtualizado, dataService,
+                  novosPagamentos.isNotEmpty ? novosPagamentos.first.tipo : null);
+            }
             setState(() => _pedidoSelecionado = pedidoAtualizado);
             Navigator.pop(context);
             ScaffoldMessenger.of(context).showSnackBar(
@@ -12664,6 +12916,8 @@ class _PdvPageState extends State<PdvPage> {
         return Icons.restaurant;
       case TipoPagamento.transferencia:
         return Icons.swap_horiz;
+      case TipoPagamento.cashBack:
+        return Icons.local_atm;
     }
   }
 
@@ -12689,6 +12943,8 @@ class _PdvPageState extends State<PdvPage> {
         return Colors.teal;
       case TipoPagamento.transferencia:
         return Colors.blueAccent;
+      case TipoPagamento.cashBack:
+        return Colors.amber;
     }
   }
 
@@ -12903,4 +13159,134 @@ class _ParcelaCrediario {
 
   // ID único para identificar a parcela
   String get id => '${pedido.id}_${pagamento.id}';
+}
+
+/// Diálogo de seleção de produto para PREMIAÇÃO/brinde no PDV.
+/// Busca por nome/código/código de barras e mostra estoque e valor de tabela
+/// (o que será cobrado é sempre R$ 0,00).
+class _DialogSelecionarProdutoPremiacao extends StatefulWidget {
+  final List<Produto> produtos;
+  const _DialogSelecionarProdutoPremiacao({required this.produtos});
+
+  @override
+  State<_DialogSelecionarProdutoPremiacao> createState() =>
+      _DialogSelecionarProdutoPremiacaoState();
+}
+
+class _DialogSelecionarProdutoPremiacaoState
+    extends State<_DialogSelecionarProdutoPremiacao> {
+  String _busca = '';
+  final TextEditingController _buscaController = TextEditingController();
+
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
+
+  List<Produto> get _filtrados {
+    final q = _busca.trim().toLowerCase();
+    if (q.isEmpty) return widget.produtos;
+    return widget.produtos.where((p) {
+      return p.nome.toLowerCase().contains(q) ||
+          (p.codigo?.toLowerCase().contains(q) ?? false) ||
+          (p.codigoBarras?.toLowerCase().contains(q) ?? false);
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtrados = _filtrados;
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text(
+        'Premiar: selecione o produto',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 17,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      content: SizedBox(
+        width: 480,
+        height: 420,
+        child: Column(
+          children: [
+            TextField(
+              controller: _buscaController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'Buscar por nome, código ou código de barras...',
+                hintStyle: TextStyle(
+                  color: Colors.white.withOpacity(0.3),
+                  fontSize: 13,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search,
+                  color: Colors.white38,
+                  size: 20,
+                ),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                isDense: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              onChanged: (v) => setState(() => _busca = v),
+              onSubmitted: (_) {
+                if (filtrados.isNotEmpty) {
+                  Navigator.pop(context, filtrados.first);
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: filtrados.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Nenhum produto encontrado',
+                        style: TextStyle(color: Colors.white24),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: filtrados.length,
+                      itemBuilder: (context, index) {
+                        final p = filtrados[index];
+                        return ListTile(
+                          dense: true,
+                          leading: const Icon(
+                            Icons.redeem,
+                            color: Colors.amber,
+                            size: 20,
+                          ),
+                          title: Text(
+                            p.nome,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            'Estoque: ${p.estoque.toStringAsFixed(2)} • Tabela: R\$ ${p.preco.toStringAsFixed(2)} • Cobrado: R\$ 0,00',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.4),
+                              fontSize: 11,
+                            ),
+                          ),
+                          onTap: () => Navigator.pop(context, p),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
