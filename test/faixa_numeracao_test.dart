@@ -37,6 +37,30 @@ void main() {
       expect(r.fim, 999);
     });
 
+    test('adiantamento normal também vale com o trava de salto', () {
+      final r = calcularReserva(
+        valorNoContador: 900,
+        aPartirDe: 434,
+        tamanho: 100,
+        adiantamentoMaximo: 1000,
+      )!;
+      expect(r.inicio, 900, reason: '466 de diferença é outra máquina, não salto');
+    });
+
+    test('contador contaminado por número ilha volta para a sequência', () {
+      // O contador ficou em 791252837 porque um número de timestamp virou
+      // nota. Sem a trava, todo bloco nasceria lá em cima para sempre.
+      final r = calcularReserva(
+        valorNoContador: 791252837,
+        aPartirDe: 4,
+        tamanho: 100,
+        adiantamentoMaximo: 1000,
+      )!;
+      expect(r.inicio, 4);
+      expect(r.fim, 103);
+      expect(r.proximoLivre, 104, reason: 'o contador desce junto com o bloco');
+    });
+
     test('tamanho inválido não reserva nada', () {
       expect(calcularReserva(valorNoContador: 10, aPartirDe: 1, tamanho: 0), isNull);
       expect(calcularReserva(valorNoContador: 10, aPartirDe: 1, tamanho: -5), isNull);

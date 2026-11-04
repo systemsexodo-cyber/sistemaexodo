@@ -263,8 +263,10 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
     try {
       await authService.selecionarEmpresa(nova);
       final empAtualizada = authService.empresaAtual ?? nova;
-      dataService.setEmpresaAtual(empAtualizada);
+      // ORDEM IMPORTANTE (igual ao main.dart): fixar o id da empresa nova
+      // ANTES de instalar o objeto.
       await dataService.definirEmpresaAtual(empAtualizada.id);
+      dataService.setEmpresaAtual(empAtualizada);
       if (!mounted) return;
 
       setState(() {

@@ -53,6 +53,7 @@ class _CaixaPageState extends State<CaixaPage> {
   String _filtroTipoFluxo = 'Todos';
   TipoPagamento? _filtroFormaFluxo; // null = todas as formas de pagamento
   bool _mostrarTodosCaixas = false;
+  bool _movimentacoesRecolhidas = false;
   // Janela de horário do Fluxo de Caixa, em minutos desde a meia-noite
   // (08:30 → 510). Só filtra quando os DOIS extremos foram escolhidos —
   // mesma regra do modal de movimentações de um caixa encerrado.
@@ -291,7 +292,9 @@ class _CaixaPageState extends State<CaixaPage> {
                 ),
 
                 // 2. Seção de Resumo (Apenas se aberto)
-                if (caixaAberto && aberturaAtual != null)
+                if (caixaAberto &&
+                    aberturaAtual != null &&
+                    !_movimentacoesRecolhidas)
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -301,7 +304,9 @@ class _CaixaPageState extends State<CaixaPage> {
                   ),
 
                 // 3. Filtros do Fluxo de Caixa (tipos + busca)
-                if (caixaAberto && aberturaAtual != null)
+                if (caixaAberto &&
+                    aberturaAtual != null &&
+                    !_movimentacoesRecolhidas)
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
@@ -317,12 +322,14 @@ class _CaixaPageState extends State<CaixaPage> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Movimentações do Dia',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                          const Expanded(
+                            child: Text(
+                              'Movimentações do Dia',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                           Container(
@@ -338,17 +345,36 @@ class _CaixaPageState extends State<CaixaPage> {
                               style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
                             ),
                           ),
+                          IconButton(
+                            tooltip: _movimentacoesRecolhidas
+                                ? 'Expandir movimentações'
+                                : 'Recolher movimentações',
+                            onPressed: () => setState(
+                              () => _movimentacoesRecolhidas =
+                                  !_movimentacoesRecolhidas,
+                            ),
+                            icon: Icon(
+                              _movimentacoesRecolhidas
+                                  ? Icons.expand_more
+                                  : Icons.expand_less,
+                              color: Colors.white70,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   ),
 
                 // 5. Lista do Fluxo de Caixa Atual
-                if (caixaAberto && aberturaAtual != null)
+                if (caixaAberto &&
+                    aberturaAtual != null &&
+                    !_movimentacoesRecolhidas)
                   _buildSliverFluxoLista(movsFluxoFiltradas, mostrarCaixa: modoTodosCaixas),
 
                 // 5.1 Total do que está sendo exibido (respeita os filtros)
-                if (caixaAberto && aberturaAtual != null)
+                if (caixaAberto &&
+                    aberturaAtual != null &&
+                    !_movimentacoesRecolhidas)
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -1228,6 +1254,17 @@ class _CaixaPageState extends State<CaixaPage> {
         }
       }
 
+      // Itens deletados do carrinho do PDV (comanda virtual de auditoria) na
+      // janela [abertura, fechamento] — antes não apareciam no PDF.
+      for (final i in dataService.itensDeletadosNoPDV(
+          inicio: ab.dataAbertura, fim: fe.dataFechamento)) {
+        final qtd = i.quantidade == i.quantidade.roundToDouble()
+            ? i.quantidade.toStringAsFixed(0)
+            : i.quantidade.toString();
+        canceladosExtra.add(
+            '[PDV] ${qtd}x ${i.nome} — deletado por ${i.usuarioModificou ?? "Sistema"}');
+      }
+
       // Recebimentos de pedidos/mesas no período do caixa (mesma regra exibida
       // no diálogo de fechamento), para o papel não ficar só com as vendas do
       // PDV.
@@ -1639,6 +1676,7 @@ class _CaixaPageState extends State<CaixaPage> {
           case 'Vendas': return tipo == 'Venda';
           case 'Pagamento': return tipo == 'Pagamento';
           case 'Suprimento': return tipo == 'Suprimento';
+          case 'Deletado': return tipo == 'Deletado';
           case 'Mesa/Comanda': return tipo == 'Mesa' || tipo == 'Comanda';
           default: return true;
         }
@@ -1750,7 +1788,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    'A RECEBER',
+                    m['tag'] ?? 'A RECEBER',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.6),
                       fontSize: 8,
@@ -1814,9 +1852,16 @@ class _CaixaPageState extends State<CaixaPage> {
     double saidas = 0.0;
     int contabilizadas = 0;
     int aReceber = 0;
+    int deletados = 0;
     for (final m in movs) {
       if (m['contabilizado'] == false) {
-        aReceber++;
+        // Dois tipos de "não contabilizado": mesa/comanda a receber (dinheiro
+        // previsto) e itens deletados do PDV (valor que saiu sem virar venda).
+        if (m['tipo'] == 'Deletado') {
+          deletados++;
+        } else {
+          aReceber++;
+        }
         continue;
       }
       contabilizadas++;
@@ -1876,6 +1921,13 @@ class _CaixaPageState extends State<CaixaPage> {
             Text(
               '$aReceber mesa(s)/comanda(s) a receber — não incluídas nos totais.',
               style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+            ),
+          ],
+          if (deletados > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              '$deletados item(ns) deletado(s) do PDV — não contabilizado(s) nos totais.',
+              style: TextStyle(color: Colors.orange.withOpacity(0.7), fontSize: 11),
             ),
           ],
         ],
@@ -1965,7 +2017,7 @@ class _CaixaPageState extends State<CaixaPage> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                'Todos', 'Vendas', 'Pagamento', 'Suprimento', 'Mesa/Comanda',
+                'Todos', 'Vendas', 'Pagamento', 'Suprimento', 'Mesa/Comanda', 'Deletado',
               ].map((tipo) {
                 final isSelected = _filtroTipoFluxo == tipo;
                 return Padding(
@@ -3441,6 +3493,47 @@ class _CaixaPageState extends State<CaixaPage> {
       });
     }
 
+    // Itens deletados do carrinho do PDV (comanda virtual de auditoria) na
+    // janela do caixa [abertura, fechamento]. Não viram dinheiro: contabilizado
+    // = false para ficarem fora dos totais, com tag própria DELETADO.
+    DateTime? fimJanela;
+    for (final f in ds.fechamentosCaixa) {
+      if (f.aberturaCaixaId == ab.id) {
+        fimJanela = f.dataFechamento;
+        break;
+      }
+    }
+    final deletadosJanela = ds.itensDeletadosNoPDV(
+      inicio: ab.dataAbertura,
+      fim: fimJanela ?? DateTime.now(),
+    );
+    for (final i in deletadosJanela) {
+      final usuario = (i.usuarioModificou ?? '').trim();
+      final generico =
+          usuario.isEmpty || usuario == 'PDV' || usuario == 'Sistema';
+      if (respAb.isNotEmpty &&
+          !generico &&
+          !ds.vendaPertenceAoOperador(usuario, respAb)) {
+        continue;
+      }
+      final qtd = i.quantidade == i.quantidade.roundToDouble()
+          ? i.quantidade.toStringAsFixed(0)
+          : i.quantidade.toString();
+      list.add({
+        'data': i.dataModificacao ?? i.dataHora,
+        'descricao': 'Deletado: ${qtd}x ${i.nome}',
+        'valor': i.preco * i.quantidade,
+        'forma': 'Deletado · não contabilizado',
+        'tipoPagamento': null,
+        'icone': Icons.delete_outline,
+        'cor': Colors.orangeAccent,
+        'numero': '',
+        'tipo': 'Deletado',
+        'contabilizado': false,
+        'tag': 'DELETADO',
+      });
+    }
+
     // Guarda de qual caixa é cada linha — usado no modo "juntar caixas" para
     // etiquetar as movimentações dos dois operadores.
     for (final mov in list) {
@@ -3867,6 +3960,20 @@ class _CaixaPageState extends State<CaixaPage> {
     // Calcular valor esperado baseado nas vendas do caixa em questão
     final vendasDoCaixa = dataService.getVendasDoCaixa(abertura);
 
+    // Itens deletados do carrinho do PDV na janela deste caixa (auditoria) —
+    // exibidos em card próprio no fechamento e somados no PDF do fechamento.
+    DateTime? fimJanelaFech;
+    for (final f in dataService.fechamentosCaixa) {
+      if (f.aberturaCaixaId == abertura.id) {
+        fimJanelaFech = f.dataFechamento;
+        break;
+      }
+    }
+    final deletadosPdv = dataService.itensDeletadosNoPDV(
+      inicio: abertura.dataAbertura,
+      fim: fimJanelaFech ?? DateTime.now(),
+    );
+
     // --- Novos cálculos para detalhamento ---
     //
     // Separação por forma de pagamento a partir da MESMA fonte do card do
@@ -3925,6 +4032,10 @@ class _CaixaPageState extends State<CaixaPage> {
     }
 
     for (var p in dataService.pedidos) {
+      // Pedido CANCELADO não entra no fechamento (nem nos itens, nem nos
+      // totais): cancelei o pedido e ele não pode continuar pesando no caixa.
+      if (p.status.trim().toLowerCase() == 'cancelado') continue;
+
       // Filtro de operador do pedido (vendedorNome), quando o caixa é nominado.
       if (temRespCaixa) {
         final operadorPedido = p.vendedorNome;
@@ -4406,6 +4517,56 @@ class _CaixaPageState extends State<CaixaPage> {
                     ],
                   ),
                 ),
+                // Itens deletados do carrinho do PDV na janela deste caixa —
+                // antes não apareciam em lugar nenhum do fechamento.
+                if (deletadosPdv.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.07),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: Colors.orange.withOpacity(0.35)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.delete_outline,
+                                color: Colors.orangeAccent, size: 20),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Itens Deletados do PDV (${deletadosPdv.length})',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ...deletadosPdv.map((i) {
+                          final qtd = i.quantidade ==
+                                  i.quantidade.roundToDouble()
+                              ? i.quantidade.toStringAsFixed(0)
+                              : i.quantidade.toString();
+                          final quando = (i.dataModificacao ?? i.dataHora)
+                              .toLocal();
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              '${qtd}x ${i.nome} — ${i.usuarioModificou ?? "Sistema"} (${DateFormat('dd/MM HH:mm').format(quando)})',
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 12),
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 // Seção de Valores
                 Container(
@@ -5180,4 +5341,3 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 }
-

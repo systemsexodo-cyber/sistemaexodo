@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/nfce.dart';
+import 'nfce_duplicidade_helper.dart';
 
 /// Serviço de contingência NFC-e.
 /// Quando o bridge está offline, salva a nota localmente e tenta retransmitir
@@ -13,11 +14,11 @@ class NfceContingenciaService extends ChangeNotifier {
 
   static const String _pastaBase = r'C:\ExodoNFCe';
   static const String _arquivoFila = r'C:\ExodoNFCe\contingencia_queue.json';
-  
+
   /// Limite máximo de tentativas antes de marcar nota como FALHA definitiva.
   /// Após atingir este limite, a nota é removida da fila e registrada como erro.
   static const int _maxTentativas = 100;
-  
+
   /// Intervalo entre logs de tentativa para notas com muitas falhas
   /// (evita poluição do console — só loga a cada 10 tentativas após o 20º)
   static const int _logIntervalo = 10;
@@ -33,6 +34,37 @@ class NfceContingenciaService extends ChangeNotifier {
   /// hook a nota continuaria "pendente" mesmo depois de autorizada, e um
   /// reenvio manual poderia gerar uma segunda nota para a mesma venda.
   static Future<void> Function(NFCe nfce, String numero)? onNotaAutorizada;
+  static Future<void> Function(
+    String empresaId,
+    String serie,
+    String numeroOriginal,
+    String motivo,
+    List<int> numerosDuplicados,
+  )?
+  onDuplicidadeSemNumero;
+
+  /// Hook registrado em `main.dart`: grava no histórico do DataService um
+  /// número que a SEFAZ confirmou ocupado por duplicidade (rejeição 539).
+  /// O serviço de contingência não conhece o DataService, então a escrita
+  /// fica no hook — sem ele, o número voltaria a ser sugerido na sequência.
+  static Future<void> Function(int numero, String serie)? onMarcarNumeroOcupado;
+
+  /// Hook registrado em `main.dart`: devolve o MENOR número livre da série no
+  /// histórico local.
+  ///
+  /// A fila de reenvio não conhece o DataService e, sem esta régua, a busca
+  /// de substituto descia a partir do número rejeitado — com um número fora
+  /// de ordem (791252835) ela continuava testando 791252834, 791252833... e
+  /// autorizava a nota lá em cima, contaminando a sequência.
+  static int Function(String serie, int numeroInicial)? onProximoNumeroLivre;
+
+  static Future<void> marcarNumeroNfceComoOcupado({
+    required int numero,
+    String serie = '1',
+  }) async {
+    final hook = onMarcarNumeroOcupado;
+    if (hook != null) await hook(numero, serie);
+  }
 
   /// Quantas notas estão aguardando transmissão
   int get totalPendentes => _fila.length;
@@ -61,11 +93,15 @@ class NfceContingenciaService extends ChangeNotifier {
       final numero = entry['numero']?.toString() ?? '';
       final tentativas = (entry['tentativas'] as int?) ?? 0;
       if (numero == '0' || numero.isEmpty) {
-        debugPrint('[Contingência] 🧹 Removendo nota inválida (número: "$numero") da fila');
+        debugPrint(
+          '[Contingência] 🧹 Removendo nota inválida (número: "$numero") da fila',
+        );
         return true;
       }
       if (tentativas >= _maxTentativas) {
-        debugPrint('[Contingência] 🧹 Removendo nota $numero (esgotou $_maxTentativas tentativas)');
+        debugPrint(
+          '[Contingência] 🧹 Removendo nota $numero (esgotou $_maxTentativas tentativas)',
+        );
         return true;
       }
       return false;
@@ -100,6 +136,8 @@ class NfceContingenciaService extends ChangeNotifier {
     final entry = {
       'id': DateTime.now().millisecondsSinceEpoch.toString(),
       'numero': numero,
+      'numero_original': numero,
+      'serie': payload['serie']?.toString() ?? '1',
       'valor_total': valorTotal,
       'empresa_id': empresaId,
       'empresa_cnpj': empresaCnpj,
@@ -112,7 +150,9 @@ class NfceContingenciaService extends ChangeNotifier {
     await _salvarFilaNoDisco();
     notifyListeners();
 
-    debugPrint('[Contingência] Nota $numero adicionada na fila. Total: ${_fila.length}');
+    debugPrint(
+      '[Contingência] Nota $numero adicionada na fila. Total: ${_fila.length}',
+    );
   }
 
   // ─────────────────────────────────────────────────
@@ -147,7 +187,9 @@ class NfceContingenciaService extends ChangeNotifier {
 
         // ═══ LIMITE DE TENTATIVAS ═══
         if (tentativas >= _maxTentativas) {
-          debugPrint('[Contingência] ❌ Nota $numero removida após $_maxTentativas tentativas (FALHA DEFINITIVA)');
+          debugPrint(
+            '[Contingência] ❌ Nota $numero removida após $_maxTentativas tentativas (FALHA DEFINITIVA)',
+          );
           removidos.add(entry['id'] as String);
           if (onErro != null) {
             onErro(numero, 'FALHA DEFINITIVA após $_maxTentativas tentativas');
@@ -157,20 +199,57 @@ class NfceContingenciaService extends ChangeNotifier {
 
         // ═══ NOTA INVÁLIDA (número = 0) ═══
         if (numero == '0' || numero.isEmpty) {
-          debugPrint('[Contingência] ❌ Nota com número inválida ("$numero") removida da fila');
+          debugPrint(
+            '[Contingência] ❌ Nota com número inválida ("$numero") removida da fila',
+          );
           removidos.add(entry['id'] as String);
           continue;
         }
 
-        // Tentar emitir via bridge
-        final result = await _enviarParaBridge(payload);
+        // Tentar transmitir via Bridge. Duplicidade 539: um único pulo
+        // neste ciclo (não varrer 30 números na SEFAZ).
+        final result = await _enviarComBuscaDuplicidade(
+          payload: payload,
+          numero: int.tryParse(numero) ?? 0,
+        );
+        final numeroOriginal = entry['numero_original']?.toString() ?? numero;
+        final serie = (payload['serie'] ?? '1').toString();
+        final numeroTransmitido =
+            result['_numero_tentado']?.toString() ?? numero;
 
-        if (result['status'] == 'sucesso' || result['status'] == 'autorizada') {
+        if (result['_duplicidade_sem_numero'] == true) {
+          removidos.add(entry['id'] as String);
+          final motivo =
+              result['mensagem']?.toString() ??
+              'Duplicidade NFC-e: não foi encontrado número livre.';
+          final duplicados =
+              (result['_numeros_duplicados'] as List<dynamic>? ?? [])
+                  .whereType<num>()
+                  .map((numero) => numero.toInt())
+                  .toList();
+          final tratarDuplicidade = onDuplicidadeSemNumero;
+          if (tratarDuplicidade != null) {
+            await tratarDuplicidade(
+              entry['empresa_id']?.toString() ?? '',
+              serie,
+              numeroOriginal,
+              motivo,
+              duplicados,
+            );
+          }
+          onErro?.call(numeroOriginal, motivo);
+          continue;
+        }
+
+        if (_respostaAutorizada(result)) {
           removidos.add(entry['id'] as String);
           sucessos++;
           debugPrint('[Contingência] ✅ Nota $numero transmitida com sucesso!');
 
-          final nfceAutorizada = _construirNFCeDoRetorno(result, entry);
+          final nfceAutorizada = _construirNFCeDoRetorno(result, {
+            ...entry,
+            'numero': numeroTransmitido,
+          });
 
           // Notificar callback do chamador
           if (onSucesso != null) {
@@ -181,18 +260,31 @@ class NfceContingenciaService extends ChangeNotifier {
           final reconciliar = onNotaAutorizada;
           if (reconciliar != null) {
             try {
-              await reconciliar(nfceAutorizada, numero);
+              await reconciliar(nfceAutorizada, numeroOriginal);
             } catch (e) {
               debugPrint('[Contingência] Erro ao reconciliar nota $numero: $e');
             }
           }
         } else {
+          final mensagemErro =
+              (result['mensagem'] ?? result['detail'] ?? result['error'] ?? '')
+                  .toString();
+          if (numeroTransmitido != numero) {
+            entry['numero'] = numeroTransmitido;
+            entry['payload'] = {
+              ...payload,
+              'numero': int.tryParse(numeroTransmitido),
+              'venda_numero': numeroTransmitido,
+            };
+          }
           // Incrementar contador de tentativas
           entry['tentativas'] = tentativas + 1;
           // Log otimizado: só imprime a cada N tentativas após o 20º
           final t = entry['tentativas'] as int;
           if (t <= 20 || t % _logIntervalo == 0) {
-            debugPrint('[Contingência] ⚠️ Nota $numero ainda pendente (tentativa $t/$_maxTentativas)');
+            debugPrint(
+              '[Contingência] ⚠️ Nota $numero ainda pendente (tentativa $t/$_maxTentativas)',
+            );
           }
           if (onErro != null) {
             onErro(numero, result['mensagem']?.toString() ?? 'Sem resposta');
@@ -203,7 +295,9 @@ class NfceContingenciaService extends ChangeNotifier {
         entry['tentativas'] = ((entry['tentativas'] as int?) ?? 0) + 1;
         final t = entry['tentativas'] as int;
         if (t <= 20 || t % _logIntervalo == 0) {
-          debugPrint('[Contingência] 🔴 Bridge offline, aguardando (tentativa $t/$_maxTentativas)');
+          debugPrint(
+            '[Contingência] 🔴 Bridge offline, aguardando (tentativa $t/$_maxTentativas)',
+          );
         }
       }
     }
@@ -241,7 +335,9 @@ class NfceContingenciaService extends ChangeNotifier {
     if (removidos > 0) {
       await _salvarFilaNoDisco();
       notifyListeners();
-      debugPrint('[Contingência] 🧹 Nota $alvo removida da fila ($removidos entrada(s))');
+      debugPrint(
+        '[Contingência] 🧹 Nota $alvo removida da fila ($removidos entrada(s))',
+      );
     }
     return removidos;
   }
@@ -250,7 +346,70 @@ class NfceContingenciaService extends ChangeNotifier {
   // BRIDGE HTTP
   // ─────────────────────────────────────────────────
 
-  Future<Map<String, dynamic>> _enviarParaBridge(Map<String, dynamic> payload) async {
+  /// Reenvio: tenta o número original. Só pula (uma vez neste ciclo) se a
+  /// SEFAZ devolver duplicidade 539.
+  Future<Map<String, dynamic>> _enviarComBuscaDuplicidade({
+    required Map<String, dynamic> payload,
+    required int numero,
+  }) async {
+    final primeira = await _enviarParaBridge(payload);
+    final mensagemInicial =
+        (primeira['mensagem'] ?? primeira['detail'] ?? primeira['error'] ?? '')
+            .toString();
+    if (!NfceDuplicidadeHelper.ehDuplicidade(mensagemInicial)) {
+      return {...primeira, '_numero_tentado': numero};
+    }
+
+    final numeroDuplicado =
+        NfceDuplicidadeHelper.numeroDaChaveDuplicada(mensagemInicial) ?? numero;
+    final numerosDuplicados = <int>{
+      ...NfceDuplicidadeHelper.numerosDuplicados(mensagemInicial),
+      if (numeroDuplicado > 0) numeroDuplicado,
+      if (numero > 0) numero,
+    };
+    for (final item in primeira['numeros_duplicados'] as List? ?? const []) {
+      final numeroOcupado = int.tryParse(item.toString());
+      if (numeroOcupado != null && numeroOcupado > 0) {
+        numerosDuplicados.add(numeroOcupado);
+      }
+    }
+    final serie = (payload['serie'] ?? '1').toString();
+    final numeroInicial =
+        int.tryParse(payload['numero_inicial_nfce']?.toString() ?? '') ?? 1;
+    var candidato = NfceDuplicidadeHelper.proximoAposDuplicidade(
+      numeroTentado: numero,
+      duplicados: numerosDuplicados,
+      numeroInicial: numeroInicial,
+    );
+    // A régua local só entra DEPOIS do pulo da 539, a partir do candidato.
+    final menorLivre =
+        onProximoNumeroLivre?.call(serie, candidato) ?? candidato;
+    if (menorLivre > candidato) candidato = menorLivre;
+
+    for (final ocupado in numerosDuplicados) {
+      await marcarNumeroNfceComoOcupado(numero: ocupado, serie: serie);
+    }
+
+    final payloadTentativa = Map<String, dynamic>.from(payload)
+      ..['numero'] = candidato
+      ..['venda_numero'] = candidato.toString();
+    final retorno = await _enviarParaBridge(payloadTentativa);
+    return {...retorno, '_numero_tentado': candidato};
+  }
+
+  bool _respostaAutorizada(Map<String, dynamic> retorno) {
+    final httpStatus = retorno['_http_status'] as int? ?? 200;
+    final status = retorno['status']?.toString().toLowerCase() ?? '';
+    return httpStatus >= 200 &&
+        httpStatus < 300 &&
+        status != 'erro' &&
+        status != 'error' &&
+        retorno['success'] != false;
+  }
+
+  Future<Map<String, dynamic>> _enviarParaBridge(
+    Map<String, dynamic> payload,
+  ) async {
     final uri = Uri.parse('http://localhost:8000/api/nfce/emitir');
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 10);
@@ -261,20 +420,47 @@ class NfceContingenciaService extends ChangeNotifier {
       request.write(jsonEncode(payload));
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
-      final data = jsonDecode(body) as Map<String, dynamic>;
-      return data;
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic>) {
+        return {
+          'status': 'erro',
+          'mensagem': body,
+          '_http_status': response.statusCode,
+        };
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return {
+          ...decoded,
+          'status': 'erro',
+          'mensagem':
+              decoded['detail'] ??
+              decoded['mensagem'] ??
+              decoded['error'] ??
+              body,
+          '_http_status': response.statusCode,
+        };
+      }
+      return {...decoded, '_http_status': response.statusCode};
     } finally {
       client.close();
     }
   }
 
-  NFCe _construirNFCeDoRetorno(Map<String, dynamic> data, Map<String, dynamic> entry) {
+  NFCe _construirNFCeDoRetorno(
+    Map<String, dynamic> data,
+    Map<String, dynamic> entry,
+  ) {
     final now = DateTime.now();
     return NFCe(
       id: data['id']?.toString() ?? now.millisecondsSinceEpoch.toString(),
       numero: data['numero']?.toString() ?? entry['numero']?.toString() ?? '0',
+      vendaId: entry['payload'] is Map
+          ? (entry['payload'] as Map)['venda_id']?.toString()
+          : null,
+      vendaNumero: data['numero']?.toString() ?? entry['numero']?.toString(),
       serie: data['serie']?.toString() ?? '1',
-      chaveAcesso: data['chave']?.toString() ?? data['chave_acesso']?.toString(),
+      chaveAcesso:
+          data['chave']?.toString() ?? data['chave_acesso']?.toString(),
       protocolo: data['protocolo']?.toString(),
       dataEmissao: now,
       empresaId: entry['empresa_id']?.toString() ?? '',
@@ -324,7 +510,8 @@ class NfceContingenciaService extends ChangeNotifier {
   // NUMERO RESERVADO (para não pular numeração)
   // ─────────────────────────────────────────────────
 
-  static const String _arquivoNumeroReservado = r'C:\ExodoNFCe\numero_reservado.json';
+  static const String _arquivoNumeroReservado =
+      r'C:\ExodoNFCe\numero_reservado.json';
 
   /// Salva o número que foi tentado mas deu erro, para reutilizá-lo
   static Future<void> reservarNumero(String empresaId, int numero) async {
@@ -335,7 +522,9 @@ class NfceContingenciaService extends ChangeNotifier {
       final arquivo = File(_arquivoNumeroReservado);
       final dados = {empresaId: numero};
       arquivo.writeAsStringSync(jsonEncode(dados));
-      debugPrint('[Contingência] Número $numero reservado para empresa $empresaId');
+      debugPrint(
+        '[Contingência] Número $numero reservado para empresa $empresaId',
+      );
     } catch (e) {
       debugPrint('[Contingência] Erro ao reservar número: $e');
     }
@@ -347,7 +536,8 @@ class NfceContingenciaService extends ChangeNotifier {
     try {
       final arquivo = File(_arquivoNumeroReservado);
       if (!arquivo.existsSync()) return null;
-      final dados = jsonDecode(arquivo.readAsStringSync()) as Map<String, dynamic>;
+      final dados =
+          jsonDecode(arquivo.readAsStringSync()) as Map<String, dynamic>;
       final valor = dados[empresaId];
       return valor != null ? (valor as num).toInt() : null;
     } catch (e) {
@@ -361,10 +551,13 @@ class NfceContingenciaService extends ChangeNotifier {
     try {
       final arquivo = File(_arquivoNumeroReservado);
       if (arquivo.existsSync()) {
-        final dados = jsonDecode(arquivo.readAsStringSync()) as Map<String, dynamic>;
+        final dados =
+            jsonDecode(arquivo.readAsStringSync()) as Map<String, dynamic>;
         dados.remove(empresaId);
         arquivo.writeAsStringSync(jsonEncode(dados));
-        debugPrint('[Contingência] Número reservado limpo para empresa $empresaId');
+        debugPrint(
+          '[Contingência] Número reservado limpo para empresa $empresaId',
+        );
       }
     } catch (e) {
       debugPrint('[Contingência] Erro ao limpar número reservado: $e');

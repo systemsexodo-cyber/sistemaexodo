@@ -1,0 +1,4 @@
+project_id = "sistema-exodo"
+
+[functions.mercado-pago-mensalidade]
+verify_jwt = false

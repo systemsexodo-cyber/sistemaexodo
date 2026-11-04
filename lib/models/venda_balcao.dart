@@ -285,6 +285,21 @@ class VendaBalcao {
   // Verifica se a venda está cancelada
   bool get isCancelada => cancelado;
 
+  /// Venda salva (guardada para receber depois), ainda NÃO recebida.
+  ///
+  /// Venda salva grava `valorRecebido == 0` e nenhum pagamento recebido; o
+  /// valor vira recebido de verdade quando o PDV registra o pagamento
+  /// (`_syncVendaBalcao`/`_concluirVendaComPagamentos`). Vendas antigas gravadas
+  /// com `valorRecebido == null` não são tratadas como salvas (compatibilidade).
+  ///
+  /// Regra única usada pelo Fluxo de Caixa, pelo saldo do caixa e pelo
+  /// Histórico de Vendas: **venda salva não entra no caixa**.
+  bool get ehVendaSalva =>
+      !cancelado &&
+      valorRecebido != null &&
+      valorRecebido! <= 0 &&
+      !pagamentos.any((p) => p.recebido);
+
   factory VendaBalcao.fromMap(Map<String, dynamic> map) {
     // Helpers para suportar camelCase (localStorage) e snake_case (Supabase)
     T? get<T>(String camel, String snake) {

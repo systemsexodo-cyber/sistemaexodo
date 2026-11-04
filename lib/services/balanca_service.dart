@@ -60,6 +60,9 @@ class BalancaService {
 
   /// Obtém o diretório padrão para exportar os itens do Toledo (geralmente área de trabalho)
   Future<String> obterDiretorioToledoPadrao() async {
+    // No navegador não existe diretório local/Platform: retorna vazio para o
+    // diálogo de configurações abrir normalmente.
+    if (kIsWeb) return '';
     try {
       if (Platform.isWindows) {
         final home = Platform.environment['USERPROFILE'];
@@ -80,7 +83,9 @@ class BalancaService {
   /// Lista as portas COM disponíveis no Windows usando PowerShell
   Future<List<String>> listarPortasCOM() async {
     final List<String> portas = [];
-    if (!Platform.isWindows) {
+    // kIsWeb ANTES de Platform: no Flutter Web, acessar Platform lança
+    // "Unsupported operation" e travava o diálogo de configurações do PDV.
+    if (kIsWeb || !Platform.isWindows) {
       return ['MOCK_PORT'];
     }
     try {
@@ -129,6 +134,16 @@ class BalancaService {
         'peso': pesoMock,
         'simulado': true,
         'erro': null,
+      };
+    }
+
+    // No Web não há porta serial: usa o peso simulado em vez de tocar em
+    // `Platform` (que lança Unsupported operation no navegador).
+    if (kIsWeb) {
+      return {
+        'peso': pesoMock,
+        'simulado': true,
+        'erro': 'Leitura de balança serial disponível apenas no aplicativo desktop.',
       };
     }
 
@@ -250,6 +265,13 @@ try {
   /// Gera e exporta o arquivo de itens compatível com Balanças Toledo (Layout MGV)
   /// Retorna o caminho do arquivo gerado
   Future<String> exportarItensToledo(List<Produto> produtos, String diretorioDestino) async {
+    // Escrita de arquivo não existe no navegador. O botão correspondente fica
+    // desabilitado no Web; esta guarda protege chamadas diretas.
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Exportação de itens Toledo disponível apenas no aplicativo desktop.',
+      );
+    }
     if (diretorioDestino.isEmpty) {
       diretorioDestino = await obterDiretorioToledoPadrao();
     }

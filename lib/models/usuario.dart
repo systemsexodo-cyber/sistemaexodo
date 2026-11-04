@@ -12,14 +12,17 @@ class Usuario {
   final TipoUsuario tipo;
   final String? empresaId; // ID da empresa associada
   final String? funcionarioId; // ID do funcionário associado (para vendedores)
-  final bool garcom; // Garçom: acesso restrito às telas de mesas/comandas + suas vendas/comissões/ranking
+  final bool
+  garcom; // Garçom: acesso restrito às telas de mesas/comandas + suas vendas/comissões/ranking
   final bool ativo;
   final bool isMaster; // Usuário master da empresa (pode gerenciar permissões)
-  final Set<String>? permissoesPersonalizadas; // Permissões adicionais concedidas
+  final Set<String>?
+  permissoesPersonalizadas; // Permissões adicionais concedidas
   final Set<String>? permissoesNegadas; // Permissões removidas do padrão
   final List<String>? telasOcultas; // Telas que o usuário não pode ver/acessar
   final int serieNfce; // Série da NFC-e (cada usuário pode ter a sua)
-  final int numeroInicialNfce; // Número inicial da NFC-e para a série do usuário (padrão: 1)
+  final int
+  numeroInicialNfce; // Número inicial da NFC-e para a série do usuário (padrão: 1)
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? ultimoAcesso;
@@ -83,7 +86,8 @@ class Usuario {
       garcom: garcom ?? this.garcom,
       ativo: ativo ?? this.ativo,
       isMaster: isMaster ?? this.isMaster,
-      permissoesPersonalizadas: permissoesPersonalizadas ?? this.permissoesPersonalizadas,
+      permissoesPersonalizadas:
+          permissoesPersonalizadas ?? this.permissoesPersonalizadas,
       permissoesNegadas: permissoesNegadas ?? this.permissoesNegadas,
       telasOcultas: telasOcultas ?? this.telasOcultas,
       serieNfce: serieNfce ?? this.serieNfce,
@@ -95,11 +99,36 @@ class Usuario {
   }
 
   factory Usuario.fromMap(Map<String, dynamic> map) {
-    // Helpers para suportar camelCase (localStorage) e snake_case (Supabase)
+    // O schema legado da nuvem guarda os campos específicos do app dentro de
+    // `dados_app` (JSONB); o PostgreSQL local pode devolvê-los como JSON.
+    Map<String, dynamic> lerJsonMap(dynamic valor) {
+      if (valor is Map) return Map<String, dynamic>.from(valor);
+      if (valor is String && valor.isNotEmpty) {
+        try {
+          final decodificado = jsonDecode(valor);
+          if (decodificado is Map) {
+            return Map<String, dynamic>.from(decodificado);
+          }
+        } catch (_) {}
+      }
+      return <String, dynamic>{};
+    }
+
+    final dadosUsuario = lerJsonMap(
+      map['dados_usuario'] ?? map['dadosUsuario'],
+    );
+    final dadosApp = lerJsonMap(map['dados_app'] ?? map['dadosApp']);
+
+    // Helpers para suportar camelCase, snake_case e o JSONB legado da nuvem.
     T? get<T>(String camel, String snake) {
-      if (map.containsKey(camel)) return map[camel] as T?;
-      if (map.containsKey(snake)) return map[snake] as T?;
-      return null;
+      final valor =
+          map[camel] ??
+          map[snake] ??
+          dadosUsuario[camel] ??
+          dadosUsuario[snake] ??
+          dadosApp[camel] ??
+          dadosApp[snake];
+      return valor as T?;
     }
 
     String? getStr(String camel, String snake) => get<String>(camel, snake);
@@ -107,32 +136,20 @@ class Usuario {
     List? getList(String camel, String snake) => get<List>(camel, snake);
     Set? getSet(String camel, String snake) => get<Set>(camel, snake);
 
-    String? empId = getStr('empresaId', 'empresa_id');
-    if (empId == null || empId.isEmpty) {
-      final dados = map['dados_usuario'] ?? map['dadosUsuario'];
-      if (dados != null) {
-        if (dados is Map) {
-          empId = dados['empresa_id']?.toString() ?? dados['empresaId']?.toString();
-        } else if (dados is String && dados.isNotEmpty) {
-          try {
-            final decoded = jsonDecode(dados);
-            if (decoded is Map) {
-              empId = decoded['empresa_id']?.toString() ?? decoded['empresaId']?.toString();
-            }
-          } catch (_) {}
-        }
-      }
-    }
+    final empId = getStr('empresaId', 'empresa_id');
 
     return Usuario(
       id: map['id']?.toString() ?? '',
       nome: map['nome']?.toString() ?? '',
       email: map['email']?.toString() ?? '',
-      senha: map['senha']?.toString() ?? '',
-      telefone: map['telefone']?.toString(),
+      senha:
+          (map['senha'] ?? dadosUsuario['senha'] ?? dadosApp['senha'])
+              ?.toString() ??
+          '',
+      telefone: getStr('telefone', 'telefone'),
       fotoUrl: getStr('fotoUrl', 'foto_url'),
       tipo: TipoUsuario.values.firstWhere(
-        (t) => t.name == map['tipo'],
+        (t) => t.name == (map['tipo'] ?? map['perfil'] ?? dadosApp['tipo']),
         orElse: () => TipoUsuario.operador,
       ),
       empresaId: empId,
@@ -140,8 +157,11 @@ class Usuario {
       garcom: getBool('garcom', 'garcom') ?? false,
       ativo: getBool('ativo', 'ativo') ?? true,
       isMaster: getBool('isMaster', 'is_master') ?? false,
-      permissoesPersonalizadas: get('permissoesPersonalizadas', 'permissoes_personalizadas') != null
-          ? Set<String>.from(get('permissoesPersonalizadas', 'permissoes_personalizadas'))
+      permissoesPersonalizadas:
+          get('permissoesPersonalizadas', 'permissoes_personalizadas') != null
+          ? Set<String>.from(
+              get('permissoesPersonalizadas', 'permissoes_personalizadas'),
+            )
           : null,
       permissoesNegadas: get('permissoesNegadas', 'permissoes_negadas') != null
           ? Set<String>.from(get('permissoesNegadas', 'permissoes_negadas'))
@@ -152,7 +172,8 @@ class Usuario {
       createdAt: DateParser.parse(map['created_at'] ?? map['createdAt']),
       updatedAt: DateParser.parse(map['updated_at'] ?? map['updatedAt']),
       serieNfce: get<num>('serieNfce', 'serie_nfce')?.toInt() ?? 1,
-      numeroInicialNfce: get<num>('numeroInicialNfce', 'numero_inicial_nfce')?.toInt() ?? 1,
+      numeroInicialNfce:
+          get<num>('numeroInicialNfce', 'numero_inicial_nfce')?.toInt() ?? 1,
       ultimoAcesso: (map['ultimo_acesso'] ?? map['ultimoAcesso']) != null
           ? DateParser.parse(map['ultimo_acesso'] ?? map['ultimoAcesso'])
           : null,
@@ -173,6 +194,7 @@ class Usuario {
       'telefone': telefone,
       'foto_url': fotoUrl,
       'tipo': tipo.name,
+      'perfil': tipo.name,
       'empresa_id': empresaId,
       'funcionario_id': funcionarioId,
       'garcom': garcom,
@@ -186,6 +208,25 @@ class Usuario {
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       'ultimo_acesso': ultimoAcesso?.toIso8601String(),
+      // Compatibilidade com a tabela legado do Supabase, que mantém senha e
+      // permissões nos JSONB de dados_usuario/dados_app.
+      'dados_usuario': {
+        'empresa_id': empresaId,
+        'telefone': telefone,
+        'ativo': ativo,
+      },
+      'dados_app': {
+        'tipo': tipo.name,
+        'is_master': isMaster,
+        'funcionario_id': funcionarioId,
+        'garcom': garcom,
+        'permissoes_personalizadas': permissoesPersonalizadas?.toList(),
+        'permissoes_negadas': permissoesNegadas?.toList(),
+        'telas_ocultas': telasOcultas,
+        'serie_nfce': serieNfce,
+        'numero_inicial_nfce': numeroInicialNfce,
+        'foto_url': fotoUrl,
+      },
     };
   }
 
@@ -203,18 +244,13 @@ class Usuario {
 
   /// Verifica se o usuário tem permissões de administrador ou gerente
   bool get podeGerenciarUsuarios => isAdmin || isGerente;
-  
+
   /// Verifica se o usuário é master (pode gerenciar permissões)
   bool get podeGerenciarPermissoes => isMaster;
 }
 
 /// Tipos de usuário do sistema
-enum TipoUsuario {
-  administrador,
-  gerente,
-  operador,
-  vendedor,
-}
+enum TipoUsuario { administrador, gerente, operador, vendedor }
 
 extension TipoUsuarioExtension on TipoUsuario {
   String get nome {
@@ -243,5 +279,3 @@ extension TipoUsuarioExtension on TipoUsuario {
     }
   }
 }
-
-

@@ -92,7 +92,9 @@ class NfceService {
   /// Verifica se o backend Python está online
   Future<bool> verificarStatusBackend() async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/'));
+      final response = await http
+          .get(Uri.parse('$_baseUrl/health'))
+          .timeout(const Duration(seconds: 3));
       return response.statusCode == 200;
     } catch (e) {
       return false;

@@ -1,5 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
+import importlib.util as _ilu
+import sys as _sys
+
+# Falha cedo se o Python que esta compilando nao tem as dependencias do bridge.
+# Sem isso o PyInstaller so avisa "missing module named uvicorn" no warn-*.txt e
+# gera um EXE que abre com ModuleNotFoundError: No module named 'uvicorn'.
+_OBRIGATORIOS = ('uvicorn', 'fastapi', 'starlette', 'pydantic')
+_faltando = [m for m in _OBRIGATORIOS if _ilu.find_spec(m) is None]
+if _faltando:
+    raise SystemExit(
+        "\n[ERRO] O Python do build nao tem: %s\n"
+        "        Interprete usado: %s\n"
+        "        Use o venv do bridge: backend_nfce\\venv\\Scripts\\python.exe -m PyInstaller ...\n"
+        % (", ".join(_faltando), _sys.executable)
+    )
 
 datas = [('firebase-credentials.json', '.')]
 binaries = []
@@ -75,7 +90,7 @@ exe_bridge = EXE(
     a.binaries,
     a.datas,
     [],
-    name='ExodoNfceBridge_v356',
+    name='ExodoNfceBridge_v358',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -98,7 +113,7 @@ exe_watchdog = EXE(
     w.binaries,
     w.datas,
     [],
-    name='ExodoNfceBridgeWatchdog_v356',
+    name='ExodoNfceBridgeWatchdog_v358',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

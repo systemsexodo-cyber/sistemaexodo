@@ -105,14 +105,16 @@ class _ProdutoCardState extends State<ProdutoCard> {
                   ),
                 ),
               ),
-              // Informações do produto
-              AnimatedContainer(
+              // Informações do produto (preenche o resto do card para o
+              // botão ficar alinhado na base de todos os cards da grade)
+              Expanded(
+                child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 padding: EdgeInsets.fromLTRB(
-                  widget.isCompacto ? 6.0 : 8.0,
-                  widget.isCompacto ? 4.0 : 4.0,
-                  widget.isCompacto ? 6.0 : 8.0,
-                  widget.isCompacto ? 0.0 : 0.0,
+                  widget.isCompacto ? 8.0 : 12.0,
+                  10.0,
+                  widget.isCompacto ? 8.0 : 12.0,
+                  12.0,
                 ),
                 decoration: BoxDecoration(
                   gradient: isCardHovered
@@ -128,20 +130,22 @@ class _ProdutoCardState extends State<ProdutoCard> {
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      produto.nome,
-                      maxLines: widget.isCompacto ? 1 : 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                        color: Theme.of(context).textTheme.bodyLarge?.color,
-                        height: 1.1,
+                    SizedBox(
+                      height: widget.isCompacto ? 18 : 34,
+                      child: Text(
+                        produto.nome,
+                        maxLines: widget.isCompacto ? 1 : 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: Theme.of(context).textTheme.bodyLarge?.color,
+                          height: 1.1,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 1),
+                    const SizedBox(height: 4),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -245,10 +249,11 @@ class _ProdutoCardState extends State<ProdutoCard> {
                         ),
                       ),
                     ],
+                    // Empurra o botão para a base do card (cards simétricos)
+                    const Spacer(),
                     Padding(
                       padding: EdgeInsets.only(
-                        top: !temEstoque ? 2 : 3,
-                        bottom: 4,
+                        top: !temEstoque ? 8 : 10,
                       ),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
@@ -297,6 +302,7 @@ class _ProdutoCardState extends State<ProdutoCard> {
                       ),
                     ),
                   ],
+                ),
                 ),
               ),
             ],

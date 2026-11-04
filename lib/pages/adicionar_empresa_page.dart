@@ -17,6 +17,7 @@ import '../models/empresa.dart';
 import '../models/tela_sistema.dart';
 import '../models/forma_pagamento.dart';
 import '../models/forma_pagamento_custom.dart';
+import '../utils/perfis_tributarios_merge.dart';
 import '../theme.dart';
 import '../services/data_service.dart';
 import '../services/whatsapp_service.dart';
@@ -458,6 +459,18 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
       final agora = DateTime.now();
 
       debugPrint('>>> [AdicionarEmpresa] Criando objeto Empresa...');
+      // Carimbo da lista de perfis de preço: só avança quando os perfis
+      // realmente mudam. É ele que decide, no merge com a nuvem, qual cópia
+      // dos preços por perfil é a mais nova (antes o cache local vencia
+      // sempre e a alteração feita aqui não chegava ao site).
+      final perfisPrecoAnteriores =
+          widget.empresa?.configuracoes?['perfis_preco'];
+      final perfisPrecoMudaram =
+          jsonEncode(perfisPrecoAnteriores ?? const []) !=
+              jsonEncode(_configPerfisPreco);
+      final carimboPerfisPreco = perfisPrecoMudaram
+          ? agora.toUtc().toIso8601String()
+          : widget.empresa?.configuracoes?[chavePerfisPrecoAtualizadoEm];
       final empresa = Empresa(
         id: widget.empresa?.id ?? const Uuid().v4(),
         razaoSocial: _razaoSocialController.text.trim(),
@@ -642,6 +655,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'cashback_validade_dias':
               int.tryParse(_cashbackValidadeController.text.trim()) ?? 0,
           'perfis_preco': _configPerfisPreco,
+          if (carimboPerfisPreco != null)
+            chavePerfisPrecoAtualizadoEm: carimboPerfisPreco,
           'pagamentos': _pagamentosConfig,
           'formas_pagamento_custom': _formasPagamentoCustom
               .map((f) => f.toMap())
@@ -732,7 +747,12 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
           // Sincronizar o regime atualizado no DataService para que o filtro de
           // perfis e os dropdowns reflitam o novo regime imediatamente.
-          dataService.setEmpresaAtual(empresa);
+          // Mesma guarda dos outros trechos abaixo: só instalar na memória se
+          // for a empresa ABERTA (editar empresa de outra empresa, no master,
+          // não pode trocar a empresa do DataService por baixo da tela).
+          if (dataService.empresaAtual?.id == empresa.id) {
+            dataService.setEmpresaAtual(empresa);
+          }
 
           if (mounted) {
             final destino = resultado.deOutraEmpresa > 0

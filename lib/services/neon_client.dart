@@ -90,7 +90,18 @@ class NeonClient {
       // Sem token ainda (boot): busca em segundo plano e a próxima chamada já
       // usa. Enquanto isso a requisição sai sem Authorization e o PostgREST
       // responde 401 — o app trata como nuvem indisponível.
-      unawaited(NeonAuth.instance.garantirToken());
+      //
+      // O erro TEM de ser tratado aqui: sem `catchError` a falha (nuvem fora,
+      // quota 402, HTTP 400 de proxy) vira uma exceção assíncrona não tratada,
+      // que estoura como erro não capturado no boot — e derruba qualquer teste
+      // widget que toque numa consulta, já que o binding de teste responde 400
+      // em toda requisição. O bloqueio do próprio `garantirToken` já cuida de
+      // não repetir a chamada; aqui só registramos.
+      unawaited(
+        NeonAuth.instance.garantirToken().catchError(
+          (e) => print('>>> [Neon Auth] ⚠️ Busca de token em segundo plano falhou: $e'),
+        ),
+      );
       return;
     }
     _postgrest.headers['Authorization'] = 'Bearer $token';

@@ -405,6 +405,15 @@ class _PerfilTributarioFormDialog extends StatefulWidget {
 }
 
 class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog> {
+  /// Lê alíquota digitada com vírgula OU ponto ("17,70" e "17.70").
+  /// O `double.tryParse` puro devolvia null para a vírgula e o perfil era
+  /// salvo sem a alíquota do IBS/CBS.
+  static double? _parseAliquota(String texto) {
+    final limpo = texto.trim().replaceAll(',', '.');
+    if (limpo.isEmpty) return null;
+    return double.tryParse(limpo);
+  }
+
   final _formKey = GlobalKey<FormState>();
   final _nomeController = TextEditingController();
   final _cfopController = TextEditingController();
@@ -413,6 +422,7 @@ class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog
   final _aliquotaCofinsController = TextEditingController();
   final _aliquotaIbsController = TextEditingController();
   final _aliquotaCbsController = TextEditingController();
+  final _classTribController = TextEditingController();
   
   // Novos controllers avançados
   final _aliquotaIpiController = TextEditingController();
@@ -487,15 +497,36 @@ class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog
     {'value': '99', 'label': '99 - Outras Saídas'},
   ];
 
+  // CST do IBS/CBS (Reforma Tributária, NT 2025.002): sempre 3 dígitos — o
+  // mesmo tamanho que o bridge e o DataService validam (`length == 3`). Os
+  // códigos de 2 dígitos que existiam aqui (01..08) eram rejeitados/ignorados
+  // e o perfil caía no padrão 000 sem o usuário saber.
   static const List<Map<String, String>> _cstIbsCbsOptions = [
-    {'value': '01', 'label': '01 - Tributada integralmente (Alíquota padrão)'},
-    {'value': '02', 'label': '02 - Tributada com regime diferenciado (redução)'},
-    {'value': '03', 'label': '03 - Isenta ou Não Tributada'},
-    {'value': '04', 'label': '04 - Alíquota Zero'},
-    {'value': '05', 'label': '05 - Imune'},
-    {'value': '06', 'label': '06 - Suspensa'},
-    {'value': '07', 'label': '07 - Monofásica (combustíveis)'},
-    {'value': '08', 'label': '08 - Regimes específicos'},
+    {'value': '000', 'label': '000 - Tributação integral'},
+    {
+      'value': '010',
+      'label': '010 - Alíquotas uniformes (serviços financeiros / FGTS)',
+    },
+    {
+      'value': '011',
+      'label': '011 - Alíquotas uniformes reduzidas (planos de saúde, funerários)',
+    },
+    {'value': '200', 'label': '200 - Alíquota reduzida (redução de 30% a 100%)'},
+    {'value': '210', 'label': '210 - Redutor de base de cálculo'},
+    {'value': '220', 'label': '220 - Alíquota fixa'},
+    {'value': '221', 'label': '221 - Alíquota fixa proporcional'},
+    {'value': '222', 'label': '222 - Redução de base de cálculo específica'},
+    {'value': '400', 'label': '400 - Isenção (concedida por lei complementar)'},
+    {'value': '410', 'label': '410 - Imunidade ou não incidência (Constituição)'},
+    {'value': '510', 'label': '510 - Diferimento (com reduções)'},
+    {'value': '515', 'label': '515 - Diferimento'},
+    {'value': '550', 'label': '550 - Suspensão (regimes aduaneiros, ZFM, ZPE)'},
+    {'value': '620', 'label': '620 - Tributação monofásica'},
+    {'value': '800', 'label': '800 - Transferência de crédito'},
+    {'value': '810', 'label': '810 - Ajustes na apuração'},
+    {'value': '811', 'label': '811 - Ajustes na apuração (proporcional)'},
+    {'value': '820', 'label': '820 - Regimes específicos'},
+    {'value': '830', 'label': '830 - Exclusão de base de cálculo (ex.: energia elétrica)'},
   ];
 
   @override
@@ -523,6 +554,7 @@ class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog
       _aliquotaIbsController.text = p.aliquotaIbs?.toString() ?? '';
       _cbsCstSelected = p.cstCbs;
       _aliquotaCbsController.text = p.aliquotaCbs?.toString() ?? '';
+      _classTribController.text = p.classTrib ?? '';
       
       _ipiCstSelected = p.ipiCst;
       _aliquotaIpiController.text = p.aliquotaIpi?.toString() ?? '';
@@ -540,8 +572,11 @@ class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog
       _pisCstSelected = '07';
       _cofinsCstSelected = '07';
       _ipiCstSelected = '99';
-      _ibsCstSelected = '01';
-      _cbsCstSelected = '01';
+      _ibsCstSelected = '000';
+      _cbsCstSelected = '000';
+      // Transição 2026: classificação padrão dos bens/serviços tributados
+      // integralmente (o mesmo código das notas autorizadas).
+      _classTribController.text = '000001';
     }
   }
 
@@ -554,6 +589,7 @@ class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog
     _aliquotaCofinsController.dispose();
     _aliquotaIbsController.dispose();
     _aliquotaCbsController.dispose();
+    _classTribController.dispose();
     _aliquotaIpiController.dispose();
     _mvaController.dispose();
     _reducaoBaseIcmsController.dispose();
@@ -792,6 +828,14 @@ class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog
                         ),
                       ],
                     ),
+                    const SizedBox(height: 12),
+                    _buildTextField(
+                      _classTribController,
+                      'cClassTrib (6 dígitos)',
+                      'Ex: 000001',
+                      false,
+                      keyboardType: TextInputType.number,
+                    ),
                     const SizedBox(height: 16),
                     const Divider(color: Colors.white10),
                     SwitchListTile(
@@ -917,9 +961,12 @@ class _PerfilTributarioFormDialogState extends State<_PerfilTributarioFormDialog
       aliquotaCofins: double.tryParse(_aliquotaCofinsController.text),
       
       cstIbs: _ibsCstSelected,
-      aliquotaIbs: double.tryParse(_aliquotaIbsController.text),
+      aliquotaIbs: _parseAliquota(_aliquotaIbsController.text),
       cstCbs: _cbsCstSelected,
-      aliquotaCbs: double.tryParse(_aliquotaCbsController.text),
+      aliquotaCbs: _parseAliquota(_aliquotaCbsController.text),
+      classTrib: _classTribController.text.trim().isEmpty
+          ? null
+          : _classTribController.text.trim(),
       
       ipiCst: _ipiCstSelected,
       aliquotaIpi: double.tryParse(_aliquotaIpiController.text),

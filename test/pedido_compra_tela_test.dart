@@ -148,9 +148,16 @@ void main() {
       fornecedor: 'Fornecedor B',
       custo: 4,
     );
-    await ds.addProduto(racao, registrarHistorico: false);
-    await ds.addProduto(brinquedo, registrarHistorico: false);
-    await ds.addProduto(petisco, registrarHistorico: false);
+    // `addProduto` grava no PostgreSQL local ANTES de retornar. Em zona fake
+    // async (o padrão do flutter_test) o Timer do timeout de conexão não dispara
+    // e o await nunca resolve — o teste pendurava até estourar os 4 min. Rodar
+    // dentro de `runAsync` devolve o tempo real: a tentativa de conexão morre em
+    // ~4 s (banco-de-teste.invalid não existe) e o teste segue.
+    await tester.runAsync(() async {
+      await ds.addProduto(racao, registrarHistorico: false);
+      await ds.addProduto(brinquedo, registrarHistorico: false);
+      await ds.addProduto(petisco, registrarHistorico: false);
+    });
 
     await tester.pumpWidget(
       MultiProvider(
@@ -179,10 +186,16 @@ void main() {
     expect(find.text('Finalizar Pedido de Compra'), findsOneWidget);
     expect(find.text('SALVAR E ENVIAR'), findsOneWidget);
 
-    // Salvar e enviar: agrupa por fornecedor e já nasce enviado.
+    // Salvar e enviar: agrupa por fornecedor e já nasce enviado. Como no
+    // `addProduto`, a gravação no PostgreSQL precisa de tempo REAL para falhar
+    // (banco-de-teste.invalid): dá um runAsync entre as voltas de pump.
     await tester.tap(find.text('SALVAR E ENVIAR'));
     for (var i = 0; i < 40; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
       await tester.pump(const Duration(milliseconds: 100));
+      tester.takeException();
       if (find.text('2 pedidos salvos').evaluate().isNotEmpty) break;
     }
 
@@ -206,33 +219,74 @@ void main() {
 
     // O atalho abre a lista de pedidos salvos.
     await tester.tap(find.text('VER PEDIDOS'));
-    await tester.pump(const Duration(milliseconds: 400));
+    for (var i = 0; i < 30; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      tester.takeException();
+      if (find.text('Pedidos de Compra').evaluate().isNotEmpty) break;
+    }
     expect(find.text('Pedidos de Compra'), findsOneWidget);
     expect(find.text(pedidoA.numero), findsOneWidget);
     expect(find.text(pedidoB.numero), findsOneWidget);
     expect(find.textContaining('Fornecedor A'), findsWidgets);
     expect(find.textContaining('Fornecedor B'), findsWidgets);
 
-    // Abre o pedido do fornecedor A e recebe tudo pela tela.
-    await tester.tap(find.textContaining('Fornecedor A').first);
-    await tester.pump(const Duration(milliseconds: 400));
+    // Abre o pedido do fornecedor A e recebe tudo pela tela. O texto puro
+    // "Fornecedor A" também aparece em filtros; o do card é o que traz os
+    // itens depois do "•" — tocar no filtro não navega nada.
+    final cardFornecedorA = find.ancestor(
+      of: find.textContaining(RegExp(r'^Fornecedor A  •')),
+      matching: find.byType(InkWell),
+    );
+    await tester.ensureVisible(cardFornecedorA);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(cardFornecedorA);
+    await tester.pump(const Duration(milliseconds: 200));
+    for (var i = 0; i < 30; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      tester.takeException();
+      if (find.text('ITENS DO PEDIDO').evaluate().isNotEmpty) break;
+    }
     expect(find.text('ITENS DO PEDIDO'), findsOneWidget);
     expect(find.text('Receber no estoque'), findsOneWidget);
 
     await tester.tap(find.text('Receber no estoque'));
-    await tester.pump(const Duration(milliseconds: 400));
+    for (var i = 0; i < 40; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      tester.takeException();
+      if (find.text('Receber Pedido de Compra').evaluate().isNotEmpty) break;
+    }
     expect(find.text('Receber Pedido de Compra'), findsOneWidget);
     expect(find.text('CONFIRMAR ENTRADA NO ESTOQUE'), findsOneWidget);
 
     await tester.tap(find.text('CONFIRMAR ENTRADA NO ESTOQUE'));
     for (var i = 0; i < 60; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
       await tester.pump(const Duration(milliseconds: 100));
+      tester.takeException();
       if (find.text('Pedido recebido').evaluate().isNotEmpty) break;
     }
     expect(find.text('Pedido recebido'), findsOneWidget);
 
     await tester.tap(find.text('OK'));
-    await tester.pump(const Duration(milliseconds: 400));
+    for (var i = 0; i < 40; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      tester.takeException();
+      if (find.text('Recebido').evaluate().isNotEmpty) break;
+    }
 
     // De volta ao detalhe, o pedido aparece recebido.
     expect(find.text('Recebido'), findsWidgets);

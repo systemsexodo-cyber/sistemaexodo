@@ -12,6 +12,8 @@ enum TipoPagamento {
   outro,
   alimentacao,
   transferencia,
+  mercado_pago,
+
   /// Saldo interno de cash back / bundle do cliente (pontos convertidos em R$).
   /// Usado como forma de pagamento alternativa ao PIX, dinheiro ou cartão.
   /// Não é emitido consecupção/serie — é apenas movimento interno de crédito.
@@ -44,6 +46,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return 'Transferência';
       case TipoPagamento.cashBack:
         return 'Cash Back';
+      case TipoPagamento.mercado_pago:
+        return 'Mercado Pago';
     }
   }
 
@@ -71,6 +75,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return Icons.swap_horiz;
       case TipoPagamento.cashBack:
         return Icons.local_atm; // futuro: ícone próprio de cash-back
+      case TipoPagamento.mercado_pago:
+        return Icons.qr_code;
     }
   }
 
@@ -98,6 +104,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         return Colors.blueAccent;
       case TipoPagamento.cashBack:
         return Colors.amber; // diferencial visual para saldo interno
+      case TipoPagamento.mercado_pago:
+        return Colors.deepPurple;
     }
   }
 
@@ -108,7 +116,8 @@ extension TipoPagamentoExtension on TipoPagamento {
         this == TipoPagamento.cartaoCredito ||
         this == TipoPagamento.cartaoDebito ||
         this == TipoPagamento.alimentacao ||
-        this == TipoPagamento.cashBack;
+        this == TipoPagamento.cashBack ||
+        this == TipoPagamento.mercado_pago;
   }
 
   /// Verifica se é pagamento a prazo (fiado, boleto, crediário)
@@ -136,6 +145,7 @@ class PagamentoPedido {
   final DateTime? dataVencimento; // Data de vencimento da parcela
   final bool recebido; // Se já foi recebido/pago
   final DateTime? dataRecebimento;
+  final String? nomePagador;
   final String? observacao;
   final double? valorRecebido; // Valor que o cliente entregou (para dinheiro)
   final double? troco; // Troco a devolver (para dinheiro)
@@ -154,6 +164,7 @@ class PagamentoPedido {
     this.dataVencimento,
     this.recebido = false,
     this.dataRecebimento,
+    this.nomePagador,
     this.observacao,
     this.valorRecebido,
     this.troco,
@@ -186,6 +197,7 @@ class PagamentoPedido {
       dataRecebimento: map['dataRecebimento'] != null
           ? DateTime.parse(map['dataRecebimento'])
           : null,
+      nomePagador: map['nomePagador']?.toString(),
       observacao: map['observacao'],
       valorRecebido: map['valorRecebido']?.toDouble(),
       troco: map['troco']?.toDouble(),
@@ -207,6 +219,7 @@ class PagamentoPedido {
       'dataVencimento': dataVencimento?.toIso8601String(),
       'recebido': recebido,
       'dataRecebimento': dataRecebimento?.toIso8601String(),
+      'nomePagador': nomePagador,
       'observacao': observacao,
       'valorRecebido': valorRecebido,
       'troco': troco,
@@ -227,6 +240,7 @@ class PagamentoPedido {
     DateTime? dataVencimento,
     bool? recebido,
     DateTime? dataRecebimento,
+    String? nomePagador,
     String? observacao,
     double? valorRecebido,
     double? troco,
@@ -245,6 +259,7 @@ class PagamentoPedido {
       dataVencimento: dataVencimento ?? this.dataVencimento,
       recebido: recebido ?? this.recebido,
       dataRecebimento: dataRecebimento ?? this.dataRecebimento,
+      nomePagador: nomePagador ?? this.nomePagador,
       observacao: observacao ?? this.observacao,
       valorRecebido: valorRecebido ?? this.valorRecebido,
       troco: troco ?? this.troco,
@@ -258,10 +273,9 @@ class PagamentoPedido {
 
   /// Nome para exibição: a forma personalizada quando houver, senão o nome
   /// padrão do tipo.
-  String get nomeExibicao =>
-      (nomeForma != null && nomeForma!.trim().isNotEmpty)
-          ? nomeForma!
-          : tipo.nome;
+  String get nomeExibicao => (nomeForma != null && nomeForma!.trim().isNotEmpty)
+      ? nomeForma!
+      : tipo.nome;
   double get valorParcela =>
       parcelas != null && parcelas! > 0 ? valor / parcelas! : valor;
 

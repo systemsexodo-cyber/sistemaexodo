@@ -18,7 +18,8 @@ class LocalStorageService {
     String key,
     List<Map<String, dynamic>> lista, {
     bool isSync,
-  })? _databaseListWriter;
+  })?
+  _databaseListWriter;
   final Future<List<Map<String, dynamic>>> Function(String key)?
   _databaseListReader;
 
@@ -28,9 +29,9 @@ class LocalStorageService {
       String key,
       List<Map<String, dynamic>> lista, {
       bool isSync,
-    })? databaseListWriter,
-    Future<List<Map<String, dynamic>>> Function(String key)?
-    databaseListReader,
+    })?
+    databaseListWriter,
+    Future<List<Map<String, dynamic>>> Function(String key)? databaseListReader,
   }) : _emergencyCacheDirectoryOverride = emergencyCacheDirectory,
        _databaseListWriter = databaseListWriter,
        _databaseListReader = databaseListReader;
@@ -48,10 +49,12 @@ class LocalStorageService {
   Future<File> _arquivoCacheEmergencia(String key) async {
     Directory raiz;
     try {
-      raiz = _emergencyCacheDirectoryOverride ??
+      raiz =
+          _emergencyCacheDirectoryOverride ??
           await getApplicationSupportDirectory();
     } catch (_) {
-      final fallback = Platform.environment['LOCALAPPDATA'] ??
+      final fallback =
+          Platform.environment['LOCALAPPDATA'] ??
           Platform.environment['APPDATA'] ??
           Platform.environment['HOME'] ??
           Directory.systemTemp.path;
@@ -85,7 +88,8 @@ class LocalStorageService {
     if (valor is DateTime) return valor.toIso8601String();
     if (valor is Map) {
       return valor.map(
-        (chave, item) => MapEntry(chave.toString(), _normalizarJsonEmergencia(item)),
+        (chave, item) =>
+            MapEntry(chave.toString(), _normalizarJsonEmergencia(item)),
       );
     }
     if (valor is Iterable) {
@@ -113,15 +117,13 @@ class LocalStorageService {
 
   Future<void> _salvarConfigComFallback(String key, dynamic valor) async {
     try {
-      await DatabaseService().salvarConfig(
-        key,
-        valor,
-        lancarSeFalhar: true,
-      );
+      await DatabaseService().salvarConfig(key, valor, lancarSeFalhar: true);
     } catch (erroBanco) {
       try {
         await salvarCacheEmergencia(key, valor, pendente: true);
-        debugPrint('⚠️ PostgreSQL indisponível; configuração $key salva em arquivo local.');
+        debugPrint(
+          '⚠️ PostgreSQL indisponível; configuração $key salva em arquivo local.',
+        );
       } catch (erroCache) {
         throw StateError(
           'Falha ao salvar $key no PostgreSQL e no cache de emergência: $erroBanco; $erroCache',
@@ -133,7 +135,9 @@ class LocalStorageService {
     try {
       await salvarCacheEmergencia(key, valor);
     } catch (e) {
-      debugPrint('⚠️ Configuração $key gravada no PostgreSQL, mas o espelho não foi atualizado: $e');
+      debugPrint(
+        '⚠️ Configuração $key gravada no PostgreSQL, mas o espelho não foi atualizado: $e',
+      );
     }
   }
 
@@ -157,7 +161,9 @@ class LocalStorageService {
       return valor;
     } catch (e) {
       if (cache != null) {
-        debugPrint('⚠️ PostgreSQL indisponível; configuração $key lida do cache local.');
+        debugPrint(
+          '⚠️ PostgreSQL indisponível; configuração $key lida do cache local.',
+        );
         return cache['valor'];
       }
       rethrow;
@@ -199,7 +205,6 @@ class LocalStorageService {
   static const String _keyTabelasPreco = 'exodo_tabelas_preco';
   static const String _keyCashBackMovimentos = 'exodo_cash_back_movimentos';
 
-  
   static String get keyNotasEntrada => _keyNotasEntrada;
   static String get keyPedidosCompra => _keyPedidosCompra;
   static String get keyLinksVendedores => _keyLinksVendedores;
@@ -210,8 +215,42 @@ class LocalStorageService {
   static String get keySuprimentos => _keySuprimentos;
   static String get keyTabelasPreco => _keyTabelasPreco;
 
+  // 🛡️ Isolamento por empresa no storage de chave/valor.
+  //
+  // Tanto o Hive (Web) quanto o `cache_dados`/`exodo_config` (desktop, chaves
+  // sem tabela própria) guardam pela CHAVE exata, sem coluna empresa_id: uma
+  // chave crua divide o mesmo espaço entre TODAS as empresas. O alerta é
+  // emitido uma vez por chave para o chamador usar `empresa_<id>_<chave>`
+  // (ex.: _getEmpresaKey / _getChaveComEmpresa no DataService).
+  static const List<String> _prefixosDeChaveIsolada = ['empresa_', 'backups_'];
+  static const Set<String> _chavesGlobaisPermitidas = {
+    'empresas',
+    'usuarios', // tabela GLOBAL do sistema: um usuário pode atender mais de uma empresa
+    'exodo_sync_queue', // fila de sync: cada item carrega o próprio empresaId
+  };
+  static final Set<String> _chavesCruasAlertadas = {};
 
-  Future<void> salvarLista<T>(String key, List<T> lista, {bool isSync = false}) async {
+  void _auditarIsolamentoChave(String key, String acao) {
+    if (_prefixosDeChaveIsolada.any(key.startsWith) ||
+        _chavesGlobaisPermitidas.contains(key)) {
+      return;
+    }
+    if (!_chavesCruasAlertadas.add(key)) return;
+    debugPrint(
+      '>>> [Storage] 🛡️ $acao com chave CRUA "$key" — sem isolamento por '
+      'empresa: no Web (Hive) o mesmo registro atende todas as empresas, e '
+      'no desktop chaves sem tabela caem em cache_dados/exodo_config sem '
+      'filtro. Use empresa_<id>_$key no chamador.',
+    );
+  }
+
+  Future<void> salvarLista<T>(
+    String key,
+    List<T> lista, {
+    bool isSync = false,
+    bool lancarSeFalhar = false,
+  }) async {
+    _auditarIsolamentoChave(key, 'salvarLista');
     try {
       if (kIsWeb) {
         // Usar localStorage no Web via HIVE
@@ -220,11 +259,14 @@ class LocalStorageService {
         debugPrint('✓ Dados salvos (Web/Hive): $key (${lista.length} itens)');
       } else {
         // Usar PostgreSQL em Desktop/Mobile para performance (6k+ itens)
-        final data = lista.map((item) => _toMap(item) as Map<String, dynamic>).toList();
+        final data = lista
+            .map((item) => _toMap(item) as Map<String, dynamic>)
+            .toList();
 
         try {
           await _salvarListaNoPostgres(key, data, isSync: isSync);
         } catch (erroBanco) {
+          if (lancarSeFalhar) rethrow;
           try {
             await salvarCacheEmergencia(key, data, pendente: true);
             debugPrint(
@@ -245,15 +287,27 @@ class LocalStorageService {
         } catch (e) {
           debugPrint('⚠️ Não atualizei o espelho de emergência de $key: $e');
         }
-        debugPrint('✓ Dados salvos (Local/PostgreSQL): $key (${lista.length} itens)');
+        debugPrint(
+          '✓ Dados salvos (Local/PostgreSQL): $key (${lista.length} itens)',
+        );
       }
     } catch (e) {
       debugPrint('✗ Erro ao salvar $key: $e');
+      if (lancarSeFalhar) rethrow;
     }
   }
 
+  /// A última `carregarLista` terminou por ERRO, sem espelho de emergência?
+  ///
+  /// Nesse caso a lista devolvida é `[]` ("primeiro boot"), mas NÃO representa
+  /// o que está salvo: gravar por cima apagaria os dados. O AuthService usa
+  /// este sinal para manter a gravação de usuários bloqueada até uma leitura
+  /// bem-sucedida.
+  bool ultimaLeituraFalhou = false;
+
   /// Carrega uma lista de objetos do local
   Future<List<Map<String, dynamic>>> carregarLista(String key) async {
+    ultimaLeituraFalhou = false;
     try {
       if (kIsWeb) {
         final json = await _carregarWeb(key);
@@ -264,8 +318,8 @@ class LocalStorageService {
         // Carregar do PostgreSQL (fonte única de dados)
         final database = DatabaseService();
         final dados = _databaseListReader == null
-          ? await database.carregarLista(key)
-          : await _databaseListReader!(key);
+            ? await database.carregarLista(key)
+            : await _databaseListReader!(key);
         final cache = await carregarCacheEmergencia(key);
 
         if (_databaseListReader == null && database.bancoLocalFalhou) {
@@ -290,7 +344,9 @@ class LocalStorageService {
               await salvarCacheEmergencia(key, emergencial);
             }
           } catch (e) {
-            debugPrint('⚠️ Cache pendente de $key ainda não foi restaurado ao PostgreSQL: $e');
+            debugPrint(
+              '⚠️ Cache pendente de $key ainda não foi restaurado ao PostgreSQL: $e',
+            );
           }
           return emergencial;
         }
@@ -299,7 +355,9 @@ class LocalStorageService {
           try {
             await salvarCacheEmergencia(key, dados);
           } catch (e) {
-            debugPrint('⚠️ Não consegui inicializar o espelho de emergência de $key: $e');
+            debugPrint(
+              '⚠️ Não consegui inicializar o espelho de emergência de $key: $e',
+            );
           }
         }
         return dados;
@@ -310,12 +368,17 @@ class LocalStorageService {
         final cache = await carregarCacheEmergencia(key);
         final emergencial = cache?['valor'];
         if (emergencial is List) {
+          // Espelho de emergência é uma cópia real do que foi salvo: a leitura
+          // terminou com dados confiáveis.
           return emergencial
               .whereType<Map>()
               .map((linha) => Map<String, dynamic>.from(linha))
               .toList();
         }
       }
+      // Nem o banco nem o espelho responderam: o `[]` daqui é FALHA, não um
+      // primeiro boot vazio.
+      ultimaLeituraFalhou = true;
       return [];
     }
   }
@@ -327,7 +390,10 @@ class LocalStorageService {
       if (kIsWeb) {
         await _salvarWeb(_keyUltimoNumeroVenda, numero.toString());
       } else {
-        await _salvarConfigComFallback(_keyUltimoNumeroVenda, numero.toString());
+        await _salvarConfigComFallback(
+          _keyUltimoNumeroVenda,
+          numero.toString(),
+        );
       }
     } catch (e) {
       debugPrint('✗ Erro ao salvar último número de venda: $e');
@@ -357,6 +423,7 @@ class LocalStorageService {
   /// Salva um objeto genérico como JSON no PostgreSQL e espelho de emergência.
   /// Web: Salva no Hive/localStorage
   Future<void> salvar(String key, dynamic value) async {
+    _auditarIsolamentoChave(key, 'salvar');
     try {
       if (kIsWeb) {
         final json = jsonEncode(value);
@@ -483,7 +550,7 @@ class LocalStorageService {
     if (kIsWeb) return LocalStorageWeb.isSessaoAtiva();
     // No Desktop (Windows), a sessão NÃO persiste entre reinicializações.
     // Toda vez que o app abre, a tela de login deve aparecer.
-    return false; 
+    return false;
   }
 
   Future<void> salvarLiberacaoTemporaria(String ateDataIso) async {
@@ -581,12 +648,25 @@ class LocalStorageService {
   Future<String?> exportarBackupJSON() async {
     try {
       final chaves = [
-        _keyClientes, _keyProdutos, _keyServicos, _keyPedidos,
-        _keyServicosRealizados, _keyOrcamentos,
-        _keyOrdensServico, _keyEntregas, _keyVendasBalcao, _keyAberturasCaixa,
-        _keyFechamentosCaixa, _keyNotasEntrada, _keyAgendamentosServico,
-        _keyFuncionarios, _keyTaxasEntrega, _keyContasPagar, _keyNFCes,
-        _keyLotesProdutos, _keyPedidosCompra
+        _keyClientes,
+        _keyProdutos,
+        _keyServicos,
+        _keyPedidos,
+        _keyServicosRealizados,
+        _keyOrcamentos,
+        _keyOrdensServico,
+        _keyEntregas,
+        _keyVendasBalcao,
+        _keyAberturasCaixa,
+        _keyFechamentosCaixa,
+        _keyNotasEntrada,
+        _keyAgendamentosServico,
+        _keyFuncionarios,
+        _keyTaxasEntrega,
+        _keyContasPagar,
+        _keyNFCes,
+        _keyLotesProdutos,
+        _keyPedidosCompra,
       ];
 
       final Map<String, dynamic> backup = {};
@@ -595,11 +675,16 @@ class LocalStorageService {
       }
 
       final jsonString = jsonEncode(backup);
-      
+
       if (!kIsWeb) {
         // Obter diretório apenas em plataformas nativas (Windows/Mobile)
         final directory = await getApplicationDocumentsDirectory();
-        final file = File(join(directory.path, 'exodo_backup_${DateTime.now().millisecondsSinceEpoch}.json'));
+        final file = File(
+          join(
+            directory.path,
+            'exodo_backup_${DateTime.now().millisecondsSinceEpoch}.json',
+          ),
+        );
         await file.writeAsString(jsonString);
         return file.path;
       }
@@ -613,7 +698,10 @@ class LocalStorageService {
   // ============ Controle de Licença Offline ============
 
   Future<void> salvarUltimaValidacaoOnline(DateTime data) async {
-    await _salvarConfigDesktop('exodo_ultima_validacao_online', data.toIso8601String());
+    await _salvarConfigDesktop(
+      'exodo_ultima_validacao_online',
+      data.toIso8601String(),
+    );
   }
 
   Future<DateTime?> carregarUltimaValidacaoOnline() async {
@@ -625,7 +713,10 @@ class LocalStorageService {
   }
 
   Future<void> salvarUltimaDataExecucao(DateTime data) async {
-    await _salvarConfigDesktop('exodo_ultima_data_execucao', data.toIso8601String());
+    await _salvarConfigDesktop(
+      'exodo_ultima_data_execucao',
+      data.toIso8601String(),
+    );
   }
 
   Future<DateTime?> carregarUltimaDataExecucao() async {
@@ -637,13 +728,20 @@ class LocalStorageService {
   }
 
   // Backup dedicado de configurações de mensalidade no banco local
-  Future<void> salvarConfiguracoesMensalidadeLocal(String empresaId, Map<String, dynamic> configs) async {
+  Future<void> salvarConfiguracoesMensalidadeLocal(
+    String empresaId,
+    Map<String, dynamic> configs,
+  ) async {
     final jsonStr = jsonEncode(configs);
     await _salvarConfigDesktop('exodo_config_mensalidade_$empresaId', jsonStr);
   }
 
-  Future<Map<String, dynamic>?> carregarConfiguracoesMensalidadeLocal(String empresaId) async {
-    final str = await _carregarConfigDesktop('exodo_config_mensalidade_$empresaId');
+  Future<Map<String, dynamic>?> carregarConfiguracoesMensalidadeLocal(
+    String empresaId,
+  ) async {
+    final str = await _carregarConfigDesktop(
+      'exodo_config_mensalidade_$empresaId',
+    );
     if (str != null && str.isNotEmpty) {
       try {
         return jsonDecode(str) as Map<String, dynamic>;
@@ -652,4 +750,3 @@ class LocalStorageService {
     return null;
   }
 }
-

@@ -130,12 +130,16 @@ class _LoginPageState extends State<LoginPage> {
         final empresaSelecionada = authService.empresaAtual;
         if (empresaSelecionada != null &&
             dataService.currentEmpresaId != empresaSelecionada.id) {
-          dataService.setEmpresaAtual(empresaSelecionada);
+          // ORDEM IMPORTANTE (igual ao main.dart): fixar o id da empresa NOVA
+          // antes de instalar o objeto. Se `setEmpresaAtual` rodasse antes,
+          // qualquer gravação nesse intervalo usava a chave da empresa
+          // ANTERIOR — era assim que estoques de uma empresa iam para a outra.
           if (mounted) setState(() => _isLoading = true);
           try {
             await dataService
                 .definirEmpresaAtual(empresaSelecionada.id)
                 .timeout(const Duration(seconds: 30));
+            dataService.setEmpresaAtual(empresaSelecionada);
           } catch (e) {
             debugPrint('>>> [Login] ⚠️ Erro ao carregar dados da empresa: $e');
           }

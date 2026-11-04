@@ -1928,7 +1928,7 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
   final _chaveRefCtrl = TextEditingController();
 
   // ── Modelo, Tipo de Emissão e Regime Tributário ──
-  int _modelo = 55; // 55 = NF-e, 65 = NFC-e
+  int _modelo = 65; // 55 = NF-e, 65 = NFC-e
   int _tpEmis = 1;  // 1=Normal, 2=FS, 3=SCAN, 4=DPEC, 5=FS-DA, 6=SVC-AN, 7=SVC-RS, 9=Off-line
   int _crt = 1;     // 1=Simples Nacional, 2=SN Excesso, 3=Regime Normal
 

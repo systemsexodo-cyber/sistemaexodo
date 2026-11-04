@@ -67,19 +67,50 @@ def _get_log_path():
 
 LOG_FILE_PATH = _get_log_path()
 
-# Se o log for maior que 10MB, rotacionar para não travar o Bridge
+# Rotação de log com TETO de 5MB. Sem teto, um loop de erro em segundo plano
+# (ex.: listener legado do Firebase rejeitando JWT ~20x/s) faz o arquivo crescer
+# centenas de MB e o Windows passa a travar só tentando escrever no disco.
+from logging.handlers import RotatingFileHandler
+
+LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB por arquivo
+LOG_BACKUP_COUNT = 2              # bridge_log.txt.1 / bridge_log.txt.2
+
+# Higiene inicial: apaga logs de edições antigas que estouraram o teto
+# (o .bak antigo de 170MB+ nunca era removido e continuava afogando o disco).
 try:
-    if os.path.exists(LOG_FILE_PATH) and os.path.getsize(LOG_FILE_PATH) > 10 * 1024 * 1024:
-        bak_file = LOG_FILE_PATH + ".bak"
-        if os.path.exists(bak_file): os.remove(bak_file)
-        os.rename(LOG_FILE_PATH, bak_file)
-except: pass
+    _dir_log = os.path.dirname(LOG_FILE_PATH)
+    for _nome in (
+        "bridge_log.txt",
+        "bridge_log.txt.bak",
+        "bridge_log.txt.1",
+        "bridge_log.txt.2",
+        "bridge_log.txt.3",
+    ):
+        _caminho = os.path.join(_dir_log, _nome)
+        if os.path.exists(_caminho) and os.path.getsize(_caminho) > LOG_MAX_BYTES:
+            try:
+                os.remove(_caminho)
+            except OSError:
+                # Sem permissão para apagar: trunca para não travar o disco.
+                with open(_caminho, "w", encoding="utf-8", errors="ignore"):
+                    pass
+except Exception:
+    pass
+
+_file_handler = RotatingFileHandler(
+    LOG_FILE_PATH,
+    maxBytes=LOG_MAX_BYTES,
+    backupCount=LOG_BACKUP_COUNT,
+    encoding="utf-8",
+    errors="ignore",
+)
+_file_handler.setFormatter(
+    logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+)
 
 logging.basicConfig(
-    filename=LOG_FILE_PATH,
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    filemode='a'
+    handlers=[_file_handler],
 )
 
 def get_pystray():
@@ -92,6 +123,15 @@ def get_pystray():
 # Variável de controle para ambientes Cloud (Docker/Linux)
 IS_CLOUD = os.environ.get("CLOUD_RUN", "false").lower() == "true"
 IS_WINDOWS = platform.system() == "Windows"
+
+# Listener do Firebase DESLIGADO por padrão: o sistema é local-first
+# (HTTP porta 8000 + Supabase/PostgreSQL). Com as credenciais antigas expiradas
+# (Invalid JWT Signature) o cliente do Google entrava em loop de reconexão
+# (~20 erros/s), inundando o log e travando o disco durante a emissão.
+# Para reativar: variável de ambiente EXODO_FIREBASE_LISTENER=1.
+FIREBASE_LISTENER_HABILITADO = os.environ.get(
+    "EXODO_FIREBASE_LISTENER", "0"
+).strip().lower() in ("1", "true", "sim", "on")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Execução de comandos SEM abrir janela de CMD
@@ -197,9 +237,10 @@ except Exception as e:
     import traceback
     print(f"[ERRO CRÍTICO] Falha ao importar nfce_handler: {e}")
     print(f"[ERRO CRÍTICO] Traceback:\n{traceback.format_exc()}")
+    _erro_import_nfce = f"{type(e).__name__}: {e}"  # Python 3 apaga 'e' no fim do except
     # Criar uma função placeholder que retorna o erro
     def emitir_nfce_pynfe(req):
-        raise HTTPException(status_code=500, detail=f"Erro na importação do nfce_handler: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro na importação do nfce_handler: {_erro_import_nfce}")
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Firebase é opcional — importado apenas se as credenciais existirem
@@ -263,12 +304,21 @@ class ItemVenda(BaseModel):
     icms_reducao_bc: Optional[float] = None
     credito_aliquota: Optional[float] = None
     credito_valor: Optional[float] = None
+    # Reforma Tributaria (IBS/CBS): vem do perfil tributario do produto e e
+    # usado no grupo <IBSCBS> do XML. Sem estes campos o Pydantic descartava
+    # os valores em silencio e a nota saia sem IBS/CBS.
+    ibs_cst: Optional[str] = None
+    ibs_aliquota: Optional[float] = None
+    ibs_class_trib: Optional[str] = None
+    cbs_cst: Optional[str] = None
+    cbs_aliquota: Optional[float] = None
 
 class RequisicaoEmissao(BaseModel):
     empresa: ConfigEmpresa
     itens: List[ItemVenda]
     valor_total: float
     valor_desconto: Optional[float] = None
+    pagamentos: Optional[List[dict]] = None
     venda_numero: Optional[str | int] = None
     cpf_cliente: Optional[str] = None
     nome_cliente: Optional[str] = None
@@ -346,7 +396,7 @@ def load_identity():
     except: pass
 
 # --- GLOBAIS ---
-BRIDGE_VERSION = "3.5.6"
+BRIDGE_VERSION = "3.5.8"
 
 # Custom encoder for Firestore objects
 def json_serial(obj):
@@ -358,7 +408,11 @@ load_identity()
 GLOBAL_TRAY_ICON = None
 
 @app.post("/api/nfce/emitir")
-async def emitir_nfce_endpoint(req: RequisicaoEmissao):
+def emitir_nfce_endpoint(req: RequisicaoEmissao):
+    # EP SÍNCRONO de propósito: o FastAPI roda endpoints `def` no pool de
+    # threads, liberando o event loop. Como `async def`, a assinatura do XML e
+    # as chamadas HTTP à SEFAZ bloqueavam a fila inteira da aplicação — o /health
+    # e as demais requisições ficavam em espera enquanto uma nota processava.
     try:
         resultado = emitir_nfce_pynfe(req)
         
@@ -940,10 +994,14 @@ def update_tray_menu():
         meipass = getattr(sys, '_MEIPASS', None)
         base_path = get_base_path()
 
-        if FIREBASE_ACTIVE:
-            icon_name = "icon_green.ico"
-        elif "Erro" in FIREBASE_STATUS_MSG or "Offline" in FIREBASE_STATUS_MSG:
+        status_msg = str(FIREBASE_STATUS_MSG or "")
+
+        # Ícone: verde = operacional (Firebase ativo OU modo local-first com bridge
+        #          saudável e empresa vinculada), laranja = aguardando empresa, vermelho = erro
+        if "Erro" in status_msg or "Offline" in status_msg:
             icon_name = "icon_red.ico"
+        elif FIREBASE_ACTIVE or (LAST_PROCESSED_COMPANY.get('cnpj') or ""):
+            icon_name = "icon_green.ico"
         else:
             icon_name = "icon_orange.ico"
 
@@ -956,7 +1014,11 @@ def update_tray_menu():
             if os.path.exists(p): full_path = p
         if full_path:
             GLOBAL_TRAY_ICON.icon = Image.open(full_path)
-    except: pass
+            try: log_message(f"[TRAY] Icone da bandeja atualizado: {icon_name}")
+            except: pass
+    except Exception as _te:
+        try: log_message(f"[TRAY] Erro ao atualizar icone: {_te}", "WARN")
+        except: pass
 
     def quit_app(icon):
         icon.stop()
@@ -1030,7 +1092,12 @@ def self_install():
             '/sc', 'onlogon'
         ]
         if is_admin(): cmd += ['/rl', 'highest']
-        subprocess.run(cmd + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
+        # O retorno era ignorado: sem admin o schtasks falhava e a tarefa ANTIGA
+        # (apontando para outro caminho/copia velha) continuava valendo em silencio.
+        _res = subprocess.run(cmd + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
+        if _res.returncode != 0:
+            log_message(f"AVISO: falha ao criar a tarefa {task_name} (codigo {_res.returncode}). "
+                        f"O auto-start antigo pode continuar ativo.", "WARN")
 
         # 1.2 TAREFA DO WATCHDOG
         watchdog_exe = os.path.join(os.path.dirname(exe_path), "ExodoNfceBridgeWatchdog.exe")
@@ -1042,7 +1109,10 @@ def self_install():
             
             cmd_watch = ['schtasks', '/create', '/tn', watchdog_task, '/tr', f'"{watchdog_exe}"', '/sc', 'onlogon']
             if is_admin(): cmd_watch += ['/rl', 'highest']
-            subprocess.run(cmd_watch + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
+            _res_watch = subprocess.run(cmd_watch + ['/f'], capture_output=True, text=True, creationflags=0x08000000)
+            if _res_watch.returncode != 0:
+                log_message(f"AVISO: falha ao criar a tarefa {watchdog_task} "
+                            f"(codigo {_res_watch.returncode}).", "WARN")
 
         # Criar marcador para não repetir isso todo boot
         with open(install_marker, "w") as f: f.write(BRIDGE_VERSION)
@@ -1222,8 +1292,17 @@ def run_background_tasks():
         _t.sleep(1.5)  # Dar tempo para o Uvicorn subir
         update_tray_menu()
 
-        # 5. Tentar Firebase opcionalmente (não trava se falhar)
-        if FIREBASE_SDK_DISPONIVEL:
+        # 5. Firebase opcional — DESATIVADO por padrão (ver
+        # FIREBASE_LISTENER_HABILITADO). O fluxo de emissão é local-first via
+        # HTTP na porta 8000; subir o listener com credenciais expiradas só
+        # gerava loop de erro em segundo plano.
+        if not FIREBASE_LISTENER_HABILITADO:
+            log_message(
+                "Listener Firebase DESATIVADO (modo local-first: HTTP porta 8000 "
+                "+ Supabase/PostgreSQL). Reative com EXODO_FIREBASE_LISTENER=1.",
+                "INFO",
+            )
+        elif FIREBASE_SDK_DISPONIVEL:
             log_message("Tentando conectar ao Firebase (opcional)...")
             try:
                 start_firebase_listener()

@@ -3033,6 +3033,8 @@ class _ContasReceberPageState extends State<ContasReceberPage> with SingleTicker
         return Icons.swap_horiz;
       case TipoPagamento.cashBack:
         return Icons.local_atm;
+    case TipoPagamento.mercado_pago:
+        return Icons.qr_code;
     }
   }
 
@@ -3060,6 +3062,8 @@ class _ContasReceberPageState extends State<ContasReceberPage> with SingleTicker
         return const Color(0xFF42A5F5);
       case TipoPagamento.cashBack:
         return Colors.amber;
+    case TipoPagamento.mercado_pago:
+        return Colors.deepPurple;
     }
   }
 

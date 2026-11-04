@@ -265,11 +265,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     );
   }
 
-  
   Widget _buildDropdownPerfilPreco() {
     final dataService = Provider.of<DataService>(context, listen: false);
     final perfis = dataService.empresaAtual?.perfisDePreco ?? [];
-    
+
     if (perfis.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -281,19 +280,17 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       decoration: const InputDecoration(
         labelText: 'Perfil de Preço (Atacarejo/Revenda)',
         labelStyle: TextStyle(color: Colors.white70),
-        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
+        enabledBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: Colors.white24),
+        ),
+        focusedBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: Colors.white),
+        ),
         prefixIcon: Icon(Icons.price_change, color: Colors.white54),
       ),
       items: [
-        const DropdownMenuItem(
-          value: null,
-          child: Text('Padrão (Sem Perfil)'),
-        ),
-        ...perfis.map((p) => DropdownMenuItem(
-          value: p,
-          child: Text(p),
-        ))
+        const DropdownMenuItem(value: null, child: Text('Padrão (Sem Perfil)')),
+        ...perfis.map((p) => DropdownMenuItem(value: p, child: Text(p))),
       ],
       onChanged: (v) => setState(() => _perfilPrecoSelecionado = v),
     );
@@ -386,7 +383,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.calendar_today, color: Colors.blue, size: 20),
+                  const Icon(
+                    Icons.calendar_today,
+                    color: Colors.blue,
+                    size: 20,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     value != null
@@ -518,14 +519,16 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         debugPrint('>>> [Upload Foto Pet] ✅ UPLOAD CONCLUÍDO (SUPABASE)');
         debugPrint('>>> [Upload Foto Pet] URL pública: $publicUrl');
       } else {
-        throw Exception('Upload para Supabase falhou (URL retornada como null)');
+        throw Exception(
+          'Upload para Supabase falhou (URL retornada como null)',
+        );
       }
 
       return publicUrl;
     } catch (e, stackTrace) {
       debugPrint('>>> [Upload Foto Pet] ❌ ERRO: $e');
       debugPrint('>>> [Upload Foto Pet] $stackTrace');
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -634,13 +637,13 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       _perfilPrecoSelecionado = c.perfilPreco;
       _limiteCreditoController.text = c.limiteCredito?.toStringAsFixed(2) ?? '';
       _saldoDevedorController.text = c.saldoDevedor.toStringAsFixed(2);
-      
+
       // Carregar creditoInicial a partir de dadosExtras
       final creditoInicialVal = c.dadosExtras?['credito_inicial'];
-      _creditoInicialController.text = creditoInicialVal != null 
-          ? double.parse(creditoInicialVal.toString()).toStringAsFixed(2) 
+      _creditoInicialController.text = creditoInicialVal != null
+          ? double.parse(creditoInicialVal.toString()).toStringAsFixed(2)
           : '0.00';
-          
+
       _ativo = c.ativo;
       _bloqueado = c.bloqueado;
       _habilitaTaxiDog = c.habilitaTaxiDog;
@@ -1339,12 +1342,18 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           ],
 
           // Crédito
-          _buildSecaoTitulo('Perfil de Preços / Precificação', Icons.price_change),
+          _buildSecaoTitulo(
+            'Perfil de Preços / Precificação',
+            Icons.price_change,
+          ),
           const SizedBox(height: 12),
           _buildDropdownPerfilPreco(),
           const SizedBox(height: 24),
 
-          _buildSecaoTitulo('Crédito e Saldos Iniciais', Icons.account_balance_wallet),
+          _buildSecaoTitulo(
+            'Crédito e Saldos Iniciais',
+            Icons.account_balance_wallet,
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -1399,7 +1408,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                       color: Colors.amber.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.local_atm, color: Colors.amber, size: 20),
+                    child: const Icon(
+                      Icons.local_atm,
+                      color: Colors.amber,
+                      size: 20,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -2227,21 +2240,28 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                                                   ),
                                                 );
 
-                                            url = await SupabaseService.instance.uploadImageFromBytes(
-                                              imageBytes: selectedFile.bytes!,
-                                              storagePath: 'pets/${empresaId}/${widget.cliente!.id}/${petId}.jpg',
-                                              contentType: 'image/jpeg',
-                                              onProgress: (p) => progressNotifier.value = p,
-                                            ).timeout(
-                                              const Duration(seconds: 45),
-                                              onTimeout: () {
-                                                debugPrint(
-                                                  '>>> [Web/Chrome] ⚠️ Timeout no upload após 45 segundos',
+                                            url = await SupabaseService.instance
+                                                .uploadImageFromBytes(
+                                                  imageBytes:
+                                                      selectedFile.bytes!,
+                                                  storagePath:
+                                                      'pets/${empresaId}/${widget.cliente!.id}/${petId}.jpg',
+                                                  contentType: 'image/jpeg',
+                                                  onProgress: (p) =>
+                                                      progressNotifier.value =
+                                                          p,
+                                                )
+                                                .timeout(
+                                                  const Duration(seconds: 45),
+                                                  onTimeout: () {
+                                                    debugPrint(
+                                                      '>>> [Web/Chrome] ⚠️ Timeout no upload após 45 segundos',
+                                                    );
+                                                    if (mounted)
+                                                      Navigator.pop(context);
+                                                    return null;
+                                                  },
                                                 );
-                                                if (mounted) Navigator.pop(context);
-                                                return null;
-                                              },
-                                            );
 
                                             progressNotifier.value = 1.0;
                                           } catch (e, stackTrace) {
@@ -3477,8 +3497,6 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     );
   }
 
-
-
   void _confirmarExclusaoPet(int index) {
     showDialog(
       context: context,
@@ -3508,7 +3526,6 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       ),
     );
   }
-
 
   Widget _buildBotaoSalvar() {
     return Container(
@@ -3806,14 +3823,18 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         limiteCredito: double.tryParse(
           _limiteCreditoController.text.replaceAll(',', '.'),
         ),
-        saldoDevedor: double.tryParse(
-          _saldoDevedorController.text.replaceAll(',', '.'),
-        ) ?? 0.0,
+        saldoDevedor:
+            double.tryParse(
+              _saldoDevedorController.text.replaceAll(',', '.'),
+            ) ??
+            0.0,
         dadosExtras: {
           ...?widget.cliente?.dadosExtras,
-          'credito_inicial': double.tryParse(
-            _creditoInicialController.text.replaceAll(',', '.'),
-          ) ?? 0.0,
+          'credito_inicial':
+              double.tryParse(
+                _creditoInicialController.text.replaceAll(',', '.'),
+              ) ??
+              0.0,
           'codigo': _codigoController.text.trim().isEmpty
               ? null
               : _codigoController.text.trim(),
@@ -4182,7 +4203,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       if (venda.cancelado) continue;
 
       totalCompras += venda.valorTotal;
-      totalPago += (venda.valorRecebido ?? 0); 
+      totalPago += (venda.valorRecebido ?? 0);
 
       if (venda.tipoPagamento == TipoPagamento.fiado) {
         final pendente = venda.valorTotal - (venda.valorRecebido ?? 0);
@@ -4258,38 +4279,94 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('DASHBOARD FINANCEIRO', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                  const Text(
+                    'DASHBOARD FINANCEIRO',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   Wrap(
                     spacing: 8,
                     children: [
                       TextButton.icon(
                         onPressed: () => _mostrarDialogExtrato(dataService),
-                        icon: const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 18),
-                        label: const Text('VER EXTRATO', style: TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        icon: const Icon(
+                          Icons.receipt_long,
+                          color: Colors.cyanAccent,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'VER EXTRATO',
+                          style: TextStyle(
+                            color: Colors.cyanAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         style: TextButton.styleFrom(
                           backgroundColor: Colors.white10,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: () => _mostrarDialogAjustarCredito(dataService),
-                        icon: const Icon(Icons.balance, color: Colors.orangeAccent, size: 18),
-                        label: const Text('AJUSTAR CRÉDITO', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        onPressed: () =>
+                            _mostrarDialogAjustarCredito(dataService),
+                        icon: const Icon(
+                          Icons.balance,
+                          color: Colors.orangeAccent,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'AJUSTAR CRÉDITO',
+                          style: TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         style: TextButton.styleFrom(
                           backgroundColor: Colors.white10,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
                       TextButton.icon(
                         onPressed: () => _quitarSaldoDevedor(dataService),
-                        icon: const Icon(Icons.add_circle, color: Colors.greenAccent, size: 18),
-                        label: const Text('RECEBER VALOR', style: TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                        icon: const Icon(
+                          Icons.add_circle,
+                          color: Colors.greenAccent,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'RECEBER VALOR',
+                          style: TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         style: TextButton.styleFrom(
                           backgroundColor: Colors.white10,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
                     ],
@@ -4375,7 +4452,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
 
   /// Cartão de cash back: saldo, vencimento, ativação e botões de extrato e
   /// lançamento manual.
-  Widget _buildCashBackCard(DataService dataService, NumberFormat formatoMoeda) {
+  Widget _buildCashBackCard(
+    DataService dataService,
+    NumberFormat formatoMoeda,
+  ) {
     final cliente = _clienteAtualNoDataService(dataService);
     if (cliente == null) return const SizedBox.shrink();
     final saldo = cliente.saldoCashback;
@@ -4506,9 +4586,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
             const Icon(Icons.local_atm, color: Colors.amber, size: 22),
@@ -4534,9 +4612,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                     final m = movimentos[i];
                     final vencido =
                         m.tipo == CashBackMovimentoTipo.credito &&
-                            m.expiraEm != null &&
-                            m.expiraEm!.isBefore(DateTime.now()) &&
-                            m.restante > 0;
+                        m.expiraEm != null &&
+                        m.expiraEm!.isBefore(DateTime.now()) &&
+                        m.restante > 0;
                     return ListTile(
                       dense: true,
                       leading: Icon(m.tipo.icone, color: m.tipo.cor),
@@ -4600,10 +4678,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text(
-              'Fechar',
-              style: TextStyle(color: Colors.amber),
-            ),
+            child: const Text('Fechar', style: TextStyle(color: Colors.amber)),
           ),
         ],
       ),
@@ -4642,10 +4717,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 children: [
                   Text(
                     cliente.nome,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -4674,8 +4746,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                             'Bonificação',
                             style: TextStyle(fontSize: 10),
                           ),
-                          onChanged: (v) =>
-                              setState(() => tipo = v ?? tipo),
+                          onChanged: (v) => setState(() => tipo = v ?? tipo),
                         ),
                       ),
                       Expanded(
@@ -4692,8 +4763,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                             'Resgate/estorno',
                             style: TextStyle(fontSize: 10),
                           ),
-                          onChanged: (v) =>
-                              setState(() => tipo = v ?? tipo),
+                          onChanged: (v) => setState(() => tipo = v ?? tipo),
                         ),
                       ),
                     ],
@@ -5213,7 +5283,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       return;
     }
 
-    final valorController = TextEditingController(text: saldo.toStringAsFixed(2));
+    final valorController = TextEditingController(
+      text: saldo.toStringAsFixed(2),
+    );
     TipoPagamento formaSelecionada = TipoPagamento.dinheiro;
 
     showDialog(
@@ -5222,64 +5294,98 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         builder: (context, setDialogState) {
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('Receber Valor (Fiado)', style: TextStyle(color: Colors.white)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Text(
+              'Receber Valor (Fiado)',
+              style: TextStyle(color: Colors.white),
+            ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                  TextField(
-                    controller: valorController,
-                    style: const TextStyle(color: Colors.white),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Valor a Receber',
-                      labelStyle: TextStyle(color: Colors.white70),
-                      prefixText: r'R$ ',
-                      prefixStyle: TextStyle(color: Colors.white),
-                    ),
+                TextField(
+                  controller: valorController,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
                   ),
+                  decoration: const InputDecoration(
+                    labelText: 'Valor a Receber',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    prefixText: r'R$ ',
+                    prefixStyle: TextStyle(color: Colors.white),
+                  ),
+                ),
                 const SizedBox(height: 20),
-                const Text('Forma de Pagamento:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const Text(
+                  'Forma de Pagamento:',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: [TipoPagamento.dinheiro, TipoPagamento.pix, TipoPagamento.cartaoDebito, TipoPagamento.cartaoCredito].map((tipo) {
-                    final isSelected = formaSelecionada == tipo;
-                    return ChoiceChip(
-                      label: Text(tipo.nome),
-                      selected: isSelected,
-                      onSelected: (v) => setDialogState(() => formaSelecionada = tipo),
-                      selectedColor: Colors.blueAccent.withOpacity(0.3),
-                      labelStyle: TextStyle(color: isSelected ? Colors.blueAccent : Colors.white70),
-                    );
-                  }).toList(),
+                  children:
+                      [
+                        TipoPagamento.dinheiro,
+                        TipoPagamento.pix,
+                        TipoPagamento.cartaoDebito,
+                        TipoPagamento.cartaoCredito,
+                      ].map((tipo) {
+                        final isSelected = formaSelecionada == tipo;
+                        return ChoiceChip(
+                          label: Text(tipo.nome),
+                          selected: isSelected,
+                          onSelected: (v) =>
+                              setDialogState(() => formaSelecionada = tipo),
+                          selectedColor: Colors.blueAccent.withOpacity(0.3),
+                          labelStyle: TextStyle(
+                            color: isSelected
+                                ? Colors.blueAccent
+                                : Colors.white70,
+                          ),
+                        );
+                      }).toList(),
                 ),
               ],
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar'),
+              ),
               ElevatedButton(
                 onPressed: () async {
-                  final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                  final valor =
+                      double.tryParse(
+                        valorController.text.replaceAll(',', '.'),
+                      ) ??
+                      0;
                   if (valor <= 0) return;
 
                   // 1. Atualizar saldo do cliente e log de extrato
-                  final novoSaldo = (widget.cliente!.saldoDevedor - valor).clamp(0.0, double.infinity);
-                  
+                  final novoSaldo = (widget.cliente!.saldoDevedor - valor)
+                      .clamp(0.0, double.infinity);
+
                   final log = {
                     'tipo': 'recebimento_fiado',
                     'data': DateTime.now().toIso8601String(),
                     'valor': valor,
-                    'descricao': 'Recebimento de fiado via ${formaSelecionada.nome}',
+                    'descricao':
+                        'Recebimento de fiado via ${formaSelecionada.nome}',
                     'saldo_devedor_anterior': widget.cliente!.saldoDevedor,
                     'saldo_devedor_atual': novoSaldo,
                   };
-                  
-                  final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? []);
+
+                  final listExtrato = List<Map<String, dynamic>>.from(
+                    widget.cliente!.dadosExtras?['extrato_financeiro'] ?? [],
+                  );
                   listExtrato.add(log);
-                  
-                  final dadosExtrasAtualizados = Map<String, dynamic>.from(widget.cliente!.dadosExtras ?? {});
+
+                  final dadosExtrasAtualizados = Map<String, dynamic>.from(
+                    widget.cliente!.dadosExtras ?? {},
+                  );
                   dadosExtrasAtualizados['extrato_financeiro'] = listExtrato;
 
                   final clienteAtualizado = widget.cliente!.copyWith(
@@ -5291,8 +5397,12 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
 
                   // 2. Registrar no Caixa como Suprimento para aparecer no Histórico
                   if (dataService.caixaAberto) {
-                    final authService = Provider.of<AuthService>(context, listen: false);
-                    final operador = authService.usuarioAtual?.nome ?? 'Sistema';
+                    final authService = Provider.of<AuthService>(
+                      context,
+                      listen: false,
+                    );
+                    final operador =
+                        authService.usuarioAtual?.nome ?? 'Sistema';
 
                     await dataService.registrarSuprimento(
                       valor: valor,
@@ -5301,21 +5411,24 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                       responsavel: operador,
                     );
                   }
-
                 },
                 child: const Text('Confirmar'),
               ),
             ],
           );
-        }
+        },
       ),
     );
   }
 
   void _mostrarDialogAjustarCredito(DataService dataService) {
     if (widget.cliente == null) return;
-    final creditoAtual = double.tryParse(widget.cliente!.dadosExtras?['credito_inicial']?.toString() ?? '0.0') ?? 0.0;
-    
+    final creditoAtual =
+        double.tryParse(
+          widget.cliente!.dadosExtras?['credito_inicial']?.toString() ?? '0.0',
+        ) ??
+        0.0;
+
     final valorController = TextEditingController();
     final motivoController = TextEditingController();
     String operacao = 'adicionar'; // 'adicionar' ou 'remover'
@@ -5326,8 +5439,13 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         builder: (context, setDialogState) {
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('Ajustar Crédito do Cliente', style: TextStyle(color: Colors.white)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Text(
+              'Ajustar Crédito do Cliente',
+              style: TextStyle(color: Colors.white),
+            ),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -5335,10 +5453,17 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 children: [
                   Text(
                     'Saldo de Crédito Atual: R\$ ${creditoAtual.toStringAsFixed(2)}',
-                    style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(
+                      color: Colors.greenAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                   const SizedBox(height: 16),
-                  const Text('Tipo de Operação:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const Text(
+                    'Tipo de Operação:',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -5346,9 +5471,14 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                         child: ChoiceChip(
                           label: const Center(child: Text('Adicionar Crédito')),
                           selected: operacao == 'adicionar',
-                          onSelected: (v) => setDialogState(() => operacao = 'adicionar'),
+                          onSelected: (v) =>
+                              setDialogState(() => operacao = 'adicionar'),
                           selectedColor: Colors.green.withOpacity(0.2),
-                          labelStyle: TextStyle(color: operacao == 'adicionar' ? Colors.greenAccent : Colors.white70),
+                          labelStyle: TextStyle(
+                            color: operacao == 'adicionar'
+                                ? Colors.greenAccent
+                                : Colors.white70,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -5356,9 +5486,14 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                         child: ChoiceChip(
                           label: const Center(child: Text('Retirar Crédito')),
                           selected: operacao == 'remover',
-                          onSelected: (v) => setDialogState(() => operacao = 'remover'),
+                          onSelected: (v) =>
+                              setDialogState(() => operacao = 'remover'),
                           selectedColor: Colors.red.withOpacity(0.2),
-                          labelStyle: TextStyle(color: operacao == 'remover' ? Colors.redAccent : Colors.white70),
+                          labelStyle: TextStyle(
+                            color: operacao == 'remover'
+                                ? Colors.redAccent
+                                : Colors.white70,
+                          ),
                         ),
                       ),
                     ],
@@ -5367,7 +5502,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   TextField(
                     controller: valorController,
                     style: const TextStyle(color: Colors.white),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Valor do Ajuste (R\$)',
                       labelStyle: TextStyle(color: Colors.white70),
@@ -5390,35 +5527,53 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar'),
+              ),
               ElevatedButton(
                 onPressed: () {
-                  final valor = double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
+                  final valor =
+                      double.tryParse(
+                        valorController.text.replaceAll(',', '.'),
+                      ) ??
+                      0;
                   if (valor <= 0) return;
 
                   double novoCredito = creditoAtual;
                   if (operacao == 'adicionar') {
                     novoCredito += valor;
                   } else {
-                    novoCredito = (creditoAtual - valor).clamp(0.0, double.infinity);
+                    novoCredito = (creditoAtual - valor).clamp(
+                      0.0,
+                      double.infinity,
+                    );
                   }
 
                   // Registrar extrato
                   final log = {
-                    'tipo': operacao == 'adicionar' ? 'adicao_credito' : 'retirada_credito',
+                    'tipo': operacao == 'adicionar'
+                        ? 'adicao_credito'
+                        : 'retirada_credito',
                     'data': DateTime.now().toIso8601String(),
                     'valor': valor,
-                    'descricao': motivoController.text.trim().isEmpty 
-                        ? (operacao == 'adicionar' ? 'Crédito Adicionado' : 'Crédito Retirado')
+                    'descricao': motivoController.text.trim().isEmpty
+                        ? (operacao == 'adicionar'
+                              ? 'Crédito Adicionado'
+                              : 'Crédito Retirado')
                         : motivoController.text.trim(),
                     'credito_anterior': creditoAtual,
                     'credito_atual': novoCredito,
                   };
 
-                  final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? []);
+                  final listExtrato = List<Map<String, dynamic>>.from(
+                    widget.cliente!.dadosExtras?['extrato_financeiro'] ?? [],
+                  );
                   listExtrato.add(log);
 
-                  final dadosExtrasAtualizados = Map<String, dynamic>.from(widget.cliente!.dadosExtras ?? {});
+                  final dadosExtrasAtualizados = Map<String, dynamic>.from(
+                    widget.cliente!.dadosExtras ?? {},
+                  );
                   dadosExtrasAtualizados['credito_inicial'] = novoCredito;
                   dadosExtrasAtualizados['extrato_financeiro'] = listExtrato;
 
@@ -5435,7 +5590,9 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   });
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('✓ Crédito ajustado com sucesso para R\$ ${novoCredito.toStringAsFixed(2)}!'),
+                      content: Text(
+                        '✓ Crédito ajustado com sucesso para R\$ ${novoCredito.toStringAsFixed(2)}!',
+                      ),
                       backgroundColor: Colors.green,
                     ),
                   );
@@ -5444,18 +5601,24 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
               ),
             ],
           );
-        }
+        },
       ),
     );
   }
 
   void _mostrarDialogExtrato(DataService dataService) {
     if (widget.cliente == null) return;
-    
+
     // Obter todos os logs de extrato_financeiro em dadosExtras
-    final listExtrato = List<Map<String, dynamic>>.from(widget.cliente!.dadosExtras?['extrato_financeiro'] ?? [])
-      ..sort((a, b) => DateTime.parse(b['data'].toString()).compareTo(DateTime.parse(a['data'].toString())));
-      
+    final listExtrato =
+        List<Map<String, dynamic>>.from(
+          widget.cliente!.dadosExtras?['extrato_financeiro'] ?? [],
+        )..sort(
+          (a, b) => DateTime.parse(
+            b['data'].toString(),
+          ).compareTo(DateTime.parse(a['data'].toString())),
+        );
+
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final formatoData = DateFormat('dd/MM/yyyy HH:mm');
 
@@ -5471,7 +5634,11 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
             Expanded(
               child: Text(
                 'Extrato Financeiro - ${widget.cliente!.nome}',
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -5484,11 +5651,18 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.inbox, size: 48, color: Colors.white.withOpacity(0.3)),
+                      Icon(
+                        Icons.inbox,
+                        size: 48,
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                       const SizedBox(height: 12),
                       Text(
                         'Nenhuma movimentação de crédito/fiado encontrada.',
-                        style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 13,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ],
@@ -5496,20 +5670,25 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 )
               : ListView.separated(
                   itemCount: listExtrato.length,
-                  separatorBuilder: (context, index) => const Divider(color: Colors.white12),
+                  separatorBuilder: (context, index) =>
+                      const Divider(color: Colors.white12),
                   itemBuilder: (context, index) {
                     final log = listExtrato[index];
                     final tipo = log['tipo']?.toString() ?? '';
                     final dataStr = log['data']?.toString() ?? '';
                     final data = DateTime.parse(dataStr);
-                    final valor = double.tryParse(log['valor']?.toString() ?? '0.0') ?? 0.0;
-                    final descricao = log['descricao']?.toString() ?? 'Lançamento';
-                    
+                    final valor =
+                        double.tryParse(log['valor']?.toString() ?? '0.0') ??
+                        0.0;
+                    final descricao =
+                        log['descricao']?.toString() ?? 'Lançamento';
+
                     Color corValor;
                     IconData iconeLog;
                     String prefixo = '';
-                    
-                    if (tipo == 'adicao_credito' || tipo == 'recebimento_fiado') {
+
+                    if (tipo == 'adicao_credito' ||
+                        tipo == 'recebimento_fiado') {
                       corValor = Colors.greenAccent;
                       iconeLog = Icons.arrow_upward;
                       prefixo = '+ ';
@@ -5531,28 +5710,48 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                       ),
                       title: Text(
                         descricao,
-                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const SizedBox(height: 4),
-                          Text(formatoData.format(data), style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                          Text(
+                            formatoData.format(data),
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
                           if (log['saldo_devedor_atual'] != null)
                             Text(
-                              'Saldo devedor: ${formatoMoeda.format(log['saldo_devedor_atual'])}', 
-                              style: const TextStyle(color: Colors.white38, fontSize: 11)
+                              'Saldo devedor: ${formatoMoeda.format(log['saldo_devedor_atual'])}',
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 11,
+                              ),
                             ),
                           if (log['credito_atual'] != null)
                             Text(
-                              'Saldo crédito: ${formatoMoeda.format(log['credito_atual'])}', 
-                              style: const TextStyle(color: Colors.white38, fontSize: 11)
+                              'Saldo crédito: ${formatoMoeda.format(log['credito_atual'])}',
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 11,
+                              ),
                             ),
                         ],
                       ),
                       trailing: Text(
                         '$prefixo${formatoMoeda.format(valor)}',
-                        style: TextStyle(color: corValor, fontWeight: FontWeight.w900, fontSize: 14),
+                        style: TextStyle(
+                          color: corValor,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                        ),
                       ),
                     );
                   },
@@ -5561,7 +5760,10 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Fechar', style: TextStyle(color: Colors.white70)),
+            child: const Text(
+              'Fechar',
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
         ],
       ),
@@ -5830,6 +6032,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Icons.swap_horiz;
       case TipoPagamento.cashBack:
         return Icons.local_atm;
+      case TipoPagamento.mercado_pago:
+        return Icons.qr_code;
     }
   }
 
@@ -5857,6 +6061,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
         return Colors.blueAccent;
       case TipoPagamento.cashBack:
         return Colors.amber;
+      case TipoPagamento.mercado_pago:
+        return Colors.deepPurple;
     }
   }
 
@@ -5891,7 +6097,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  pag.tipo.nome,
+                  pag.nomeExibicao,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w500,
@@ -5904,6 +6110,14 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                     fontSize: 11,
                   ),
                 ),
+                if (pag.nomePagador?.trim().isNotEmpty == true)
+                  Text(
+                    'Pago por: ${pag.nomePagador}',
+                    style: const TextStyle(
+                      color: Colors.greenAccent,
+                      fontSize: 11,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -6296,7 +6510,6 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     }
   }
 }
-
 
 /// Formatter para transformar texto em maiúsculas
 class UpperCaseTextFormatter extends TextInputFormatter {

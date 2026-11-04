@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
+import 'package:sistema_exodo_novo/utils/perfis_tributarios_merge.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
@@ -73,12 +74,22 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
         merged[entry.key] = entry.value;
       }
     }
-    if ((configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
-      merged['perfis_tributarios'] = configLocal['perfis_tributarios'];
-    }
-    if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
-      merged['perfis_preco'] = configLocal['perfis_preco'];
-    }
+    // Perfis tributários: vence a cópia mais nova (carimbo próprio), não mais
+    // o cache local fixo.
+    aplicarPerfisTributariosMaisRecentes(
+      merged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
+    aplicarPerfisPrecoMaisRecentes(
+      merged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
     return remota.copyWith(configuracoes: merged);
   }
 
@@ -110,6 +121,11 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
     _ultimoSlugProcessado = currentSlug;
 
     String? empresaIdParaUsar;
+    // A empresa detectada fica guardada e só é INSTALADA no DataService depois
+    // do `definirEmpresaAtual` do passo 5. Instalar antes (setEmpresaAtual
+    // com `_currentEmpresaId` ainda da empresa anterior) abria a mesma janela
+    // que misturava dados entre empresas no app.
+    Empresa? empresaDetectada;
 
     try {
       // 1. Tentar encontrar a empresa solicitada IMEDIATAMENTE (Otimizado)
@@ -118,7 +134,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
         if (detectada != null) {
           print('>>> [LojaPublica] ✅ Empresa detectada via Busca Direta: ${detectada.nomeExibicao}');
           empresaIdParaUsar = detectada.id;
-          dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, detectada)); 
+          empresaDetectada = _preservarConfigsLocais(dataService, detectada);
         } else {
           // Retentativa rápida para casos de latência do Firebase (o "não encontrada ainda" do usuário)
           debugPrint('>>> [LojaPublica] ⏳ Slug não encontrado de primeira, aguardando 1.5s para retentar...');
@@ -127,7 +143,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
           if (detectada2 != null) {
             print('>>> [LojaPublica] ✅ Empresa detectada na Retentativa: ${detectada2.nomeExibicao}');
             empresaIdParaUsar = detectada2.id;
-            dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, detectada2));
+            empresaDetectada = _preservarConfigsLocais(dataService, detectada2);
           }
         }
       }
@@ -186,7 +202,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
         final empresaPorSlug = await authService.buscarEmpresaPorSlugAsync(slugDeteccao);
         if (empresaPorSlug != null) {
           empresaIdParaUsar = empresaPorSlug.id;
-          dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, empresaPorSlug));
+          empresaDetectada = _preservarConfigsLocais(dataService, empresaPorSlug);
           print('>>> [LojaPublica] ✅ Empresa encontrada por slug: ${empresaPorSlug.nomeExibicao} (ID: $empresaIdParaUsar)');
         } else {
           print('>>> [LojaPublica] ⚠ Slug "$slugDeteccao" não encontrado em ${authService.empresas.length} empresas');
@@ -202,7 +218,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
              if (porId) {
                 final empObj = authService.empresas.firstWhere((e) => e.id == slugDeteccao);
                 empresaIdParaUsar = empObj.id;
-                dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, empObj));
+                empresaDetectada = _preservarConfigsLocais(dataService, empObj);
                 print('>>> [LojaPublica] ✅ Empresa encontrada por ID direto: ${empObj.nomeExibicao} ($empresaIdParaUsar)');
               }
           }
@@ -211,7 +227,7 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
             // Se ainda assim não achamos e o usuário não especificou slug, usar a primeira
             if (slugDeteccao == null || slugDeteccao.isEmpty) {
               empresaIdParaUsar = authService.empresas.first.id;
-              dataService.setEmpresaAtual(_preservarConfigsLocais(dataService, authService.empresas.first));
+              empresaDetectada = _preservarConfigsLocais(dataService, authService.empresas.first);
               print('>>> [LojaPublica] ⚠ Usando primeira empresa como padrão: $empresaIdParaUsar');
             } else {
               // SE ESPECIFICOU SLUG E NÃO ACHAMOS, É UM ERRO!
@@ -238,6 +254,13 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
             const Duration(seconds: 25),
             onTimeout: () => print('>>> [LojaPublica] Timeout recarregarDados'),
           );
+        }
+        // Instalação ÚNICA do objeto da empresa, DEPOIS que o id já está
+        // fixado no DataService (mesma ordem do main.dart e das outras telas):
+        // evita o estado misto "memória da empresa nova + id da empresa antiga".
+        if (empresaDetectada != null &&
+            dataService.empresaAtual?.id != empresaDetectada.id) {
+          dataService.setEmpresaAtual(empresaDetectada);
         }
       }
       

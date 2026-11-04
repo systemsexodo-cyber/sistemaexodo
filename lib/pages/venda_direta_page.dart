@@ -2,7 +2,9 @@ import 'dart:math' as math;
 import 'dart:async';
 import 'dart:convert';
 
-import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
+import 'html_helper_stub.dart'
+    if (dart.library.html) 'html_helper_web.dart'
+    as html_helper;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +16,8 @@ import 'package:uuid/uuid.dart';
 import 'package:sistema_exodo_novo/models/conta_pagar.dart';
 
 import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/utils/perfis_tributarios_merge.dart';
+import 'package:sistema_exodo_novo/utils/numeracao_venda.dart';
 import 'package:sistema_exodo_novo/services/cash_back_service.dart';
 import 'package:sistema_exodo_novo/widgets/cash_back_badge.dart';
 import 'package:sistema_exodo_novo/services/local_storage_service.dart';
@@ -92,9 +96,11 @@ class ItemCarrinho {
   String? observacao;
   final List<AdicionalProduto> adicionais;
   final List<OpcaoPerguntaSelecao> opcoesCombo;
-  final List<VariacaoProduto>? variacoesSelecionadas; // Variações escolhidas (Tamanho P, Cor Azul, etc)
+  final List<VariacaoProduto>?
+  variacoesSelecionadas; // Variações escolhidas (Tamanho P, Cor Azul, etc)
   bool isBrinde; // Identifica se o produto é vendido como brinde (grátis)
-  bool baixaProporcional; // true = baixa pela conversão do saco (15 kg = 1); false = baixa a quantidade inteira no ingrediente
+  bool
+  baixaProporcional; // true = baixa pela conversão do saco (15 kg = 1); false = baixa a quantidade inteira no ingrediente
   // Forma de venda escolhida no PDV (unidade/caixa/pacote/saco) e sua baixa
   String? unidadeVenda;
   double? quantidadeBaixa;
@@ -126,10 +132,10 @@ class ItemCarrinho {
     this.quantidadeBaixa,
     this.precoSemPromocao,
     this.precoTabela,
-  })  : precoOriginal = precoOriginal ?? preco,
-        adicionais = adicionais ?? [],
-        opcoesCombo = opcoesCombo ?? [],
-        variacoesSelecionadas = variacoesSelecionadas ?? [];
+  }) : precoOriginal = precoOriginal ?? preco,
+       adicionais = adicionais ?? [],
+       opcoesCombo = opcoesCombo ?? [],
+       variacoesSelecionadas = variacoesSelecionadas ?? [];
 
   /// Indica se o preço unitário foi alterado no PDV em relação ao valor original
   bool get tevePrecoAlterado => (preco - precoOriginal).abs() > 0.001;
@@ -146,15 +152,30 @@ class ItemCarrinho {
   double get subtotal {
     if (isBrinde) return 0.0;
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
-    final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
-    final totalVariacoes = (variacoesSelecionadas ?? []).fold(0.0, (sum, v) => sum + (v.precoAdicional ?? 0.0));
-    return ((preco + totalAdicionais + totalCombo + totalVariacoes) * quantidade) - desconto;
+    final totalCombo = opcoesCombo.fold(
+      0.0,
+      (sum, o) => sum + o.precoAdicional,
+    );
+    final totalVariacoes = (variacoesSelecionadas ?? []).fold(
+      0.0,
+      (sum, v) => sum + (v.precoAdicional ?? 0.0),
+    );
+    return ((preco + totalAdicionais + totalCombo + totalVariacoes) *
+            quantidade) -
+        desconto;
   }
+
   double get subtotalSemDesconto {
     if (isBrinde) return 0.0;
     final totalAdicionais = adicionais.fold(0.0, (sum, a) => sum + a.preco);
-    final totalCombo = opcoesCombo.fold(0.0, (sum, o) => sum + o.precoAdicional);
-    final totalVariacoes = (variacoesSelecionadas ?? []).fold(0.0, (sum, v) => sum + (v.precoAdicional ?? 0.0));
+    final totalCombo = opcoesCombo.fold(
+      0.0,
+      (sum, o) => sum + o.precoAdicional,
+    );
+    final totalVariacoes = (variacoesSelecionadas ?? []).fold(
+      0.0,
+      (sum, v) => sum + (v.precoAdicional ?? 0.0),
+    );
     return (preco + totalAdicionais + totalCombo + totalVariacoes) * quantidade;
   }
 
@@ -188,7 +209,9 @@ class ItemCarrinho {
       'observacao': observacao,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
       'opcoesCombo': opcoesCombo.map((o) => o.toMap()).toList(),
-      'variacoesSelecionadas': (variacoesSelecionadas ?? []).map((v) => v.toMap()).toList(),
+      'variacoesSelecionadas': (variacoesSelecionadas ?? [])
+          .map((v) => v.toMap())
+          .toList(),
       'isBrinde': isBrinde,
       'baixaProporcional': baixaProporcional,
       'unidadeVenda': unidadeVenda,
@@ -205,19 +228,27 @@ class ItemCarrinho {
       nome: map['nome'] ?? '',
       descricao: map['descricao'],
       preco: p,
-      precoOriginal: map['precoOriginal'] != null ? (map['precoOriginal'] as num).toDouble() : p,
+      precoOriginal: map['precoOriginal'] != null
+          ? (map['precoOriginal'] as num).toDouble()
+          : p,
       quantidade: (map['quantidade'] ?? 1.0).toDouble(),
       isServico: map['isServico'] ?? false,
       desconto: (map['desconto'] ?? 0.0).toDouble(),
       fornecedorNome: map['fornecedorNome'],
       fornecedorId: map['fornecedorId'],
       observacao: map['observacao'],
-      adicionais: (map['adicionais'] as List<dynamic>?)
-          ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
-          .toList() ?? [],
-      opcoesCombo: (map['opcoesCombo'] as List<dynamic>?)
-          ?.map((o) => OpcaoPerguntaSelecao.fromMap(o as Map<String, dynamic>))
-          .toList() ?? [],
+      adicionais:
+          (map['adicionais'] as List<dynamic>?)
+              ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
+              .toList() ??
+          [],
+      opcoesCombo:
+          (map['opcoesCombo'] as List<dynamic>?)
+              ?.map(
+                (o) => OpcaoPerguntaSelecao.fromMap(o as Map<String, dynamic>),
+              )
+              .toList() ??
+          [],
       variacoesSelecionadas: (map['variacoesSelecionadas'] as List<dynamic>?)
           ?.map((v) => VariacaoProduto.fromMap(v as Map<String, dynamic>))
           .toList(),
@@ -246,7 +277,8 @@ class VendaDiretaPage extends StatefulWidget {
   final List<ItemServico>? servicosParaRepetir; // Serviços para repetir venda
   final MesaComanda? mesaComanda; // Mesa/Comanda para receber
   final bool iniciarDelivery; // Abrir direto com delivery ativo
-  final double? pagamentoValorLivre; // Valor livre para pagamento direto da mesa/comanda
+  final double?
+  pagamentoValorLivre; // Valor livre para pagamento direto da mesa/comanda
 
   VendaDiretaPage({
     super.key,
@@ -265,6 +297,7 @@ class VendaDiretaPage extends StatefulWidget {
 }
 
 enum SortOption { codigo, nome, recentes, grupo }
+
 enum ViewMode { grid, list }
 
 class _VendaDiretaPageState extends State<VendaDiretaPage> {
@@ -287,10 +320,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   String? _ultimaCategoriaCache;
   DateTime? _ultimaAtualizacaoCache;
   final List<ItemCarrinho> _carrinho = [];
-  final NumberFormat _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  final NumberFormat _formatoMoeda = NumberFormat.currency(
+    locale: 'pt_BR',
+    symbol: 'R\$',
+  );
   Cliente? _clienteSelecionado;
   String? _tabelaPrecoAtiva;
-    Funcionario? _vendedorSelecionado;
+  Funcionario? _vendedorSelecionado;
   String? _categoriaAtiva;
 
   double _quantidadeDigitada = 1.0;
@@ -323,6 +359,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       debugPrint('>>> [Audio PDV] Erro ao tocar som: $e');
     }
   }
+
   Pedido? _pedidoOriginal; // Pedido original sendo editado
   List<PagamentoPedido> _pagamentosSalvos =
       []; // Pagamentos do pedido sendo editado
@@ -341,15 +378,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   int _segundosSemFullscreen = 0;
   final ScrollController _carrinhoScrollController = ScrollController();
   final ScrollController _gridScrollController = ScrollController();
-  String? _ultimoItemAdicionadoId; // ID do último item adicionado (para destaque)
-  bool _dialogAberto = false; // Flag para evitar duplos F9 (múltiplas telas de pagamento)
-  int _itensVisiveisPDV = 500; // Aumentado de 100 para 500 para carregar um catálogo maior inicialmente
+  String?
+  _ultimoItemAdicionadoId; // ID do último item adicionado (para destaque)
+  bool _dialogAberto =
+      false; // Flag para evitar duplos F9 (múltiplas telas de pagamento)
+  int _itensVisiveisPDV =
+      500; // Aumentado de 100 para 500 para carregar um catálogo maior inicialmente
   static const int _itensPorPaginaPDV = 100;
   List<Produto> _cacheProdutosCategoria = [];
   String? _cacheCategoriaAtiva;
   SortOption _cacheSortPDV = SortOption.codigo;
   int _cacheTotalProdutosPDV = 0;
-  int _cacheTotalProdutosAtivosPDV = 0; // Conta produtos ativos para invalidar cache ao desativar
+  int _cacheTotalProdutosAtivosPDV =
+      0; // Conta produtos ativos para invalidar cache ao desativar
   int _cacheTotalPerguntasPDV = 0;
 
   // ESTADO DE DELIVERY
@@ -359,15 +400,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   String? _motoristaId;
   String? _motoristaNome;
   double _valorParaTroco = 0.0; // Valor informado pelo cliente para troco
-  TipoPagamento? _formaPagamentoDelivery = TipoPagamento.dinheiro; // Forma de pagamento registrada para a entrega
-  String _previsaoEntrega = ''; // Previsão de entrega informada (ex: 30-45 min ou 18:30)
+  TipoPagamento? _formaPagamentoDelivery =
+      TipoPagamento.dinheiro; // Forma de pagamento registrada para a entrega
+  String _previsaoEntrega =
+      ''; // Previsão de entrega informada (ex: 30-45 min ou 18:30)
   String _infoCalculoTaxa = '';
   bool _calculandoTaxa = false;
 
-  bool _estaFinalizando = false; // Flag para evitar duplos cliques e concorrência
+  bool _estaFinalizando =
+      false; // Flag para evitar duplos cliques e concorrência
   final LocalStorageService _storage = LocalStorageService();
   String? _empresaIdStorage; // Para isolar dados por empresa
-  
+
   /// Retorna a chave de storage prefixada com o ID da empresa atual
   String _chavePDV(String baseKey) {
     if (_empresaIdStorage == null || _empresaIdStorage!.isEmpty) {
@@ -375,7 +419,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
     return 'empresa_${_empresaIdStorage}_$baseKey';
   }
-  
+
   static const String _keyCarrinhoPDV = 'exodo_carrinho_pdv';
   static const String _keyClientePDV = 'exodo_cliente_pdv';
   static const String _keyTabelaPrecoPDV = 'exodo_tabela_preco_pdv';
@@ -394,15 +438,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   bool _somFinalizarHabilitado = true;
   bool _alertarLimiteGaveta = false;
   double _limiteGavetaValor = 1000.0;
-  bool _mostrarBarraLegenda = false; // Controle de visibilidade da legenda (hover)
-  Timer? _debounce; // Timer para suavizar a busca e evitar lag na digitação do PDV
+  bool _mostrarBarraLegenda =
+      false; // Controle de visibilidade da legenda (hover)
+  Timer?
+  _debounce; // Timer para suavizar a busca e evitar lag na digitação do PDV
   bool _habilitarMesasComandas = true;
   bool _habilitarCozinha = true;
 
   // Getters para facilitar identificação de Mesa/Comanda
   String get tipoNome {
     if (_mesaComandaVinculada == null) return 'Venda';
-    return _mesaComandaVinculada?.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa';
+    return _mesaComandaVinculada?.tipo == TipoControle.comanda
+        ? 'Comanda'
+        : 'Mesa';
   }
 
   String? get _perfilPrecoEfetivo => _tabelaPrecoAtiva;
@@ -437,10 +485,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         return 'Preço fixo por produto';
     }
   }
+
   String get labelOrigem {
     if (_mesaComandaVinculada == null) return '[BALCÃO]';
-    return _mesaComandaVinculada?.tipo == TipoControle.comanda ? '[COMANDA]' : '[MESA]';
+    return _mesaComandaVinculada?.tipo == TipoControle.comanda
+        ? '[COMANDA]'
+        : '[MESA]';
   }
+
   String? get mesaNumero => _mesaComandaVinculada?.numero;
   String? get mesaParaLimparId => _mesaComandaVinculada?.id;
 
@@ -470,7 +522,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         // Mostrar diálogo para solicitar valor de abertura
         _solicitarAberturaCaixa(context, dataService);
       }
-      
+
       // Iniciar em tela cheia por padrão (no web)
       if (kIsWeb) {
         _entrarTelaCheia();
@@ -478,10 +530,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       // Carregar configurações de visualização (Grade ou Lista)
       final empresa = dataService.empresaAtual;
-      
+
       // Carregar empresaId para isolar preferências
       _empresaIdStorage = dataService.currentEmpresaId;
-      
+
       // Carregar configurações de som (isoladas por empresa)
       _storage.carregar(_chavePDV(_keySomPDV)).then((value) {
         if (value != null && value is bool) {
@@ -543,10 +595,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           });
         }
       });
-      if (empresa != null && empresa.configuracoes?['venda_direta_view_mode'] != null) {
+      if (empresa != null &&
+          empresa.configuracoes?['venda_direta_view_mode'] != null) {
         setState(() {
-          _viewMode = empresa.configuracoes!['venda_direta_view_mode'] == 'list' 
-              ? ViewMode.list 
+          _viewMode = empresa.configuracoes!['venda_direta_view_mode'] == 'list'
+              ? ViewMode.list
               : ViewMode.grid;
         });
       }
@@ -564,92 +617,112 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _carrinho.clear();
       // Filtrar apenas itens que ainda não foram pagos e não foram cancelados
       final itensPendentes = widget.mesaComanda!.itens
-          .where((i) => i.status != StatusItem.cancelado && !widget.mesaComanda!.itensPagos.contains(i.id))
+          .where(
+            (i) =>
+                i.status != StatusItem.cancelado &&
+                !widget.mesaComanda!.itensPagos.contains(i.id),
+          )
           .toList();
-          
-      _carrinho.addAll(itensPendentes.map((i) => ItemCarrinho(
-                id: i.itemId,
-                nome: i.nome,
-                preco: i.preco,
-                quantidade: i.quantidade,
-                isServico: i.isServico,
-                observacao: i.observacao,
-              )));
+
+      _carrinho.addAll(
+        itensPendentes.map(
+          (i) => ItemCarrinho(
+            id: i.itemId,
+            nome: i.nome,
+            preco: i.preco,
+            quantidade: i.quantidade,
+            isServico: i.isServico,
+            observacao: i.observacao,
+          ),
+        ),
+      );
 
       // Adicionar couvert como um item se existir
       if (widget.mesaComanda!.valorCouvertCalculado > 0) {
-        _carrinho.add(ItemCarrinho(
-          id: 'couvert',
-          nome: 'Couvert Artístico',
-          quantidade: (widget.mesaComanda!.quantidadePessoasCouvert ?? 1).toDouble(),
-          preco: widget.mesaComanda!.valorCouvertPorPessoa ?? 0.0,
-          isServico: true,
-        ));
+        _carrinho.add(
+          ItemCarrinho(
+            id: 'couvert',
+            nome: 'Couvert Artístico',
+            quantidade: (widget.mesaComanda!.quantidadePessoasCouvert ?? 1)
+                .toDouble(),
+            preco: widget.mesaComanda!.valorCouvertPorPessoa ?? 0.0,
+            isServico: true,
+          ),
+        );
       }
 
       // Adicionar taxa do garçom como um item se houver e não foi retirada
       if (!widget.mesaComanda!.garcomRetirado) {
-          final vGarcom = widget.mesaComanda!.valorGarcom ?? widget.mesaComanda!.valorGarcomCalculado;
-          if (vGarcom > 0.01) {
-            _carrinho.add(ItemCarrinho(
+        final vGarcom =
+            widget.mesaComanda!.valorGarcom ??
+            widget.mesaComanda!.valorGarcomCalculado;
+        if (vGarcom > 0.01) {
+          _carrinho.add(
+            ItemCarrinho(
               id: 'garcom',
               nome: 'Taxa de Serviço (Garçom)',
               preco: vGarcom,
               quantidade: 1,
               isServico: true,
-            ));
-          }
+            ),
+          );
+        }
       }
 
       // Carregar pagamentos parciais já feitos na mesa
       final listaPagamentos = <PagamentoPedido>[];
-      
+
       if (widget.mesaComanda!.historicoPagamentos.isNotEmpty) {
-        listaPagamentos.addAll(widget.mesaComanda!.historicoPagamentos.map((rp) {
-          final f = rp.formaPagamento?.toLowerCase() ?? '';
-          TipoPagamento tipo;
-          if (f.contains('pix')) {
-            tipo = TipoPagamento.pix;
-          } else if (f.contains('dinheiro')) {
-            tipo = TipoPagamento.dinheiro;
-          } else if (f.contains('débito') || f.contains('debito')) {
-            tipo = TipoPagamento.cartaoDebito;
-          } else if (f.contains('crédito') || f.contains('credito') || f.contains('cart')) {
-            tipo = TipoPagamento.cartaoCredito;
-          } else if (f.contains('boleto')) {
-            tipo = TipoPagamento.boleto;
-          } else if (f.contains('crediário') || f.contains('crediario')) {
-            tipo = TipoPagamento.crediario;
-          } else if (f.contains('fiado')) {
-            tipo = TipoPagamento.fiado;
-          } else {
-            tipo = TipoPagamento.outro;
-          }
+        listaPagamentos.addAll(
+          widget.mesaComanda!.historicoPagamentos.map((rp) {
+            final f = rp.formaPagamento?.toLowerCase() ?? '';
+            TipoPagamento tipo;
+            if (f.contains('pix')) {
+              tipo = TipoPagamento.pix;
+            } else if (f.contains('dinheiro')) {
+              tipo = TipoPagamento.dinheiro;
+            } else if (f.contains('débito') || f.contains('debito')) {
+              tipo = TipoPagamento.cartaoDebito;
+            } else if (f.contains('crédito') ||
+                f.contains('credito') ||
+                f.contains('cart')) {
+              tipo = TipoPagamento.cartaoCredito;
+            } else if (f.contains('boleto')) {
+              tipo = TipoPagamento.boleto;
+            } else if (f.contains('crediário') || f.contains('crediario')) {
+              tipo = TipoPagamento.crediario;
+            } else if (f.contains('fiado')) {
+              tipo = TipoPagamento.fiado;
+            } else {
+              tipo = TipoPagamento.outro;
+            }
 
-
-          return PagamentoPedido(
-            id: rp.id,
-            tipo: tipo,
-            valor: rp.valor,
-            recebido: true,
-            dataRecebimento: rp.dataPagamento,
-            observacao: 'Pago na $tipoNome ${widget.mesaComanda!.numero}',
-          );
-        }));
+            return PagamentoPedido(
+              id: rp.id,
+              tipo: tipo,
+              valor: rp.valor,
+              recebido: true,
+              dataRecebimento: rp.dataPagamento,
+              observacao: 'Pago na $tipoNome ${widget.mesaComanda!.numero}',
+            );
+          }),
+        );
       }
-      
+
       // Adicionar couvert já pago se houver
       if (widget.mesaComanda!.couvertPago > 0.01) {
-        listaPagamentos.add(PagamentoPedido(
-          id: 'couvert_pago_anterior',
-          tipo: TipoPagamento.outro,
-          valor: widget.mesaComanda!.couvertPago,
-          recebido: true,
-          dataRecebimento: widget.mesaComanda!.updatedAt,
-          observacao: 'Couvert já pago anteriormente',
-        ));
+        listaPagamentos.add(
+          PagamentoPedido(
+            id: 'couvert_pago_anterior',
+            tipo: TipoPagamento.outro,
+            valor: widget.mesaComanda!.couvertPago,
+            recebido: true,
+            dataRecebimento: widget.mesaComanda!.updatedAt,
+            observacao: 'Couvert já pago anteriormente',
+          ),
+        );
       }
-      
+
       _pagamentosSalvos = listaPagamentos;
 
       // Sincronizar cliente se houver
@@ -714,12 +787,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Listener para scroll infinito no grid de produtos
     _gridScrollController.addListener(() {
-      if (_gridScrollController.position.pixels >= _gridScrollController.position.maxScrollExtent - 400) {
+      if (_gridScrollController.position.pixels >=
+          _gridScrollController.position.maxScrollExtent - 400) {
         if (_termoBusca.isEmpty) {
-           // Só aumenta se não estiver em busca, ou se o total for maior que o visível
-           setState(() {
-             _itensVisiveisPDV += _itensPorPaginaPDV;
-           });
+          // Só aumenta se não estiver em busca, ou se o total for maior que o visível
+          setState(() {
+            _itensVisiveisPDV += _itensPorPaginaPDV;
+          });
         }
       }
     });
@@ -834,7 +908,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _motoristaNome = pedido.deliveryInfo!.motoristaNome;
       _valorParaTroco = pedido.deliveryInfo!.valorParaTroco;
       _previsaoEntrega = pedido.deliveryInfo!.previsaoEntrega ?? '';
-      _formaPagamentoDelivery = pedido.pagamentos.isNotEmpty ? pedido.pagamentos.first.tipo : null;
+      _formaPagamentoDelivery = pedido.pagamentos.isNotEmpty
+          ? pedido.pagamentos.first.tipo
+          : null;
       _enderecoEntrega = EnderecoCliente(
         id: pedido.deliveryInfo!.enderecoId,
         tipo: 'Entrega',
@@ -862,7 +938,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             .firstOrNull;
         if (cliente != null) {
           setState(() => _clienteSelecionado = cliente);
-          
+
           // Se for delivery, tentar encontrar o objeto EnderecoCliente real do cliente
           if (_isDelivery && _enderecoEntrega != null) {
             final enderecoReal = cliente.enderecos
@@ -894,36 +970,51 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   /// Scrolla o grid para mostrar o item selecionado
-  void _scrollToSelectedGridItem(int index, int crossAxisCount, double itemHeight) {
+  void _scrollToSelectedGridItem(
+    int index,
+    int crossAxisCount,
+    double itemHeight,
+  ) {
     if (!_gridScrollController.hasClients) return;
 
     // Caso especial: voltando para categorias
     if (index == -1) {
-      _gridScrollController.animateTo(0.0, duration: const Duration(milliseconds: 300), curve: Curves.easeOutQuart);
+      _gridScrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutQuart,
+      );
       return;
     }
-    
-    final effectiveCrossAxisCount = _viewMode == ViewMode.list ? 1 : crossAxisCount;
+
+    final effectiveCrossAxisCount = _viewMode == ViewMode.list
+        ? 1
+        : crossAxisCount;
     // ALTURA MATEMÁTICA: 82.0 (itemExtent) + 0 (spacing na lista)
     // Se for grade, usamos 82.0 + 4.0 do spacing
     final effectiveItemHeight = _viewMode == ViewMode.list ? 82.0 : 86.0;
-    
+
     // Lazy loading antecipado
     if (_termoBusca.isEmpty && index >= _itensVisiveisPDV - 100) {
-      setState(() => _itensVisiveisPDV += 1000); // Carregar blocos maiores (1000)
+      setState(
+        () => _itensVisiveisPDV += 1000,
+      ); // Carregar blocos maiores (1000)
     }
 
     final row = index ~/ effectiveCrossAxisCount;
-    final scrollPosition = row * effectiveItemHeight; 
+    final scrollPosition = row * effectiveItemHeight;
     final viewportHeight = _gridScrollController.position.viewportDimension;
     final currentOffset = _gridScrollController.offset;
-    
+
     // Só rola se o item sair da "zona de conforto" (margem de 5px)
     const margin = 5.0;
-    if (scrollPosition < (currentOffset + margin) || (scrollPosition + effectiveItemHeight) > (currentOffset + viewportHeight - margin)) {
-      final targetScroll = (scrollPosition - (viewportHeight / 2) + (effectiveItemHeight / 2))
-          .clamp(0.0, _gridScrollController.position.maxScrollExtent);
-          
+    if (scrollPosition < (currentOffset + margin) ||
+        (scrollPosition + effectiveItemHeight) >
+            (currentOffset + viewportHeight - margin)) {
+      final targetScroll =
+          (scrollPosition - (viewportHeight / 2) + (effectiveItemHeight / 2))
+              .clamp(0.0, _gridScrollController.position.maxScrollExtent);
+
       _gridScrollController.animateTo(
         targetScroll,
         duration: const Duration(milliseconds: 300),
@@ -948,7 +1039,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         _empresaIdStorage = dataService.currentEmpresaId;
       } catch (_) {}
 
-      final carrinhoMap = await _storage.carregarLista(_chavePDV(_keyCarrinhoPDV));
+      final carrinhoMap = await _storage.carregarLista(
+        _chavePDV(_keyCarrinhoPDV),
+      );
       if (carrinhoMap.isNotEmpty) {
         setState(() {
           _carrinho.clear();
@@ -958,7 +1051,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
 
       // Carregar desconto total
-      final descontoTotalMap = await _storage.carregar(_chavePDV(_keyDescontoTotalPDV));
+      final descontoTotalMap = await _storage.carregar(
+        _chavePDV(_keyDescontoTotalPDV),
+      );
       if (descontoTotalMap != null && descontoTotalMap is double) {
         setState(() {
           _descontoTotal = descontoTotalMap;
@@ -1046,7 +1141,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         return;
       }
 
-      final clienteMap = await _storage.carregarLista(_chavePDV(_keyClientePDV));
+      final clienteMap = await _storage.carregarLista(
+        _chavePDV(_keyClientePDV),
+      );
       if (clienteMap.isNotEmpty) {
         final clienteData = clienteMap.first;
         final clienteId = clienteData['id'] as String?;
@@ -1148,13 +1245,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _buscaController.clear();
     // Limpar storage persistente
     _limparCarrinhoSalvo();
-    debugPrint('>>> [VendaDireta] 🔄 ESTADO DA VENDA RESETADO COM SUCESSO. Pronto para próxima operação.');
+    debugPrint(
+      '>>> [VendaDireta] 🔄 ESTADO DA VENDA RESETADO COM SUCESSO. Pronto para próxima operação.',
+    );
   }
 
   /// Limpa a mesa/comanda vinculada salvando no histórico do DataService
   Future<void> _limparMesaComandaVinculada() async {
     if (_mesaComandaVinculada == null) return;
-    
+
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1163,7 +1262,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           children: [
             const Icon(Icons.warning_amber_rounded, color: Colors.blueAccent),
             const SizedBox(width: 8),
-            Text('Limpar $tipoNome?', style: const TextStyle(color: Colors.white)),
+            Text(
+              'Limpar $tipoNome?',
+              style: const TextStyle(color: Colors.white),
+            ),
           ],
         ),
         content: Text(
@@ -1188,14 +1290,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       try {
         final dataService = Provider.of<DataService>(context, listen: false);
         final authService = Provider.of<AuthService>(context, listen: false);
-        
+
         await dataService.limparMesaComanda(
-          _mesaComandaVinculada!.id, 
+          _mesaComandaVinculada!.id,
           usuario: authService.usuarioAtual?.nome,
         );
-        
+
         _resetarTodaVenda();
-        
+
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -1227,31 +1329,56 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   double get _totalCarrinhoSemDesconto {
-    final base = _carrinho.fold(0.0, (sum, item) => sum + item.subtotalSemDesconto);
+    final base = _carrinho.fold(
+      0.0,
+      (sum, item) => sum + item.subtotalSemDesconto,
+    );
     return _isDelivery ? base + _taxaEntrega : base;
   }
 
   double get _totalItens =>
       _carrinho.fold(0.0, (sum, item) => sum + item.quantidade);
 
-  void _exibirSelecaoAdicionais(Produto produto, {bool manterFoco = false, String? fornecedorPreSelecionado}) {
+  void _exibirSelecaoAdicionais(
+    Produto produto, {
+    bool manterFoco = false,
+    String? fornecedorPreSelecionado,
+  }) {
     List<AdicionalProduto> selecionados = [];
     final precoBase = produto.precoAtual;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final totalAdicionais = selecionados.fold(0.0, (sum, a) => sum + a.preco);
-          
+          final totalAdicionais = selecionados.fold(
+            0.0,
+            (sum, a) => sum + a.preco,
+          );
+
           return AlertDialog(
             backgroundColor: const Color(0xFF1E293B),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(produto.nome, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                Text('Selecione os adicionais desejados', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
+                Text(
+                  produto.nome,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'Selecione os adicionais desejados',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 12,
+                  ),
+                ),
               ],
             ),
             content: SizedBox(
@@ -1264,12 +1391,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       builder: (context, dataService, _) {
                         final empresa = dataService.empresaAtual;
                         // Combinar adicionais específicos do produto com os globais da empresa
-                        final List<AdicionalProduto> listaExibicao = [...produto.adicionais.where((a) => a.ativo)];
-                        
-                        if (empresa != null && empresa.modelosAdicionais.isNotEmpty) {
+                        final List<AdicionalProduto> listaExibicao = [
+                          ...produto.adicionais.where((a) => a.ativo),
+                        ];
+
+                        if (empresa != null &&
+                            empresa.modelosAdicionais.isNotEmpty) {
                           for (final modelo in empresa.modelosAdicionais) {
-                            final nomeNormalizado = modelo.nome.trim().toLowerCase();
-                            if (!listaExibicao.any((a) => a.nome.trim().toLowerCase() == nomeNormalizado)) {
+                            final nomeNormalizado = modelo.nome
+                                .trim()
+                                .toLowerCase();
+                            if (!listaExibicao.any(
+                              (a) =>
+                                  a.nome.trim().toLowerCase() ==
+                                  nomeNormalizado,
+                            )) {
                               listaExibicao.add(modelo);
                             }
                           }
@@ -1279,7 +1415,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           return Center(
                             child: Padding(
                               padding: const EdgeInsets.all(20.0),
-                              child: Text('Nenhum adicional disponível', style: TextStyle(color: Colors.white.withOpacity(0.3))),
+                              child: Text(
+                                'Nenhum adicional disponível',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.3),
+                                ),
+                              ),
                             ),
                           );
                         }
@@ -1289,39 +1430,78 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           itemCount: listaExibicao.length,
                           itemBuilder: (context, index) {
                             final adicional = listaExibicao[index];
-                            final qtd = selecionados.where((s) => s.id == adicional.id).length;
+                            final qtd = selecionados
+                                .where((s) => s.id == adicional.id)
+                                .length;
                             final estaSelecionado = qtd > 0;
-                            
+
                             return Container(
                               margin: const EdgeInsets.only(bottom: 8),
                               decoration: BoxDecoration(
-                                color: estaSelecionado ? Colors.blueAccent.withOpacity(0.1) : Colors.white.withOpacity(0.03),
+                                color: estaSelecionado
+                                    ? Colors.blueAccent.withOpacity(0.1)
+                                    : Colors.white.withOpacity(0.03),
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: estaSelecionado ? Colors.blueAccent : Colors.white.withOpacity(0.05)),
+                                border: Border.all(
+                                  color: estaSelecionado
+                                      ? Colors.blueAccent
+                                      : Colors.white.withOpacity(0.05),
+                                ),
                               ),
                               child: ListTile(
                                 dense: true,
-                                title: Text(adicional.nome, style: const TextStyle(color: Colors.white, fontSize: 14)),
-                                subtitle: Text('+ R\$ ${adicional.preco.toStringAsFixed(2)}', 
-                                  style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                                title: Text(
+                                  adicional.nome,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '+ R\$ ${adicional.preco.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     if (estaSelecionado) ...[
                                       IconButton(
-                                        icon: const Icon(Icons.remove_circle_outline, color: Colors.white38),
+                                        icon: const Icon(
+                                          Icons.remove_circle_outline,
+                                          color: Colors.white38,
+                                        ),
                                         onPressed: () {
                                           setDialogState(() {
-                                            final idx = selecionados.indexWhere((s) => s.id == adicional.id);
-                                            if (idx != -1) selecionados.removeAt(idx);
+                                            final idx = selecionados.indexWhere(
+                                              (s) => s.id == adicional.id,
+                                            );
+                                            if (idx != -1)
+                                              selecionados.removeAt(idx);
                                           });
                                         },
                                       ),
-                                      Text('$qtd', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                      Text(
+                                        '$qtd',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
+                                        ),
+                                      ),
                                     ],
                                     IconButton(
-                                      icon: Icon(estaSelecionado ? Icons.add_circle : Icons.add_circle_outline, 
-                                        color: estaSelecionado ? Colors.blueAccent : Colors.white38),
+                                      icon: Icon(
+                                        estaSelecionado
+                                            ? Icons.add_circle
+                                            : Icons.add_circle_outline,
+                                        color: estaSelecionado
+                                            ? Colors.blueAccent
+                                            : Colors.white38,
+                                      ),
                                       onPressed: () {
                                         setDialogState(() {
                                           selecionados.add(adicional);
@@ -1334,16 +1514,25 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             );
                           },
                         );
-                      }
+                      },
                     ),
                   ),
                   const Divider(color: Colors.white10, height: 24),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Total p/ item:', style: TextStyle(color: Colors.white60)),
-                      Text('R\$ ${(precoBase + totalAdicionais).toStringAsFixed(2)}', 
-                        style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                      const Text(
+                        'Total p/ item:',
+                        style: TextStyle(color: Colors.white60),
+                      ),
+                      Text(
+                        'R\$ ${(precoBase + totalAdicionais).toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: Colors.greenAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -1353,7 +1542,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('CANCELAR', style: TextStyle(color: Colors.white38)),
+                child: const Text(
+                  'CANCELAR',
+                  style: TextStyle(color: Colors.white38),
+                ),
               ),
               ElevatedButton(
                 onPressed: () {
@@ -1372,17 +1564,23 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         preco: precoItem,
                         isServico: false,
                         quantidade: _quantidadeDigitada,
-                        fornecedorNome: fornecedorPreSelecionado ?? produto.fornecedorNome,
+                        fornecedorNome:
+                            fornecedorPreSelecionado ?? produto.fornecedorNome,
                         observacao: produto.observacaoPadrao,
                         adicionais: List<AdicionalProduto>.from(selecionados),
-                        precoSemPromocao: (precoItem < produto.preco - 0.001) ? produto.preco : null,
+                        precoSemPromocao: (precoItem < produto.preco - 0.001)
+                            ? produto.preco
+                            : null,
                       ),
                     );
                   });
-                  
+
                   // Sincronização com Mesa/Comanda se houver
                   if (_mesaComandaVinculada != null) {
-                    final dataService = Provider.of<DataService>(context, listen: false);
+                    final dataService = Provider.of<DataService>(
+                      context,
+                      listen: false,
+                    );
                     final newItemMc = ItemMesaComanda(
                       id: const Uuid().v4(),
                       itemId: produto.id,
@@ -1392,32 +1590,49 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       isServico: false,
                       paraCozinha: produto.paraCozinha,
                       paraBar: produto.paraBar,
-                      local: (produto.departamentoId != null && produto.departamentoId!.isNotEmpty)
-                          ? (dataService.nomeDepartamento(produto.departamentoId).isNotEmpty
-                              ? dataService.nomeDepartamento(produto.departamentoId)
-                              : (produto.paraCozinha == true ? 'Cozinha' : (produto.paraBar == true ? 'Bar' : null)))
-                          : (produto.paraCozinha == true ? 'Cozinha' : (produto.paraBar == true ? 'Bar' : null)),
+                      local:
+                          (produto.departamentoId != null &&
+                              produto.departamentoId!.isNotEmpty)
+                          ? (dataService
+                                    .nomeDepartamento(produto.departamentoId)
+                                    .isNotEmpty
+                                ? dataService.nomeDepartamento(
+                                    produto.departamentoId,
+                                  )
+                                : (produto.paraCozinha == true
+                                      ? 'Cozinha'
+                                      : (produto.paraBar == true
+                                            ? 'Bar'
+                                            : null)))
+                          : (produto.paraCozinha == true
+                                ? 'Cozinha'
+                                : (produto.paraBar == true ? 'Bar' : null)),
                       status: StatusItem.pendente,
                       observacao: produto.observacaoPadrao,
                       adicionais: List<AdicionalProduto>.from(selecionados),
-                      usuarioCriou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+                      usuarioCriou:
+                          Provider.of<AuthService>(
+                            context,
+                            listen: false,
+                          ).usuarioAtual?.nome ??
+                          'PDV',
                     );
                     _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(
                       itens: [..._mesaComandaVinculada!.itens, newItemMc],
                     );
                     dataService.updateMesaComanda(_mesaComandaVinculada!);
                   }
-                  
+
                   _mostrarNotificacaoItemAdicionado(
                     nome: produto.nome,
                     quantidade: _quantidadeDigitada,
-                    quantidadeTotal: _quantidadeDigitada, 
+                    quantidadeTotal: _quantidadeDigitada,
                     preco: produto.precoAtual + totalAdicionais,
                     jaExistia: false,
                     isServico: false,
                     totalCarrinho: _totalCarrinho,
                   );
-                  
+
                   setState(() => _quantidadeDigitada = 1);
                   if (!manterFoco) {
                     setState(() => _termoBusca = '');
@@ -1425,7 +1640,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     _buscaFocusNode.requestFocus();
                   }
                   _salvarCarrinho();
-                  
+
                   // Scroll para o topo para mostrar o novo item (lista invertida)
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (_carrinhoScrollController.hasClients) {
@@ -1436,31 +1651,46 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       );
                     }
                   });
-                  
+
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blueAccent,
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
-                child: const Text('ADICIONAR AO CARRINHO', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                child: const Text(
+                  'ADICIONAR AO CARRINHO',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ],
           );
-        }
+        },
       ),
     );
   }
 
   void _exibirSelecaoFornecedor(Produto produto, {bool manterFoco = false}) {
-    debugPrint('>>> [PDV_DEBUG] Abrindo diálogo de fornecedor para: ${produto.nome}');
+    debugPrint(
+      '>>> [PDV_DEBUG] Abrindo diálogo de fornecedor para: ${produto.nome}',
+    );
     // Filtrar fornecedores: remover "Geral" da lista de opções se houver outros
     final opcoes = produto.estoquePorFornecedor.entries
         .where((e) => e.key.trim().toLowerCase() != 'geral')
         .toList();
-    
-    debugPrint('>>> [PDV_DEBUG] Opções finais: ${opcoes.map((e) => e.key).toList()}');
+
+    debugPrint(
+      '>>> [PDV_DEBUG] Opções finais: ${opcoes.map((e) => e.key).toList()}',
+    );
 
     showDialog(
       context: context,
@@ -1470,9 +1700,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(produto.nome, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(
+              produto.nome,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 4),
-            const Text('Selecione o fornecedor:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+            const Text(
+              'Selecione o fornecedor:',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
           ],
         ),
         content: SizedBox(
@@ -1491,15 +1731,43 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     border: Border.all(color: Colors.white.withOpacity(0.05)),
                   ),
                   child: ListTile(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    title: Text(nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
-                    trailing: Text('$qtd un', style: TextStyle(color: qtd > 0 ? Colors.greenAccent : Colors.redAccent, fontSize: 12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    title: Text(
+                      nome,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    trailing: Text(
+                      '$qtd un',
+                      style: TextStyle(
+                        color: qtd > 0 ? Colors.greenAccent : Colors.redAccent,
+                        fontSize: 12,
+                      ),
+                    ),
                     onTap: () {
                       Navigator.pop(context);
-                      if (_deveMostrarAdicionais(produto, Provider.of<DataService>(context, listen: false).empresaAtual)) {
-                        _exibirSelecaoAdicionais(produto, manterFoco: manterFoco, fornecedorPreSelecionado: nome);
+                      if (_deveMostrarAdicionais(
+                        produto,
+                        Provider.of<DataService>(
+                          context,
+                          listen: false,
+                        ).empresaAtual,
+                      )) {
+                        _exibirSelecaoAdicionais(
+                          produto,
+                          manterFoco: manterFoco,
+                          fornecedorPreSelecionado: nome,
+                        );
                       } else {
-                        _efetivarAdicaoAoCarrinho(produto, fornecedorNome: nome, manterFoco: manterFoco);
+                        _efetivarAdicaoAoCarrinho(
+                          produto,
+                          fornecedorNome: nome,
+                          manterFoco: manterFoco,
+                        );
                       }
                     },
                   ),
@@ -1594,28 +1862,40 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         spacing: 8,
                         runSpacing: 8,
                         children: opcoes.map((variacao) {
-                          final isSelected = selecoes[nomeAtributo]?.id == variacao.id;
+                          final isSelected =
+                              selecoes[nomeAtributo]?.id == variacao.id;
                           final temEstoque = variacao.estoque > 0;
 
                           return InkWell(
                             onTap: temEstoque
                                 ? () {
                                     setDialogState(() {
-                                      selecoes[nomeAtributo] = isSelected ? null : variacao;
+                                      selecoes[nomeAtributo] = isSelected
+                                          ? null
+                                          : variacao;
                                     });
                                   }
                                 : null,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
                               decoration: BoxDecoration(
                                 color: isSelected
                                     ? Colors.tealAccent
-                                    : (temEstoque ? Colors.white10 : Colors.white.withValues(alpha: 0.05)),
+                                    : (temEstoque
+                                          ? Colors.white10
+                                          : Colors.white.withValues(
+                                              alpha: 0.05,
+                                            )),
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
                                   color: isSelected
                                       ? Colors.tealAccent
-                                      : (temEstoque ? Colors.white24 : Colors.white10),
+                                      : (temEstoque
+                                            ? Colors.white24
+                                            : Colors.white10),
                                   width: isSelected ? 2 : 1,
                                 ),
                               ),
@@ -1632,7 +1912,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                           fontWeight: FontWeight.w600,
                                           color: isSelected
                                               ? const Color(0xFF0F172A)
-                                              : (temEstoque ? Colors.white : Colors.white30),
+                                              : (temEstoque
+                                                    ? Colors.white
+                                                    : Colors.white30),
                                         ),
                                       ),
                                       if (isSelected) ...[
@@ -1645,7 +1927,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                       ],
                                     ],
                                   ),
-                                  if (variacao.precoAdicional != null && variacao.precoAdicional != 0)
+                                  if (variacao.precoAdicional != null &&
+                                      variacao.precoAdicional != 0)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
                                       child: Text(
@@ -1655,8 +1938,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                         style: TextStyle(
                                           fontSize: 10,
                                           color: isSelected
-                                              ? const Color(0xFF0F172A).withOpacity(0.7)
-                                              : Colors.tealAccent.withOpacity(0.7),
+                                              ? const Color(
+                                                  0xFF0F172A,
+                                                ).withOpacity(0.7)
+                                              : Colors.tealAccent.withOpacity(
+                                                  0.7,
+                                                ),
                                         ),
                                       ),
                                     ),
@@ -1717,10 +2004,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   variacoesSelecionadas: variacoesSelecionadas,
                 );
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.tealAccent),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.tealAccent,
+              ),
               child: const Text(
                 'Confirmar',
-                style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -1729,14 +2021,27 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _efetivarAdicaoAoCarrinho(dynamic item, {String? fornecedorNome, bool manterFoco = false, List<OpcaoPerguntaSelecao>? opcoesCombo, List<VariacaoProduto>? variacoesSelecionadas, double quantidade = 1}) {
+  void _efetivarAdicaoAoCarrinho(
+    dynamic item, {
+    String? fornecedorNome,
+    bool manterFoco = false,
+    List<OpcaoPerguntaSelecao>? opcoesCombo,
+    List<VariacaoProduto>? variacoesSelecionadas,
+    double quantidade = 1,
+  }) {
     final isServico = item is Servico;
     final id = item.id;
     final nome = item.nome;
-    final empresaAtual = Provider.of<DataService>(context, listen: false).empresaAtual;
-    final modificadorPerfil = empresaAtual?.getModificadorPerfilValor(_perfilPrecoEfetivo) ?? 0.0;
-    final tipoModificador = empresaAtual?.getModificadorPerfilTipo(_perfilPrecoEfetivo) ?? 'desconto';
-    
+    final empresaAtual = Provider.of<DataService>(
+      context,
+      listen: false,
+    ).empresaAtual;
+    final modificadorPerfil =
+        empresaAtual?.getModificadorPerfilValor(_perfilPrecoEfetivo) ?? 0.0;
+    final tipoModificador =
+        empresaAtual?.getModificadorPerfilTipo(_perfilPrecoEfetivo) ??
+        'desconto';
+
     // Forma de venda selecionada (se veio do diálogo de múltiplas formas)
     final FormaVenda? formaSelecionada = _formaVendaPendente;
     // Reset imediato para não contaminar a próxima adição
@@ -1747,13 +2052,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     double preco = isServico
         ? item.preco
         : (formaSelecionada != null && formaSelecionada.preco > 0)
-            ? formaSelecionada.preco
-            : (item as Produto).getPrecoInteligente(
-                perfilCliente: _perfilPrecoEfetivo,
-                modificadorPerfil: modificadorPerfil,
-                tipoModificador: tipoModificador,
-                quantidade: quantidade,
-              );
+        ? formaSelecionada.preco
+        : (item as Produto).getPrecoInteligente(
+            perfilCliente: _perfilPrecoEfetivo,
+            modificadorPerfil: modificadorPerfil,
+            tipoModificador: tipoModificador,
+            quantidade: quantidade,
+          );
     final precoBase = preco;
 
     // Preço de tabela SEM o desconto do perfil de preços — usado para exibir o
@@ -1781,7 +2086,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // Aplica as promoções empilhadas (por data, dia da semana, quantidade ou
     // valor mínimo) usando a quantidade que está sendo adicionada.
     if (!isServico && item is Produto) {
-      final qtdPromo = _quantidadeDigitada > 0 ? _quantidadeDigitada : quantidade;
+      final qtdPromo = _quantidadeDigitada > 0
+          ? _quantidadeDigitada
+          : quantidade;
       preco = item.aplicarPromocoes(
         preco,
         quantidade: qtdPromo,
@@ -1800,26 +2107,34 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     // Guarda o preço base (sem promoção) para exibir o desconto na conferência.
-    final double? precoSemPromocao = (preco < precoBase - 0.001) ? precoBase : null;
+    final double? precoSemPromocao = (preco < precoBase - 0.001)
+        ? precoBase
+        : null;
     final descricao = isServico ? null : (item as Produto).descricao;
     final observacao = isServico ? null : (item as Produto).observacaoPadrao;
     final fornecedorId = isServico ? null : (item as Produto).fornecedorId;
 
     // Se fornecedorNome não foi passado, tenta usar o do produto
-    final fNome = fornecedorNome ?? (isServico ? null : (item as Produto).fornecedorNome);
+    final fNome =
+        fornecedorNome ?? (isServico ? null : (item as Produto).fornecedorNome);
 
     List<OpcaoPerguntaSelecao>? finalOpcoesCombo = opcoesCombo;
-    if (item is Produto && item.ehComposto && item.exibirComposicaoPdv && (finalOpcoesCombo == null || finalOpcoesCombo.isEmpty)) {
+    if (item is Produto &&
+        item.ehComposto &&
+        item.exibirComposicaoPdv &&
+        (finalOpcoesCombo == null || finalOpcoesCombo.isEmpty)) {
       final dataService = Provider.of<DataService>(context, listen: false);
       finalOpcoesCombo = [];
       for (final itemComp in item.composicao) {
         // Buscar nome do ingrediente na lista global de produtos
         final prodIngrediente = dataService.produtos.firstWhere(
           (p) => p.id == itemComp.produtoId,
-          orElse: () => null as dynamic, // cast para evitar erro de tipo no orElse
+          orElse: () =>
+              null as dynamic, // cast para evitar erro de tipo no orElse
         );
         final nomeIngrediente = prodIngrediente?.nome ?? 'Ingrediente';
-        final qtdFormatada = itemComp.quantidade == itemComp.quantidade.roundToDouble()
+        final qtdFormatada =
+            itemComp.quantidade == itemComp.quantidade.roundToDouble()
             ? itemComp.quantidade.toStringAsFixed(0)
             : itemComp.quantidade.toStringAsFixed(2);
         finalOpcoesCombo.add(
@@ -1836,10 +2151,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Verificar se já existe no carrinho com MESMO fornecedor E MESMAS variações
     // Não agrupa itens de combo/variação para manter as seleções separadas no carrinho
-    final temVariacoes = variacoesSelecionadas != null && variacoesSelecionadas.isNotEmpty;
-    final index = (finalOpcoesCombo != null && finalOpcoesCombo.isNotEmpty) || temVariacoes
-        ? -1 
-        : _carrinho.indexWhere((c) => c.id == id && c.adicionais.isEmpty && c.opcoesCombo.isEmpty && (c.variacoesSelecionadas ?? []).isEmpty && c.fornecedorNome == fNome);
+    final temVariacoes =
+        variacoesSelecionadas != null && variacoesSelecionadas.isNotEmpty;
+    final index =
+        (finalOpcoesCombo != null && finalOpcoesCombo.isNotEmpty) ||
+            temVariacoes
+        ? -1
+        : _carrinho.indexWhere(
+            (c) =>
+                c.id == id &&
+                c.adicionais.isEmpty &&
+                c.opcoesCombo.isEmpty &&
+                (c.variacoesSelecionadas ?? []).isEmpty &&
+                c.fornecedorNome == fNome,
+          );
     final bool jaExistia = index >= 0;
 
     if (jaExistia) {
@@ -1877,12 +2202,28 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     _tocarSomPDV('notification.mp3', tipo: 'adicionar');
-    _posAdicaoAoCarrinho(item, nome, preco, isServico, jaExistia, index, manterFoco);
+    _posAdicaoAoCarrinho(
+      item,
+      nome,
+      preco,
+      isServico,
+      jaExistia,
+      index,
+      manterFoco,
+    );
   }
 
-  void _posAdicaoAoCarrinho(dynamic item, String nome, double preco, bool isServico, bool jaExistia, int index, bool manterFoco) {
+  void _posAdicaoAoCarrinho(
+    dynamic item,
+    String nome,
+    double preco,
+    bool isServico,
+    bool jaExistia,
+    int index,
+    bool manterFoco,
+  ) {
     final id = item.id;
-    
+
     // SICRONIZAÇÃO COM COMANDA/MESA (se houver vínculo)
     if (_mesaComandaVinculada != null) {
       final dataService = Provider.of<DataService>(context, listen: false);
@@ -1897,13 +2238,29 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         paraBar: isServico ? false : (item as Produto).paraBar,
         local: isServico
             ? null
-            : ((item as Produto).departamentoId != null && (item as Produto).departamentoId!.isNotEmpty
-                ? (dataService.nomeDepartamento((item as Produto).departamentoId).isNotEmpty
-                    ? dataService.nomeDepartamento((item as Produto).departamentoId)
-                    : ((item as Produto).paraCozinha == true ? 'Cozinha' : ((item as Produto).paraBar == true ? 'Bar' : null)))
-                : ((item as Produto).paraCozinha == true ? 'Cozinha' : ((item as Produto).paraBar == true ? 'Bar' : null))),
+            : ((item as Produto).departamentoId != null &&
+                      (item as Produto).departamentoId!.isNotEmpty
+                  ? (dataService
+                            .nomeDepartamento((item as Produto).departamentoId)
+                            .isNotEmpty
+                        ? dataService.nomeDepartamento(
+                            (item as Produto).departamentoId,
+                          )
+                        : ((item as Produto).paraCozinha == true
+                              ? 'Cozinha'
+                              : ((item as Produto).paraBar == true
+                                    ? 'Bar'
+                                    : null)))
+                  : ((item as Produto).paraCozinha == true
+                        ? 'Cozinha'
+                        : ((item as Produto).paraBar == true ? 'Bar' : null))),
         status: StatusItem.pendente,
-        usuarioCriou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+        usuarioCriou:
+            Provider.of<AuthService>(
+              context,
+              listen: false,
+            ).usuarioAtual?.nome ??
+            'PDV',
       );
 
       _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(
@@ -1939,7 +2296,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _termoBusca = '';
     });
     _buscaController.clear();
-    
+
     // Força o foco persistente no campo de busca agendando após a renderização do frame
     // e com pequeno delay para garantir o foco mesmo após o fechamento de modais (ex: diálogos de quantidade/fornecedor)
     _buscaFocusNode.requestFocus();
@@ -1994,7 +2351,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       color: Colors.blueAccent.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.import_export, color: Colors.blueAccent, size: 20),
+                    child: const Icon(
+                      Icons.import_export,
+                      color: Colors.blueAccent,
+                      size: 20,
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -2022,7 +2383,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white38, size: 18),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white38,
+                      size: 18,
+                    ),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -2043,7 +2408,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   default:
                     icone = Icons.inventory_2_outlined;
                 }
-                final baixaFormatada = forma.quantidadeBaixa == forma.quantidadeBaixa.roundToDouble()
+                final baixaFormatada =
+                    forma.quantidadeBaixa ==
+                        forma.quantidadeBaixa.roundToDouble()
                     ? forma.quantidadeBaixa.toStringAsFixed(0)
                     : forma.quantidadeBaixa.toString();
                 return Padding(
@@ -2056,7 +2423,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.05),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white.withOpacity(0.1)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.1),
+                        ),
                       ),
                       child: Row(
                         children: [
@@ -2088,7 +2457,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             ),
                           ),
                           Text(
-                            _formatoMoeda.format(forma.preco > 0 ? forma.preco : produto.preco),
+                            _formatoMoeda.format(
+                              forma.preco > 0 ? forma.preco : produto.preco,
+                            ),
                             style: const TextStyle(
                               color: Colors.cyanAccent,
                               fontWeight: FontWeight.bold,
@@ -2141,12 +2512,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           context: context,
           builder: (ctx) => AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             title: Row(
               children: [
                 Icon(Icons.lock_outline, color: Colors.redAccent, size: 28),
                 const SizedBox(width: 10),
-                const Text('Produto Desativado', style: TextStyle(color: Colors.white, fontSize: 18)),
+                const Text(
+                  'Produto Desativado',
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
               ],
             ),
             content: Text(
@@ -2156,7 +2532,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('ENTENDI', style: TextStyle(color: Colors.blueAccent)),
+                child: const Text(
+                  'ENTENDI',
+                  style: TextStyle(color: Colors.blueAccent),
+                ),
               ),
             ],
           ),
@@ -2173,12 +2552,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           context: context,
           builder: (ctx) => AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             title: const Row(
               children: [
-                Icon(Icons.schedule_outlined, color: Colors.orangeAccent, size: 28),
+                Icon(
+                  Icons.schedule_outlined,
+                  color: Colors.orangeAccent,
+                  size: 28,
+                ),
                 SizedBox(width: 10),
-                Text('Produto Indisponível', style: TextStyle(color: Colors.white, fontSize: 18)),
+                Text(
+                  'Produto Indisponível',
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
               ],
             ),
             content: Text(
@@ -2189,7 +2577,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('ENTENDI', style: TextStyle(color: Colors.blueAccent)),
+                child: const Text(
+                  'ENTENDI',
+                  style: TextStyle(color: Colors.blueAccent),
+                ),
               ),
             ],
           ),
@@ -2200,8 +2591,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Reserva de estoque: com a configuração ligada, o disponível é o estoque
     // menos o que outros pedidos em aberto já seguram.
-    final faltaEstoque = Provider.of<DataService>(context, listen: false)
-        .validarEstoqueDisponivel(produto);
+    final faltaEstoque = Provider.of<DataService>(
+      context,
+      listen: false,
+    ).validarEstoqueDisponivel(produto);
     if (faltaEstoque != null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2255,31 +2648,41 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
     final dataService = Provider.of<DataService>(context, listen: false);
     final empresa = dataService.empresaAtual;
-    
+
     final config = empresa?.configuracoes ?? {};
     final ativarSelecaoFornecedor = config['selecionarFornecedorPDV'] == true;
 
     // SnackBar temporário para ajudar o usuário a entender por que não aparece
     if (ativarSelecaoFornecedor) {
-       debugPrint('>>> [DEBUG_PDV] Coca: ${produto.estoquePorFornecedor}');
+      debugPrint('>>> [DEBUG_PDV] Coca: ${produto.estoquePorFornecedor}');
     }
 
     // 1. FORNECEDOR (PRIORIDADE)
-    if (ativarSelecaoFornecedor && !isServico && produto.estoquePorFornecedor.isNotEmpty) {
+    if (ativarSelecaoFornecedor &&
+        !isServico &&
+        produto.estoquePorFornecedor.isNotEmpty) {
       final opcoesValidas = produto.estoquePorFornecedor.entries
           .where((e) => e.key.trim().toLowerCase() != 'geral')
           .toList();
-      
+
       if (opcoesValidas.length > 1) {
         _exibirSelecaoFornecedor(produto, manterFoco: manterFoco);
         return;
       } else if (opcoesValidas.length == 1) {
         final fornecedor = opcoesValidas.first.key;
         if (_deveMostrarAdicionais(produto, empresa)) {
-          _exibirSelecaoAdicionais(produto, manterFoco: manterFoco, fornecedorPreSelecionado: fornecedor);
+          _exibirSelecaoAdicionais(
+            produto,
+            manterFoco: manterFoco,
+            fornecedorPreSelecionado: fornecedor,
+          );
           return;
         }
-        _efetivarAdicaoAoCarrinho(produto, fornecedorNome: fornecedor, manterFoco: manterFoco);
+        _efetivarAdicaoAoCarrinho(
+          produto,
+          fornecedorNome: fornecedor,
+          manterFoco: manterFoco,
+        );
         return;
       }
     }
@@ -2293,21 +2696,48 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // 3. DIÁLOGO DE QUANTIDADE AUTOMÁTICO (Para produtos fracionáveis: KG, L, M, etc)
     // Se o usuário já digitou uma quantidade na barra de busca (ex: 0,200), respeitamos e não abrimos o dialog.
     final unidadesFracionaveis = [
-      'KG', 'KILO', 'KILOS', 'KILOGRAMA', 'KILOGRAMAS', 'G', 'GR', 'GRAMA', 'GRAMAS', 
-      'L', 'LT', 'LITRO', 'LITROS', 'ML', 'MILILITRO', 'MILILITROS', 
-      'METRO', 'METROS', 'M', 'CM', 'MM'
+      'KG',
+      'KILO',
+      'KILOS',
+      'KILOGRAMA',
+      'KILOGRAMAS',
+      'G',
+      'GR',
+      'GRAMA',
+      'GRAMAS',
+      'L',
+      'LT',
+      'LITRO',
+      'LITROS',
+      'ML',
+      'MILILITRO',
+      'MILILITROS',
+      'METRO',
+      'METROS',
+      'M',
+      'CM',
+      'MM',
     ];
     final unidadeProd = produto.unidade.trim().toUpperCase();
-    final ehFracionavel = unidadesFracionaveis.contains(unidadeProd) || 
-                          unidadeProd.startsWith('KG') || 
-                          unidadeProd.startsWith('KIL') || 
-                          unidadeProd.startsWith('LIT') ||
-                          unidadeProd.startsWith('MET');
-    
-    debugPrint('>>> [PDV] Adicionando item: ${produto.nome}, Unidade: "$unidadeProd", EhFracionavel: $ehFracionavel, QtdDigitada: $_quantidadeDigitada');
+    final ehFracionavel =
+        unidadesFracionaveis.contains(unidadeProd) ||
+        unidadeProd.startsWith('KG') ||
+        unidadeProd.startsWith('KIL') ||
+        unidadeProd.startsWith('LIT') ||
+        unidadeProd.startsWith('MET');
 
-    if (ehFracionavel && _quantidadeDigitada == 1.0) {
-      _exibirDialogoQuantidade(produto, manterFoco: manterFoco);
+    debugPrint(
+      '>>> [PDV] Adicionando item: ${produto.nome}, Unidade: "$unidadeProd", EhFracionavel: $ehFracionavel, QtdDigitada: $_quantidadeDigitada',
+    );
+
+    if (_quantidadeDigitada == 1.0 &&
+        (ehFracionavel ||
+            (config['solicitarQuantidadeAoAdicionarPDV'] == true))) {
+      _exibirDialogoQuantidade(
+        produto,
+        manterFoco: manterFoco,
+        usarBalanca: ehFracionavel,
+      );
       return;
     }
 
@@ -2323,7 +2753,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   /// Verifica se o produto é composto com pelo menos uma conversão configurada.
   bool _produtoComConversaoComposicao(Produto produto) {
     if (!produto.ehComposto || produto.composicao.isEmpty) return false;
-    return produto.composicao.any((c) => c.pesoTotalSaco != null && c.fracaoBase != null);
+    return produto.composicao.any(
+      (c) => c.pesoTotalSaco != null && c.fracaoBase != null,
+    );
   }
 
   /// Texto da conversão de baixa a partir do objeto Produto (para diálogos).
@@ -2351,14 +2783,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   /// Exibe um diálogo rápido para digitar a quantidade (ideal para itens pesáveis/fracionados)
-  void _exibirDialogoQuantidade(Produto produto, {bool manterFoco = false}) async {
-    final TextEditingController qtdController = TextEditingController();
+  void _exibirDialogoQuantidade(
+    Produto produto, {
+    bool manterFoco = false,
+    bool usarBalanca = true,
+  }) async {
+    final TextEditingController qtdController = TextEditingController(
+      text: '1',
+    );
     final focusNode = FocusNode();
 
     // Carregar configurações locais da balança
     final balancaService = BalancaService();
     final config = await balancaService.obterConfiguracao();
-    final bool balancaAtiva = config['ativo'] == true;
+    final bool balancaAtiva = usarBalanca && config['ativo'] == true;
 
     if (!mounted) return;
 
@@ -2372,29 +2810,31 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       barrierDismissible: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          
           // Função interna para ler da balança
           Future<void> lerDaBalanca() async {
             setDialogState(() {
               lendo = true;
               statusText = "Lendo peso da balança...";
             });
-            
+
             final res = await balancaService.lerPeso();
             final peso = (res['peso'] as num?)?.toDouble() ?? 0.0;
             final simulado = res['simulado'] == true;
             final erro = res['erro'] as String?;
-            
+
             setDialogState(() {
               lendo = false;
               pesoSimulado = simulado;
               if (peso > 0) {
-                qtdController.text = peso.toStringAsFixed(3).replaceAll('.', ',');
-                statusText = simulado 
+                qtdController.text = peso
+                    .toStringAsFixed(3)
+                    .replaceAll('.', ',');
+                statusText = simulado
                     ? "Peso Simulado: ${peso.toStringAsFixed(3)} kg"
                     : "Peso Lido: ${peso.toStringAsFixed(3)} kg";
                 if (erro != null) {
-                  statusText = "Simulado: ${peso.toStringAsFixed(3)} kg\n(Porta COM indisponível)";
+                  statusText =
+                      "Simulado: ${peso.toStringAsFixed(3)} kg\n(Porta COM indisponível)";
                 }
               } else {
                 statusText = erro ?? "Erro ao ler peso da balança.";
@@ -2413,15 +2853,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
               side: BorderSide(
-                color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent, 
-                width: 1.5
+                color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent,
+                width: 1.5,
               ),
             ),
             title: Row(
               children: [
                 Icon(
-                  balancaAtiva ? Icons.scale_rounded : Icons.edit_note_rounded, 
-                  color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent
+                  balancaAtiva ? Icons.scale_rounded : Icons.edit_note_rounded,
+                  color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -2443,25 +2883,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       produto.vendePorEmbalagem
                           ? 'Unidade de venda: ${produto.unidadeVendaLabel} (${_formatarQtdBaixa(produto)} un. por ${produto.unidadeVenda})'
                           : 'Unidade: ${produto.unidade.toUpperCase()}',
-                      style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 14,
+                      ),
                     ),
                     if (balancaAtiva)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: pesoSimulado ? Colors.orange.withOpacity(0.15) : Colors.teal.withOpacity(0.15),
+                          color: pesoSimulado
+                              ? Colors.orange.withOpacity(0.15)
+                              : Colors.teal.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                            color: pesoSimulado ? Colors.orangeAccent : Colors.tealAccent,
-                            width: 0.5
+                            color: pesoSimulado
+                                ? Colors.orangeAccent
+                                : Colors.tealAccent,
+                            width: 0.5,
                           ),
                         ),
                         child: Text(
                           pesoSimulado ? 'SIMULADOR ATIVO' : 'BALANÇA ONLINE',
                           style: TextStyle(
-                            color: pesoSimulado ? Colors.orangeAccent : Colors.tealAccent,
+                            color: pesoSimulado
+                                ? Colors.orangeAccent
+                                : Colors.tealAccent,
                             fontSize: 10,
-                            fontWeight: FontWeight.bold
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
@@ -2473,15 +2925,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.amber.withOpacity(0.08),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.amber.withOpacity(0.25)),
+                        border: Border.all(
+                          color: Colors.amber.withOpacity(0.25),
+                        ),
                       ),
                       child: Text(
                         '⚖️ Baixa no estoque: ${_textoConversaoBaixaProduto(produto)}',
-                        style: const TextStyle(color: Colors.amber, fontSize: 11, height: 1.35),
+                        style: const TextStyle(
+                          color: Colors.amber,
+                          fontSize: 11,
+                          height: 1.35,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -2494,22 +2955,34 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       controller: qtdController,
                       focusNode: focusNode,
                       autofocus: !balancaAtiva,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                      ),
                       textAlign: TextAlign.center,
                       decoration: InputDecoration(
                         hintText: '0,000',
-                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.1)),
+                        hintStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.1),
+                        ),
                         enabledBorder: UnderlineInputBorder(
                           borderSide: BorderSide(
-                            color: balancaAtiva ? Colors.tealAccent.withOpacity(0.5) : Colors.blueAccent
-                          )
+                            color: balancaAtiva
+                                ? Colors.tealAccent.withOpacity(0.5)
+                                : Colors.blueAccent,
+                          ),
                         ),
                         focusedBorder: UnderlineInputBorder(
                           borderSide: BorderSide(
-                            color: balancaAtiva ? Colors.tealAccent : Colors.blueAccent, 
-                            width: 2
-                          )
+                            color: balancaAtiva
+                                ? Colors.tealAccent
+                                : Colors.blueAccent,
+                            width: 2,
+                          ),
                         ),
                       ),
                       onSubmitted: (val) {
@@ -2518,7 +2991,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         if (qtd > 0) {
                           Navigator.pop(context);
                           setState(() => _quantidadeDigitada = qtd);
-                          _efetivarAdicaoAoCarrinho(produto, manterFoco: manterFoco);
+                          _efetivarAdicaoAoCarrinho(
+                            produto,
+                            manterFoco: manterFoco,
+                          );
                         }
                       },
                     ),
@@ -2530,7 +3006,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           height: 24,
                           child: CircularProgressIndicator(
                             strokeWidth: 2.5,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.tealAccent),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.tealAccent,
+                            ),
                           ),
                         ),
                       ),
@@ -2543,9 +3021,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     child: Text(
                       statusText!,
                       style: TextStyle(
-                        color: pesoSimulado ? Colors.orangeAccent.withOpacity(0.8) : Colors.white60,
+                        color: pesoSimulado
+                            ? Colors.orangeAccent.withOpacity(0.8)
+                            : Colors.white60,
                         fontSize: 12,
-                        height: 1.3
+                        height: 1.3,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -2556,19 +3036,33 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   children: [
                     Text(
                       'Use vírgula para valores decimais',
-                      style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.4),
+                        fontSize: 11,
+                      ),
                     ),
                     if (balancaAtiva) ...[
                       const SizedBox(width: 12),
                       TextButton.icon(
                         onPressed: lendo ? null : () => lerDaBalanca(),
-                        icon: const Icon(Icons.refresh, size: 14, color: Colors.tealAccent),
+                        icon: const Icon(
+                          Icons.refresh,
+                          size: 14,
+                          color: Colors.tealAccent,
+                        ),
                         label: const Text(
                           'LER NOVAMENTE',
-                          style: TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.tealAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           minimumSize: Size.zero,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
@@ -2581,12 +3075,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                child: const Text(
+                  'CANCELAR',
+                  style: TextStyle(color: Colors.white54),
+                ),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: balancaAtiva ? Colors.teal : Colors.blueAccent,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  backgroundColor: balancaAtiva
+                      ? Colors.teal
+                      : Colors.blueAccent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 onPressed: () {
                   final valor = qtdController.text.replaceAll(',', '.');
@@ -2597,7 +3098,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     _efetivarAdicaoAoCarrinho(produto, manterFoco: manterFoco);
                   }
                 },
-                child: const Text('ADICIONAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'ADICIONAR',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ],
           );
@@ -2613,11 +3120,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
   bool _deveMostrarAdicionais(Produto produto, Empresa? empresa) {
     if (!produto.temAdicionais) return false;
-    
+
     // Verificar se realmente tem algum adicional para mostrar (produto ou global)
     final especificos = produto.adicionais.where((a) => a.ativo).isNotEmpty;
     final globais = (empresa?.modelosAdicionais ?? []).isNotEmpty;
-    
+
     return especificos || globais;
   }
 
@@ -2671,7 +3178,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               const SizedBox(height: 4),
               Text(
                 produtoAlvo.nome.toUpperCase(),
-                style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 11,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -2699,7 +3209,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       // Atualiza o item com a nova forma: preço, baixa e rótulo.
                       // Reconstrói o ItemCarrinho para também atualizar o precoOriginal
                       // (evita exibir "preço alterado/desconto" falso após a troca).
-                      final precoBaseForma = forma.preco > 0 ? forma.preco : produtoAlvo.preco;
+                      final precoBaseForma = forma.preco > 0
+                          ? forma.preco
+                          : produtoAlvo.preco;
                       final novoPreco = produtoAlvo.aplicarPromocoes(
                         precoBaseForma,
                         quantidade: item.quantidade,
@@ -2721,13 +3233,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           observacao: itemAtual.observacao,
                           adicionais: itemAtual.adicionais,
                           opcoesCombo: itemAtual.opcoesCombo,
-                          variacoesSelecionadas: itemAtual.variacoesSelecionadas,
+                          variacoesSelecionadas:
+                              itemAtual.variacoesSelecionadas,
                           isBrinde: itemAtual.isBrinde,
                           baixaProporcional: itemAtual.baixaProporcional,
                           unidadeVenda: forma.tipo,
                           quantidadeBaixa: forma.quantidadeBaixa,
-                          precoSemPromocao:
-                              (novoPreco < precoBaseForma - 0.001) ? precoBaseForma : null,
+                          precoSemPromocao: (novoPreco < precoBaseForma - 0.001)
+                              ? precoBaseForma
+                              : null,
                           precoTabela: itemAtual.precoTabela,
                         );
                       });
@@ -2753,7 +3267,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         children: [
                           Icon(
                             icone,
-                            color: selecionada ? Colors.blueAccent : Colors.white70,
+                            color: selecionada
+                                ? Colors.blueAccent
+                                : Colors.white70,
                             size: 20,
                           ),
                           const SizedBox(width: 10),
@@ -2768,10 +3284,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             ),
                           ),
                           if (selecionada)
-                            const Icon(Icons.check_circle, color: Colors.blueAccent, size: 18)
+                            const Icon(
+                              Icons.check_circle,
+                              color: Colors.blueAccent,
+                              size: 18,
+                            )
                           else
                             Text(
-                              _formatoMoeda.format(forma.preco > 0 ? forma.preco : produtoAlvo.preco),
+                              _formatoMoeda.format(
+                                forma.preco > 0
+                                    ? forma.preco
+                                    : produtoAlvo.preco,
+                              ),
                               style: const TextStyle(
                                 color: Colors.cyanAccent,
                                 fontWeight: FontWeight.bold,
@@ -2787,7 +3311,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               const SizedBox(height: 4),
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+                child: const Text(
+                  'CANCELAR',
+                  style: TextStyle(color: Colors.grey),
+                ),
               ),
             ],
           ),
@@ -2799,12 +3326,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   void _alterarQuantidade(int index, int delta) {
     setState(() {
       _carrinho[index].quantidade += delta;
-      
+
       if (_carrinho[index].quantidade <= 0) {
         _carrinho.removeAt(index);
       }
     });
-    
+
     _recalcularPrecosCarrinho();
 
     // SICRONIZAÇÃO COM COMANDA/MESA (se houver vínculo)
@@ -2826,14 +3353,22 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             quantidade: delta.toDouble(),
             preco: itemCarrinho.preco,
             isServico: itemCarrinho.isServico,
-            paraCozinha: itemCarrinho.isServico ? false : dataService.getProdutoById(itemCarrinho.id)?.paraCozinha,
-            paraBar: itemCarrinho.isServico ? false : dataService.getProdutoById(itemCarrinho.id)?.paraBar,
+            paraCozinha: itemCarrinho.isServico
+                ? false
+                : dataService.getProdutoById(itemCarrinho.id)?.paraCozinha,
+            paraBar: itemCarrinho.isServico
+                ? false
+                : dataService.getProdutoById(itemCarrinho.id)?.paraBar,
             local: itemCarrinho.isServico
                 ? null
                 : () {
                     final prod = dataService.getProdutoById(itemCarrinho.id);
-                    if (prod != null && prod.departamentoId != null && prod.departamentoId!.isNotEmpty) {
-                      final nome = dataService.nomeDepartamento(prod.departamentoId);
+                    if (prod != null &&
+                        prod.departamentoId != null &&
+                        prod.departamentoId!.isNotEmpty) {
+                      final nome = dataService.nomeDepartamento(
+                        prod.departamentoId,
+                      );
                       if (nome.isNotEmpty) return nome;
                     }
                     if (prod?.paraCozinha == true) return 'Cozinha';
@@ -2841,7 +3376,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     return null;
                   }(),
             status: StatusItem.pendente,
-            usuarioCriou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+            usuarioCriou:
+                Provider.of<AuthService>(
+                  context,
+                  listen: false,
+                ).usuarioAtual?.nome ??
+                'PDV',
           );
 
           _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(
@@ -2850,28 +3390,43 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           );
         } else {
           // Se diminuiu, temos que "cancelar" um item da comanda
-          final itensMc = List<ItemMesaComanda>.from(_mesaComandaVinculada!.itens);
+          final itensMc = List<ItemMesaComanda>.from(
+            _mesaComandaVinculada!.itens,
+          );
           final itemParaCancelarIndex = itensMc.lastIndexWhere(
-            (i) => i.itemId == itemCarrinho.id && i.status != StatusItem.cancelado
+            (i) =>
+                i.itemId == itemCarrinho.id && i.status != StatusItem.cancelado,
           );
 
           if (itemParaCancelarIndex != -1) {
-             final itemParaCanc = itensMc[itemParaCancelarIndex];
-             if (itemParaCanc.quantidade > (delta * -1)) {
-                itensMc[itemParaCancelarIndex] = itemParaCanc.copyWith(
-                  quantidade: itemParaCanc.quantidade + delta, // delta é negativo
-                  usuarioModificou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
-                  dataModificacao: DateTime.now(),
-                );
-             } else {
-                itensMc[itemParaCancelarIndex] = itemParaCanc.copyWith(
-                  status: StatusItem.cancelado,
-                  usuarioModificou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
-                  dataModificacao: DateTime.now(),
-                  acaoRealizada: 'Cancelado via PDV',
-                );
-             }
-             _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(itens: itensMc);
+            final itemParaCanc = itensMc[itemParaCancelarIndex];
+            if (itemParaCanc.quantidade > (delta * -1)) {
+              itensMc[itemParaCancelarIndex] = itemParaCanc.copyWith(
+                quantidade: itemParaCanc.quantidade + delta, // delta é negativo
+                usuarioModificou:
+                    Provider.of<AuthService>(
+                      context,
+                      listen: false,
+                    ).usuarioAtual?.nome ??
+                    'PDV',
+                dataModificacao: DateTime.now(),
+              );
+            } else {
+              itensMc[itemParaCancelarIndex] = itemParaCanc.copyWith(
+                status: StatusItem.cancelado,
+                usuarioModificou:
+                    Provider.of<AuthService>(
+                      context,
+                      listen: false,
+                    ).usuarioAtual?.nome ??
+                    'PDV',
+                dataModificacao: DateTime.now(),
+                acaoRealizada: 'Cancelado via PDV',
+              );
+            }
+            _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(
+              itens: itensMc,
+            );
           }
         }
         dataService.updateMesaComanda(_mesaComandaVinculada!);
@@ -2889,7 +3444,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         // Estima altura do item no carrinho: ~105px (card + margem)
         final targetOffset = index * 105.0;
         final currentOffset = _carrinhoScrollController.offset;
-        final viewportHeight = 400.0; // Estimativa do container visível do carrinho
+        final viewportHeight =
+            400.0; // Estimativa do container visível do carrinho
 
         if (targetOffset < currentOffset) {
           _carrinhoScrollController.animateTo(
@@ -2912,24 +3468,32 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     setState(() {
       final itemRemovido = _carrinho[index];
       _carrinho.removeAt(index);
-      
+
       // SICRONIZAÇÃO COM COMANDA/MESA (se houver vínculo)
       if (_mesaComandaVinculada != null) {
         final dataService = Provider.of<DataService>(context, listen: false);
-        final itensMc = List<ItemMesaComanda>.from(_mesaComandaVinculada!.itens);
-        
+        final itensMc = List<ItemMesaComanda>.from(
+          _mesaComandaVinculada!.itens,
+        );
+
         // Cancela TODOS os lançamentos desse item que não estejam cancelados
         for (var i = 0; i < itensMc.length; i++) {
-          if (itensMc[i].itemId == itemRemovido.id && itensMc[i].status != StatusItem.cancelado) {
+          if (itensMc[i].itemId == itemRemovido.id &&
+              itensMc[i].status != StatusItem.cancelado) {
             itensMc[i] = itensMc[i].copyWith(
               status: StatusItem.cancelado,
-              usuarioModificou: Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ?? 'PDV',
+              usuarioModificou:
+                  Provider.of<AuthService>(
+                    context,
+                    listen: false,
+                  ).usuarioAtual?.nome ??
+                  'PDV',
               dataModificacao: DateTime.now(),
               acaoRealizada: 'Removido via PDV',
             );
           }
         }
-        
+
         _mesaComandaVinculada = _mesaComandaVinculada!.copyWith(itens: itensMc);
         dataService.updateMesaComanda(_mesaComandaVinculada!);
       }
@@ -3293,17 +3857,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final authService = Provider.of<AuthService>(context, listen: false);
     final dataService = Provider.of<DataService>(context, listen: false);
     final usuario = authService.usuarioAtual;
-    
+
     // Verifica se tem permissão (master, admin, ou permissão específica)
-    final bool temPermissao = usuario?.isMaster == true || 
-                             usuario?.isAdmin == true ||
-                             usuario?.isGerente == true ||
-                             (usuario?.permissoesPersonalizadas?.contains('alterar_preco') == true);
-                             
+    final bool temPermissao =
+        usuario?.isMaster == true ||
+        usuario?.isAdmin == true ||
+        usuario?.isGerente == true ||
+        (usuario?.permissoesPersonalizadas?.contains('alterar_preco') == true);
+
     if (!temPermissao) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Você não tem permissão para alterar o preço do produto.'),
+          content: Text(
+            'Você não tem permissão para alterar o preço do produto.',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -3311,13 +3878,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     final item = _carrinho[index];
-    
+
     // Verifica se é fracionável para liberar o campo de Valor Desejado
     bool isFracionavel = false;
     try {
       final produto = dataService.produtos.firstWhere((p) => p.id == item.id);
       final unidade = produto.unidade.trim().toUpperCase();
-      isFracionavel = unidade.startsWith('KG') || unidade.startsWith('KIL') || unidade.startsWith('LIT') || unidade.startsWith('MET');
+      isFracionavel =
+          unidade.startsWith('KG') ||
+          unidade.startsWith('KIL') ||
+          unidade.startsWith('LIT') ||
+          unidade.startsWith('MET');
     } catch (_) {}
 
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
@@ -3330,9 +3901,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
             const Icon(
@@ -3404,7 +3973,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 const SizedBox(height: 20),
                 const Divider(color: Colors.white24),
                 const SizedBox(height: 10),
-                const Text('Ou comprar por valor', style: TextStyle(color: Colors.orangeAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+                const Text(
+                  'Ou comprar por valor',
+                  style: TextStyle(
+                    color: Colors.orangeAccent,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 10),
                 TextField(
                   controller: valorDesejadoController,
@@ -3432,10 +4008,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     filled: true,
                     fillColor: Colors.white.withOpacity(0.05),
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                 ),
                 const SizedBox(height: 8),
-                const Text('A quantidade (peso) será ajustada automaticamente.', style: TextStyle(color: Colors.white54, fontSize: 12), textAlign: TextAlign.center),
+                const Text(
+                  'A quantidade (peso) será ajustada automaticamente.',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
               ],
             ],
           ),
@@ -3450,12 +4032,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           ),
           ElevatedButton(
             onPressed: () {
-              final novoPreco = double.tryParse(
-                precoController.text.replaceAll(',', '.'),
-              ) ?? -1.0;
-              final valorDesejado = double.tryParse(
-                valorDesejadoController.text.replaceAll(',', '.'),
-              ) ?? 0.0;
+              final novoPreco =
+                  double.tryParse(precoController.text.replaceAll(',', '.')) ??
+                  -1.0;
+              final valorDesejado =
+                  double.tryParse(
+                    valorDesejadoController.text.replaceAll(',', '.'),
+                  ) ??
+                  0.0;
 
               if (novoPreco < 0) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -3479,9 +4063,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    isFracionavel && valorDesejado > 0 
-                      ? 'Quantidade ajustada para ${_carrinho[index].quantidade.toStringAsFixed(3)} baseada no valor de ${formatoMoeda.format(valorDesejado)}'
-                      : 'Preço alterado para ${formatoMoeda.format(novoPreco)}',
+                    isFracionavel && valorDesejado > 0
+                        ? 'Quantidade ajustada para ${_carrinho[index].quantidade.toStringAsFixed(3)} baseada no valor de ${formatoMoeda.format(valorDesejado)}'
+                        : 'Preço alterado para ${formatoMoeda.format(novoPreco)}',
                   ),
                   backgroundColor: Colors.green,
                   duration: const Duration(seconds: 3),
@@ -3743,7 +4327,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 setState(() {
                   _descontoTotal = desconto;
                 });
-                await _storage.salvar(_chavePDV(_keyDescontoTotalPDV), desconto);
+                await _storage.salvar(
+                  _chavePDV(_keyDescontoTotalPDV),
+                  desconto,
+                );
                 Navigator.pop(dialogContext);
 
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -3768,7 +4355,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-
   List<String> _getCategorias(DataService dataService) {
     final categorias = dataService.produtos
         .map((p) => p.grupo)
@@ -3792,7 +4378,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   List<Produto> _getProdutosPorCategoria(DataService dataService) {
-    final totalPerguntas = dataService.produtos.fold<int>(0, (sum, p) => sum + p.perguntasSelecao.length);
+    final totalPerguntas = dataService.produtos.fold<int>(
+      0,
+      (sum, p) => sum + p.perguntasSelecao.length,
+    );
 
     // Se o cache for válido, retorna ele
     final totalAtivos = dataService.produtos.where((p) => p.ativo).length;
@@ -3817,7 +4406,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           .where((p) => p.grupo == _categoriaAtiva)
           .toList();
     }
-    
+
     // Aplicar ordenação selecionada
     lista.sort((a, b) {
       switch (_sortOption) {
@@ -3826,15 +4415,25 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         case SortOption.recentes:
           final dateA = a.updatedAt ?? a.createdAt ?? DateTime(2000);
           final dateB = b.updatedAt ?? b.createdAt ?? DateTime(2000);
-          return dateB.compareTo(dateA); 
+          return dateB.compareTo(dateA);
         case SortOption.grupo:
-          final grupoCompare = a.grupo.toLowerCase().compareTo(b.grupo.toLowerCase());
+          final grupoCompare = a.grupo.toLowerCase().compareTo(
+            b.grupo.toLowerCase(),
+          );
           if (grupoCompare != 0) return grupoCompare;
           return a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
         case SortOption.codigo:
         default:
-          final numA = int.tryParse(a.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
-          final numB = int.tryParse(b.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0') ?? 0;
+          final numA =
+              int.tryParse(
+                a.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0',
+              ) ??
+              0;
+          final numB =
+              int.tryParse(
+                b.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '0',
+              ) ??
+              0;
           return numA.compareTo(numB);
       }
     });
@@ -3846,7 +4445,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _cacheTotalProdutosPDV = dataService.produtos.length;
     _cacheTotalProdutosAtivosPDV = totalAtivos;
     _cacheTotalPerguntasPDV = totalPerguntas;
-    
+
     return lista;
   }
 
@@ -3867,7 +4466,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Se o termo contiver vírgula, NÃO remove a vírgula para buscar códigos de produto (ex: 10,00 não deve virar código 1000)
     final bool temVirgula = termoFinal.contains(',');
-    final queryNumeros = temVirgula ? '' : termoFinal.replaceAll(RegExp(r'[^0-9]'), ''); 
+    final queryNumeros = temVirgula
+        ? ''
+        : termoFinal.replaceAll(RegExp(r'[^0-9]'), '');
     final queryNumerosSemZeros = queryNumeros.isEmpty
         ? ''
         : int.tryParse(queryNumeros)?.toString() ?? queryNumeros;
@@ -3883,28 +4484,30 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         return b == termoFinal || bLower.startsWith(buscaLower);
       });
 
-      final ehMatchCodigoOuBarras = codigoLower == buscaLower || 
-                                     codigoLower == 'cod-$buscaLower' || 
-                                     codigo == termoFinal || 
-                                     barrasExatoOuPrefixo ||
-                                     codigoLower.startsWith(buscaLower) || 
-                                     codigoLower.startsWith('cod-$buscaLower');
+      final ehMatchCodigoOuBarras =
+          codigoLower == buscaLower ||
+          codigoLower == 'cod-$buscaLower' ||
+          codigo == termoFinal ||
+          barrasExatoOuPrefixo ||
+          codigoLower.startsWith(buscaLower) ||
+          codigoLower.startsWith('cod-$buscaLower');
 
       final nome = produto.nome.toLowerCase().trim();
 
       // MATCH EXATO (PRIORIDADE 1)
-      if (codigoLower == buscaLower || 
-          codigoLower == 'cod-$buscaLower' || 
-          codigo == termoFinal || 
+      if (codigoLower == buscaLower ||
+          codigoLower == 'cod-$buscaLower' ||
+          codigo == termoFinal ||
           todosBarras.contains(termoFinal)) {
         exatos.add(produto);
         continue;
       }
 
       // MATCH CÓDIGO PARCIAL (PRIORIDADE 2)
-      if (codigoLower.startsWith(buscaLower) || 
+      if (codigoLower.startsWith(buscaLower) ||
           codigoLower.startsWith('cod-$buscaLower') ||
-          (queryNumerosSemZeros.isNotEmpty && codigo.contains(queryNumerosSemZeros))) {
+          (queryNumerosSemZeros.isNotEmpty &&
+              codigo.contains(queryNumerosSemZeros))) {
         parciais.add(produto);
         continue;
       }
@@ -3938,7 +4541,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     return resultados;
   }
-
 
   void _solicitarAberturaCaixa(BuildContext context, DataService dataService) {
     final valorController = TextEditingController(text: '0.00');
@@ -4161,12 +4763,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   /// Realiza a baixa de estoque manual de um item (sem venda financeira)
   Future<void> _darBaixaEstoqueItem(int index) async {
     if (index < 0 || index >= _carrinho.length) return;
-    
+
     final item = _carrinho[index];
     if (item.isServico) return; // Serviços não têm estoque
-    
+
     final descricaoController = TextEditingController();
-    final quantidadeController = TextEditingController(text: item.quantidade.toString());
+    final quantidadeController = TextEditingController(
+      text: item.quantidade.toString(),
+    );
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -4189,12 +4793,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           children: [
             Text(
               'Deseja dar baixa manual no produto:',
-              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 14,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               item.nome,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
             ),
             const SizedBox(height: 20),
             const Text(
@@ -4209,7 +4820,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               decoration: InputDecoration(
                 filled: true,
                 fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                   borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
@@ -4230,7 +4843,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
                 filled: true,
                 fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                   borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
@@ -4269,12 +4884,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       // 1. Registrar a saída no estoque sem gerar venda
       await dataService.registrarSaidaEstoque(
-        produtoId: item.id, 
+        produtoId: item.id,
         quantidade: qtd.toDouble(),
         motivo: 'Baixa Manual',
         fornecedorNome: item.fornecedorNome,
-        observacao: descricaoController.text.trim().isEmpty 
-            ? 'Baixa manual realizada via PDV' 
+        observacao: descricaoController.text.trim().isEmpty
+            ? 'Baixa manual realizada via PDV'
             : descricaoController.text.trim(),
         usuario: usuario?.nome ?? 'Operador',
       );
@@ -4360,7 +4975,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   /// Abre o diálogo de pagamento com valor pré-preenchido (pagamento por valor livre da mesa/comanda)
   void _abrirDialogPagamentoValorLivre(double valor) {
     final dataService = Provider.of<DataService>(context, listen: false);
-    
+
     setState(() {
       _gridSelectedIndex = -1;
       _cartSelectedIndex = -1;
@@ -4407,7 +5022,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
   void _finalizarVenda(DataService dataService) {
     if (_estaFinalizando) return; // Proteção contra múltiplos cliques
-    
+
     if (_carrinho.isEmpty && _mesaComandaVinculada == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -4454,7 +5069,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   /// Finalização ultra-rápida em Dinheiro (F10)
   void _finalizarDinheiroDireto(DataService dataService) {
     if (_estaFinalizando) return;
-    
+
     if (_carrinho.isEmpty && _mesaComandaVinculada == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -4485,32 +5100,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _concluirVendaComPagamentos(dataService, [pagamento]);
   }
 
-
-  
-
   void _recalcularPrecosCarrinho() {
     final dataService = Provider.of<DataService>(context, listen: false);
     final empresaAtual = dataService.empresaAtual;
-    final configPerfil = empresaAtual?.getConfigPerfilPreco(_perfilPrecoEfetivo);
-    
-    final qtdMinima = configPerfil != null && configPerfil['quantidade_minima'] != null 
-        ? (configPerfil['quantidade_minima'] as num).toDouble() 
+    final configPerfil = empresaAtual?.getConfigPerfilPreco(
+      _perfilPrecoEfetivo,
+    );
+
+    final qtdMinima =
+        configPerfil != null && configPerfil['quantidade_minima'] != null
+        ? (configPerfil['quantidade_minima'] as num).toDouble()
         : 0.0;
-        
-    final tipoQtdMinima = configPerfil != null && configPerfil['tipo_quantidade_minima'] != null 
+
+    final tipoQtdMinima =
+        configPerfil != null && configPerfil['tipo_quantidade_minima'] != null
         ? configPerfil['tipo_quantidade_minima'] as String
         : 'carrinho';
-        
-    final descontoPerfil = configPerfil != null && configPerfil['tipo'] == 'desconto'
+
+    final descontoPerfil =
+        configPerfil != null && configPerfil['tipo'] == 'desconto'
         ? (configPerfil['valor'] as num?)?.toDouble() ?? 0.0
         : 0.0;
-        
+
     final totalItens = _totalItens;
-    
+
     setState(() {
       for (var item in _carrinho) {
         if (!item.isServico) {
-          final prod = dataService.produtos.firstWhere((p) => p.id == item.id, orElse: () => null as dynamic);
+          final prod = dataService.produtos.firstWhere(
+            (p) => p.id == item.id,
+            orElse: () => null as dynamic,
+          );
           if (prod != null) {
             // Itens com forma de venda selecionada (caixa/pacote/saco) têm preço
             // próprio da forma: recalcula apenas a promoção sobre o preço-base
@@ -4523,24 +5143,32 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 quantidade: item.quantidade,
                 subtotalItem: baseForma * item.quantidade,
               );
-              item.precoSemPromocao = (item.preco < baseForma - 0.001) ? baseForma : null;
+              item.precoSemPromocao = (item.preco < baseForma - 0.001)
+                  ? baseForma
+                  : null;
               continue;
             }
-            
+
             bool aplicarTabela = false;
             if (qtdMinima <= 0) {
               aplicarTabela = true;
             } else if (tipoQtdMinima == 'carrinho') {
               aplicarTabela = totalItens >= qtdMinima;
-            } else { // 'item'
+            } else {
+              // 'item'
               aplicarTabela = item.quantidade >= qtdMinima;
             }
 
-            final modificadorPerfil = configPerfil != null && (configPerfil['tipo'] == 'desconto' || configPerfil['tipo'] == 'acrescimo')
+            final modificadorPerfil =
+                configPerfil != null &&
+                    (configPerfil['tipo'] == 'desconto' ||
+                        configPerfil['tipo'] == 'acrescimo')
                 ? (configPerfil['valor'] as num?)?.toDouble() ?? 0.0
                 : 0.0;
-            final tipoModificador = configPerfil != null ? configPerfil['tipo'] as String? ?? 'desconto' : 'desconto';
-                
+            final tipoModificador = configPerfil != null
+                ? configPerfil['tipo'] as String? ?? 'desconto'
+                : 'desconto';
+
             item.preco = prod.getPrecoInteligente(
               perfilCliente: aplicarTabela ? _perfilPrecoEfetivo : null,
               modificadorPerfil: aplicarTabela ? modificadorPerfil : 0.0,
@@ -4555,8 +5183,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               subtotalItem: item.preco * item.quantidade,
             );
             // Atualiza o preço base (sem promoção) para a conferência.
-            item.precoSemPromocao =
-                (item.preco < precoBaseRecalc - 0.001) ? precoBaseRecalc : null;
+            item.precoSemPromocao = (item.preco < precoBaseRecalc - 0.001)
+                ? precoBaseRecalc
+                : null;
             // Atualiza o preço de tabela (sem o desconto do perfil) para o cupom.
             final precoSemPerfilRecalc = prod.getPrecoInteligente(
               perfilCliente: null,
@@ -4572,6 +5201,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
     });
   }
+
   void _selecionarTabelaPreco(DataService dataService) {
     final tabelas = _obterTabelasPrecoEmpresa();
     if (tabelas.isEmpty) {
@@ -4615,12 +5245,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             padding: const EdgeInsets.all(20),
             child: Row(
               children: [
-                const Icon(Icons.price_change, color: Colors.orangeAccent, size: 28),
+                const Icon(
+                  Icons.price_change,
+                  color: Colors.orangeAccent,
+                  size: 28,
+                ),
                 const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
                     'Tabela de Preço',
-                    style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 if (_tabelaPrecoAtiva != null)
@@ -4631,7 +5269,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     },
                     icon: const Icon(Icons.clear, size: 16),
                     label: const Text('Padrão'),
-                    style: TextButton.styleFrom(foregroundColor: Colors.white54),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white54,
+                    ),
                   ),
               ],
             ),
@@ -4651,13 +5291,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 ListTile(
                   leading: Icon(
                     Icons.storefront,
-                    color: _tabelaPrecoAtiva == null ? Colors.blueAccent : Colors.white38,
+                    color: _tabelaPrecoAtiva == null
+                        ? Colors.blueAccent
+                        : Colors.white38,
                   ),
                   title: Text(
                     'Padrão (preço de venda)',
                     style: TextStyle(
-                      color: _tabelaPrecoAtiva == null ? Colors.blueAccent : Colors.white,
-                      fontWeight: _tabelaPrecoAtiva == null ? FontWeight.bold : FontWeight.normal,
+                      color: _tabelaPrecoAtiva == null
+                          ? Colors.blueAccent
+                          : Colors.white,
+                      fontWeight: _tabelaPrecoAtiva == null
+                          ? FontWeight.bold
+                          : FontWeight.normal,
                     ),
                   ),
                   subtitle: const Text(
@@ -4679,15 +5325,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   final tipo = config['tipo'] as String? ?? 'fixo';
                   final corTipo = tipo == 'desconto'
                       ? Colors.greenAccent
-                      : (tipo == 'acrescimo' ? Colors.redAccent : Colors.orangeAccent);
+                      : (tipo == 'acrescimo'
+                            ? Colors.redAccent
+                            : Colors.orangeAccent);
 
                   return Card(
-                    color: selecionada ? Colors.orangeAccent.withOpacity(0.12) : Colors.white.withOpacity(0.05),
+                    color: selecionada
+                        ? Colors.orangeAccent.withOpacity(0.12)
+                        : Colors.white.withOpacity(0.05),
                     margin: const EdgeInsets.only(bottom: 8),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                       side: BorderSide(
-                        color: selecionada ? Colors.orangeAccent : Colors.transparent,
+                        color: selecionada
+                            ? Colors.orangeAccent
+                            : Colors.transparent,
                       ),
                     ),
                     child: ListTile(
@@ -4695,17 +5347,30 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       title: Text(
                         nome,
                         style: TextStyle(
-                          color: selecionada ? Colors.orangeAccent : Colors.white,
-                          fontWeight: selecionada ? FontWeight.bold : FontWeight.w500,
+                          color: selecionada
+                              ? Colors.orangeAccent
+                              : Colors.white,
+                          fontWeight: selecionada
+                              ? FontWeight.bold
+                              : FontWeight.w500,
                         ),
                       ),
                       subtitle: Text(
                         _descricaoTipoTabelaPDV(config),
-                        style: TextStyle(color: corTipo.withOpacity(0.9), fontSize: 12),
+                        style: TextStyle(
+                          color: corTipo.withOpacity(0.9),
+                          fontSize: 12,
+                        ),
                       ),
                       trailing: selecionada
-                          ? const Icon(Icons.check_circle, color: Colors.orangeAccent)
-                          : const Icon(Icons.chevron_right, color: Colors.white24),
+                          ? const Icon(
+                              Icons.check_circle,
+                              color: Colors.orangeAccent,
+                            )
+                          : const Icon(
+                              Icons.chevron_right,
+                              color: Colors.white24,
+                            ),
                       onTap: () {
                         Navigator.pop(context);
                         _aplicarTabelaPreco(nome);
@@ -4803,17 +5468,33 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       final isSelected = _vendedorSelecionado?.id == func.id;
                       return ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: isSelected ? Colors.purpleAccent : Colors.grey[800],
-                          child: Icon(Icons.person, color: isSelected ? Colors.white : Colors.white54),
+                          backgroundColor: isSelected
+                              ? Colors.purpleAccent
+                              : Colors.grey[800],
+                          child: Icon(
+                            Icons.person,
+                            color: isSelected ? Colors.white : Colors.white54,
+                          ),
                         ),
-                        title: Text(func.nome, style: const TextStyle(color: Colors.white)),
+                        title: Text(
+                          func.nome,
+                          style: const TextStyle(color: Colors.white),
+                        ),
                         subtitle: Text(
-                          func.porcentagemComissao > 0 
-                            ? 'Comissão: ${func.porcentagemComissao}%' 
-                            : 'Sem comissão definida',
-                          style: const TextStyle(color: Colors.white54, fontSize: 12),
+                          func.porcentagemComissao > 0
+                              ? 'Comissão: ${func.porcentagemComissao}%'
+                              : 'Sem comissão definida',
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
                         ),
-                        trailing: isSelected ? const Icon(Icons.check, color: Colors.purpleAccent) : null,
+                        trailing: isSelected
+                            ? const Icon(
+                                Icons.check,
+                                color: Colors.purpleAccent,
+                              )
+                            : null,
                         onTap: () {
                           setState(() => _vendedorSelecionado = func);
                           Navigator.pop(context);
@@ -4835,7 +5516,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Estados do diálogo
     int abaAtiva = 0; // 0: Novo Lançamento, 1: Contas Pendentes
-    String tipoLancamento = 'Dinheiro do Caixa'; // 'Dinheiro do Caixa' ou 'Contas a Pagar'
+    String tipoLancamento =
+        'Dinheiro do Caixa'; // 'Dinheiro do Caixa' ou 'Contas a Pagar'
     String statusContaPagar = 'Pendente'; // 'Pendente' ou 'Pago'
     bool tirarDoCaixaSePago = true;
     DateTime dataVencimentoSelecionada = DateTime.now();
@@ -4845,10 +5527,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           final dataService = Provider.of<DataService>(context, listen: false);
-          
+
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
             contentPadding: EdgeInsets.zero,
             title: Padding(
               padding: const EdgeInsets.all(20),
@@ -4861,8 +5545,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
-                      abaAtiva == 0 ? Icons.money_off : Icons.receipt_long, 
-                      color: Colors.redAccent
+                      abaAtiva == 0 ? Icons.money_off : Icons.receipt_long,
+                      color: Colors.redAccent,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -4893,16 +5577,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 12),
                               decoration: BoxDecoration(
-                                color: abaAtiva == 0 ? Colors.blueAccent : Colors.transparent,
+                                color: abaAtiva == 0
+                                    ? Colors.blueAccent
+                                    : Colors.transparent,
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Center(
                                 child: Text(
                                   'NOVO LANÇAMENTO',
                                   style: TextStyle(
-                                    color: Colors.white, 
-                                    fontSize: 12, 
-                                    fontWeight: FontWeight.bold
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ),
@@ -4915,16 +5601,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 12),
                               decoration: BoxDecoration(
-                                color: abaAtiva == 1 ? Colors.blueAccent : Colors.transparent,
+                                color: abaAtiva == 1
+                                    ? Colors.blueAccent
+                                    : Colors.transparent,
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Center(
                                 child: Text(
                                   'CONTAS PENDENTES',
                                   style: TextStyle(
-                                    color: Colors.white, 
-                                    fontSize: 12, 
-                                    fontWeight: FontWeight.bold
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ),
@@ -4935,53 +5623,72 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  
+
                   Expanded(
-                    child: abaAtiva == 0 
-                      ? _buildFormNovoLancamento(
-                          formKey, 
-                          descricaoController, 
-                          valorController, 
-                          responsavelController, 
-                          tipoLancamento, 
-                          statusContaPagar, 
-                          tirarDoCaixaSePago,
-                          dataVencimentoSelecionada,
-                          (tipo) => setDialogState(() => tipoLancamento = tipo),
-                          (status) => setDialogState(() => statusContaPagar = status),
-                          (v) => setDialogState(() => tirarDoCaixaSePago = v),
-                          (data) => setDialogState(() => dataVencimentoSelecionada = data),
-                        )
-                      : _buildListaContasPendentes(dataService, setDialogState),
+                    child: abaAtiva == 0
+                        ? _buildFormNovoLancamento(
+                            formKey,
+                            descricaoController,
+                            valorController,
+                            responsavelController,
+                            tipoLancamento,
+                            statusContaPagar,
+                            tirarDoCaixaSePago,
+                            dataVencimentoSelecionada,
+                            (tipo) =>
+                                setDialogState(() => tipoLancamento = tipo),
+                            (status) =>
+                                setDialogState(() => statusContaPagar = status),
+                            (v) => setDialogState(() => tirarDoCaixaSePago = v),
+                            (data) => setDialogState(
+                              () => dataVencimentoSelecionada = data,
+                            ),
+                          )
+                        : _buildListaContasPendentes(
+                            dataService,
+                            setDialogState,
+                          ),
                   ),
                 ],
               ),
             ),
-            actionsPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            actionsPadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 16,
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+                child: const Text(
+                  'FECHAR',
+                  style: TextStyle(color: Colors.white54),
+                ),
               ),
               if (abaAtiva == 0) ...[
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () async {
                     if (!formKey.currentState!.validate()) return;
-                    
-                    final valor = double.parse(valorController.text.replaceAll(',', '.'));
+
+                    final valor = double.parse(
+                      valorController.text.replaceAll(',', '.'),
+                    );
                     final descricao = descricaoController.text.trim();
                     final responsavel = responsavelController.text.trim();
-                    
+
                     try {
                       if (tipoLancamento == 'Dinheiro do Caixa') {
                         if (dataService.aberturaCaixaAtual == null) {
-                          throw Exception('O caixa precisa estar aberto para pagar com dinheiro do dia.');
+                          throw Exception(
+                            'O caixa precisa estar aberto para pagar com dinheiro do dia.',
+                          );
                         }
                         await dataService.registrarSangria(
                           valor: valor,
                           motivo: '[PAGAMENTO] $descricao',
-                          responsavel: responsavel.isNotEmpty ? responsavel : null,
+                          responsavel: responsavel.isNotEmpty
+                              ? responsavel
+                              : null,
                         );
                       } else {
                         final novaConta = ContaPagar(
@@ -4990,44 +5697,68 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           descricao: descricao,
                           valor: valor,
                           dataVencimento: dataVencimentoSelecionada,
-                          status: statusContaPagar == 'Pago' ? StatusContaPagar.pago : StatusContaPagar.pendente,
-                          dataPagamento: statusContaPagar == 'Pago' ? DateTime.now() : null,
+                          status: statusContaPagar == 'Pago'
+                              ? StatusContaPagar.pago
+                              : StatusContaPagar.pendente,
+                          dataPagamento: statusContaPagar == 'Pago'
+                              ? DateTime.now()
+                              : null,
                           valorPago: statusContaPagar == 'Pago' ? valor : 0,
-                          formaPagamento: statusContaPagar == 'Pago' ? 'Dinheiro' : null,
+                          formaPagamento: statusContaPagar == 'Pago'
+                              ? 'Dinheiro'
+                              : null,
                           usuarioCriacao: responsavel,
                         );
                         await dataService.addContaPagar(novaConta);
-                        
+
                         if (statusContaPagar == 'Pago' && tirarDoCaixaSePago) {
                           if (dataService.aberturaCaixaAtual != null) {
                             await dataService.registrarSangria(
                               valor: valor,
                               motivo: '[PAGAMENTO] Despesa: $descricao',
-                              responsavel: responsavel.isNotEmpty ? responsavel : null,
+                              responsavel: responsavel.isNotEmpty
+                                  ? responsavel
+                                  : null,
                             );
                           }
                         }
                       }
-                      
+
                       if (context.mounted) {
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Sucesso: $tipoLancamento registrado.')),
+                          SnackBar(
+                            content: Text(
+                              'Sucesso: $tipoLancamento registrado.',
+                            ),
+                          ),
                         );
                       }
                     } catch (e) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.redAccent),
+                        SnackBar(
+                          content: Text('Erro: $e'),
+                          backgroundColor: Colors.redAccent,
+                        ),
                       );
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: tipoLancamento == 'Dinheiro do Caixa' ? Colors.redAccent : Colors.blueAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    backgroundColor: tipoLancamento == 'Dinheiro do Caixa'
+                        ? Colors.redAccent
+                        : Colors.blueAccent,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   child: Text(
-                    tipoLancamento == 'Dinheiro do Caixa' ? 'PAGAR COM CAIXA' : 'LANÇAR CONTA',
+                    tipoLancamento == 'Dinheiro do Caixa'
+                        ? 'PAGAR COM CAIXA'
+                        : 'LANÇAR CONTA',
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -5065,13 +5796,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               style: TextStyle(color: Colors.white54, fontSize: 13),
             ),
             const SizedBox(height: 20),
-            
+
             Row(
               children: [
                 Expanded(
                   child: _buildTipoOption(
-                    'Pagar com Dinheiro do Caixa', 
-                    Icons.account_balance_wallet, 
+                    'Pagar com Dinheiro do Caixa',
+                    Icons.account_balance_wallet,
                     tipoLancamento == 'Dinheiro do Caixa',
                     () => onTypeChanged('Dinheiro do Caixa'),
                   ),
@@ -5079,26 +5810,31 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildTipoOption(
-                    'Lançar Conta (Fora do Caixa)', 
-                    Icons.receipt_long, 
+                    'Lançar Conta (Fora do Caixa)',
+                    Icons.receipt_long,
                     tipoLancamento == 'Contas a Pagar',
                     () => onTypeChanged('Contas a Pagar'),
                   ),
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 20),
 
             if (tipoLancamento == 'Contas a Pagar') ...[
-              const Text('Data de Vencimento', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const Text(
+                'Data de Vencimento',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
               const SizedBox(height: 8),
               InkWell(
                 onTap: () async {
                   final picked = await showDatePicker(
                     context: context,
                     initialDate: dataVencimento,
-                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    firstDate: DateTime.now().subtract(
+                      const Duration(days: 365),
+                    ),
                     lastDate: DateTime.now().add(const Duration(days: 3650)),
                     builder: (context, child) {
                       return Theme(
@@ -5118,18 +5854,29 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   if (picked != null) onDataChanged(picked);
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.05),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.calendar_today, color: Colors.blueAccent, size: 20),
+                      const Icon(
+                        Icons.calendar_today,
+                        color: Colors.blueAccent,
+                        size: 20,
+                      ),
                       const SizedBox(width: 12),
                       Text(
                         DateFormat('dd / MM / yyyy').format(dataVencimento),
-                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const Spacer(),
                       const Icon(Icons.edit, color: Colors.white24, size: 16),
@@ -5143,14 +5890,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             TextFormField(
               controller: descricaoController,
               style: const TextStyle(color: Colors.white),
-              decoration: _inputDecoration('Descrição / Motivo', Icons.description),
-              validator: (v) => v == null || v.isEmpty ? 'Informe a descrição' : null,
+              decoration: _inputDecoration(
+                'Descrição / Motivo',
+                Icons.description,
+              ),
+              validator: (v) =>
+                  v == null || v.isEmpty ? 'Informe a descrição' : null,
             ),
             const SizedBox(height: 16),
             TextFormField(
               controller: valorController,
               style: const TextStyle(color: Colors.white),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: _inputDecoration('Valor (R\$)', Icons.attach_money),
               validator: (v) {
                 if (v == null || v.isEmpty) return 'Informe o valor';
@@ -5159,18 +5912,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 return null;
               },
             ),
-            
+
             if (tipoLancamento == 'Contas a Pagar') ...[
               const SizedBox(height: 20),
               const Divider(color: Colors.white10),
               const SizedBox(height: 10),
-              const Text('Status da Conta', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+              const Text(
+                'Status da Conta',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
                     child: _buildStatusChip(
-                      'Pendente', 
+                      'Pendente',
                       statusContaPagar == 'Pendente',
                       () => onStatusChanged('Pendente'),
                       Colors.orange,
@@ -5179,7 +5938,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: _buildStatusChip(
-                      'Pago', 
+                      'Pago',
                       statusContaPagar == 'Pago',
                       () => onStatusChanged('Pago'),
                       Colors.green,
@@ -5191,7 +5950,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 const SizedBox(height: 12),
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Tirar dinheiro do caixa?', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  title: const Text(
+                    'Tirar dinheiro do caixa?',
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
                   value: tirarDoCaixaSePago,
                   onChanged: (v) => onTirarDoCaixaChanged(v ?? false),
                   activeColor: Colors.blueAccent,
@@ -5201,12 +5963,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 ),
               ],
             ],
-            
+
             const SizedBox(height: 16),
             TextFormField(
               controller: responsavelController,
               style: const TextStyle(color: Colors.white),
-              decoration: _inputDecoration('Responsável (Opcional)', Icons.person_outline),
+              decoration: _inputDecoration(
+                'Responsável (Opcional)',
+                Icons.person_outline,
+              ),
             ),
             const SizedBox(height: 20),
           ],
@@ -5215,26 +5980,38 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  Widget _buildListaContasPendentes(DataService dataService, StateSetter setDialogState) {
-    final contasPendentes = dataService.contasPagar
-        .where((c) => c.status == StatusContaPagar.pendente)
-        .toList()
-      ..sort((a, b) => a.dataVencimento.compareTo(b.dataVencimento));
+  Widget _buildListaContasPendentes(
+    DataService dataService,
+    StateSetter setDialogState,
+  ) {
+    final contasPendentes =
+        dataService.contasPagar
+            .where((c) => c.status == StatusContaPagar.pendente)
+            .toList()
+          ..sort((a, b) => a.dataVencimento.compareTo(b.dataVencimento));
 
     if (contasPendentes.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.check_circle_outline, color: Colors.green.withOpacity(0.2), size: 80),
+            Icon(
+              Icons.check_circle_outline,
+              color: Colors.green.withOpacity(0.2),
+              size: 80,
+            ),
             const SizedBox(height: 16),
             const Text(
-              'Tudo em dia!', 
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)
+              'Tudo em dia!',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
             const Text(
-              'Nenhuma conta pendente encontrada.', 
-              style: TextStyle(color: Colors.white54, fontSize: 14)
+              'Nenhuma conta pendente encontrada.',
+              style: TextStyle(color: Colors.white54, fontSize: 14),
             ),
           ],
         ),
@@ -5247,7 +6024,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       itemBuilder: (context, index) {
         final conta = contasPendentes[index];
         final hoje = DateTime.now();
-        final vencida = conta.dataVencimento.isBefore(DateTime(hoje.year, hoje.month, hoje.day));
+        final vencida = conta.dataVencimento.isBefore(
+          DateTime(hoje.year, hoje.month, hoje.day),
+        );
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -5255,7 +6034,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             color: Colors.white.withOpacity(0.03),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: vencida ? Colors.red.withOpacity(0.3) : Colors.white.withOpacity(0.08),
+              color: vencida
+                  ? Colors.red.withOpacity(0.3)
+                  : Colors.white.withOpacity(0.08),
             ),
           ),
           child: ListTile(
@@ -5267,14 +6048,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
-                vencida ? Icons.warning_amber_rounded : Icons.receipt_long, 
-                color: vencida ? Colors.redAccent : Colors.orange, 
-                size: 24
+                vencida ? Icons.warning_amber_rounded : Icons.receipt_long,
+                color: vencida ? Colors.redAccent : Colors.orange,
+                size: 24,
               ),
             ),
             title: Text(
               conta.descricao,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -5285,7 +6070,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 Text(
                   'Vencimento: ${DateFormat('dd/MM/yyyy').format(conta.dataVencimento)}',
                   style: TextStyle(
-                    color: vencida ? Colors.redAccent : Colors.white54, 
+                    color: vencida ? Colors.redAccent : Colors.white54,
                     fontSize: 12,
                     fontWeight: vencida ? FontWeight.bold : FontWeight.normal,
                   ),
@@ -5293,7 +6078,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 if (vencida)
                   const Text(
                     'CONTA VENCIDA',
-                    style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
               ],
             ),
@@ -5303,7 +6092,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               children: [
                 Text(
                   'R\$ ${conta.valor.toStringAsFixed(2)}',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 Material(
@@ -5312,15 +6105,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     onTap: () => _baixarContaPagarDialog(dataService, conta),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.green.withOpacity(0.15),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.green.withOpacity(0.3)),
+                        border: Border.all(
+                          color: Colors.green.withOpacity(0.3),
+                        ),
                       ),
                       child: const Text(
                         'PAGAR',
-                        style: TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
@@ -5340,7 +6142,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       prefixIcon: Icon(icon, color: Colors.white54),
       filled: true,
       fillColor: Colors.white.withOpacity(0.05),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
       contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
     );
   }
@@ -5354,7 +6159,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       builder: (context) => StatefulBuilder(
         builder: (context, setSubDialogState) => Dialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
           child: Container(
             padding: const EdgeInsets.all(24),
             constraints: const BoxConstraints(maxWidth: 400),
@@ -5370,12 +6177,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         color: Colors.green.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Icon(Icons.check_circle_outline, color: Colors.greenAccent),
+                      child: const Icon(
+                        Icons.check_circle_outline,
+                        color: Colors.greenAccent,
+                      ),
                     ),
                     const SizedBox(width: 16),
                     const Text(
                       'Baixar Conta',
-                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
@@ -5387,12 +6201,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 const SizedBox(height: 8),
                 Text(
                   conta.descricao,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Valor: R\$ ${conta.valor.toStringAsFixed(2)}',
-                  style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 18),
+                  style: const TextStyle(
+                    color: Colors.greenAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
                 ),
                 const SizedBox(height: 24),
                 Container(
@@ -5406,15 +6228,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text(
-                          'Registrar saída do caixa?', 
-                          style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)
+                          'Registrar saída do caixa?',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         subtitle: const Text(
                           'O dinheiro será retirado do saldo do dia.',
                           style: TextStyle(color: Colors.white54, fontSize: 12),
                         ),
                         value: tirarDoCaixa,
-                        onChanged: (v) => setSubDialogState(() => tirarDoCaixa = v ?? false),
+                        onChanged: (v) =>
+                            setSubDialogState(() => tirarDoCaixa = v ?? false),
                         activeColor: Colors.blueAccent,
                         checkColor: Colors.white,
                         dense: true,
@@ -5431,9 +6258,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         onPressed: () => Navigator.pop(context),
                         style: TextButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
-                        child: const Text('CANCELAR', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)),
+                        child: const Text(
+                          'CANCELAR',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -5449,27 +6284,33 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                               valorPago: conta.valor,
                               formaPagamento: 'Dinheiro',
                             );
-                            
+
                             await dataService.updateContaPagar(contaAtualizada);
-                            
+
                             // Se tirar do caixa
                             if (tirarDoCaixa) {
                               if (dataService.aberturaCaixaAtual == null) {
-                                throw Exception('O caixa precisa estar aberto para registrar a saída.');
+                                throw Exception(
+                                  'O caixa precisa estar aberto para registrar a saída.',
+                                );
                               }
                               await dataService.registrarSangria(
                                 valor: conta.valor,
-                                motivo: '[PAGAMENTO] Baixa conta: ${conta.descricao}',
-                                responsavel: authService.usuarioAtual?.nome ?? 'Sistema',
+                                motivo:
+                                    '[PAGAMENTO] Baixa conta: ${conta.descricao}',
+                                responsavel:
+                                    authService.usuarioAtual?.nome ?? 'Sistema',
                               );
                             }
-                            
+
                             if (context.mounted) {
-                              Navigator.pop(context); // Fecha dialog de confirmação
+                              Navigator.pop(
+                                context,
+                              ); // Fecha dialog de confirmação
                               Navigator.pop(context); // Fecha dialog de despesa
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text('✓ Conta baixada com sucesso!'), 
+                                  content: Text('✓ Conta baixada com sucesso!'),
                                   backgroundColor: Colors.green,
                                   behavior: SnackBarBehavior.floating,
                                 ),
@@ -5478,7 +6319,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           } catch (e) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text('Erro: $e'), 
+                                content: Text('Erro: $e'),
                                 backgroundColor: Colors.redAccent,
                                 behavior: SnackBarBehavior.floating,
                               ),
@@ -5490,11 +6331,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           elevation: 0,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         child: const Text(
                           'CONFIRMAR PAGAMENTO',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ),
@@ -5508,15 +6354,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-
-  Widget _buildTipoOption(String label, IconData icon, bool selected, VoidCallback onTap) {
+  Widget _buildTipoOption(
+    String label,
+    IconData icon,
+    bool selected,
+    VoidCallback onTap,
+  ) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
-          color: selected ? Colors.blueAccent.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+          color: selected
+              ? Colors.blueAccent.withOpacity(0.2)
+              : Colors.white.withOpacity(0.05),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected ? Colors.blueAccent : Colors.transparent,
@@ -5525,7 +6377,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         ),
         child: Column(
           children: [
-            Icon(icon, color: selected ? Colors.blueAccent : Colors.white54, size: 32),
+            Icon(
+              icon,
+              color: selected ? Colors.blueAccent : Colors.white54,
+              size: 32,
+            ),
             const SizedBox(height: 8),
             Text(
               label,
@@ -5541,14 +6397,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  Widget _buildStatusChip(String label, bool selected, VoidCallback onTap, Color color) {
+  Widget _buildStatusChip(
+    String label,
+    bool selected,
+    VoidCallback onTap,
+    Color color,
+  ) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+          color: selected
+              ? color.withOpacity(0.2)
+              : Colors.white.withOpacity(0.05),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: selected ? color : Colors.transparent,
@@ -5579,7 +6442,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     if (resultado != null) {
       setState(() {
         _clienteSelecionado = resultado;
-        if (resultado.perfilPreco != null && resultado.perfilPreco!.isNotEmpty) {
+        if (resultado.perfilPreco != null &&
+            resultado.perfilPreco!.isNotEmpty) {
           _tabelaPrecoAtiva = resultado.perfilPreco;
         }
       });
@@ -5602,7 +6466,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final authService = Provider.of<AuthService>(context, listen: false);
     final empresa = authService.empresaAtual;
     if (empresa == null) return;
-    
+
     showDialog(
       context: context,
       builder: (context) => HistoricoNFCePDVDialog(empresa: empresa),
@@ -5629,7 +6493,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     if (!dataService.caixaAberto) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('É necessário abrir o caixa antes de fazer um pagamento'),
+          content: Text(
+            'É necessário abrir o caixa antes de fazer um pagamento',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -6250,29 +7116,50 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                 onTap: () => selecionarItem(item),
                                 child: Container(
                                   margin: const EdgeInsets.only(bottom: 6),
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 14,
+                                  ),
                                   decoration: BoxDecoration(
                                     gradient: isSelected
                                         ? LinearGradient(
                                             begin: Alignment.centerLeft,
                                             end: Alignment.centerRight,
                                             colors: isProduto
-                                                ? [Colors.blue.shade900.withOpacity(0.6), Colors.blue.shade800.withOpacity(0.3)]
-                                                : [Colors.purple.shade900.withOpacity(0.6), Colors.purple.shade800.withOpacity(0.3)],
+                                                ? [
+                                                    Colors.blue.shade900
+                                                        .withOpacity(0.6),
+                                                    Colors.blue.shade800
+                                                        .withOpacity(0.3),
+                                                  ]
+                                                : [
+                                                    Colors.purple.shade900
+                                                        .withOpacity(0.6),
+                                                    Colors.purple.shade800
+                                                        .withOpacity(0.3),
+                                                  ],
                                           )
                                         : null,
-                                    color: isSelected ? null : Colors.white.withOpacity(0.05),
+                                    color: isSelected
+                                        ? null
+                                        : Colors.white.withOpacity(0.05),
                                     borderRadius: BorderRadius.circular(14),
                                     border: Border.all(
                                       color: isSelected
-                                          ? (isProduto ? Colors.blueAccent : Colors.purpleAccent)
+                                          ? (isProduto
+                                                ? Colors.blueAccent
+                                                : Colors.purpleAccent)
                                           : Colors.white.withOpacity(0.08),
                                       width: isSelected ? 2 : 1,
                                     ),
                                     boxShadow: isSelected
                                         ? [
                                             BoxShadow(
-                                              color: (isProduto ? Colors.blue : Colors.purple).withOpacity(0.2),
+                                              color:
+                                                  (isProduto
+                                                          ? Colors.blue
+                                                          : Colors.purple)
+                                                      .withOpacity(0.2),
                                               blurRadius: 8,
                                               offset: const Offset(0, 2),
                                             ),
@@ -6286,10 +7173,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                         return Row(
                                           children: [
                                             // Código como badge ou ícone
-                                            if (produto.codigo != null && produto.codigo!.isNotEmpty)
+                                            if (produto.codigo != null &&
+                                                produto.codigo!.isNotEmpty)
                                               Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                                constraints: const BoxConstraints(minWidth: 48),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 8,
+                                                    ),
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      minWidth: 48,
+                                                    ),
                                                 decoration: BoxDecoration(
                                                   gradient: LinearGradient(
                                                     begin: Alignment.topLeft,
@@ -6299,12 +7194,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                                       Colors.blue.shade800,
                                                     ],
                                                   ),
-                                                  borderRadius: BorderRadius.circular(10),
+                                                  borderRadius:
+                                                      BorderRadius.circular(10),
                                                   boxShadow: [
                                                     BoxShadow(
-                                                      color: Colors.blue.withOpacity(0.3),
+                                                      color: Colors.blue
+                                                          .withOpacity(0.3),
                                                       blurRadius: 6,
-                                                      offset: const Offset(0, 2),
+                                                      offset: const Offset(
+                                                        0,
+                                                        2,
+                                                      ),
                                                     ),
                                                   ],
                                                 ),
@@ -6321,10 +7221,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                               )
                                             else
                                               Container(
-                                                padding: const EdgeInsets.all(10),
+                                                padding: const EdgeInsets.all(
+                                                  10,
+                                                ),
                                                 decoration: BoxDecoration(
-                                                  color: Colors.blue.withOpacity(0.15),
-                                                  borderRadius: BorderRadius.circular(10),
+                                                  color: Colors.blue
+                                                      .withOpacity(0.15),
+                                                  borderRadius:
+                                                      BorderRadius.circular(10),
                                                 ),
                                                 child: const Icon(
                                                   Icons.inventory_2_rounded,
@@ -6336,53 +7240,107 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                             // Nome e estoque
                                             Expanded(
                                               child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
                                                   Text(
                                                     produto.nome.toUpperCase(),
                                                     style: TextStyle(
-                                                      color: isDark ? Colors.yellow.shade200 : const Color(0xFF0F172A),
+                                                      color: isDark
+                                                          ? Colors
+                                                                .yellow
+                                                                .shade200
+                                                          : const Color(
+                                                              0xFF0F172A,
+                                                            ),
                                                       fontSize: 24,
-                                                      fontWeight: FontWeight.w900,
+                                                      fontWeight:
+                                                          FontWeight.w900,
                                                       height: 1.15,
                                                       letterSpacing: 0.5,
-                                                      shadows: isDark ? [
-                                                        const Shadow(
-                                                          color: Colors.black87,
-                                                          blurRadius: 4,
-                                                          offset: Offset(0, 2),
-                                                        ),
-                                                      ] : null,
+                                                      shadows: isDark
+                                                          ? [
+                                                              const Shadow(
+                                                                color: Colors
+                                                                    .black87,
+                                                                blurRadius: 4,
+                                                                offset: Offset(
+                                                                  0,
+                                                                  2,
+                                                                ),
+                                                              ),
+                                                            ]
+                                                          : null,
                                                     ),
                                                     maxLines: 2,
-                                                    overflow: TextOverflow.ellipsis,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
                                                   ),
                                                   const SizedBox(height: 4),
                                                   // Estoque indicator
                                                   Row(
                                                     children: [
                                                       Container(
-                                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 3,
+                                                            ),
                                                         decoration: BoxDecoration(
-                                                          color: produto.estoque <= 0
-                                                              ? Colors.red.withOpacity(0.2)
-                                                              : produto.estoque < 10
-                                                                  ? Colors.orange.withOpacity(0.15)
-                                                                  : Colors.green.withOpacity(0.12),
-                                                          borderRadius: BorderRadius.circular(6),
+                                                          color:
+                                                              produto.estoque <=
+                                                                  0
+                                                              ? Colors.red
+                                                                    .withOpacity(
+                                                                      0.2,
+                                                                    )
+                                                              : produto.estoque <
+                                                                    10
+                                                              ? Colors.orange
+                                                                    .withOpacity(
+                                                                      0.15,
+                                                                    )
+                                                              : Colors.green
+                                                                    .withOpacity(
+                                                                      0.12,
+                                                                    ),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                6,
+                                                              ),
                                                         ),
                                                         child: Text(
                                                           produto.estoque <= 0
                                                               ? '⚠ Sem estoque'
                                                               : 'Est: ${produto.estoque}',
                                                           style: TextStyle(
-                                                            color: produto.estoque <= 0
-                                                                ? (isDark ? Colors.redAccent : Colors.red.shade800)
-                                                                : produto.estoque < 10
-                                                                    ? (isDark ? Colors.orangeAccent : Colors.orange.shade900)
-                                                                    : (isDark ? Colors.greenAccent.shade200 : Colors.green.shade800),
+                                                            color:
+                                                                produto.estoque <=
+                                                                    0
+                                                                ? (isDark
+                                                                      ? Colors
+                                                                            .redAccent
+                                                                      : Colors
+                                                                            .red
+                                                                            .shade800)
+                                                                : produto.estoque <
+                                                                      10
+                                                                ? (isDark
+                                                                      ? Colors
+                                                                            .orangeAccent
+                                                                      : Colors
+                                                                            .orange
+                                                                            .shade900)
+                                                                : (isDark
+                                                                      ? Colors
+                                                                            .greenAccent
+                                                                            .shade200
+                                                                      : Colors
+                                                                            .green
+                                                                            .shade800),
                                                             fontSize: 11,
-                                                            fontWeight: FontWeight.w600,
+                                                            fontWeight:
+                                                                FontWeight.w600,
                                                           ),
                                                         ),
                                                       ),
@@ -6394,18 +7352,32 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                             const SizedBox(width: 12),
                                             // Preço em pill
                                             Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8,
+                                                  ),
                                               decoration: BoxDecoration(
-                                                color: isDark ? Colors.green.withOpacity(0.15) : const Color(0xFFDCFCE7),
-                                                borderRadius: BorderRadius.circular(10),
+                                                color: isDark
+                                                    ? Colors.green.withOpacity(
+                                                        0.15,
+                                                      )
+                                                    : const Color(0xFFDCFCE7),
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
                                                 border: Border.all(
-                                                  color: isDark ? Colors.greenAccent.withOpacity(0.2) : const Color(0xFF86EFAC),
+                                                  color: isDark
+                                                      ? Colors.greenAccent
+                                                            .withOpacity(0.2)
+                                                      : const Color(0xFF86EFAC),
                                                 ),
                                               ),
                                               child: Text(
                                                 'R\$ ${produto.preco.toStringAsFixed(2)}',
                                                 style: TextStyle(
-                                                  color: isDark ? Colors.greenAccent : const Color(0xFF15803D),
+                                                  color: isDark
+                                                      ? Colors.greenAccent
+                                                      : const Color(0xFF15803D),
                                                   fontSize: 16,
                                                   fontWeight: FontWeight.bold,
                                                   letterSpacing: 0.3,
@@ -6425,11 +7397,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                                   begin: Alignment.topLeft,
                                                   end: Alignment.bottomRight,
                                                   colors: [
-                                                    Colors.purple.shade600.withOpacity(0.4),
-                                                    Colors.purple.shade800.withOpacity(0.2),
+                                                    Colors.purple.shade600
+                                                        .withOpacity(0.4),
+                                                    Colors.purple.shade800
+                                                        .withOpacity(0.2),
                                                   ],
                                                 ),
-                                                borderRadius: BorderRadius.circular(10),
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
                                               ),
                                               child: const Icon(
                                                 Icons.build_rounded,
@@ -6440,14 +7415,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                             const SizedBox(width: 14),
                                             Expanded(
                                               child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
                                                   Text(
                                                     servico.nome.toUpperCase(),
                                                     style: TextStyle(
-                                                      color: Colors.yellow.shade200,
+                                                      color: Colors
+                                                          .yellow
+                                                          .shade200,
                                                       fontSize: 24,
-                                                      fontWeight: FontWeight.w900,
+                                                      fontWeight:
+                                                          FontWeight.w900,
                                                       height: 1.15,
                                                       letterSpacing: 0.5,
                                                       shadows: [
@@ -6459,15 +7438,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                                       ],
                                                     ),
                                                     maxLines: 2,
-                                                    overflow: TextOverflow.ellipsis,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
                                                   ),
                                                   const SizedBox(height: 3),
                                                   Text(
                                                     '✦ Serviço',
                                                     style: TextStyle(
-                                                      color: Colors.purpleAccent.withOpacity(0.7),
+                                                      color: Colors.purpleAccent
+                                                          .withOpacity(0.7),
                                                       fontSize: 11,
-                                                      fontWeight: FontWeight.w600,
+                                                      fontWeight:
+                                                          FontWeight.w600,
                                                     ),
                                                   ),
                                                 ],
@@ -6476,12 +7458,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                             const SizedBox(width: 12),
                                             // Preço em pill
                                             Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8,
+                                                  ),
                                               decoration: BoxDecoration(
-                                                color: Colors.green.withOpacity(0.15),
-                                                borderRadius: BorderRadius.circular(10),
+                                                color: Colors.green.withOpacity(
+                                                  0.15,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
                                                 border: Border.all(
-                                                  color: Colors.greenAccent.withOpacity(0.2),
+                                                  color: Colors.greenAccent
+                                                      .withOpacity(0.2),
                                                 ),
                                               ),
                                               child: Text(
@@ -6824,14 +7814,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _focoNasCategorias = false;
     });
 
-    List<PagamentoPedido> pagamentosAUsar = pagamentosIniciais ?? List.from(_pagamentosSalvos);
-    
+    List<PagamentoPedido> pagamentosAUsar =
+        pagamentosIniciais ?? List.from(_pagamentosSalvos);
+
     // Se for Delivery e o pagamento preferencial estiver definido (e ainda sem pagamentos lançados),
     // já pré-preenche o pagamento preferencial com o valor total (produtos + taxa de entrega)
-    if (pagamentosAUsar.isEmpty && _isDelivery && _formaPagamentoDelivery != null) {
+    if (pagamentosAUsar.isEmpty &&
+        _isDelivery &&
+        _formaPagamentoDelivery != null) {
       final total = _totalCarrinho;
       double? troco;
-      if (_formaPagamentoDelivery == TipoPagamento.dinheiro && _valorParaTroco > total) {
+      if (_formaPagamentoDelivery == TipoPagamento.dinheiro &&
+          _valorParaTroco > total) {
         troco = _valorParaTroco - total;
       }
       pagamentosAUsar = [
@@ -6840,12 +7834,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           tipo: _formaPagamentoDelivery!,
           valor: total,
           recebido: true,
-          valorRecebido: _formaPagamentoDelivery == TipoPagamento.dinheiro ? (_valorParaTroco > 0 ? _valorParaTroco : total) : null,
+          valorRecebido: _formaPagamentoDelivery == TipoPagamento.dinheiro
+              ? (_valorParaTroco > 0 ? _valorParaTroco : total)
+              : null,
           troco: troco,
-        )
+        ),
       ];
     }
-    
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -6908,7 +7904,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // CAPTURAR DADOS IMEDIATAMENTE (Atomicidade e Segurança contra Race Conditions)
     final itensVendaCapturados = List<ItemCarrinho>.from(_carrinho);
-    final totalVendaCapturado = _totalCarrinho; 
+    final totalVendaCapturado = _totalCarrinho;
     final mesaParaLimparId = this.mesaParaLimparId;
     final mesaNumero = this.mesaNumero;
     final tipoNome = this.tipoNome;
@@ -6918,7 +7914,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final cpfNfceCapturado = _cpfNfce;
     final nomeNfceCapturado = _nomeNfce;
     final mesaComandaOriginal = _mesaComandaVinculada;
-    
+
     // DELIVERY DATA CAPTURE
     final isDeliveryCapturado = _isDelivery;
     final enderecoEntregaCapturado = _enderecoEntrega;
@@ -6927,20 +7923,26 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final motoristaNomeCapturado = _motoristaNome;
 
     if (itensVendaCapturados.isEmpty && mesaParaLimparId == null) {
-      debugPrint('>>> [VendaDireta] ⚠️ Abortando finalização: Carrinho vazio e sem mesa vinculada.');
+      debugPrint(
+        '>>> [VendaDireta] ⚠️ Abortando finalização: Carrinho vazio e sem mesa vinculada.',
+      );
       return;
     }
 
     // VALIDAR FORMAS DE PAGAMENTO DA TABELA DE PREÇO
-    final configPerfil = dataService.empresaAtual?.getConfigPerfilPreco(_perfilPrecoEfetivo);
-    final formasPermitidas = configPerfil != null && configPerfil['formas_pagamento'] != null 
+    final configPerfil = dataService.empresaAtual?.getConfigPerfilPreco(
+      _perfilPrecoEfetivo,
+    );
+    final formasPermitidas =
+        configPerfil != null && configPerfil['formas_pagamento'] != null
         ? List<String>.from(configPerfil['formas_pagamento'])
         : <String>[];
 
-    final qtdMinima = configPerfil != null && configPerfil['quantidade_minima'] != null 
-        ? (configPerfil['quantidade_minima'] as num).toDouble() 
+    final qtdMinima =
+        configPerfil != null && configPerfil['quantidade_minima'] != null
+        ? (configPerfil['quantidade_minima'] as num).toDouble()
         : 0.0;
-        
+
     final aplicarTabela = _totalItens >= qtdMinima;
 
     if (aplicarTabela && formasPermitidas.isNotEmpty && configPerfil != null) {
@@ -6952,39 +7954,53 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           break;
         }
       }
-      
+
       if (pagamentoInvalido) {
-        final nomesPermitidos = formasPermitidas.map((f) {
-           return TipoPagamento.values.firstWhere((t) => t.name == f, orElse: () => TipoPagamento.outro).nome;
-        }).join(', ');
-        
+        final nomesPermitidos = formasPermitidas
+            .map((f) {
+              return TipoPagamento.values
+                  .firstWhere(
+                    (t) => t.name == f,
+                    orElse: () => TipoPagamento.outro,
+                  )
+                  .nome;
+            })
+            .join(', ');
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('A Tabela "${configPerfil['nome']}" exige pagamento em: $nomesPermitidos.'),
+            content: Text(
+              'A Tabela "${configPerfil['nome']}" exige pagamento em: $nomesPermitidos.',
+            ),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 4),
-          )
+          ),
         );
         return; // Aborta a finalização
       }
     }
 
     setState(() => _estaFinalizando = true);
-    
+
     final uuid = const Uuid();
     debugPrint('>>> [VendaDireta] 🚀 INICIANDO FINALIZAÇÃO DA VENDA (Segura)');
-    debugPrint('>>> [VendaDireta] 🔍 Total Capturado: R\$ ${totalVendaCapturado.toStringAsFixed(2)}');
+    debugPrint(
+      '>>> [VendaDireta] 🔍 Total Capturado: R\$ ${totalVendaCapturado.toStringAsFixed(2)}',
+    );
     debugPrint('>>> [VendaDireta] 🔍 Itens: ${itensVendaCapturados.length}');
-    
+
     try {
-      String numero = _pedidoOriginal?.numero ?? (isDeliveryCapturado 
-          ? await dataService.getProximoNumeroPedidoSeguro() 
-          : await dataService.getProximoNumeroVendaSeguro());
-          
+      String numero =
+          _pedidoOriginal?.numero ??
+          (isDeliveryCapturado
+              ? await dataService.getProximoNumeroPedidoSeguro()
+              : await dataService.getProximoNumeroVendaSeguro());
+
       if (mesaNumero != null && _pedidoOriginal == null) {
-        final bool isComanda = mesaComandaOriginal?.tipo == TipoControle.comanda || 
-                               mesaNumero.toUpperCase().contains('CMD') || 
-                               mesaNumero.toUpperCase().contains('COMANDA');
+        final bool isComanda =
+            mesaComandaOriginal?.tipo == TipoControle.comanda ||
+            mesaNumero.toUpperCase().contains('CMD') ||
+            mesaNumero.toUpperCase().contains('COMANDA');
         final prefixo = isComanda ? 'CMD' : 'MESA';
         final proximoNumVal = numero.split('-').last;
         numero = '$prefixo-$mesaNumero-$proximoNumVal';
@@ -7027,8 +8043,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         statusPedido = 'Pendente';
       }
 
-      TipoPagamento tipoPagamentoVenda = pagamentosAtualizados.isNotEmpty 
-          ? pagamentosAtualizados.first.tipo 
+      TipoPagamento tipoPagamentoVenda = pagamentosAtualizados.isNotEmpty
+          ? pagamentosAtualizados.first.tipo
           : TipoPagamento.outro;
 
       final itensVenda = itensVendaCapturados
@@ -7042,45 +8058,51 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               quantidade: item.quantidade,
               isServico: item.isServico,
               fornecedorNome: item.fornecedorNome,
-              observacao: item.isBrinde 
-                  ? (item.observacao != null && item.observacao!.isNotEmpty 
-                      ? '[BRINDE] ${item.observacao}' 
-                      : '[BRINDE]') 
+              observacao: item.isBrinde
+                  ? (item.observacao != null && item.observacao!.isNotEmpty
+                        ? '[BRINDE] ${item.observacao}'
+                        : '[BRINDE]')
                   : item.observacao,
               adicionais: item.adicionais,
               opcoesCombo: item.opcoesCombo,
               variacoesSelecionadas: item.variacoesSelecionadas,
               precoTabela: item.precoTabela,
-            baixaProporcional: item.baixaProporcional,
-            unidadeVenda: item.unidadeVenda,
-            quantidadeBaixa: item.quantidadeBaixa,
+              baixaProporcional: item.baixaProporcional,
+              unidadeVenda: item.unidadeVenda,
+              quantidadeBaixa: item.quantidadeBaixa,
             ),
           )
           .toList();
 
       String? observacoesFinais = observacoesVendaCapturadas;
-      final String labelOrigem = tipoNome == 'Comanda' ? '[COMANDA]' : (tipoNome == 'Mesa' ? '[MESA]' : '[BALCÃO]');
-      
+      final String labelOrigem = tipoNome == 'Comanda'
+          ? '[COMANDA]'
+          : (tipoNome == 'Mesa' ? '[MESA]' : '[BALCÃO]');
+
       if (observacoesFinais == null || observacoesFinais.isEmpty) {
         if (mesaNumero != null) {
           observacoesFinais = 'Venda originada da $tipoNome $mesaNumero';
         }
       }
 
-      String? clienteNomeFinal = clienteSelecionadoCapturado?.nome ?? nomeNfceCapturado;
+      String? clienteNomeFinal =
+          clienteSelecionadoCapturado?.nome ?? nomeNfceCapturado;
       if (mesaNumero != null) {
         if (clienteNomeFinal == null || clienteNomeFinal.isEmpty) {
           clienteNomeFinal = '$labelOrigem $mesaNumero';
-        } else if (!clienteNomeFinal.toUpperCase().contains(labelOrigem.toUpperCase())) {
+        } else if (!clienteNomeFinal.toUpperCase().contains(
+          labelOrigem.toUpperCase(),
+        )) {
           clienteNomeFinal = '$labelOrigem $mesaNumero - $clienteNomeFinal';
         }
       }
 
-      final String tagIdentificacao = '[VIP-MC] originado de $labelOrigem $mesaNumero';
-      final observacaoIdentificadora = mesaParaLimparId != null 
-          ? (observacoesFinais != null && observacoesFinais.isNotEmpty 
-              ? '$tagIdentificacao | $observacoesFinais' 
-              : tagIdentificacao)
+      final String tagIdentificacao =
+          '[VIP-MC] originado de $labelOrigem $mesaNumero';
+      final observacaoIdentificadora = mesaParaLimparId != null
+          ? (observacoesFinais != null && observacoesFinais.isNotEmpty
+                ? '$tagIdentificacao | $observacoesFinais'
+                : tagIdentificacao)
           : observacoesFinais;
 
       final vendaId = _pedidoOriginal?.id ?? uuid.v4();
@@ -7091,7 +8113,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         clienteId: clienteSelecionadoCapturado?.id,
         clienteNome: clienteNomeFinal,
         clienteTelefone: clienteSelecionadoCapturado?.telefone,
-        clienteCpfCnpj: clienteSelecionadoCapturado?.cpfCnpj ?? cpfNfceCapturado,
+        clienteCpfCnpj:
+            clienteSelecionadoCapturado?.cpfCnpj ?? cpfNfceCapturado,
         vendedorId: vendedorSelecionadoCapturado?.id,
         vendedorNome: vendedorSelecionadoCapturado?.nome,
         itens: itensVenda,
@@ -7119,7 +8142,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 motoristaId: motoristaIdCapturado,
                 motoristaNome: motoristaNomeCapturado,
                 status: 'Pendente',
-                previsaoEntrega: _previsaoEntrega.trim().isEmpty ? null : _previsaoEntrega.trim(),
+                previsaoEntrega: _previsaoEntrega.trim().isEmpty
+                    ? null
+                    : _previsaoEntrega.trim(),
                 dataPedido: DateTime.now(),
               )
             : null,
@@ -7131,7 +8156,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         // dataService.deletePedido(_pedidoOriginal!.id);
 
         final vendaOriginal = dataService.vendasBalcao
-            .where((v) => v.id == _pedidoOriginal!.id || v.numero == _pedidoOriginal!.numero)
+            .where(
+              (v) =>
+                  v.id == _pedidoOriginal!.id ||
+                  v.numero == _pedidoOriginal!.numero,
+            )
             .firstOrNull;
         if (vendaOriginal != null) {
           await dataService.deleteVendaBalcao(vendaOriginal.id);
@@ -7149,10 +8178,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       final empresaConfigImpressao = dataService.empresaAtual;
       final imprimirProducaoAuto =
           empresaConfigImpressao?.configuracoes?['imprimirProducaoAoSalvar'] ??
-              true;
+          true;
       final imprimirCupomAuto =
           empresaConfigImpressao?.configuracoes?['imprimirCupomAoSalvar'] ??
-              false;
+          false;
 
       // IMPRIMIR TICKETS DE PRODUÇÃO (para qualquer venda direta, se ligado)
       // Criar itens de produção a partir do carrinho para impressão
@@ -7160,18 +8189,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         final produtosParaImprimir = <ItemPedido>[];
         for (final item in itensVenda) {
           if (!item.isServico) {
-            produtosParaImprimir.add(ItemPedido(
-              id: item.id,
-              nome: item.nome,
-              preco: item.precoUnitario,
-              quantidade: item.quantidade,
-              observacao: item.observacao,
-              fornecedorNome: item.fornecedorNome,
-              adicionais: item.adicionais,
-              unidadeVenda: item.unidadeVenda,
-              quantidadeBaixa: item.quantidadeBaixa,
-              precoSemPromocao: item.precoSemPromocao,
-            ));
+            produtosParaImprimir.add(
+              ItemPedido(
+                id: item.id,
+                nome: item.nome,
+                preco: item.precoUnitario,
+                quantidade: item.quantidade,
+                observacao: item.observacao,
+                fornecedorNome: item.fornecedorNome,
+                adicionais: item.adicionais,
+                unidadeVenda: item.unidadeVenda,
+                quantidadeBaixa: item.quantidadeBaixa,
+                precoSemPromocao: item.precoSemPromocao,
+              ),
+            );
           }
         }
         final pedidoParaImpressao = Pedido(
@@ -7179,7 +8210,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           numero: numero,
           clienteId: clienteSelecionadoCapturado?.id,
           clienteNome: clienteNomeFinal,
-          clienteTelefone: clienteSelecionadoCapturado?.telefone ?? vendaBalcao.clienteTelefone,
+          clienteTelefone:
+              clienteSelecionadoCapturado?.telefone ??
+              vendaBalcao.clienteTelefone,
           dataPedido: vendaBalcao.dataVenda,
           status: 'Pago',
           total: totalVendaCapturado,
@@ -7195,38 +8228,48 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         await _imprimirTicketsProducaoVendaDireta(pedidoParaImpressao);
       }
 
-      final temPagamentosPendentes = pagamentosAtualizados.any((p) => !p.recebido);
+      final temPagamentosPendentes = pagamentosAtualizados.any(
+        (p) => !p.recebido,
+      );
       final temFiadoOuCrediario = pagamentosAtualizados.any(
-        (p) => p.tipo == TipoPagamento.fiado || p.tipo == TipoPagamento.crediario,
+        (p) =>
+            p.tipo == TipoPagamento.fiado || p.tipo == TipoPagamento.crediario,
       );
 
-      if (mesaParaLimparId != null || temFiadoOuCrediario || temPagamentosPendentes || isDeliveryCapturado) {
+      if (mesaParaLimparId != null ||
+          temFiadoOuCrediario ||
+          temPagamentosPendentes ||
+          isDeliveryCapturado) {
         final produtosPedido = <ItemPedido>[];
         final servicosPedido = <ItemServico>[];
 
         for (final item in itensVenda) {
           if (item.isServico) {
-            servicosPedido.add(ItemServico(
-              id: item.id,
-              descricao: item.nome,
-              valor: item.precoUnitario,
-              valorAdicional: 0.0,
-              dataAgendamento: DateTime.now(),
-              observacao: item.observacao,
-            ));
+            servicosPedido.add(
+              ItemServico(
+                id: item.id,
+                descricao: item.nome,
+                valor: item.precoUnitario,
+                valorAdicional: 0.0,
+                dataAgendamento: DateTime.now(),
+                observacao: item.observacao,
+              ),
+            );
           } else {
-            produtosPedido.add(ItemPedido(
-              id: item.id,
-              nome: item.nome,
-              preco: item.precoUnitario,
-              quantidade: item.quantidade,
-              observacao: item.observacao,
-              fornecedorNome: item.fornecedorNome,
-              adicionais: item.adicionais,
-              unidadeVenda: item.unidadeVenda,
-              quantidadeBaixa: item.quantidadeBaixa,
-              precoSemPromocao: item.precoSemPromocao,
-            ));
+            produtosPedido.add(
+              ItemPedido(
+                id: item.id,
+                nome: item.nome,
+                preco: item.precoUnitario,
+                quantidade: item.quantidade,
+                observacao: item.observacao,
+                fornecedorNome: item.fornecedorNome,
+                adicionais: item.adicionais,
+                unidadeVenda: item.unidadeVenda,
+                quantidadeBaixa: item.quantidadeBaixa,
+                precoSemPromocao: item.precoSemPromocao,
+              ),
+            );
           }
         }
 
@@ -7235,7 +8278,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           numero: numero,
           clienteId: clienteSelecionadoCapturado?.id,
           clienteNome: clienteNomeFinal,
-          clienteTelefone: clienteSelecionadoCapturado?.telefone ?? vendaBalcao.clienteTelefone,
+          clienteTelefone:
+              clienteSelecionadoCapturado?.telefone ??
+              vendaBalcao.clienteTelefone,
           dataPedido: vendaBalcao.dataVenda,
           status: statusPedido,
           total: totalVendaCapturado,
@@ -7262,7 +8307,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             pedidoNumero: pedido.numero,
             clienteNome: pedido.clienteNome ?? 'Cliente',
             clienteTelefone: pedido.clienteTelefone,
-            enderecoEntrega: '${pedido.deliveryInfo!.logradouro}, ${pedido.deliveryInfo!.numero}',
+            enderecoEntrega:
+                '${pedido.deliveryInfo!.logradouro}, ${pedido.deliveryInfo!.numero}',
             bairro: pedido.deliveryInfo!.bairro,
             cidade: pedido.deliveryInfo!.cidade,
             cep: pedido.deliveryInfo!.cep,
@@ -7291,27 +8337,33 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           .fold(0.0, (sum, p) => sum + p.valor);
 
       if (valorFiado > 0 && clienteSelecionadoCapturado != null) {
-        dataService.updateCliente(clienteSelecionadoCapturado.copyWith(
-          saldoDevedor: clienteSelecionadoCapturado.saldoDevedor + valorFiado,
-          updatedAt: DateTime.now(),
-        ));
+        dataService.updateCliente(
+          clienteSelecionadoCapturado.copyWith(
+            saldoDevedor: clienteSelecionadoCapturado.saldoDevedor + valorFiado,
+            updatedAt: DateTime.now(),
+          ),
+        );
       }
 
       // Registrar pagamentos no historicoPagamentos da mesa/comanda
       // ANTES de fechar, para que o totalPago fique correto.
       if (mesaParaLimparId != null && mesaComandaOriginal != null) {
-        final pagamentosExistentes = List<RegistroPagamento>.from(mesaComandaOriginal.historicoPagamentos);
+        final pagamentosExistentes = List<RegistroPagamento>.from(
+          mesaComandaOriginal.historicoPagamentos,
+        );
         final idsExistentes = pagamentosExistentes.map((p) => p.id).toSet();
         for (final p in pagamentosAtualizados) {
           if (p.recebido && p.valor > 0 && !idsExistentes.contains(p.id)) {
-            pagamentosExistentes.add(RegistroPagamento(
-              id: p.id,
-              valor: p.valor,
-              dataPagamento: p.dataRecebimento ?? DateTime.now(),
-              formaPagamento: p.tipo.nome,
-              observacao: p.observacao,
-              pessoaPagou: vendedorSelecionadoCapturado?.nome,
-            ));
+            pagamentosExistentes.add(
+              RegistroPagamento(
+                id: p.id,
+                valor: p.valor,
+                dataPagamento: p.dataRecebimento ?? DateTime.now(),
+                formaPagamento: p.tipo.nome,
+                observacao: p.observacao,
+                pessoaPagou: vendedorSelecionadoCapturado?.nome,
+              ),
+            );
           }
         }
         final mesaAtualizada = mesaComandaOriginal.copyWith(
@@ -7322,11 +8374,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       }
       // Limpar mesa/comanda vinculada
       if (mesaParaLimparId != null) {
-          await dataService.deleteMesaComanda(mesaParaLimparId);
+        await dataService.deleteMesaComanda(mesaParaLimparId);
       }
 
       // SALVAMENTO GLOBAL EM BACKGROUND (Evita travamentos visuais)
-      dataService.salvarImediatamente(); 
+      dataService.salvarImediatamente();
 
       final trocoTotal = pagamentosAtualizados
           .where((p) => p.troco != null && p.troco! > 0)
@@ -7334,11 +8386,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       _resetarTodaVenda();
 
-      
       if (mounted) {
         _tocarSomPDV('notification.mp3', tipo: 'finalizar');
         _mostrarSucessoVenda(
-          totalVendaCapturado, numero, vendaBalcao,
+          totalVendaCapturado,
+          numero,
+          vendaBalcao,
           troco: trocoTotal,
           titulo: '${tipoNome.toUpperCase()} FINALIZADA!',
           infoExtra: 'GERADA NO HISTÓRICO!',
@@ -7355,18 +8408,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             empresa: empresaConfigImpressao,
             context: context,
           );
-          debugPrint('>>> [VendaDireta] ✓ Cupom impresso automaticamente '
-              '(venda ${vendaBalcao.numero})');
+          debugPrint(
+            '>>> [VendaDireta] ✓ Cupom impresso automaticamente '
+            '(venda ${vendaBalcao.numero})',
+          );
         } catch (e) {
           debugPrint(
-              '>>> [VendaDireta] ⚠️ Falha ao imprimir cupom automático: $e');
+            '>>> [VendaDireta] ⚠️ Falha ao imprimir cupom automático: $e',
+          );
         }
       }
     } catch (e, stackTrace) {
       debugPrint('>>> ❌ ERRO AO FINALIZAR: $e\n$stackTrace');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao finalizar venda: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Erro ao finalizar venda: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -7391,8 +8450,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       valorComissao = valorPedido * (percentualComissao / 100);
     } else {
       valorComissao = vendedor.valorComissao;
-      percentualComissao =
-          valorPedido > 0 ? (valorComissao / valorPedido) * 100 : 0.0;
+      percentualComissao = valorPedido > 0
+          ? (valorComissao / valorPedido) * 100
+          : 0.0;
     }
 
     if (valorComissao <= 0) return;
@@ -7430,7 +8490,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   ) async {
     final nfceService = NfceService();
     final dataService = Provider.of<DataService>(context, listen: false);
-    final empresa = dataService.empresaAtual; // Usando empresaAtual do DataService
+    final empresa =
+        dataService.empresaAtual; // Usando empresaAtual do DataService
 
     if (empresa != null) {
       final configUrl = empresa.configuracoes?['bridgeNfceUrl'] as String?;
@@ -7523,37 +8584,56 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       } else {
         final controller = TextEditingController();
         nomeIdentificacao = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Identificar Venda', style: TextStyle(color: Colors.white)),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              labelText: 'Nome do Cliente ou Mesa',
-              labelStyle: const TextStyle(color: Colors.white70),
-              hintText: 'Ex: João, Mesa 05, Balcão...',
-              hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-              filled: true,
-              fillColor: Colors.black26,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
             ),
+            title: const Text(
+              'Identificar Venda',
+              style: TextStyle(color: Colors.white),
+            ),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Nome do Cliente ou Mesa',
+                labelStyle: const TextStyle(color: Colors.white70),
+                hintText: 'Ex: João, Mesa 05, Balcão...',
+                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                filled: true,
+                fillColor: Colors.black26,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onSubmitted: (_) =>
+                  Navigator.pop(context, controller.text.trim()),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: const Text(
+                  'IGNORAR',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, controller.text.trim()),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                child: const Text(
+                  'SALVAR',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, null),
-              child: const Text('IGNORAR', style: TextStyle(color: Colors.white54)),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-              child: const Text('SALVAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
         );
         // Se o usuário digitou um nome, salva ele no _nomeNfce para futuras referências
         if (nomeIdentificacao != null && nomeIdentificacao.isNotEmpty) {
@@ -7570,11 +8650,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final taxaEntregaCapturado = _taxaEntrega;
     final motoristaIdCapturado = _motoristaId;
     final motoristaNomeCapturado = _motoristaNome;
-    
+
     final uuid = const Uuid();
     final mesaNumero = _mesaComandaVinculada?.numero;
     final mesaParaLimparId = _mesaComandaVinculada?.id;
-
 
     // Criar itens da venda balcão
     final itensVenda = _carrinho
@@ -7591,29 +8670,38 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             observacao: item.observacao,
             adicionais: item.adicionais,
             opcoesCombo: item.opcoesCombo,
-          variacoesSelecionadas: item.variacoesSelecionadas,
-          baixaProporcional: item.baixaProporcional,
-          unidadeVenda: item.unidadeVenda,
-          quantidadeBaixa: item.quantidadeBaixa,
+            variacoesSelecionadas: item.variacoesSelecionadas,
+            baixaProporcional: item.baixaProporcional,
+            unidadeVenda: item.unidadeVenda,
+            quantidadeBaixa: item.quantidadeBaixa,
           ),
         )
         .toList();
 
     // Determinar tipo de pagamento principal (se houver)
-    TipoPagamento tipoPrincipal = _formaPagamentoDelivery ?? TipoPagamento.outro;
+    TipoPagamento tipoPrincipal =
+        _formaPagamentoDelivery ?? TipoPagamento.outro;
     if (pagamentosDoDialog.isNotEmpty) {
       tipoPrincipal = pagamentosDoDialog.first.tipo;
     }
 
-    final String numero = _pedidoOriginal?.numero ?? (isDeliveryCapturado 
-        ? await dataService.getProximoNumeroPedidoSeguro() 
-        : await dataService.getProximoNumeroVendaSeguro());
-        
+    final pedidoOriginalViraVendaSalva =
+        !isDeliveryCapturado &&
+        _pedidoOriginal != null &&
+        NumeracaoVenda.ehPedidoTradicional(_pedidoOriginal!.numero);
+    final String numero =
+        _pedidoOriginal != null && !pedidoOriginalViraVendaSalva
+        ? _pedidoOriginal!.numero
+        : isDeliveryCapturado
+        ? await dataService.getProximoNumeroPedidoSeguro()
+        : await dataService.getProximoNumeroVendaSeguro();
+
     String numeroFinal = numero;
     if (mesaNumero != null && _pedidoOriginal == null) {
-      final bool isComanda = _mesaComandaVinculada?.tipo == TipoControle.comanda || 
-                             mesaNumero.toUpperCase().contains('CMD') || 
-                             mesaNumero.toUpperCase().contains('COMANDA');
+      final bool isComanda =
+          _mesaComandaVinculada?.tipo == TipoControle.comanda ||
+          mesaNumero.toUpperCase().contains('CMD') ||
+          mesaNumero.toUpperCase().contains('COMANDA');
       final prefixo = isComanda ? 'CMD' : 'MESA';
       final proximoNumVal = numero.split('-').last;
       numeroFinal = '$prefixo-$mesaNumero-$proximoNumVal';
@@ -7625,7 +8713,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       numero: numeroFinal,
       dataVenda: _pedidoOriginal?.dataPedido ?? DateTime.now(),
       clienteId: _clienteSelecionado?.id,
-      clienteNome: _clienteSelecionado?.nome ?? (nomeIdentificacao?.isNotEmpty == true ? nomeIdentificacao : (dataService.nomeDoCaixa.isNotEmpty ? dataService.nomeDoCaixa : (mesaNumero != null ? 'Mesa $mesaNumero' : null))),
+      clienteNome:
+          _clienteSelecionado?.nome ??
+          (nomeIdentificacao?.isNotEmpty == true
+              ? nomeIdentificacao
+              : (dataService.nomeDoCaixa.isNotEmpty
+                    ? dataService.nomeDoCaixa
+                    : (mesaNumero != null ? 'Mesa $mesaNumero' : null))),
       clienteTelefone: _clienteSelecionado?.telefone,
       vendedorId: vendedorSelecionadoCapturado?.id,
       vendedorNome: vendedorSelecionadoCapturado?.nome,
@@ -7635,28 +8729,31 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       valorTotal: _totalCarrinho,
       valorRecebido: null,
       troco: null,
-      observacoes: _observacoesVenda?.isNotEmpty == true ? _observacoesVenda : null,
+      observacoes: _observacoesVenda?.isNotEmpty == true
+          ? _observacoesVenda
+          : null,
       deliveryInfo: isDeliveryCapturado && enderecoEntregaCapturado != null
-            ? DeliveryInfo(
-                id: uuid.v4(),
-                enderecoId: enderecoEntregaCapturado.id,
-                logradouro: enderecoEntregaCapturado.logradouro,
-                numero: enderecoEntregaCapturado.numero,
-                bairro: enderecoEntregaCapturado.bairro,
-                cidade: enderecoEntregaCapturado.cidade,
-                uf: enderecoEntregaCapturado.uf,
-                cep: enderecoEntregaCapturado.cep,
-                taxaEntrega: taxaEntregaCapturado,
-                motoristaId: motoristaIdCapturado,
-                motoristaNome: motoristaNomeCapturado,
-                status: 'Pendente',
-                valorParaTroco: _valorParaTroco,
-                previsaoEntrega: _previsaoEntrega.trim().isEmpty ? null : _previsaoEntrega.trim(),
-                dataPedido: DateTime.now(),
-              )
-            : null,
+          ? DeliveryInfo(
+              id: uuid.v4(),
+              enderecoId: enderecoEntregaCapturado.id,
+              logradouro: enderecoEntregaCapturado.logradouro,
+              numero: enderecoEntregaCapturado.numero,
+              bairro: enderecoEntregaCapturado.bairro,
+              cidade: enderecoEntregaCapturado.cidade,
+              uf: enderecoEntregaCapturado.uf,
+              cep: enderecoEntregaCapturado.cep,
+              taxaEntrega: taxaEntregaCapturado,
+              motoristaId: motoristaIdCapturado,
+              motoristaNome: motoristaNomeCapturado,
+              status: 'Pendente',
+              valorParaTroco: _valorParaTroco,
+              previsaoEntrega: _previsaoEntrega.trim().isEmpty
+                  ? null
+                  : _previsaoEntrega.trim(),
+              dataPedido: DateTime.now(),
+            )
+          : null,
     );
-
 
     // Salvar venda balcão (Removido: Venda salva agora gera apenas Pedido até ser paga no PDV)
     // dataService.addVendaBalcao(vendaBalcao);
@@ -7700,24 +8797,30 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       id: _pedidoOriginal?.id ?? uuid.v4(),
       numero: _pedidoOriginal?.numero ?? vendaBalcao.numero,
       clienteId: _clienteSelecionado?.id,
-      clienteNome: vendaBalcao.clienteNome?.trim().isEmpty == true ? 'Delivery' : vendaBalcao.clienteNome,
-      clienteTelefone: _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
-      clienteEndereco: isDeliveryCapturado && enderecoEntregaCapturado != null 
-          ? '${enderecoEntregaCapturado.logradouro}, ${enderecoEntregaCapturado.numero}' 
+      clienteNome: vendaBalcao.clienteNome?.trim().isEmpty == true
+          ? 'Delivery'
+          : vendaBalcao.clienteNome,
+      clienteTelefone:
+          _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
+      clienteEndereco: isDeliveryCapturado && enderecoEntregaCapturado != null
+          ? '${enderecoEntregaCapturado.logradouro}, ${enderecoEntregaCapturado.numero}'
           : null,
       dataPedido: vendaBalcao.dataVenda,
       status: 'Pendente',
       produtos: produtosPedido,
       servicos: servicosPedido,
-      pagamentos: pagamentosDoDialog.isNotEmpty 
-          ? pagamentosDoDialog 
-          : [PagamentoPedido(
-              id: uuid.v4(),
-              tipo: _formaPagamentoDelivery ?? TipoPagamento.outro,
-              valor: _totalCarrinho,
-              recebido: false,
-              observacao: 'Venda Salva: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
-            )],
+      pagamentos: pagamentosDoDialog.isNotEmpty
+          ? pagamentosDoDialog
+          : [
+              PagamentoPedido(
+                id: uuid.v4(),
+                tipo: _formaPagamentoDelivery ?? TipoPagamento.outro,
+                valor: _totalCarrinho,
+                recebido: false,
+                observacao:
+                    'Venda Salva: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
+              ),
+            ],
       createdAt: vendaBalcao.dataVenda,
       updatedAt: vendaBalcao.dataVenda,
       observacoes: vendaBalcao.observacoes,
@@ -7730,6 +8833,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // Isso evita duplicados e garante que o novo registro (com mesmo ID se carregado) persista
     if (_pedidoOriginal != null) {
       // dataService.deletePedido(_pedidoOriginal!.id);
+      if (pedidoOriginalViraVendaSalva) {
+        dataService.deletePedido(_pedidoOriginal!.id);
+      }
 
       final vendaOriginal = dataService.vendasBalcao
           .where((v) => v.numero == _pedidoOriginal!.numero)
@@ -7760,7 +8866,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         pedidoNumero: pedidoVendaSalva.numero,
         clienteNome: pedidoVendaSalva.clienteNome ?? 'Delivery',
         clienteTelefone: pedidoVendaSalva.clienteTelefone,
-        enderecoEntrega: '${pedidoVendaSalva.deliveryInfo!.logradouro}, ${pedidoVendaSalva.deliveryInfo!.numero}',
+        enderecoEntrega:
+            '${pedidoVendaSalva.deliveryInfo!.logradouro}, ${pedidoVendaSalva.deliveryInfo!.numero}',
         bairro: pedidoVendaSalva.deliveryInfo!.bairro,
         cidade: pedidoVendaSalva.deliveryInfo!.cidade,
         cep: pedidoVendaSalva.deliveryInfo!.cep,
@@ -7806,42 +8913,45 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Marcar como fechada e aguardar liberação
     if (mesaParaLimparId != null && _mesaComandaVinculada != null) {
-        // Registrar pagamentos antes de fechar a mesa
-        final pagamentosExistentes = List<RegistroPagamento>.from(_mesaComandaVinculada!.historicoPagamentos);
-        final idsExistentes = pagamentosExistentes.map((p) => p.id).toSet();
-        for (final p in pagamentosDoDialog) {
-          if (p.recebido && p.valor > 0 && !idsExistentes.contains(p.id)) {
-            pagamentosExistentes.add(RegistroPagamento(
+      // Registrar pagamentos antes de fechar a mesa
+      final pagamentosExistentes = List<RegistroPagamento>.from(
+        _mesaComandaVinculada!.historicoPagamentos,
+      );
+      final idsExistentes = pagamentosExistentes.map((p) => p.id).toSet();
+      for (final p in pagamentosDoDialog) {
+        if (p.recebido && p.valor > 0 && !idsExistentes.contains(p.id)) {
+          pagamentosExistentes.add(
+            RegistroPagamento(
               id: p.id,
               valor: p.valor,
               dataPagamento: p.dataRecebimento ?? DateTime.now(),
               formaPagamento: p.tipo.nome,
               observacao: p.observacao,
-            ));
-          }
-        }
-        final tempMc = _mesaComandaVinculada!.copyWith(
-          historicoPagamentos: pagamentosExistentes,
-          status: 'Fechada',
-        );
-        dataService.updateMesaComanda(tempMc);
-        
-        await dataService.deleteMesaComanda(mesaParaLimparId);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Mesa/Comanda $mesaNumero liberada!'),
-              backgroundColor: Colors.orange,
-              behavior: SnackBarBehavior.floating,
             ),
           );
         }
+      }
+      final tempMc = _mesaComandaVinculada!.copyWith(
+        historicoPagamentos: pagamentosExistentes,
+        status: 'Fechada',
+      );
+      dataService.updateMesaComanda(tempMc);
+
+      await dataService.deleteMesaComanda(mesaParaLimparId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Mesa/Comanda $mesaNumero liberada!'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
 
     // Resetar estado local
     _resetarTodaVenda();
-
   }
 
   void _mostrarSucessoPedidoGerado(String numeroVenda) {
@@ -7858,7 +8968,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Limpar carrinho salvo após finalizar venda
     // _limparCarrinhoSalvo();
-
   }
 
   void _abrirDialogDividirConta() {
@@ -7867,10 +8976,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
     final pageContext = context; // Salvar context da pagina antes do dialog
-    
+
     // Map local para armazenar as quantidades selecionadas para dividir (index -> qty)
     final Map<int, double> selecionados = {};
-    
+
     // Inicializa todos com 0.0
     for (int i = 0; i < _carrinho.length; i++) {
       selecionados[i] = 0.0;
@@ -7885,11 +8994,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            
             // Calcular o valor total selecionado
             double totalSelecionado = 0.0;
-            double totalItensOriginal = _carrinho.fold(0.0, (sum, item) => sum + item.subtotal);
-            
+            double totalItensOriginal = _carrinho.fold(
+              0.0,
+              (sum, item) => sum + item.subtotal,
+            );
+
             for (int i = 0; i < _carrinho.length; i++) {
               final item = _carrinho[i];
               final qty = selecionados[i] ?? 0.0;
@@ -7908,13 +9019,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             double totalFinalPagar = totalSelecionado - descontoProporcional;
 
             // No modo valor livre, usar o valor digitado
-            double valorLivre = double.tryParse(valorLivreController.text.replaceAll(',', '.')) ?? 0.0;
+            double valorLivre =
+                double.tryParse(
+                  valorLivreController.text.replaceAll(',', '.'),
+                ) ??
+                0.0;
             bool isModoValor = modoPagamento == 'valor';
             double totalFinal = isModoValor ? valorLivre : totalFinalPagar;
 
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
               title: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -7922,7 +9039,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     children: const [
                       Icon(Icons.call_split_rounded, color: Colors.blueAccent),
                       SizedBox(width: 8),
-                      Text('Receber / Dividir', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text(
+                        'Receber / Dividir',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -7936,19 +9060,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setDialogState(() => modoPagamento = 'itens'),
+                            onTap: () =>
+                                setDialogState(() => modoPagamento = 'itens'),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               decoration: BoxDecoration(
-                                color: !isModoValor ? Colors.blueAccent.withOpacity(0.3) : Colors.transparent,
+                                color: !isModoValor
+                                    ? Colors.blueAccent.withOpacity(0.3)
+                                    : Colors.transparent,
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.shopping_cart, size: 14, color: !isModoValor ? Colors.blueAccent : Colors.white54),
+                                  Icon(
+                                    Icons.shopping_cart,
+                                    size: 14,
+                                    color: !isModoValor
+                                        ? Colors.blueAccent
+                                        : Colors.white54,
+                                  ),
                                   const SizedBox(width: 6),
-                                  Text('Selecionar Itens', style: TextStyle(color: !isModoValor ? Colors.blueAccent : Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  Text(
+                                    'Selecionar Itens',
+                                    style: TextStyle(
+                                      color: !isModoValor
+                                          ? Colors.blueAccent
+                                          : Colors.white54,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -7956,19 +9098,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         ),
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setDialogState(() => modoPagamento = 'valor'),
+                            onTap: () =>
+                                setDialogState(() => modoPagamento = 'valor'),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               decoration: BoxDecoration(
-                                color: isModoValor ? Colors.greenAccent.withOpacity(0.3) : Colors.transparent,
+                                color: isModoValor
+                                    ? Colors.greenAccent.withOpacity(0.3)
+                                    : Colors.transparent,
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.attach_money, size: 14, color: isModoValor ? Colors.greenAccent : Colors.white54),
+                                  Icon(
+                                    Icons.attach_money,
+                                    size: 14,
+                                    color: isModoValor
+                                        ? Colors.greenAccent
+                                        : Colors.white54,
+                                  ),
                                   const SizedBox(width: 6),
-                                  Text('Pagar por Valor', style: TextStyle(color: isModoValor ? Colors.greenAccent : Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  Text(
+                                    'Pagar por Valor',
+                                    style: TextStyle(
+                                      color: isModoValor
+                                          ? Colors.greenAccent
+                                          : Colors.white54,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -7988,7 +9148,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     if (!isModoValor) ...[
                       Text(
                         'Selecione a quantidade de cada produto que esta pessoa vai pagar agora:',
-                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 13,
+                        ),
                       ),
                       const SizedBox(height: 16),
                     ],
@@ -7996,20 +9159,34 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                       const SizedBox(height: 8),
                       Text(
                         'Digite o valor que o cliente vai pagar (ex: R\$ 100,00):',
-                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 13,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
                         controller: valorLivreController,
                         autofocus: true,
-                        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
                         onChanged: (_) => setDialogState(() {}),
                         decoration: InputDecoration(
                           prefixText: 'R\$ ',
-                          prefixStyle: const TextStyle(color: Colors.greenAccent, fontSize: 22),
+                          prefixStyle: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 22,
+                          ),
                           hintText: '0,00',
-                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                          hintStyle: TextStyle(
+                            color: Colors.white.withOpacity(0.2),
+                          ),
                           filled: true,
                           fillColor: Colors.black26,
                           border: OutlineInputBorder(
@@ -8025,103 +9202,153 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         runSpacing: 8,
                         children: [10, 20, 50, 100, 150, 200].map((v) {
                           return GestureDetector(
-                            onTap: () => setDialogState(() => valorLivreController.text = v.toStringAsFixed(2)),
+                            onTap: () => setDialogState(
+                              () => valorLivreController.text = v
+                                  .toStringAsFixed(2),
+                            ),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.white.withOpacity(0.08),
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(color: Colors.white10),
                               ),
-                              child: Text('R\$ $v', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                              child: Text(
+                                'R\$ $v',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 13,
+                                ),
+                              ),
                             ),
                           );
                         }).toList(),
                       ),
                     ],
                     if (!isModoValor) ...[
-                    Flexible(
-                      child: Container(
-                        constraints: const BoxConstraints(maxHeight: 300),
-                        decoration: BoxDecoration(
-                          color: Colors.black12,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          padding: const EdgeInsets.all(8),
-                          itemCount: _carrinho.length,
-                          separatorBuilder: (_, __) => const Divider(color: Colors.white10, height: 1),
-                          itemBuilder: (context, index) {
-                            final item = _carrinho[index];
-                            final qtySelecionada = selecionados[index] ?? 0.0;
+                      Flexible(
+                        child: Container(
+                          constraints: const BoxConstraints(maxHeight: 300),
+                          decoration: BoxDecoration(
+                            color: Colors.black12,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.all(8),
+                            itemCount: _carrinho.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(color: Colors.white10, height: 1),
+                            itemBuilder: (context, index) {
+                              final item = _carrinho[index];
+                              final qtySelecionada = selecionados[index] ?? 0.0;
 
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8.0,
+                                  horizontal: 4.0,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            item.nome,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Disponível: ${item.quantidade.toStringAsFixed(0)}x • R\$ ${item.preco.toStringAsFixed(2)} cada',
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.5,
+                                              ),
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    // Selecionador de Quantidade
+                                    Row(
                                       children: [
-                                        Text(
-                                          item.nome,
-                                          style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.remove_circle_outline,
+                                            color: Colors.redAccent,
+                                            size: 20,
+                                          ),
+                                          onPressed: qtySelecionada > 0.0
+                                              ? () {
+                                                  setDialogState(() {
+                                                    selecionados[index] =
+                                                        (qtySelecionada - 1.0)
+                                                            .clamp(
+                                                              0.0,
+                                                              item.quantidade,
+                                                            );
+                                                  });
+                                                }
+                                              : null,
                                         ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'Disponível: ${item.quantidade.toStringAsFixed(0)}x • R\$ ${item.preco.toStringAsFixed(2)} cada',
-                                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                                        Container(
+                                          constraints: const BoxConstraints(
+                                            minWidth: 30,
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            qtySelecionada.toStringAsFixed(0),
+                                            style: TextStyle(
+                                              color: qtySelecionada > 0.0
+                                                  ? Colors.greenAccent
+                                                  : Colors.white24,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.add_circle_outline,
+                                            color: Colors.greenAccent,
+                                            size: 20,
+                                          ),
+                                          onPressed:
+                                              qtySelecionada < item.quantidade
+                                              ? () {
+                                                  setDialogState(() {
+                                                    selecionados[index] =
+                                                        (qtySelecionada + 1.0)
+                                                            .clamp(
+                                                              0.0,
+                                                              item.quantidade,
+                                                            );
+                                                  });
+                                                }
+                                              : null,
                                         ),
                                       ],
                                     ),
-                                  ),
-                                  // Selecionador de Quantidade
-                                  Row(
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent, size: 20),
-                                        onPressed: qtySelecionada > 0.0
-                                            ? () {
-                                                setDialogState(() {
-                                                  selecionados[index] = (qtySelecionada - 1.0).clamp(0.0, item.quantidade);
-                                                });
-                                              }
-                                            : null,
-                                      ),
-                                      Container(
-                                        constraints: const BoxConstraints(minWidth: 30),
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          qtySelecionada.toStringAsFixed(0),
-                                          style: TextStyle(
-                                            color: qtySelecionada > 0.0 ? Colors.greenAccent : Colors.white24,
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.add_circle_outline, color: Colors.greenAccent, size: 20),
-                                        onPressed: qtySelecionada < item.quantidade
-                                            ? () {
-                                                setDialogState(() {
-                                                  selecionados[index] = (qtySelecionada + 1.0).clamp(0.0, item.quantidade);
-                                                });
-                                              }
-                                            : null,
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),                      ),
-                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
                     ], // fim do if (!isModoValor)
                     const SizedBox(height: 16),
                     // Resumo Financeiro
@@ -8137,17 +9364,44 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('Subtotal selecionado:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
-                                Text('R\$ ${totalSelecionado.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                                Text(
+                                  'Subtotal selecionado:',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.6),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  'R\$ ${totalSelecionado.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ],
                             ),
                             if (descontoProporcional > 0) ...[
                               const SizedBox(height: 4),
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text('Desconto proporcional:', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
-                                  Text('- R\$ ${descontoProporcional.toStringAsFixed(2)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                                  Text(
+                                    'Desconto proporcional:',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.6),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    '- R\$ ${descontoProporcional.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ],
@@ -8157,12 +9411,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                isModoValor ? 'Valor informado:' : 'Total desta parte:',
-                                style: TextStyle(color: isModoValor ? Colors.greenAccent : Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold),
+                                isModoValor
+                                    ? 'Valor informado:'
+                                    : 'Total desta parte:',
+                                style: TextStyle(
+                                  color: isModoValor
+                                      ? Colors.greenAccent
+                                      : Colors.greenAccent,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                               Text(
                                 'R\$ ${totalFinal.toStringAsFixed(2)}',
-                                style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.w900),
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                ),
                               ),
                             ],
                           ),
@@ -8175,78 +9441,139 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                  child: const Text(
+                    'CANCELAR',
+                    style: TextStyle(color: Colors.white54),
+                  ),
                 ),
                 if (isModoValor) ...[
                   ElevatedButton(
                     onPressed: valorLivre > 0.0
                         ? () async {
                             Navigator.pop(context);
-                            final usuarioLogado = authService.usuarioAtual?.nome ?? 'Sistema';
+                            final usuarioLogado =
+                                authService.usuarioAtual?.nome ?? 'Sistema';
 
                             // Solicitar identificação / nome se não houver cliente selecionado
                             String? nomeIdentificacao = _nomeNfce;
-                            if (_clienteSelecionado == null && (nomeIdentificacao == null || nomeIdentificacao.trim().isEmpty)) {
+                            if (_clienteSelecionado == null &&
+                                (nomeIdentificacao == null ||
+                                    nomeIdentificacao.trim().isEmpty)) {
                               if (pageContext.mounted) {
                                 final nameController = TextEditingController();
                                 nomeIdentificacao = await showDialog<String>(
                                   context: pageContext,
                                   builder: (ctx) => AlertDialog(
                                     backgroundColor: const Color(0xFF1E1E2E),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                    title: const Text('Identificar Venda / Cliente', style: TextStyle(color: Colors.white, fontSize: 16)),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    title: const Text(
+                                      'Identificar Venda / Cliente',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                      ),
+                                    ),
                                     content: TextField(
                                       controller: nameController,
                                       autofocus: true,
-                                      style: const TextStyle(color: Colors.white),
+                                      textInputAction: TextInputAction.done,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
                                       decoration: InputDecoration(
                                         labelText: 'Nome do Cliente ou Mesa',
-                                        labelStyle: const TextStyle(color: Colors.white70),
-                                        hintText: 'Ex: João, Mesa 05, Balcão...',
-                                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                                        labelStyle: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                        hintText:
+                                            'Ex: João, Mesa 05, Balcão...',
+                                        hintStyle: TextStyle(
+                                          color: Colors.white.withOpacity(0.3),
+                                        ),
                                         filled: true,
                                         fillColor: Colors.black26,
-                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                      ),
+                                      onSubmitted: (_) => Navigator.pop(
+                                        ctx,
+                                        nameController.text.trim(),
                                       ),
                                     ),
                                     actions: [
                                       TextButton(
-                                        onPressed: () => Navigator.pop(ctx, null),
-                                        child: const Text('IGNORAR', style: TextStyle(color: Colors.white54)),
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, null),
+                                        child: const Text(
+                                          'IGNORAR',
+                                          style: TextStyle(
+                                            color: Colors.white54,
+                                          ),
+                                        ),
                                       ),
                                       ElevatedButton(
-                                        onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
-                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700),
-                                        child: const Text('SALVAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                        onPressed: () => Navigator.pop(
+                                          ctx,
+                                          nameController.text.trim(),
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              Colors.green.shade700,
+                                        ),
+                                        child: const Text(
+                                          'SALVAR',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
                                 );
-                                if (nomeIdentificacao != null && nomeIdentificacao.isNotEmpty) {
+                                if (nomeIdentificacao != null &&
+                                    nomeIdentificacao.isNotEmpty) {
                                   _nomeNfce = nomeIdentificacao;
                                 }
                               }
                             }
 
-                            final nomeClienteFinal = _clienteSelecionado?.nome ??
-                                (nomeIdentificacao != null && nomeIdentificacao.trim().isNotEmpty ? nomeIdentificacao.trim() : null);
+                            final nomeClienteFinal =
+                                _clienteSelecionado?.nome ??
+                                (nomeIdentificacao != null &&
+                                        nomeIdentificacao.trim().isNotEmpty
+                                    ? nomeIdentificacao.trim()
+                                    : null);
 
                             if (_mesaComandaVinculada != null) {
                               // === COMANDA/MESA: registrar pagamento parcial na comanda ===
                               final pagamento = RegistroPagamento(
-                                id: DateTime.now().millisecondsSinceEpoch.toString(),
+                                id: DateTime.now().millisecondsSinceEpoch
+                                    .toString(),
                                 valor: valorLivre,
                                 dataPagamento: DateTime.now(),
                                 formaPagamento: 'Valor Informado',
-                                observacao: 'Pagamento parcial via dividir conta',
+                                observacao:
+                                    'Pagamento parcial via dividir conta',
                                 pessoaPagou: usuarioLogado,
                               );
-                              final pagamentosExistentes = List<RegistroPagamento>.from(_mesaComandaVinculada!.historicoPagamentos);
+                              final pagamentosExistentes =
+                                  List<RegistroPagamento>.from(
+                                    _mesaComandaVinculada!.historicoPagamentos,
+                                  );
                               pagamentosExistentes.add(pagamento);
-                              final mesaAtualizada = _mesaComandaVinculada!.copyWith(
-                                historicoPagamentos: pagamentosExistentes,
+                              final mesaAtualizada = _mesaComandaVinculada!
+                                  .copyWith(
+                                    historicoPagamentos: pagamentosExistentes,
+                                  );
+                              await dataService.updateMesaComanda(
+                                mesaAtualizada,
                               );
-                              await dataService.updateMesaComanda(mesaAtualizada);
                               _mesaComandaVinculada = mesaAtualizada;
                               dataService.salvarImediatamente();
 
@@ -8279,8 +9606,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                               final totalCarrinho = _totalCarrinho;
                               final restante = totalCarrinho - valorLivre;
 
-                              final ratioPago = totalCarrinho > 0 ? (valorLivre / totalCarrinho).clamp(0.0, 1.0) : 1.0;
-                              final ratioRestante = totalCarrinho > 0 ? (restante / totalCarrinho).clamp(0.0, 1.0) : 0.0;
+                              final ratioPago = totalCarrinho > 0
+                                  ? (valorLivre / totalCarrinho).clamp(0.0, 1.0)
+                                  : 1.0;
+                              final ratioRestante = totalCarrinho > 0
+                                  ? (restante / totalCarrinho).clamp(0.0, 1.0)
+                                  : 0.0;
 
                               final pagamentoRecebido = PagamentoPedido(
                                 id: uuid.v4(),
@@ -8292,60 +9623,100 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                 observacao: 'Pagamento via dividir conta',
                               );
 
-                              final itensPago = _carrinho.map((item) => ItemVendaBalcao(
-                                id: item.id,
-                                nome: item.nome,
-                                precoUnitario: item.isBrinde ? 0.0 : item.preco * ratioPago,
-                                precoOriginal: item.precoOriginal != null ? item.precoOriginal! * ratioPago : null,
-                                precoSemPromocao: item.precoSemPromocao != null ? item.precoSemPromocao! * ratioPago : null,
-                                quantidade: item.quantidade,
-                                isServico: item.isServico,
-                                fornecedorNome: item.fornecedorNome,
-                                observacao: item.observacao,
-                                adicionais: item.adicionais,
-                                opcoesCombo: item.opcoesCombo,
-                                variacoesSelecionadas: item.variacoesSelecionadas,
-                                precoTabela: item.precoTabela != null ? item.precoTabela! * ratioPago : null,
-                                baixaProporcional: item.baixaProporcional,
-                                unidadeVenda: item.unidadeVenda,
-                                quantidadeBaixa: item.quantidadeBaixa,
-                              )).toList();
+                              final itensPago = _carrinho
+                                  .map(
+                                    (item) => ItemVendaBalcao(
+                                      id: item.id,
+                                      nome: item.nome,
+                                      precoUnitario: item.isBrinde
+                                          ? 0.0
+                                          : item.preco * ratioPago,
+                                      precoOriginal: item.precoOriginal != null
+                                          ? item.precoOriginal! * ratioPago
+                                          : null,
+                                      precoSemPromocao:
+                                          item.precoSemPromocao != null
+                                          ? item.precoSemPromocao! * ratioPago
+                                          : null,
+                                      quantidade: item.quantidade,
+                                      isServico: item.isServico,
+                                      fornecedorNome: item.fornecedorNome,
+                                      observacao: item.observacao,
+                                      adicionais: item.adicionais,
+                                      opcoesCombo: item.opcoesCombo,
+                                      variacoesSelecionadas:
+                                          item.variacoesSelecionadas,
+                                      precoTabela: item.precoTabela != null
+                                          ? item.precoTabela! * ratioPago
+                                          : null,
+                                      baixaProporcional: item.baixaProporcional,
+                                      unidadeVenda: item.unidadeVenda,
+                                      quantidadeBaixa: item.quantidadeBaixa,
+                                    ),
+                                  )
+                                  .toList();
 
-                              final itensRestante = _carrinho.map((item) => ItemVendaBalcao(
-                                id: item.id,
-                                nome: item.nome,
-                                precoUnitario: item.isBrinde ? 0.0 : item.preco * ratioRestante,
-                                precoOriginal: item.precoOriginal != null ? item.precoOriginal! * ratioRestante : null,
-                                precoSemPromocao: item.precoSemPromocao != null ? item.precoSemPromocao! * ratioRestante : null,
-                                quantidade: item.quantidade,
-                                isServico: item.isServico,
-                                fornecedorNome: item.fornecedorNome,
-                                observacao: item.observacao,
-                                adicionais: item.adicionais,
-                                opcoesCombo: item.opcoesCombo,
-                                variacoesSelecionadas: item.variacoesSelecionadas,
-                                precoTabela: item.precoTabela != null ? item.precoTabela! * ratioRestante : null,
-                                baixaProporcional: item.baixaProporcional,
-                                unidadeVenda: item.unidadeVenda,
-                                quantidadeBaixa: item.quantidadeBaixa,
-                              )).toList();
+                              final itensRestante = _carrinho
+                                  .map(
+                                    (item) => ItemVendaBalcao(
+                                      id: item.id,
+                                      nome: item.nome,
+                                      precoUnitario: item.isBrinde
+                                          ? 0.0
+                                          : item.preco * ratioRestante,
+                                      precoOriginal: item.precoOriginal != null
+                                          ? item.precoOriginal! * ratioRestante
+                                          : null,
+                                      precoSemPromocao:
+                                          item.precoSemPromocao != null
+                                          ? item.precoSemPromocao! *
+                                                ratioRestante
+                                          : null,
+                                      quantidade: item.quantidade,
+                                      isServico: item.isServico,
+                                      fornecedorNome: item.fornecedorNome,
+                                      observacao: item.observacao,
+                                      adicionais: item.adicionais,
+                                      opcoesCombo: item.opcoesCombo,
+                                      variacoesSelecionadas:
+                                          item.variacoesSelecionadas,
+                                      precoTabela: item.precoTabela != null
+                                          ? item.precoTabela! * ratioRestante
+                                          : null,
+                                      baixaProporcional: item.baixaProporcional,
+                                      unidadeVenda: item.unidadeVenda,
+                                      quantidadeBaixa: item.quantidadeBaixa,
+                                    ),
+                                  )
+                                  .toList();
 
                               if (_pedidoOriginal != null) {
                                 final vendaOrig = dataService.vendasBalcao
-                                    .where((v) => v.id == _pedidoOriginal!.id || v.numero == _pedidoOriginal!.numero)
+                                    .where(
+                                      (v) =>
+                                          v.id == _pedidoOriginal!.id ||
+                                          v.numero == _pedidoOriginal!.numero,
+                                    )
                                     .firstOrNull;
                                 if (vendaOrig != null) {
-                                  await dataService.deleteVendaBalcao(vendaOrig.id);
+                                  await dataService.deleteVendaBalcao(
+                                    vendaOrig.id,
+                                  );
                                 }
                                 final pedOrig = dataService.pedidos
-                                    .where((p) => p.id == _pedidoOriginal!.id || p.numero == _pedidoOriginal!.numero)
+                                    .where(
+                                      (p) =>
+                                          p.id == _pedidoOriginal!.id ||
+                                          p.numero == _pedidoOriginal!.numero,
+                                    )
                                     .firstOrNull;
                                 if (pedOrig != null) {
                                   dataService.deletePedido(pedOrig.id);
                                 }
                               }
 
-                              final numero = await dataService.getProximoNumeroVendaSeguro();
+                              final numero = await dataService
+                                  .getProximoNumeroVendaSeguro();
                               final vendaBalcao = VendaBalcao(
                                 id: uuid.v4(),
                                 numero: numero,
@@ -8353,40 +9724,49 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                 clienteId: _clienteSelecionado?.id,
                                 clienteNome: nomeClienteFinal,
                                 clienteTelefone: _clienteSelecionado?.telefone,
-                                clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
+                                clienteCpfCnpj:
+                                    _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
                                 itens: itensPago,
                                 tipoPagamento: TipoPagamento.dinheiro,
                                 pagamentos: [pagamentoRecebido],
                                 valorTotal: valorLivre,
                                 valorRecebido: valorLivre,
-                                observacoes: 'Pagamento via dividir conta: R\$ ${valorLivre.toStringAsFixed(2)}',
+                                observacoes:
+                                    'Pagamento via dividir conta: R\$ ${valorLivre.toStringAsFixed(2)}',
                                 operador: dataService.responsavelAtivo ?? 'PDV',
                                 vendedorId: _vendedorSelecionado?.id,
                                 vendedorNome: _vendedorSelecionado?.nome,
                                 origem: 'Venda Direta',
                               );
                               await dataService.addVendaBalcao(vendaBalcao);
-                              debugPrint('>>> [Dividir PDV] Venda $numero criada: R\$ ${valorLivre.toStringAsFixed(2)} pago');
+                              debugPrint(
+                                '>>> [Dividir PDV] Venda $numero criada: R\$ ${valorLivre.toStringAsFixed(2)} pago',
+                              );
 
                               // Se tem restante, criar venda pendente e pedido pendente para o que falta
                               if (restante > 0.01) {
                                 final idRestante = uuid.v4();
-                                final numeroRestante = await dataService.getProximoNumeroVendaSeguro();
+                                final numeroRestante = await dataService
+                                    .getProximoNumeroVendaSeguro();
                                 final vendaRestante = VendaBalcao(
                                   id: idRestante,
                                   numero: numeroRestante,
                                   dataVenda: DateTime.now(),
                                   clienteId: _clienteSelecionado?.id,
                                   clienteNome: nomeClienteFinal,
-                                  clienteTelefone: _clienteSelecionado?.telefone,
-                                  clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
+                                  clienteTelefone:
+                                      _clienteSelecionado?.telefone,
+                                  clienteCpfCnpj:
+                                      _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
                                   itens: itensRestante,
                                   tipoPagamento: TipoPagamento.outro,
                                   pagamentos: [],
                                   valorTotal: restante,
                                   valorRecebido: 0,
-                                  observacoes: 'Restante da venda $numero: R\$ ${restante.toStringAsFixed(2)} pendente',
-                                  operador: dataService.responsavelAtivo ?? 'PDV',
+                                  observacoes:
+                                      'Restante da venda $numero: R\$ ${restante.toStringAsFixed(2)} pendente',
+                                  operador:
+                                      dataService.responsavelAtivo ?? 'PDV',
                                   vendedorId: _vendedorSelecionado?.id,
                                   vendedorNome: _vendedorSelecionado?.nome,
                                   origem: 'Venda Direta',
@@ -8430,8 +9810,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                   numero: numeroRestante,
                                   clienteId: _clienteSelecionado?.id,
                                   clienteNome: nomeClienteFinal,
-                                  clienteTelefone: _clienteSelecionado?.telefone,
-                                  clienteCpfCnpj: _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
+                                  clienteTelefone:
+                                      _clienteSelecionado?.telefone,
+                                  clienteCpfCnpj:
+                                      _clienteSelecionado?.cpfCnpj ?? _cpfNfce,
                                   dataPedido: DateTime.now(),
                                   status: 'Pendente',
                                   total: restante,
@@ -8443,19 +9825,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                       tipo: TipoPagamento.outro,
                                       valor: restante,
                                       recebido: false,
-                                      observacao: 'Restante pendente: R\$ ${restante.toStringAsFixed(2)} (Dividir Conta)',
+                                      observacao:
+                                          'Restante pendente: R\$ ${restante.toStringAsFixed(2)} (Dividir Conta)',
                                     ),
                                   ],
                                   createdAt: DateTime.now(),
                                   updatedAt: DateTime.now(),
-                                  observacoes: 'Restante da venda $numero: R\$ ${restante.toStringAsFixed(2)} pendente',
-                                  operador: dataService.responsavelAtivo ?? 'PDV',
+                                  observacoes:
+                                      'Restante da venda $numero: R\$ ${restante.toStringAsFixed(2)} pendente',
+                                  operador:
+                                      dataService.responsavelAtivo ?? 'PDV',
                                   vendedorId: _vendedorSelecionado?.id,
                                   vendedorNome: _vendedorSelecionado?.nome,
                                   origem: 'Venda Direta',
                                 );
                                 await dataService.addPedido(pedidoRestante);
-                                debugPrint('>>> [Dividir PDV] Venda/Pedido restante $numeroRestante criada: R\$ ${restante.toStringAsFixed(2)} pendente (Cliente: $nomeClienteFinal)');
+                                debugPrint(
+                                  '>>> [Dividir PDV] Venda/Pedido restante $numeroRestante criada: R\$ ${restante.toStringAsFixed(2)} pendente (Cliente: $nomeClienteFinal)',
+                                );
                               }
 
                               dataService.salvarImediatamente();
@@ -8465,9 +9852,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                               if (pageContext.mounted) {
                                 ScaffoldMessenger.of(pageContext).showSnackBar(
                                   SnackBar(
-                                    content: Text(restante > 0.01
-                                        ? 'Venda $numero: R\$ ${valorLivre.toStringAsFixed(2)} pago | Restante R\$ ${restante.toStringAsFixed(2)} pendente'
-                                        : 'Venda $numero criada: R\$ ${valorLivre.toStringAsFixed(2)} pago'),
+                                    content: Text(
+                                      restante > 0.01
+                                          ? 'Venda $numero: R\$ ${valorLivre.toStringAsFixed(2)} pago | Restante R\$ ${restante.toStringAsFixed(2)} pendente'
+                                          : 'Venda $numero criada: R\$ ${valorLivre.toStringAsFixed(2)} pago',
+                                    ),
                                     backgroundColor: Colors.green,
                                   ),
                                 );
@@ -8479,12 +9868,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
                       disabledBackgroundColor: Colors.white.withOpacity(0.05),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                     child: const Text(
                       'PAGAR ESTE VALOR',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ],
@@ -8493,33 +9891,61 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     onPressed: totalFinalPagar > 0.0
                         ? () async {
                             Navigator.pop(context);
-                            await _processarDivisaoItens(dataService, selecionados, totalFinalPagar, descontoProporcional);
+                            await _processarDivisaoItens(
+                              dataService,
+                              selecionados,
+                              totalFinalPagar,
+                              descontoProporcional,
+                            );
                           }
                         : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blueGrey.shade800,
                       disabledBackgroundColor: Colors.white.withOpacity(0.05),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                     child: const Text(
                       'ABRIR VENDA (DEIXAR VALOR)',
-                      style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12),
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                   ElevatedButton(
                     onPressed: totalFinalPagar > 0.0
-                        ? () => _pagarParteAgora(dataService, selecionados, totalFinalPagar, descontoProporcional)
+                        ? () => _pagarParteAgora(
+                            dataService,
+                            selecionados,
+                            totalFinalPagar,
+                            descontoProporcional,
+                          )
                         : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
                       disabledBackgroundColor: Colors.white.withOpacity(0.05),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                     child: const Text(
                       'PAGAR AGORA (FINALIZAR)',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ],
@@ -8627,14 +10053,20 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Identificar a venda de forma rápida para a parte selecionada
     String? identificacao = _nomeNfce;
-    if (_clienteSelecionado == null && (identificacao == null || identificacao.isEmpty)) {
+    if (_clienteSelecionado == null &&
+        (identificacao == null || identificacao.isEmpty)) {
       final controller = TextEditingController();
       identificacao = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Identificar Parte da Conta', style: TextStyle(color: Colors.white)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'Identificar Parte da Conta',
+            style: TextStyle(color: Colors.white),
+          ),
           content: TextField(
             controller: controller,
             autofocus: true,
@@ -8646,25 +10078,40 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
               filled: true,
               fillColor: Colors.black26,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, null),
-              child: const Text('IGNORAR', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'IGNORAR',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, controller.text.trim()),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
-              child: const Text('SALVAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+              ),
+              child: const Text(
+                'SALVAR',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ],
         ),
       );
     }
 
-    final String numero = _pedidoOriginal?.numero ?? await dataService.getProximoNumeroVendaSeguro();
+    final String numero =
+        _pedidoOriginal?.numero ??
+        await dataService.getProximoNumeroVendaSeguro();
     final String numeroParte = '$numero-DIV';
 
     // Cria o Pedido para a parte selecionada
@@ -8672,10 +10119,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       id: uuid.v4(),
       numero: numeroParte,
       clienteId: _clienteSelecionado?.id,
-      clienteNome: _clienteSelecionado?.nome ?? (identificacao?.isNotEmpty == true ? identificacao : 'Parte da Conta'),
+      clienteNome:
+          _clienteSelecionado?.nome ??
+          (identificacao?.isNotEmpty == true
+              ? identificacao
+              : 'Parte da Conta'),
       clienteTelefone: _clienteSelecionado?.telefone,
-      clienteEndereco: _isDelivery && _enderecoEntrega != null 
-          ? '${_enderecoEntrega!.logradouro}, ${_enderecoEntrega!.numero}' 
+      clienteEndereco: _isDelivery && _enderecoEntrega != null
+          ? '${_enderecoEntrega!.logradouro}, ${_enderecoEntrega!.numero}'
           : null,
       dataPedido: DateTime.now(),
       status: 'Pendente',
@@ -8688,7 +10139,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           valor: totalPagar,
           recebido: true,
           dataRecebimento: DateTime.now(),
-          observacao: 'Parte Dividida: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
+          observacao:
+              'Parte Dividida: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         ),
       ],
       createdAt: DateTime.now(),
@@ -8715,7 +10167,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         }
       }
       _carrinho.removeWhere((item) => item.quantidade <= 0.0);
-      _descontoTotal = (_descontoTotal - descontoProporcional).clamp(0.0, double.infinity);
+      _descontoTotal = (_descontoTotal - descontoProporcional).clamp(
+        0.0,
+        double.infinity,
+      );
     });
 
     // Salva o estado atualizado do carrinho no local storage (chave POR EMPRESA:
@@ -8726,11 +10181,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Parte de R\$ ${totalPagar.toStringAsFixed(2)} separada para pagamento!'),
+          content: Text(
+            'Parte de R\$ ${totalPagar.toStringAsFixed(2)} separada para pagamento!',
+          ),
           backgroundColor: Colors.blueAccent,
         ),
       );
-      
+
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -8753,7 +10210,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     if (!dataService.caixaAberto) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('E necessario abrir o caixa antes de realizar pagamentos'),
+          content: const Text(
+            'E necessario abrir o caixa antes de realizar pagamentos',
+          ),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
           action: SnackBarAction(
@@ -8856,7 +10315,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     final uuid = const Uuid();
 
     try {
-      final String numeroOriginal = _pedidoOriginal?.numero ?? await dataService.getProximoNumeroVendaSeguro();
+      final String numeroOriginal =
+          _pedidoOriginal?.numero ??
+          await dataService.getProximoNumeroVendaSeguro();
       final String numero = '$numeroOriginal-DIV';
 
       final pagamentosAtualizados = pagamentos.map((p) {
@@ -8911,23 +10372,28 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               quantidade: item.quantidade,
               isServico: item.isServico,
               fornecedorNome: item.fornecedorNome,
-              observacao: item.observacao,            adicionais: item.adicionais,
-            opcoesCombo: item.opcoesCombo,
-            variacoesSelecionadas: item.variacoesSelecionadas,
-            baixaProporcional: item.baixaProporcional,
-            unidadeVenda: item.unidadeVenda,
-            quantidadeBaixa: item.quantidadeBaixa,
+              observacao: item.observacao,
+              adicionais: item.adicionais,
+              opcoesCombo: item.opcoesCombo,
+              variacoesSelecionadas: item.variacoesSelecionadas,
+              baixaProporcional: item.baixaProporcional,
+              unidadeVenda: item.unidadeVenda,
+              quantidadeBaixa: item.quantidadeBaixa,
             ),
           )
           .toList();
 
       final vendaId = uuid.v4();
-      final String labelOrigem = tipoNome == 'Comanda' ? '[COMANDA]' : (tipoNome == 'Mesa' ? '[MESA]' : '[BALCÃO]');
+      final String labelOrigem = tipoNome == 'Comanda'
+          ? '[COMANDA]'
+          : (tipoNome == 'Mesa' ? '[MESA]' : '[BALCÃO]');
       String? clienteNomeFinal = _clienteSelecionado?.nome ?? _nomeNfce;
       if (mesaNumero != null) {
         if (clienteNomeFinal == null || clienteNomeFinal.isEmpty) {
           clienteNomeFinal = '$labelOrigem $mesaNumero';
-        } else if (!clienteNomeFinal.toUpperCase().contains(labelOrigem.toUpperCase())) {
+        } else if (!clienteNomeFinal.toUpperCase().contains(
+          labelOrigem.toUpperCase(),
+        )) {
           clienteNomeFinal = '$labelOrigem $mesaNumero - $clienteNomeFinal';
         }
       }
@@ -8956,9 +10422,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       await dataService.addVendaBalcao(vendaBalcao);
 
-      final temPagamentosPendentes = pagamentosAtualizados.any((p) => !p.recebido);
+      final temPagamentosPendentes = pagamentosAtualizados.any(
+        (p) => !p.recebido,
+      );
       final temFiadoOuCrediario = pagamentosAtualizados.any(
-        (p) => p.tipo == TipoPagamento.fiado || p.tipo == TipoPagamento.crediario,
+        (p) =>
+            p.tipo == TipoPagamento.fiado || p.tipo == TipoPagamento.crediario,
       );
 
       if (temFiadoOuCrediario || temPagamentosPendentes) {
@@ -8967,26 +10436,30 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
         for (final item in itensVenda) {
           if (item.isServico) {
-            servicosPedido.add(ItemServico(
-              id: item.id,
-              descricao: item.nome,
-              valor: item.precoUnitario,
-              valorAdicional: 0.0,
-              dataAgendamento: DateTime.now(),
-              observacao: item.observacao,
-            ));
+            servicosPedido.add(
+              ItemServico(
+                id: item.id,
+                descricao: item.nome,
+                valor: item.precoUnitario,
+                valorAdicional: 0.0,
+                dataAgendamento: DateTime.now(),
+                observacao: item.observacao,
+              ),
+            );
           } else {
-            produtosPedido.add(ItemPedido(
-              id: item.id,
-              nome: item.nome,
-              preco: item.precoUnitario,
-              quantidade: item.quantidade,
-              observacao: item.observacao,
-              fornecedorNome: item.fornecedorNome,
-              unidadeVenda: item.unidadeVenda,
-              quantidadeBaixa: item.quantidadeBaixa,
-              precoSemPromocao: item.precoSemPromocao,
-            ));
+            produtosPedido.add(
+              ItemPedido(
+                id: item.id,
+                nome: item.nome,
+                preco: item.precoUnitario,
+                quantidade: item.quantidade,
+                observacao: item.observacao,
+                fornecedorNome: item.fornecedorNome,
+                unidadeVenda: item.unidadeVenda,
+                quantidadeBaixa: item.quantidadeBaixa,
+                precoSemPromocao: item.precoSemPromocao,
+              ),
+            );
           }
         }
 
@@ -8995,7 +10468,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           numero: numero,
           clienteId: _clienteSelecionado?.id,
           clienteNome: clienteNomeFinal,
-          clienteTelefone: _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
+          clienteTelefone:
+              _clienteSelecionado?.telefone ?? vendaBalcao.clienteTelefone,
           dataPedido: vendaBalcao.dataVenda,
           status: statusPedido,
           total: totalPortion,
@@ -9029,27 +10503,38 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           }
         }
         _carrinho.removeWhere((item) => item.quantidade <= 0.0);
-        _descontoTotal = (_descontoTotal - descontoProporcional).clamp(0.0, double.infinity);
+        _descontoTotal = (_descontoTotal - descontoProporcional).clamp(
+          0.0,
+          double.infinity,
+        );
 
-        if (_carrinho.isEmpty && mesaParaLimparId != null && mesaComandaOriginal != null) {
+        if (_carrinho.isEmpty &&
+            mesaParaLimparId != null &&
+            mesaComandaOriginal != null) {
           // Registrar pagamentos antes de fechar a mesa
-          final pagamentosExistentes = List<RegistroPagamento>.from(mesaComandaOriginal.historicoPagamentos);
+          final pagamentosExistentes = List<RegistroPagamento>.from(
+            mesaComandaOriginal.historicoPagamentos,
+          );
           final idsExistentes = pagamentosExistentes.map((p) => p.id).toSet();
           for (final p in pagamentosAtualizados) {
             if (p.recebido && p.valor > 0 && !idsExistentes.contains(p.id)) {
-              pagamentosExistentes.add(RegistroPagamento(
-                id: p.id,
-                valor: p.valor,
-                dataPagamento: p.dataRecebimento ?? DateTime.now(),
-                formaPagamento: p.tipo.nome,
-                observacao: p.observacao,
-              ));
+              pagamentosExistentes.add(
+                RegistroPagamento(
+                  id: p.id,
+                  valor: p.valor,
+                  dataPagamento: p.dataRecebimento ?? DateTime.now(),
+                  formaPagamento: p.tipo.nome,
+                  observacao: p.observacao,
+                ),
+              );
             }
           }
-          dataService.updateMesaComanda(mesaComandaOriginal.copyWith(
-            historicoPagamentos: pagamentosExistentes,
-            status: 'Fechada',
-          ));
+          dataService.updateMesaComanda(
+            mesaComandaOriginal.copyWith(
+              historicoPagamentos: pagamentosExistentes,
+              status: 'Fechada',
+            ),
+          );
           dataService.deleteMesaComanda(mesaParaLimparId);
         }
       });
@@ -9077,7 +10562,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       debugPrint('>>> ❌ ERRO AO FINALIZAR PARTE: $e\n$stackTrace');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao finalizar parte da conta: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Erro ao finalizar parte da conta: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -9141,26 +10629,42 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               // Salvar referência ao contexto da página ANTES de fechar o diálogo
               final pageContext = this.context;
               Navigator.pop(context);
-              await _imprimirPDFPedido(pageContext, pedido, termico: false, forcarPreview: true);
+              await _imprimirPDFPedido(
+                pageContext,
+                pedido,
+                termico: false,
+                forcarPreview: true,
+              );
               if (pageContext.mounted) {
                 _navegarParaReceber();
               }
             },
             icon: const Icon(Icons.visibility, color: Colors.white70),
-            label: const Text('VER PDF (A4) ANTES', style: TextStyle(color: Colors.white70)),
+            label: const Text(
+              'VER PDF (A4) ANTES',
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
           TextButton.icon(
             onPressed: () async {
               // Salvar referência ao contexto da página ANTES de fechar o diálogo
               final pageContext = this.context;
               Navigator.pop(context);
-              await _imprimirPDFPedido(pageContext, pedido, termico: true, forcarPreview: true);
+              await _imprimirPDFPedido(
+                pageContext,
+                pedido,
+                termico: true,
+                forcarPreview: true,
+              );
               if (pageContext.mounted) {
                 _navegarParaReceber();
               }
             },
             icon: const Icon(Icons.receipt_long, color: Colors.orangeAccent),
-            label: const Text('VER TÉRMICO ANTES', style: TextStyle(color: Colors.orangeAccent)),
+            label: const Text(
+              'VER TÉRMICO ANTES',
+              style: TextStyle(color: Colors.orangeAccent),
+            ),
           ),
         ],
       ),
@@ -9188,14 +10692,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
-    
+
     // Tentar pegar do dataService se o authService estiver nulo
     Empresa? empresa = authService.empresaAtual ?? dataService.empresaAtual;
-    
+
     if (empresa == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Nenhuma empresa selecionada'), backgroundColor: Colors.red),
+          const SnackBar(
+            content: Text('Nenhuma empresa selecionada'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
       return;
@@ -9220,7 +10727,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao imprimir: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Erro ao imprimir: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -9240,7 +10750,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Limpar carrinho salvo após finalizar venda
     // _limparCarrinhoSalvo();
-
   }
 
   /// Notificação inteligente e discreta para itens adicionados
@@ -9344,7 +10853,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Limpar carrinho salvo após finalizar venda
     // _limparCarrinhoSalvo();
-
   }
 
   void _mostrarSucessoVendaParcelada(
@@ -9370,18 +10878,22 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Limpar carrinho salvo após finalizar venda
     // _limparCarrinhoSalvo();
-
   }
 
   void _abrirConferenciaItens() {
     if (_carrinho.isEmpty) return;
-    
+
     showDialog(
       context: context,
       builder: (context) => _DialogConferenciaItens(
         carrinho: _carrinho,
         onRemoverItem: (index) {
-           _removerItem(index);
+          _removerItem(index);
+        },
+        onAlterarQuantidade: (index, delta) {
+          if (index >= 0 && index < _carrinho.length) {
+            _alterarQuantidade(index, delta);
+          }
         },
       ),
     );
@@ -9407,21 +10919,21 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Limpar carrinho e cliente salvos após finalizar
     // _limparCarrinhoSalvo();
-
   }
 
   void _mostrarSucessoVenda(
-  double valor,
-  String numeroVenda,
-  VendaBalcao vendaBalcao, {
-  double? troco,
-  IconData? icone,
-  Color? corBase,
-  String? infoExtra,
-  String? titulo,
-  bool voltarAoFechar = false, // true quando chamado a partir do controle de mesas
-}) {
-  // Popup animado com dinheiro caindo
+    double valor,
+    String numeroVenda,
+    VendaBalcao vendaBalcao, {
+    double? troco,
+    IconData? icone,
+    Color? corBase,
+    String? infoExtra,
+    String? titulo,
+    bool voltarAoFechar =
+        false, // true quando chamado a partir do controle de mesas
+  }) {
+    // Popup animado com dinheiro caindo
     _estaComPopupAberto = true;
     PopupSucessoVenda.mostrar(
       context,
@@ -9443,29 +10955,34 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           }
         }
       },
-    onEmitirNFCe: () => _emitirNFCe(
-      vendaBalcao,
-      cpfCnpjOverride: _cpfNfce ?? vendaBalcao.clienteCpfCnpj,
-      nomeOverride: _nomeNfce ?? vendaBalcao.clienteNome,
-    ),
-    onWhatsApp: () => _enviarWhatsAppVenda(vendaBalcao),
-    onImprimir: () {
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final empresa = authService.empresaAtual;
-      if (empresa != null) {
-        VendaPDFService.imprimirPDFTermico(
-          venda: vendaBalcao,
-          empresa: empresa,
-          context: context,
-        );
-      }
-    },
-  );
+      onEmitirNFCe: () => _emitirNFCe(
+        vendaBalcao,
+        cpfCnpjOverride: _cpfNfce ?? vendaBalcao.clienteCpfCnpj,
+        nomeOverride: _nomeNfce ?? vendaBalcao.clienteNome,
+      ),
+      onWhatsApp: () => _enviarWhatsAppVenda(vendaBalcao),
+      onImprimir: () {
+        final authService = Provider.of<AuthService>(context, listen: false);
+        final empresa = authService.empresaAtual;
+        if (empresa != null) {
+          VendaPDFService.imprimirPDFTermico(
+            venda: vendaBalcao,
+            empresa: empresa,
+            context: context,
+          );
+        }
+      },
+    );
 
-  // O carrinho e cliente serão limpos quando o popup for fechado (onDismiss)
-}
+    // O carrinho e cliente serão limpos quando o popup for fechado (onDismiss)
+  }
 
-  Future<void> _emitirNFCe(VendaBalcao vendaBalcao, {String? cpfCnpjOverride, String? nomeOverride, String? numeroOverride}) async {
+  Future<void> _emitirNFCe(
+    VendaBalcao vendaBalcao, {
+    String? cpfCnpjOverride,
+    String? nomeOverride,
+    String? numeroOverride,
+  }) async {
     try {
       // Obter empresa atual
       final authService = Provider.of<AuthService>(context, listen: false);
@@ -9488,28 +11005,42 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           (empresa.certificadoDigitalUrl != null &&
               empresa.certificadoDigitalUrl!.isNotEmpty) ||
           (empresa.configuracoes?['certificadoWindowsThumbprint'] != null);
-      
-      final temSenhaOriginal = empresa.senhaCertificado != null && empresa.senhaCertificado!.isNotEmpty;
+
+      final temSenhaOriginal =
+          empresa.senhaCertificado != null &&
+          empresa.senhaCertificado!.isNotEmpty;
 
       if (!temCertOriginal || !temSenhaOriginal) {
-        debugPrint('>>> [VendaDireta] ⚠️ Certificado ou senha ausentes localmente. Tentando auto-recuperar do Supabase...');
+        debugPrint(
+          '>>> [VendaDireta] ⚠️ Certificado ou senha ausentes localmente. Tentando auto-recuperar do Supabase...',
+        );
         try {
           final supabaseService = SupabaseService.instance;
           if (SupabaseService.isAvailable) {
-            final empresaSupabase = await supabaseService.buscarEmpresaPorSlug(empresa.slug);
+            final empresaSupabase = await supabaseService.buscarEmpresaPorSlug(
+              empresa.slug,
+            );
             if (empresaSupabase != null) {
               final temCertSupabase =
-                  (empresaSupabase.configuracoes?['certificadoDigitalBytes'] != null &&
-                      (empresaSupabase.configuracoes!['certificadoDigitalBytes'] as String)
+                  (empresaSupabase.configuracoes?['certificadoDigitalBytes'] !=
+                          null &&
+                      (empresaSupabase.configuracoes!['certificadoDigitalBytes']
+                              as String)
                           .isNotEmpty) ||
                   (empresaSupabase.certificadoDigitalUrl != null &&
                       empresaSupabase.certificadoDigitalUrl!.isNotEmpty) ||
-                  (empresaSupabase.configuracoes?['certificadoWindowsThumbprint'] != null);
-              
-              final temSenhaSupabase = empresaSupabase.senhaCertificado != null && empresaSupabase.senhaCertificado!.isNotEmpty;
+                  (empresaSupabase
+                          .configuracoes?['certificadoWindowsThumbprint'] !=
+                      null);
+
+              final temSenhaSupabase =
+                  empresaSupabase.senhaCertificado != null &&
+                  empresaSupabase.senhaCertificado!.isNotEmpty;
 
               if (temCertSupabase && temSenhaSupabase) {
-                debugPrint('>>> [VendaDireta] ✓ Auto-recuperado do Supabase com sucesso!');
+                debugPrint(
+                  '>>> [VendaDireta] ✓ Auto-recuperado do Supabase com sucesso!',
+                );
                 // MERGE: preserva configurações que existem apenas no cache local
                 // (perfis tributários, perfis de preço, bridgeNfceUrl, senha_admin,
                 // ultimo_numero_nfce etc.). Sem este merge, a versão do Supabase
@@ -9524,31 +11055,51 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                     configMerged[entry.key] = entry.value;
                   }
                 }
-                if ((configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
-                  configMerged['perfis_tributarios'] = configLocal['perfis_tributarios'];
-                }
-                if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
-                  configMerged['perfis_preco'] = configLocal['perfis_preco'];
-                }
+                // Perfis tributários: vence a cópia mais nova (carimbo próprio).
+                // Antes o local vencia sempre e impostos alterados no desktop
+                // nunca chegavam ao site.
+                aplicarPerfisTributariosMaisRecentes(
+                  configMerged,
+                  configLocal,
+                  configSupabase,
+                  updatedAtLocal: empresa.updatedAt,
+                  updatedAtRemota: empresaSupabase.updatedAt,
+                );
+                aplicarPerfisPrecoMaisRecentes(
+                  configMerged,
+                  configLocal,
+                  configSupabase,
+                  updatedAtLocal: empresa.updatedAt,
+                  updatedAtRemota: empresaSupabase.updatedAt,
+                );
                 // Configs de UI/UX do PDV local sempre têm prioridade
                 if (configLocal.containsKey('habilitarMesasComandas')) {
-                  configMerged['habilitarMesasComandas'] = configLocal['habilitarMesasComandas'];
+                  configMerged['habilitarMesasComandas'] =
+                      configLocal['habilitarMesasComandas'];
                 }
                 if (configLocal.containsKey('habilitarCozinha')) {
-                  configMerged['habilitarCozinha'] = configLocal['habilitarCozinha'];
+                  configMerged['habilitarCozinha'] =
+                      configLocal['habilitarCozinha'];
                 }
-                final empresaComConfig = empresaSupabase.copyWith(configuracoes: configMerged);
+                final empresaComConfig = empresaSupabase.copyWith(
+                  configuracoes: configMerged,
+                );
                 empresa = empresaComConfig;
-                
+
                 // Atualiza o AuthService e DataService localmente para corrigir o cache
                 await authService.atualizarEmpresa(empresaComConfig);
-                final dataService = Provider.of<DataService>(context, listen: false);
+                final dataService = Provider.of<DataService>(
+                  context,
+                  listen: false,
+                );
                 dataService.setEmpresaAtual(empresaComConfig);
               }
             }
           }
         } catch (e) {
-          debugPrint('>>> [VendaDireta] ⚠️ Erro na auto-recuperação do Supabase: $e');
+          debugPrint(
+            '>>> [VendaDireta] ⚠️ Erro na auto-recuperação do Supabase: $e',
+          );
         }
       }
 
@@ -9558,9 +11109,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       debugPrint(
         '>>> [VendaDireta] Verificando empresa antes de emitir NFC-e...',
       );
-      debugPrint(
-        '>>> [VendaDireta] empresa: ${empresaFinal.razaoSocial}',
-      );
+      debugPrint('>>> [VendaDireta] empresa: ${empresaFinal.razaoSocial}');
 
       debugPrint(
         '>>> [VendaDireta] configuracoes: ${empresaFinal.configuracoes != null ? "presente" : "null"}',
@@ -9666,7 +11215,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         final taxaEntrega = vendaBalcao.deliveryInfo?.taxaEntrega ?? 0.0;
         if (taxaEntrega > 0.01) {
           ajusteFiscal += taxaEntrega;
-          debugPrint('>>> [VendaDireta] NFC-e: taxa de entrega R\$ ${taxaEntrega.toStringAsFixed(2)} EXCLUÍDA do total fiscal');
+          debugPrint(
+            '>>> [VendaDireta] NFC-e: taxa de entrega R\$ ${taxaEntrega.toStringAsFixed(2)} EXCLUÍDA do total fiscal',
+          );
         }
       }
 
@@ -9677,7 +11228,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             .fold(0.0, (sum, i) => sum + i.subtotal);
         if (itemGarcom > 0.01) {
           ajusteFiscal += itemGarcom;
-          debugPrint('>>> [VendaDireta] NFC-e: serviço do garçom R\$ ${itemGarcom.toStringAsFixed(2)} EXCLUÍDO do total fiscal');
+          debugPrint(
+            '>>> [VendaDireta] NFC-e: serviço do garçom R\$ ${itemGarcom.toStringAsFixed(2)} EXCLUÍDO do total fiscal',
+          );
         }
       }
 
@@ -9730,7 +11283,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       // Usar URL configurada na empresa (importante para Túneis como Zrok/Ngrok)
       final configUrl = empresaFinal.configuracoes?['bridgeNfceUrl'] as String?;
       if (configUrl != null && configUrl.isNotEmpty) {
-        debugPrint('>>> [VendaDireta] Configurando URL customizada para NFC-e: $configUrl');
+        debugPrint(
+          '>>> [VendaDireta] Configurando URL customizada para NFC-e: $configUrl',
+        );
         NFCeServiceFactory.configurarBackend(url: configUrl);
       } else {
         // Garantir que use o valor padrão do Factory se não houver config
@@ -9740,9 +11295,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       // Verificar se backend está disponível (se configurado para usar)
       final backendDisponivel = await NFCeServiceFactory.verificarBackend();
       if (!backendDisponivel) {
-        debugPrint(
-          '>>> [VendaDireta] ❌ Backend/Bridge não disponível!',
-        );
+        debugPrint('>>> [VendaDireta] ❌ Backend/Bridge não disponível!');
         if (mounted) Navigator.pop(context); // Fecha o loading
         _mostrarErro(
           'O Emissor NFC-e (Bridge) não está respondendo!\n\n'
@@ -9774,7 +11327,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       final serieUsuario = usuario?.serieNfce;
 
       // Usar número reservado (de emissão com erro anterior) para não pular numeração
-      final numeroReservado = await NfceContingenciaService.obterNumeroReservado(empresaFinal.id);
+      final numeroReservado =
+          await NfceContingenciaService.obterNumeroReservado(empresaFinal.id);
       // Número ATÔMICO (bloco reservado na nuvem): dois caixas emitindo offline
       // não chegam mais ao MESMO número fiscal (rejeição 539 da SEFAZ). Se a
       // nuvem não responder, cai no cálculo local antigo.
@@ -9782,12 +11336,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         serie: serieUsuario?.toString() ?? '1',
         numeroInicial: usuario?.numeroInicialNfce ?? 1,
       );
-      final numeroFinal = numeroOverride ?? 
-          (numeroReservado != null ? numeroReservado.toString() : (numeroAtomico ??
-          dataService.getProximoNumeroNfce(
-            serie: serieUsuario?.toString() ?? '1',
-            numeroInicial: usuario?.numeroInicialNfce ?? 1,
-          )).toString());
+      final numeroFinal =
+          numeroOverride ??
+          (numeroReservado != null
+              ? numeroReservado.toString()
+              : (numeroAtomico ??
+                        dataService.getProximoNumeroNfce(
+                          serie: serieUsuario?.toString() ?? '1',
+                          numeroInicial: usuario?.numeroInicialNfce ?? 1,
+                        ))
+                    .toString());
 
       // Desconto total da venda (tabela de preços, promoções, desconto manual):
       // soma dos itens pelo preço de tabela/cadastro − total pago. Garante que o
@@ -9820,7 +11378,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       await dataService.adicionarNFCe(nfce);
 
       // Salvar XML automaticamente em C:\ExodoNFCe\[CNPJ]\[YYYY-MM]\
-      NfceXmlLocalService.salvarXmlAposEmissao(nfce: nfce, empresa: empresaFinal);
+      NfceXmlLocalService.salvarXmlAposEmissao(
+        nfce: nfce,
+        empresa: empresaFinal,
+      );
 
       // Fechar diálogo de processamento
       if (mounted) Navigator.pop(context);
@@ -9837,12 +11398,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             SnackBar(
               content: const Row(
                 children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.black, size: 20),
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.black,
+                    size: 20,
+                  ),
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       '⚠️ NOTA EM CONTINGÊNCIA\nBridge offline. A nota será transmitida automaticamente quando a conexão retornar.',
-                      style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -9866,7 +11434,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                   Expanded(
                     child: Text(
                       '⚠️ NOTA PENDENTE\nA SEFAZ rejeitou a nota. Ela ficou salva em pendentes e será reenviada automaticamente.',
-                      style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -10003,7 +11574,8 @@ recusando a emissão de NFC-e (erro 403).
     // Detectar duplicidade (539) e extrair número da chave se possível
     String? numeroDuplicado;
     String? sugestaoNumero;
-    bool isDuplicidade = erro.contains('[539]') || erro.toLowerCase().contains('duplicidade');
+    bool isDuplicidade =
+        erro.contains('[539]') || erro.toLowerCase().contains('duplicidade');
 
     if (isDuplicidade) {
       try {
@@ -10029,12 +11601,16 @@ recusando a emissão de NFC-e (erro 403).
     final dataService = Provider.of<DataService>(context, listen: false);
     final authServiceLocal = Provider.of<AuthService>(context, listen: false);
     final usuarioAtualLocal = authServiceLocal.usuarioAtual;
-    final proximoDisponivel = dataService.getProximoNumeroNfce(
-      serie: usuarioAtualLocal?.serieNfce.toString() ?? '1',
-      numeroInicial: usuarioAtualLocal?.numeroInicialNfce ?? 1,
-    ).toString();
-    
-    final controller = TextEditingController(text: sugestaoNumero ?? proximoDisponivel);
+    final proximoDisponivel = dataService
+        .getProximoNumeroNfce(
+          serie: usuarioAtualLocal?.serieNfce.toString() ?? '1',
+          numeroInicial: usuarioAtualLocal?.numeroInicialNfce ?? 1,
+        )
+        .toString();
+
+    final controller = TextEditingController(
+      text: sugestaoNumero ?? proximoDisponivel,
+    );
 
     showDialog(
       context: context,
@@ -10085,11 +11661,18 @@ recusando a emissão de NFC-e (erro 403).
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                        const Icon(
+                          Icons.info_outline,
+                          color: Colors.orange,
+                          size: 18,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           'Nº que Duplicou: $numeroDuplicado',
-                          style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -10107,7 +11690,9 @@ recusando a emissão de NFC-e (erro 403).
                         labelText: 'Novo Número da NFC-e',
                         labelStyle: const TextStyle(color: Colors.orange),
                         enabledBorder: OutlineInputBorder(
-                          borderSide: BorderSide(color: Colors.orange.withOpacity(0.5)),
+                          borderSide: BorderSide(
+                            color: Colors.orange.withOpacity(0.5),
+                          ),
                         ),
                         focusedBorder: const OutlineInputBorder(
                           borderSide: BorderSide(color: Colors.orange),
@@ -10147,15 +11732,16 @@ recusando a emissão de NFC-e (erro 403).
   Future<void> _enviarWhatsAppVenda(VendaBalcao venda) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final empresa = dataService.empresaAtual;
-    
+
     if (empresa == null) {
       _mostrarErro('Nenhuma empresa selecionada.');
       return;
     }
 
     // Identificar telefone do cliente
-    String? telefone = _clienteSelecionado?.whatsapp ?? _clienteSelecionado?.telefone;
-    
+    String? telefone =
+        _clienteSelecionado?.whatsapp ?? _clienteSelecionado?.telefone;
+
     // Se não tiver telefone, pedir ao usuário
     if (telefone == null || telefone.isEmpty) {
       final controller = TextEditingController();
@@ -10163,7 +11749,9 @@ recusando a emissão de NFC-e (erro 403).
         context: context,
         builder: (context) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: const Row(
             children: [
               Icon(Icons.chat_bubble_outline, color: Color(0xFF25D366)),
@@ -10190,7 +11778,9 @@ recusando a emissão de NFC-e (erro 403).
                   labelStyle: const TextStyle(color: Colors.white70),
                   filled: true,
                   fillColor: Colors.black26,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   prefixIcon: const Icon(Icons.phone, color: Colors.white54),
                 ),
               ),
@@ -10198,18 +11788,23 @@ recusando a emissão de NFC-e (erro 403).
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context), 
-              child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                'CANCELAR',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, controller.text),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF25D366),
+              ),
               child: const Text('ENVIAR AGORA'),
             ),
           ],
         ),
       );
-      
+
       if (result == null || result.isEmpty) return;
       telefone = result;
     }
@@ -10229,7 +11824,10 @@ recusando a emissão de NFC-e (erro 403).
               children: [
                 CircularProgressIndicator(color: Color(0xFF25D366)),
                 SizedBox(height: 16),
-                Text('Enviando via WhatsApp...', style: TextStyle(color: Colors.white)),
+                Text(
+                  'Enviando via WhatsApp...',
+                  style: TextStyle(color: Colors.white),
+                ),
               ],
             ),
           ),
@@ -10238,9 +11836,10 @@ recusando a emissão de NFC-e (erro 403).
     );
 
     try {
-      final hasApi = empresa.whatsappApiUrl != null && empresa.whatsappApiKey != null;
+      final hasApi =
+          empresa.whatsappApiUrl != null && empresa.whatsappApiKey != null;
       bool isConnected = false;
-      
+
       if (hasApi) {
         final service = WhatsAppService.fromEmpresa(empresa);
         isConnected = await service.isConectado();
@@ -10253,12 +11852,15 @@ recusando a emissão de NFC-e (erro 403).
       buffer.writeln('✅ *VENDA CONCLUÍDA*');
       buffer.writeln('------------------------------------');
       buffer.writeln('📝 Pedido: #${venda.numero}');
-      buffer.writeln('📅 Data: ${DateFormat('dd/MM/yyyy HH:mm').format(venda.dataVenda)}');
+      buffer.writeln(
+        '📅 Data: ${DateFormat('dd/MM/yyyy HH:mm').format(venda.dataVenda)}',
+      );
       buffer.writeln('👤 Cliente: ${venda.clienteNome ?? "Consumidor"}');
       buffer.writeln('------------------------------------');
       buffer.writeln('*DETALHES DA COMPRA:*');
       for (final item in venda.itens) {
-        final totalItem = (item.precoUnitario * item.quantidade).toStringAsFixed(2);
+        final totalItem = (item.precoUnitario * item.quantidade)
+            .toStringAsFixed(2);
         buffer.writeln('• ${item.quantidade}x ${item.nome}');
         buffer.writeln('  └ R\$ $totalItem');
       }
@@ -10272,8 +11874,13 @@ recusando a emissão de NFC-e (erro 403).
         context: context,
         builder: (context) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Escolha o Formato', style: TextStyle(color: Colors.white)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'Escolha o Formato',
+            style: TextStyle(color: Colors.white),
+          ),
           content: const Text(
             'Como você deseja enviar o comprovante?',
             style: TextStyle(color: Colors.white70),
@@ -10281,7 +11888,10 @@ recusando a emissão de NFC-e (erro 403).
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, 'texto'),
-              child: const Text('SOMENTE TEXTO', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'SOMENTE TEXTO',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton.icon(
               onPressed: () => Navigator.pop(context, '80mm'),
@@ -10305,7 +11915,7 @@ recusando a emissão de NFC-e (erro 403).
       }
 
       bool sucesso = false;
-      
+
       if (formato == 'texto') {
         if (hasApi && isConnected) {
           final service = WhatsAppService.fromEmpresa(empresa);
@@ -10313,19 +11923,22 @@ recusando a emissão de NFC-e (erro 403).
         } else {
           // Fallback para link direto se não tiver API ou não estiver conectado
           sucesso = await WhatsAppService.abrirWhatsAppDireto(
-            numero: telefone, 
-            mensagem: buffer.toString()
+            numero: telefone,
+            mensagem: buffer.toString(),
           );
         }
       } else {
         if (!hasApi || !isConnected) {
           if (mounted) Navigator.pop(context);
-          
+
           final confirmarManual = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
-              title: const Text('API Indisponível', style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'API Indisponível',
+                style: TextStyle(color: Colors.white),
+              ),
               content: const Text(
                 'A integração automática não está configurada. Deseja gerar o PDF e compartilhar usando o menu do seu aparelho?',
                 style: TextStyle(color: Colors.white70),
@@ -10333,7 +11946,10 @@ recusando a emissão de NFC-e (erro 403).
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
-                  child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                  child: const Text(
+                    'CANCELAR',
+                    style: TextStyle(color: Colors.white54),
+                  ),
                 ),
                 ElevatedButton(
                   onPressed: () => Navigator.pop(context, true),
@@ -10345,38 +11961,53 @@ recusando a emissão de NFC-e (erro 403).
           );
 
           if (confirmarManual != true) return;
-          
+
           // Se confirmou manual, gerar e compartilhar pelo menu nativo
           // Mostrar loading novamente pois o anterior foi fechado
           if (!mounted) return;
-          showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator()));
-          
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) =>
+                const Center(child: CircularProgressIndicator()),
+          );
+
           try {
-             // Converter VendaBalcao para Pedido temporário para usar o PDF Service
+            // Converter VendaBalcao para Pedido temporário para usar o PDF Service
             final pedidoTemp = Pedido(
               id: venda.id,
               numero: venda.numero,
               dataPedido: venda.dataVenda,
               status: 'Pago',
               total: venda.valorTotal,
-              produtos: venda.itens.where((i) => !i.isServico).map((i) => ItemPedido(
-                id: i.id,
-                nome: i.nome,
-                quantidade: i.quantidade,
-                preco: i.precoUnitario,
-                observacao: i.observacao,
-                fornecedorNome: i.fornecedorNome,
-                adicionais: i.adicionais,
-                unidadeVenda: i.unidadeVenda,
-                quantidadeBaixa: i.quantidadeBaixa,
-                precoSemPromocao: i.precoSemPromocao,
-              )).toList(),
-              servicos: venda.itens.where((i) => i.isServico).map((i) => ItemServico(
-                id: i.id,
-                descricao: i.nome,
-                valor: i.precoUnitario,
-                observacao: i.observacao,
-              )).toList(),
+              produtos: venda.itens
+                  .where((i) => !i.isServico)
+                  .map(
+                    (i) => ItemPedido(
+                      id: i.id,
+                      nome: i.nome,
+                      quantidade: i.quantidade,
+                      preco: i.precoUnitario,
+                      observacao: i.observacao,
+                      fornecedorNome: i.fornecedorNome,
+                      adicionais: i.adicionais,
+                      unidadeVenda: i.unidadeVenda,
+                      quantidadeBaixa: i.quantidadeBaixa,
+                      precoSemPromocao: i.precoSemPromocao,
+                    ),
+                  )
+                  .toList(),
+              servicos: venda.itens
+                  .where((i) => i.isServico)
+                  .map(
+                    (i) => ItemServico(
+                      id: i.id,
+                      descricao: i.nome,
+                      valor: i.precoUnitario,
+                      observacao: i.observacao,
+                    ),
+                  )
+                  .toList(),
               pagamentos: [
                 PagamentoPedido(
                   id: 'pg-${venda.id}',
@@ -10384,7 +12015,7 @@ recusando a emissão de NFC-e (erro 403).
                   valor: venda.valorTotal,
                   recebido: true,
                   dataRecebimento: venda.dataVenda,
-                )
+                ),
               ],
               clienteId: venda.clienteId,
               clienteNome: venda.clienteNome,
@@ -10395,13 +12026,19 @@ recusando a emissão de NFC-e (erro 403).
 
             Uint8List pdfBytes;
             if (formato == '80mm') {
-              pdfBytes = await PedidoPDFService.gerarPDFTermico(pedido: pedidoTemp, empresa: empresa);
+              pdfBytes = await PedidoPDFService.gerarPDFTermico(
+                pedido: pedidoTemp,
+                empresa: empresa,
+              );
             } else {
-              pdfBytes = await PedidoPDFService.gerarPDF(pedido: pedidoTemp, empresa: empresa);
+              pdfBytes = await PedidoPDFService.gerarPDF(
+                pedido: pedidoTemp,
+                empresa: empresa,
+              );
             }
 
             if (mounted) Navigator.pop(context); // Fecha loading
-            
+
             await Printing.sharePdf(
               bytes: pdfBytes,
               filename: 'comprovante_${venda.numero}.pdf',
@@ -10422,21 +12059,31 @@ recusando a emissão de NFC-e (erro 403).
           dataPedido: venda.dataVenda,
           status: 'Pago',
           total: venda.valorTotal,
-          produtos: venda.itens.where((i) => !i.isServico).map((i) => ItemPedido(
-            id: i.id,
-            nome: i.nome,
-            quantidade: i.quantidade,
-            preco: i.precoUnitario,
-            observacao: i.observacao,
-            fornecedorNome: i.fornecedorNome,
-            adicionais: i.adicionais,
-          )).toList(),
-          servicos: venda.itens.where((i) => i.isServico).map((i) => ItemServico(
-            id: i.id,
-            descricao: i.nome,
-            valor: i.precoUnitario,
-            observacao: i.observacao,
-          )).toList(),
+          produtos: venda.itens
+              .where((i) => !i.isServico)
+              .map(
+                (i) => ItemPedido(
+                  id: i.id,
+                  nome: i.nome,
+                  quantidade: i.quantidade,
+                  preco: i.precoUnitario,
+                  observacao: i.observacao,
+                  fornecedorNome: i.fornecedorNome,
+                  adicionais: i.adicionais,
+                ),
+              )
+              .toList(),
+          servicos: venda.itens
+              .where((i) => i.isServico)
+              .map(
+                (i) => ItemServico(
+                  id: i.id,
+                  descricao: i.nome,
+                  valor: i.precoUnitario,
+                  observacao: i.observacao,
+                ),
+              )
+              .toList(),
           pagamentos: [
             PagamentoPedido(
               id: 'pg-${venda.id}',
@@ -10444,7 +12091,7 @@ recusando a emissão de NFC-e (erro 403).
               valor: venda.valorTotal,
               recebido: true,
               dataRecebimento: venda.dataVenda,
-            )
+            ),
           ],
           clienteId: venda.clienteId,
           clienteNome: venda.clienteNome,
@@ -10455,29 +12102,36 @@ recusando a emissão de NFC-e (erro 403).
 
         Uint8List pdfBytes;
         String fileName;
-        
+
         if (formato == '80mm') {
-          pdfBytes = await PedidoPDFService.gerarPDFTermico(pedido: pedidoTemp, empresa: empresa);
+          pdfBytes = await PedidoPDFService.gerarPDFTermico(
+            pedido: pedidoTemp,
+            empresa: empresa,
+          );
           fileName = 'recibo_${venda.numero}.pdf';
         } else {
-          pdfBytes = await PedidoPDFService.gerarPDF(pedido: pedidoTemp, empresa: empresa);
+          pdfBytes = await PedidoPDFService.gerarPDF(
+            pedido: pedidoTemp,
+            empresa: empresa,
+          );
           fileName = 'comprovante_${venda.numero}.pdf';
         }
 
         final base64Pdf = base64Encode(pdfBytes);
-        
+
         sucesso = await service.enviarArquivo(
           numero: telefone,
           base64Content: base64Pdf,
           fileName: fileName,
-          caption: 'Olá! Segue o seu comprovante da compra realizada em *${empresa.razaoSocial}*. 🛍️',
+          caption:
+              'Olá! Segue o seu comprovante da compra realizada em *${empresa.razaoSocial}*. 🛍️',
         );
       }
 
       final ok = sucesso;
-      
+
       if (mounted) Navigator.pop(context); // Fecha loading
-      
+
       if (ok) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -10488,13 +12142,15 @@ recusando a emissão de NFC-e (erro 403).
                   SizedBox(width: 8),
                   Text('Comprovante enviado com sucesso!'),
                 ],
-              ), 
+              ),
               backgroundColor: Colors.green,
             ),
           );
         }
       } else {
-        _mostrarErro('Não foi possível enviar a mensagem.\nVerifique se o número é válido e tem WhatsApp.');
+        _mostrarErro(
+          'Não foi possível enviar a mensagem.\nVerifique se o número é válido e tem WhatsApp.',
+        );
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
@@ -10512,19 +12168,23 @@ recusando a emissão de NFC-e (erro 403).
       // Respeita a configuração "Imprimir Tickets de Produção ao Finalizar a
       // Venda" (Configurações da Empresa > Impressão). Padrão LIGADO.
       if (empresa.configuracoes?['imprimirProducaoAoSalvar'] == false) {
-        debugPrint('>>> [Producao] Impressão de produção desativada nas '
-            'configurações da empresa. Nada a imprimir.');
+        debugPrint(
+          '>>> [Producao] Impressão de produção desativada nas '
+          'configurações da empresa. Nada a imprimir.',
+        );
         return;
       }
       final inputs = _carrinho
           .where((item) => !item.isServico)
-          .map((item) => ItemProducaoInput(
-                id: item.id,
-                nome: item.nome,
-                quantidade: item.quantidade,
-                observacao: item.observacao,
-                adicionais: item.adicionais.map((a) => a.nome).toList(),
-              ))
+          .map(
+            (item) => ItemProducaoInput(
+              id: item.id,
+              nome: item.nome,
+              quantidade: item.quantidade,
+              observacao: item.observacao,
+              adicionais: item.adicionais.map((a) => a.nome).toList(),
+            ),
+          )
           .toList();
 
       if (inputs.isEmpty) return;
@@ -10553,7 +12213,9 @@ recusando a emissão de NFC-e (erro 403).
         ),
       );
       if (qtd > 0) {
-        debugPrint('>>> [Producao] ✓ $qtd ticket(s) de produção impressos (pedido ${pedido.numero})');
+        debugPrint(
+          '>>> [Producao] ✓ $qtd ticket(s) de produção impressos (pedido ${pedido.numero})',
+        );
       }
     } catch (e) {
       debugPrint('>>> [Producao] ⚠️ Erro ao imprimir tickets de produção: $e');
@@ -10574,28 +12236,32 @@ recusando a emissão de NFC-e (erro 403).
     final dataService = Provider.of<DataService>(context, listen: false);
     final vendedorSelecionadoCapturado = _vendedorSelecionado;
     final uuid = const Uuid();
-    
+
     try {
       final numero = await dataService.getProximoNumeroPedidoSeguro();
       final vendaId = uuid.v4();
-      
-      final itensVenda = _carrinho.map((item) => ItemVendaBalcao(
-        id: item.id,
-        nome: item.nome,
-        precoUnitario: item.preco,
-        precoOriginal: item.precoOriginal,
-        precoSemPromocao: item.precoSemPromocao,
-        quantidade: item.quantidade,
-        isServico: item.isServico,
-        fornecedorNome: item.fornecedorNome,
-        observacao: item.observacao,
-        adicionais: item.adicionais,
-        opcoesCombo: item.opcoesCombo,
-        variacoesSelecionadas: item.variacoesSelecionadas,
-      baixaProporcional: item.baixaProporcional,
-      unidadeVenda: item.unidadeVenda,
-      quantidadeBaixa: item.quantidadeBaixa,
-      )).toList();
+
+      final itensVenda = _carrinho
+          .map(
+            (item) => ItemVendaBalcao(
+              id: item.id,
+              nome: item.nome,
+              precoUnitario: item.preco,
+              precoOriginal: item.precoOriginal,
+              precoSemPromocao: item.precoSemPromocao,
+              quantidade: item.quantidade,
+              isServico: item.isServico,
+              fornecedorNome: item.fornecedorNome,
+              observacao: item.observacao,
+              adicionais: item.adicionais,
+              opcoesCombo: item.opcoesCombo,
+              variacoesSelecionadas: item.variacoesSelecionadas,
+              baixaProporcional: item.baixaProporcional,
+              unidadeVenda: item.unidadeVenda,
+              quantidadeBaixa: item.quantidadeBaixa,
+            ),
+          )
+          .toList();
 
       final deliveryInfo = DeliveryInfo(
         id: uuid.v4(),
@@ -10611,11 +12277,13 @@ recusando a emissão de NFC-e (erro 403).
         motoristaNome: _motoristaNome,
         status: 'Pendente',
         valorParaTroco: _valorParaTroco,
-        previsaoEntrega: _previsaoEntrega.trim().isEmpty ? null : _previsaoEntrega.trim(),
+        previsaoEntrega: _previsaoEntrega.trim().isEmpty
+            ? null
+            : _previsaoEntrega.trim(),
         dataPedido: DateTime.now(),
       );
 
-      // Criar objeto VendaBalcao para facilidade de uso na UI/Impressão 
+      // Criar objeto VendaBalcao para facilidade de uso na UI/Impressão
       // (Não será persistido via dataService.addVendaBalcao para não poluir o histórico antecipadamente)
       final vendaBalcao = VendaBalcao(
         id: vendaId,
@@ -10628,7 +12296,9 @@ recusando a emissão de NFC-e (erro 403).
         vendedorId: vendedorSelecionadoCapturado?.id,
         vendedorNome: vendedorSelecionadoCapturado?.nome,
         itens: itensVenda,
-        tipoPagamento: _formaPagamentoDelivery ?? TipoPagamento.outro, // Lançado conforme registrado ou pendente
+        tipoPagamento:
+            _formaPagamentoDelivery ??
+            TipoPagamento.outro, // Lançado conforme registrado ou pendente
         valorTotal: _totalCarrinho,
         valorRecebido: 0,
         troco: 0,
@@ -10642,26 +12312,30 @@ recusando a emissão de NFC-e (erro 403).
       final servicosPedido = <ItemServico>[];
       for (final item in _carrinho) {
         if (item.isServico) {
-          servicosPedido.add(ItemServico(
-            id: item.id,
-            descricao: item.nome,
-            valor: item.preco,
-            dataAgendamento: DateTime.now(),
-            observacao: item.observacao,
-          ));
+          servicosPedido.add(
+            ItemServico(
+              id: item.id,
+              descricao: item.nome,
+              valor: item.preco,
+              dataAgendamento: DateTime.now(),
+              observacao: item.observacao,
+            ),
+          );
         } else {
-          produtosPedido.add(ItemPedido(
-            id: item.id,
-            nome: item.nome,
-            preco: item.preco,
-            quantidade: item.quantidade,
-            adicionais: item.adicionais,
-            observacao: item.observacao,
-            fornecedorNome: item.fornecedorNome,
-            unidadeVenda: item.unidadeVenda,
-            quantidadeBaixa: item.quantidadeBaixa,
-            precoSemPromocao: item.precoSemPromocao,
-          ));
+          produtosPedido.add(
+            ItemPedido(
+              id: item.id,
+              nome: item.nome,
+              preco: item.preco,
+              quantidade: item.quantidade,
+              adicionais: item.adicionais,
+              observacao: item.observacao,
+              fornecedorNome: item.fornecedorNome,
+              unidadeVenda: item.unidadeVenda,
+              quantidadeBaixa: item.quantidadeBaixa,
+              precoSemPromocao: item.precoSemPromocao,
+            ),
+          );
         }
       }
 
@@ -10669,10 +12343,12 @@ recusando a emissão de NFC-e (erro 403).
         id: vendaId,
         numero: numero,
         clienteId: _clienteSelecionado?.id,
-        clienteNome: vendaBalcao.clienteNome?.trim().isEmpty == true ? 'Delivery' : vendaBalcao.clienteNome,
+        clienteNome: vendaBalcao.clienteNome?.trim().isEmpty == true
+            ? 'Delivery'
+            : vendaBalcao.clienteNome,
         clienteTelefone: vendaBalcao.clienteTelefone,
-        clienteEndereco: _enderecoEntrega != null 
-            ? '${_enderecoEntrega!.logradouro}, ${_enderecoEntrega!.numero}' 
+        clienteEndereco: _enderecoEntrega != null
+            ? '${_enderecoEntrega!.logradouro}, ${_enderecoEntrega!.numero}'
             : null,
         dataPedido: vendaBalcao.dataVenda,
         status: 'Pendente',
@@ -10685,7 +12361,7 @@ recusando a emissão de NFC-e (erro 403).
             tipo: _formaPagamentoDelivery ?? TipoPagamento.outro,
             valor: vendaBalcao.valorTotal,
             recebido: false,
-          )
+          ),
         ],
         deliveryInfo: deliveryInfo,
         observacoes: vendaBalcao.observacoes,
@@ -10706,7 +12382,7 @@ recusando a emissão de NFC-e (erro 403).
         valorPedido: pedido.total,
         vendedor: vendedorSelecionadoCapturado,
       );
-      
+
       // CRIAR REGISTRO DE ENTREGA (Para aparecer no Controle de Entregas)
       final registroEntrega = Entrega(
         id: uuid.v4(),
@@ -10726,12 +12402,14 @@ recusando a emissão de NFC-e (erro 403).
         observacoes: pedido.observacoes,
       );
       await dataService.addEntrega(registroEntrega);
-      
+
       // Limpar mesa/comanda vinculada se houver
       if (_mesaComandaVinculada != null) {
-          final idMesa = _mesaComandaVinculada!.id;
-          dataService.updateMesaComanda(_mesaComandaVinculada!.copyWith(status: 'Fechada'));
-          await dataService.deleteMesaComanda(idMesa);
+        final idMesa = _mesaComandaVinculada!.id;
+        dataService.updateMesaComanda(
+          _mesaComandaVinculada!.copyWith(status: 'Fechada'),
+        );
+        await dataService.deleteMesaComanda(idMesa);
       }
 
       // Salvar imediatamente no storage
@@ -10747,7 +12425,6 @@ recusando a emissão de NFC-e (erro 403).
         _mostrarSucessoPedidoGerado(vendaBalcao.numero);
         _mostrarDialogoTipoImpressaoPedido(context, pedido);
       }
-
     } catch (e) {
       debugPrint('>>> ❌ ERRO AO GERAR PEDIDO DELIVERY: $e');
       _mostrarErro('Erro ao gerar pedido de delivery: $e');
@@ -10756,7 +12433,12 @@ recusando a emissão de NFC-e (erro 403).
     }
   }
 
-  Widget _buildViewModeOption(String label, IconData icon, bool isSelected, VoidCallback onTap) {
+  Widget _buildViewModeOption(
+    String label,
+    IconData icon,
+    bool isSelected,
+    VoidCallback onTap,
+  ) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
@@ -10764,7 +12446,9 @@ recusando a emissão de NFC-e (erro 403).
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.blueAccent.withOpacity(0.15) : Colors.white.withOpacity(0.02),
+          color: isSelected
+              ? Colors.blueAccent.withOpacity(0.15)
+              : Colors.white.withOpacity(0.02),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: isSelected ? Colors.blueAccent : Colors.white10,
@@ -10773,7 +12457,11 @@ recusando a emissão de NFC-e (erro 403).
         ),
         child: Column(
           children: [
-            Icon(icon, color: isSelected ? Colors.blueAccent : Colors.white54, size: 24),
+            Icon(
+              icon,
+              color: isSelected ? Colors.blueAccent : Colors.white54,
+              size: 24,
+            ),
             const SizedBox(height: 6),
             Text(
               label,
@@ -10800,7 +12488,9 @@ recusando a emissão de NFC-e (erro 403).
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(
-        child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent)),
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+        ),
       ),
     );
 
@@ -10809,7 +12499,8 @@ recusando a emissão de NFC-e (erro 403).
     final configBalanca = await balancaService.obterConfiguracao();
     final portasCOM = await balancaService.listarPortasCOM();
     if (configBalanca['diretorioToledo'].isEmpty) {
-      configBalanca['diretorioToledo'] = await balancaService.obterDiretorioToledoPadrao();
+      configBalanca['diretorioToledo'] = await balancaService
+          .obterDiretorioToledoPadrao();
     }
 
     // Fechar dialog de carregamento
@@ -10818,9 +12509,15 @@ recusando a emissão de NFC-e (erro 403).
     }
 
     // Estado local para resposta instantânea
-    bool selecionarFornecedorLocal = empresa.configuracoes?['selecionarFornecedorPDV'] == true;
-    bool habilitarMesasComandasLocal = empresa.configuracoes?['habilitarMesasComandas'] != false; // true por padrão
-    bool habilitarCozinhaLocal = empresa.configuracoes?['habilitarCozinha'] != false; // true por padrão
+    bool selecionarFornecedorLocal =
+        empresa.configuracoes?['selecionarFornecedorPDV'] == true;
+    bool solicitarQuantidadeAoAdicionarLocal =
+        empresa.configuracoes?['solicitarQuantidadeAoAdicionarPDV'] == true;
+    bool habilitarMesasComandasLocal =
+        empresa.configuracoes?['habilitarMesasComandas'] !=
+        false; // true por padrão
+    bool habilitarCozinhaLocal =
+        empresa.configuracoes?['habilitarCozinha'] != false; // true por padrão
     bool somHabilitadoLocal = _somHabilitado;
     bool somAdicionarLocal = _somAdicionarHabilitado;
     bool somRemoverLocal = _somRemoverHabilitado;
@@ -10848,14 +12545,25 @@ recusando a emissão de NFC-e (erro 403).
         await ImpressaoService.getUltimaImpressora(empresaId: empresa.id) ?? '';
     if (impressoraTerminal.isEmpty) {
       impressoraTerminal =
-          (empresa.configuracoes?['impressoraSelecionada'] as String?)?.trim() ?? '';
+          (empresa.configuracoes?['impressoraSelecionada'] as String?)
+              ?.trim() ??
+          '';
     }
 
-    final TextEditingController pesoMockController = TextEditingController(text: pesoMockBalanca.toStringAsFixed(3));
-    final TextEditingController dirToledoController = TextEditingController(text: diretorioToledo);
-    final TextEditingController deptoToledoController = TextEditingController(text: deptoToledo);
-    final TextEditingController validadeToledoController = TextEditingController(text: validadeToledo.toString());
-    final TextEditingController limiteValorController = TextEditingController(text: limiteValorLocal.toStringAsFixed(2).replaceAll('.', ','));
+    final TextEditingController pesoMockController = TextEditingController(
+      text: pesoMockBalanca.toStringAsFixed(3),
+    );
+    final TextEditingController dirToledoController = TextEditingController(
+      text: diretorioToledo,
+    );
+    final TextEditingController deptoToledoController = TextEditingController(
+      text: deptoToledo,
+    );
+    final TextEditingController validadeToledoController =
+        TextEditingController(text: validadeToledo.toString());
+    final TextEditingController limiteValorController = TextEditingController(
+      text: limiteValorLocal.toStringAsFixed(2).replaceAll('.', ','),
+    );
 
     if (!context.mounted) return;
 
@@ -10865,7 +12573,9 @@ recusando a emissão de NFC-e (erro 403).
         builder: (context, setDialogState) {
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
             title: Row(
               children: [
                 Container(
@@ -10874,10 +12584,17 @@ recusando a emissão de NFC-e (erro 403).
                     color: Colors.blueAccent.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.settings, color: Colors.blueAccent, size: 20),
+                  child: const Icon(
+                    Icons.settings,
+                    color: Colors.blueAccent,
+                    size: 20,
+                  ),
                 ),
                 const SizedBox(width: 12),
-                const Text('Configurações do PDV', style: TextStyle(color: Colors.white, fontSize: 18)),
+                const Text(
+                  'Configurações do PDV',
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
               ],
             ),
             content: SizedBox(
@@ -10890,7 +12607,12 @@ recusando a emissão de NFC-e (erro 403).
                     // --- CONFIGURAÇÕES GERAIS ---
                     const Text(
                       'Configurações do Sistema',
-                      style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.1),
+                      style: TextStyle(
+                        color: Colors.blueAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        letterSpacing: 1.1,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Container(
@@ -10898,13 +12620,20 @@ recusando a emissão de NFC-e (erro 403).
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: selecionarFornecedorLocal 
-                              ? Colors.blueAccent.withOpacity(0.3) 
-                              : Colors.white.withOpacity(0.05)
+                          color: selecionarFornecedorLocal
+                              ? Colors.blueAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
                         ),
                       ),
                       child: SwitchListTile(
-                        title: const Text('Selecionar Fornecedor', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                        title: const Text(
+                          'Selecionar Fornecedor',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
                         subtitle: const Text(
                           'Permite escolher o fornecedor do produto no momento da venda quando houver estoque particionado.',
                           style: TextStyle(color: Colors.white54, fontSize: 11),
@@ -10927,13 +12656,56 @@ recusando a emissão de NFC-e (erro 403).
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: habilitarMesasComandasLocal 
-                              ? Colors.purpleAccent.withOpacity(0.3) 
-                              : Colors.white.withOpacity(0.05)
+                          color: solicitarQuantidadeAoAdicionarLocal
+                              ? Colors.orangeAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
                         ),
                       ),
                       child: SwitchListTile(
-                        title: const Text('Mesas e Comandas', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                        title: const Text(
+                          'Solicitar quantidade ao lançar item',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Abre uma janela para informar a quantidade antes de adicionar o produto ao carrinho.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                        value: solicitarQuantidadeAoAdicionarLocal,
+                        activeColor: Colors.orangeAccent,
+                        activeTrackColor: Colors.orangeAccent.withOpacity(0.3),
+                        inactiveThumbColor: Colors.grey,
+                        inactiveTrackColor: Colors.white10,
+                        onChanged: (value) {
+                          setDialogState(() {
+                            solicitarQuantidadeAoAdicionarLocal = value;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: habilitarMesasComandasLocal
+                              ? Colors.purpleAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        title: const Text(
+                          'Mesas e Comandas',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
                         subtitle: const Text(
                           'Habilita os botões e rotinas de controle de mesas e comandas de clientes.',
                           style: TextStyle(color: Colors.white54, fontSize: 11),
@@ -10956,13 +12728,20 @@ recusando a emissão de NFC-e (erro 403).
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: habilitarCozinhaLocal 
-                              ? Colors.greenAccent.withOpacity(0.3) 
-                              : Colors.white.withOpacity(0.05)
+                          color: habilitarCozinhaLocal
+                              ? Colors.greenAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
                         ),
                       ),
                       child: SwitchListTile(
-                        title: const Text('Painel de Cozinha', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                        title: const Text(
+                          'Painel de Cozinha',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
                         subtitle: const Text(
                           'Exibe o atalho para monitorar pedidos e preparos na Cozinha/Bar.',
                           style: TextStyle(color: Colors.white54, fontSize: 11),
@@ -10985,22 +12764,34 @@ recusando a emissão de NFC-e (erro 403).
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: somHabilitadoLocal 
-                              ? Colors.amberAccent.withOpacity(0.3) 
-                              : Colors.white.withOpacity(0.05)
+                          color: somHabilitadoLocal
+                              ? Colors.amberAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
                         ),
                       ),
                       child: Column(
                         children: [
                           SwitchListTile(
-                            title: const Text('Efeitos Sonoros do PDV', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            title: const Text(
+                              'Efeitos Sonoros do PDV',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
                             subtitle: const Text(
                               'Ativa ou desativa os bips ao bipar itens, deletar e finalizar vendas.',
-                              style: TextStyle(color: Colors.white54, fontSize: 11),
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
                             ),
                             value: somHabilitadoLocal,
                             activeColor: Colors.amberAccent,
-                            activeTrackColor: Colors.amberAccent.withOpacity(0.3),
+                            activeTrackColor: Colors.amberAccent.withOpacity(
+                              0.3,
+                            ),
                             inactiveThumbColor: Colors.grey,
                             inactiveTrackColor: Colors.white10,
                             onChanged: (value) {
@@ -11014,7 +12805,13 @@ recusando a emissão de NFC-e (erro 403).
                             Padding(
                               padding: const EdgeInsets.only(left: 16.0),
                               child: SwitchListTile(
-                                title: const Text('Som ao Adicionar Item', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                title: const Text(
+                                  'Som ao Adicionar Item',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
                                 value: somAdicionarLocal,
                                 activeColor: Colors.amberAccent,
                                 inactiveThumbColor: Colors.grey,
@@ -11029,7 +12826,13 @@ recusando a emissão de NFC-e (erro 403).
                             Padding(
                               padding: const EdgeInsets.only(left: 16.0),
                               child: SwitchListTile(
-                                title: const Text('Som ao Remover Item', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                title: const Text(
+                                  'Som ao Remover Item',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
                                 value: somRemoverLocal,
                                 activeColor: Colors.amberAccent,
                                 inactiveThumbColor: Colors.grey,
@@ -11044,7 +12847,13 @@ recusando a emissão de NFC-e (erro 403).
                             Padding(
                               padding: const EdgeInsets.only(left: 16.0),
                               child: SwitchListTile(
-                                title: const Text('Som ao Finalizar Venda', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                title: const Text(
+                                  'Som ao Finalizar Venda',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
                                 value: somFinalizarLocal,
                                 activeColor: Colors.amberAccent,
                                 inactiveThumbColor: Colors.grey,
@@ -11066,18 +12875,28 @@ recusando a emissão de NFC-e (erro 403).
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: alertarLimiteLocal 
-                              ? Colors.redAccent.withOpacity(0.3) 
-                              : Colors.white.withOpacity(0.05)
+                          color: alertarLimiteLocal
+                              ? Colors.redAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
                         ),
                       ),
                       child: Column(
                         children: [
                           SwitchListTile(
-                            title: const Text('Aviso de Limite em Dinheiro', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            title: const Text(
+                              'Aviso de Limite em Dinheiro',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
                             subtitle: const Text(
                               'Alerta na tela quando o valor total em dinheiro na gaveta atingir o limite definido.',
-                              style: TextStyle(color: Colors.white54, fontSize: 11),
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
                             ),
                             value: alertarLimiteLocal,
                             activeColor: Colors.redAccent,
@@ -11096,18 +12915,37 @@ recusando a emissão de NFC-e (erro 403).
                               padding: const EdgeInsets.all(16.0),
                               child: TextFormField(
                                 controller: limiteValorController,
-                                style: const TextStyle(color: Colors.white, fontSize: 14),
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                ),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
                                 decoration: const InputDecoration(
                                   labelText: 'Valor Limite na Gaveta (R\$)',
-                                  labelStyle: TextStyle(color: Colors.redAccent, fontSize: 12),
-                                  enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                  focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.redAccent)),
+                                  labelStyle: TextStyle(
+                                    color: Colors.redAccent,
+                                    fontSize: 12,
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: Colors.white10,
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: Colors.redAccent,
+                                    ),
+                                  ),
                                   prefixText: 'R\$ ',
                                   prefixStyle: TextStyle(color: Colors.white70),
                                 ),
                                 onChanged: (val) {
-                                  final clean = val.replaceAll('.', '').replaceAll(',', '.');
+                                  final clean = val
+                                      .replaceAll('.', '')
+                                      .replaceAll(',', '.');
                                   final valDouble = double.tryParse(clean);
                                   if (valDouble != null && valDouble > 0) {
                                     limiteValorLocal = valDouble;
@@ -11121,51 +12959,63 @@ recusando a emissão de NFC-e (erro 403).
                     ),
                     const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.white.withOpacity(0.05)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.05),
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
                             'Visualização de Produtos',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
                           ),
                           const Text(
                             'Escolha como os produtos são exibidos no catálogo',
-                            style: TextStyle(color: Colors.white54, fontSize: 11),
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
                           ),
                           const SizedBox(height: 12),
                           Row(
                             children: [
                               Expanded(
                                 child: _buildViewModeOption(
-                                  'Grade de Quadros', 
-                                  Icons.grid_view_rounded, 
+                                  'Grade de Quadros',
+                                  Icons.grid_view_rounded,
                                   _viewMode == ViewMode.grid,
                                   () {
                                     setDialogState(() {
                                       _viewMode = ViewMode.grid;
                                     });
                                     setState(() {});
-                                  }
+                                  },
                                 ),
                               ),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: _buildViewModeOption(
-                                  'Lista de Linhas', 
-                                  Icons.view_headline_rounded, 
+                                  'Lista de Linhas',
+                                  Icons.view_headline_rounded,
                                   _viewMode == ViewMode.list,
                                   () {
                                     setDialogState(() {
                                       _viewMode = ViewMode.list;
                                     });
                                     setState(() {});
-                                  }
+                                  },
                                 ),
                               ),
                             ],
@@ -11178,7 +13028,12 @@ recusando a emissão de NFC-e (erro 403).
                     // --- IMPRESSORA DESTE TERMINAL (local, por máquina) ---
                     const Text(
                       'Impressora deste Terminal',
-                      style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.1),
+                      style: TextStyle(
+                        color: Colors.greenAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        letterSpacing: 1.1,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Container(
@@ -11186,14 +13041,20 @@ recusando a emissão de NFC-e (erro 403).
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.white.withOpacity(0.05)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.05),
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
                             children: [
-                              const Icon(Icons.print_rounded, color: Colors.greenAccent, size: 20),
+                              const Icon(
+                                Icons.print_rounded,
+                                color: Colors.greenAccent,
+                                size: 20,
+                              ),
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
@@ -11201,14 +13062,21 @@ recusando a emissão de NFC-e (erro 403).
                                   children: [
                                     const Text(
                                       'Impressora padrão deste terminal',
-                                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                                      style: TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 11,
+                                      ),
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
                                       impressoraTerminal.isEmpty
                                           ? 'Nenhuma configurada (usará a padrão da empresa)'
                                           : impressoraTerminal,
-                                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ],
@@ -11222,16 +13090,24 @@ recusando a emissão de NFC-e (erro 403).
                               Expanded(
                                 child: OutlinedButton.icon(
                                   onPressed: () async {
-                                    final escolhida = await ImpressaoService.selecionarImpressoraPadrao(
-                                      context,
-                                      empresa: empresa,
-                                      somenteLocal: true, // fica APENAS nesta máquina
-                                    );
+                                    final escolhida =
+                                        await ImpressaoService.selecionarImpressoraPadrao(
+                                          context,
+                                          empresa: empresa,
+                                          somenteLocal:
+                                              true, // fica APENAS nesta máquina
+                                        );
                                     if (escolhida != null && context.mounted) {
-                                      setDialogState(() => impressoraTerminal = escolhida);
-                                      ScaffoldMessenger.of(context).showSnackBar(
+                                      setDialogState(
+                                        () => impressoraTerminal = escolhida,
+                                      );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
                                         SnackBar(
-                                          content: Text('✓ Impressora deste terminal: $escolhida'),
+                                          content: Text(
+                                            '✓ Impressora deste terminal: $escolhida',
+                                          ),
                                           backgroundColor: Colors.greenAccent,
                                           behavior: SnackBarBehavior.floating,
                                         ),
@@ -11242,7 +13118,11 @@ recusando a emissão de NFC-e (erro 403).
                                   label: const Text('Trocar Impressora'),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.greenAccent,
-                                    side: BorderSide(color: Colors.greenAccent.withOpacity(0.5)),
+                                    side: BorderSide(
+                                      color: Colors.greenAccent.withOpacity(
+                                        0.5,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -11252,17 +13132,26 @@ recusando a emissão de NFC-e (erro 403).
                                   onPressed: impressoraTerminal.isEmpty
                                       ? null
                                       : () async {
-                                          final ok = await ImpressaoService.testarImpressora(impressoraTerminal, empresa: empresa);
+                                          final ok =
+                                              await ImpressaoService.testarImpressora(
+                                                impressoraTerminal,
+                                                empresa: empresa,
+                                              );
                                           if (context.mounted) {
-                                            ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
                                               SnackBar(
                                                 content: Text(
                                                   ok
                                                       ? '✓ Teste enviado para: $impressoraTerminal'
                                                       : '✗ Falha ao testar: $impressoraTerminal',
                                                 ),
-                                                backgroundColor: ok ? Colors.greenAccent : Colors.redAccent,
-                                                behavior: SnackBarBehavior.floating,
+                                                backgroundColor: ok
+                                                    ? Colors.greenAccent
+                                                    : Colors.redAccent,
+                                                behavior:
+                                                    SnackBarBehavior.floating,
                                               ),
                                             );
                                           }
@@ -11271,7 +13160,11 @@ recusando a emissão de NFC-e (erro 403).
                                   label: const Text('Testar'),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.greenAccent,
-                                    side: BorderSide(color: Colors.greenAccent.withOpacity(0.5)),
+                                    side: BorderSide(
+                                      color: Colors.greenAccent.withOpacity(
+                                        0.5,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -11285,7 +13178,12 @@ recusando a emissão de NFC-e (erro 403).
                     // --- CONFIGURAÇÕES DA BALANÇA ---
                     const Text(
                       'Balança (Leitura Serial / COM)',
-                      style: TextStyle(color: Colors.tealAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.1),
+                      style: TextStyle(
+                        color: Colors.tealAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        letterSpacing: 1.1,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Container(
@@ -11294,20 +13192,34 @@ recusando a emissão de NFC-e (erro 403).
                         color: Colors.white.withOpacity(0.02),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: balancaAtiva ? Colors.tealAccent.withOpacity(0.3) : Colors.white.withOpacity(0.05)
+                          color: balancaAtiva
+                              ? Colors.tealAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
                         ),
                       ),
                       child: Column(
                         children: [
                           SwitchListTile(
-                            title: const Text('Ativar Integração com Balança', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            title: const Text(
+                              'Ativar Integração com Balança',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
                             subtitle: const Text(
                               'Efetua leitura automática do peso ao selecionar produtos pesáveis.',
-                              style: TextStyle(color: Colors.white54, fontSize: 11),
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
                             ),
                             value: balancaAtiva,
                             activeColor: Colors.tealAccent,
-                            activeTrackColor: Colors.tealAccent.withOpacity(0.3),
+                            activeTrackColor: Colors.tealAccent.withOpacity(
+                              0.3,
+                            ),
                             inactiveThumbColor: Colors.grey,
                             inactiveTrackColor: Colors.white10,
                             onChanged: (value) {
@@ -11319,7 +13231,10 @@ recusando a emissão de NFC-e (erro 403).
                           if (balancaAtiva) ...[
                             const Divider(color: Colors.white10, height: 16),
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
                               child: Column(
                                 children: [
                                   Row(
@@ -11327,18 +13242,43 @@ recusando a emissão de NFC-e (erro 403).
                                       Expanded(
                                         child: DropdownButtonFormField<String>(
                                           value: portaSelecionada,
-                                          dropdownColor: const Color(0xFF1E1E2E),
-                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          dropdownColor: const Color(
+                                            0xFF1E1E2E,
+                                          ),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 13,
+                                          ),
                                           decoration: InputDecoration(
                                             labelText: 'Porta Serial',
-                                            labelStyle: const TextStyle(color: Colors.tealAccent, fontSize: 12),
-                                            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.tealAccent)),
+                                            labelStyle: const TextStyle(
+                                              color: Colors.tealAccent,
+                                              fontSize: 12,
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(
+                                                color: Colors.white10,
+                                              ),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(
+                                                color: Colors.tealAccent,
+                                              ),
+                                            ),
                                           ),
-                                          items: portasCOM.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+                                          items: portasCOM
+                                              .map(
+                                                (p) => DropdownMenuItem(
+                                                  value: p,
+                                                  child: Text(p),
+                                                ),
+                                              )
+                                              .toList(),
                                           onChanged: (val) {
                                             if (val != null) {
-                                              setDialogState(() => portaSelecionada = val);
+                                              setDialogState(
+                                                () => portaSelecionada = val,
+                                              );
                                             }
                                           },
                                         ),
@@ -11347,20 +13287,51 @@ recusando a emissão de NFC-e (erro 403).
                                       Expanded(
                                         child: DropdownButtonFormField<int>(
                                           value: baudRateSelecionado,
-                                          dropdownColor: const Color(0xFF1E1E2E),
-                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          dropdownColor: const Color(
+                                            0xFF1E1E2E,
+                                          ),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 13,
+                                          ),
                                           decoration: InputDecoration(
                                             labelText: 'Baud Rate',
-                                            labelStyle: const TextStyle(color: Colors.tealAccent, fontSize: 12),
-                                            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.tealAccent)),
+                                            labelStyle: const TextStyle(
+                                              color: Colors.tealAccent,
+                                              fontSize: 12,
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(
+                                                color: Colors.white10,
+                                              ),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(
+                                                color: Colors.tealAccent,
+                                              ),
+                                            ),
                                           ),
-                                          items: [2400, 4800, 9600, 19200, 38400, 115200]
-                                              .map((b) => DropdownMenuItem(value: b, child: Text('$b bps')))
-                                              .toList(),
+                                          items:
+                                              [
+                                                    2400,
+                                                    4800,
+                                                    9600,
+                                                    19200,
+                                                    38400,
+                                                    115200,
+                                                  ]
+                                                  .map(
+                                                    (b) => DropdownMenuItem(
+                                                      value: b,
+                                                      child: Text('$b bps'),
+                                                    ),
+                                                  )
+                                                  .toList(),
                                           onChanged: (val) {
                                             if (val != null) {
-                                              setDialogState(() => baudRateSelecionado = val);
+                                              setDialogState(
+                                                () => baudRateSelecionado = val,
+                                              );
                                             }
                                           },
                                         ),
@@ -11369,14 +13340,25 @@ recusando a emissão de NFC-e (erro 403).
                                   ),
                                   const SizedBox(height: 12),
                                   SwitchListTile(
-                                    title: const Text('Modo Simulador (Sem Balança Física)', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                                    title: const Text(
+                                      'Modo Simulador (Sem Balança Física)',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                     subtitle: const Text(
                                       'Retorna peso predefinido para testes sem conexão serial real.',
-                                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                                      style: TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 11,
+                                      ),
                                     ),
                                     value: usarMockBalanca,
                                     activeColor: Colors.orangeAccent,
-                                    activeTrackColor: Colors.orangeAccent.withOpacity(0.3),
+                                    activeTrackColor: Colors.orangeAccent
+                                        .withOpacity(0.3),
                                     onChanged: (value) {
                                       setDialogState(() {
                                         usarMockBalanca = value;
@@ -11389,19 +13371,42 @@ recusando a emissão de NFC-e (erro 403).
                                       padding: const EdgeInsets.only(top: 8),
                                       child: TextFormField(
                                         controller: pesoMockController,
-                                        style: const TextStyle(color: Colors.white),
-                                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
+                                        keyboardType:
+                                            const TextInputType.numberWithOptions(
+                                              decimal: true,
+                                            ),
                                         decoration: const InputDecoration(
-                                          labelText: 'Peso Simulado Padrão (kg)',
-                                          labelStyle: TextStyle(color: Colors.orangeAccent, fontSize: 12),
-                                          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                                          labelText:
+                                              'Peso Simulado Padrão (kg)',
+                                          labelStyle: TextStyle(
+                                            color: Colors.orangeAccent,
+                                            fontSize: 12,
+                                          ),
+                                          enabledBorder: OutlineInputBorder(
+                                            borderSide: BorderSide(
+                                              color: Colors.white10,
+                                            ),
+                                          ),
+                                          focusedBorder: OutlineInputBorder(
+                                            borderSide: BorderSide(
+                                              color: Colors.orangeAccent,
+                                            ),
+                                          ),
                                           hintText: '1.500',
                                         ),
                                         onChanged: (val) {
-                                          final clean = val.replaceAll(',', '.');
-                                          final valDouble = double.tryParse(clean);
-                                          if (valDouble != null && valDouble > 0) {
+                                          final clean = val.replaceAll(
+                                            ',',
+                                            '.',
+                                          );
+                                          final valDouble = double.tryParse(
+                                            clean,
+                                          );
+                                          if (valDouble != null &&
+                                              valDouble > 0) {
                                             pesoMockBalanca = valDouble;
                                           }
                                         },
@@ -11419,7 +13424,12 @@ recusando a emissão de NFC-e (erro 403).
                     // --- EXPORTAÇÃO BALANÇA TOLEDO ---
                     const Text(
                       'Balanças Toledo (Carga de Produtos)',
-                      style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.1),
+                      style: TextStyle(
+                        color: Colors.purpleAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        letterSpacing: 1.1,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Container(
@@ -11427,20 +13437,37 @@ recusando a emissão de NFC-e (erro 403).
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.02),
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.white.withOpacity(0.05)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.05),
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           TextFormField(
                             controller: dirToledoController,
-                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                            ),
                             decoration: InputDecoration(
                               labelText: 'Diretório de Destino (txtitens.txt)',
-                              labelStyle: const TextStyle(color: Colors.purpleAccent, fontSize: 12),
-                              enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                              focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.purpleAccent)),
-                              suffixIcon: const Icon(Icons.folder, color: Colors.purpleAccent),
+                              labelStyle: const TextStyle(
+                                color: Colors.purpleAccent,
+                                fontSize: 12,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderSide: BorderSide(color: Colors.white10),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderSide: BorderSide(
+                                  color: Colors.purpleAccent,
+                                ),
+                              ),
+                              suffixIcon: const Icon(
+                                Icons.folder,
+                                color: Colors.purpleAccent,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 12),
@@ -11449,13 +13476,27 @@ recusando a emissão de NFC-e (erro 403).
                               Expanded(
                                 child: TextFormField(
                                   controller: deptoToledoController,
-                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
                                   maxLength: 2,
                                   decoration: InputDecoration(
                                     labelText: 'Departamento (MGV)',
-                                    labelStyle: const TextStyle(color: Colors.purpleAccent, fontSize: 12),
-                                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.purpleAccent)),
+                                    labelStyle: const TextStyle(
+                                      color: Colors.purpleAccent,
+                                      fontSize: 12,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderSide: BorderSide(
+                                        color: Colors.white10,
+                                      ),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderSide: BorderSide(
+                                        color: Colors.purpleAccent,
+                                      ),
+                                    ),
                                     counterText: '',
                                   ),
                                 ),
@@ -11464,13 +13505,27 @@ recusando a emissão de NFC-e (erro 403).
                               Expanded(
                                 child: TextFormField(
                                   controller: validadeToledoController,
-                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
                                   keyboardType: TextInputType.number,
                                   decoration: InputDecoration(
                                     labelText: 'Validade em Dias',
-                                    labelStyle: const TextStyle(color: Colors.purpleAccent, fontSize: 12),
-                                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.purpleAccent)),
+                                    labelStyle: const TextStyle(
+                                      color: Colors.purpleAccent,
+                                      fontSize: 12,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderSide: BorderSide(
+                                        color: Colors.white10,
+                                      ),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderSide: BorderSide(
+                                        color: Colors.purpleAccent,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -11480,8 +13535,15 @@ recusando a emissão de NFC-e (erro 403).
                           ElevatedButton.icon(
                             onPressed: () async {
                               final dir = dirToledoController.text.trim();
-                              final depto = deptoToledoController.text.trim().isEmpty ? '01' : deptoToledoController.text.trim();
-                              final validade = int.tryParse(validadeToledoController.text.trim()) ?? 0;
+                              final depto =
+                                  deptoToledoController.text.trim().isEmpty
+                                  ? '01'
+                                  : deptoToledoController.text.trim();
+                              final validade =
+                                  int.tryParse(
+                                    validadeToledoController.text.trim(),
+                                  ) ??
+                                  0;
 
                               // Salva temporariamente para exportação consistente
                               final tempConfig = {
@@ -11494,14 +13556,22 @@ recusando a emissão de NFC-e (erro 403).
                                 'deptoToledo': depto,
                                 'validadeToledoDias': validade,
                               };
-                              await balancaService.salvarConfiguracao(tempConfig);
+                              await balancaService.salvarConfiguracao(
+                                tempConfig,
+                              );
 
                               try {
-                                final filePath = await balancaService.exportarItensToledo(dataService.produtos, dir);
+                                final filePath = await balancaService
+                                    .exportarItensToledo(
+                                      dataService.produtos,
+                                      dir,
+                                    );
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text('Arquivo exportado com sucesso em: $filePath'),
+                                      content: Text(
+                                        'Arquivo exportado com sucesso em: $filePath',
+                                      ),
                                       backgroundColor: Colors.purple,
                                       behavior: SnackBarBehavior.floating,
                                     ),
@@ -11511,7 +13581,9 @@ recusando a emissão de NFC-e (erro 403).
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text('Erro ao exportar arquivo: $e'),
+                                      content: Text(
+                                        'Erro ao exportar arquivo: $e',
+                                      ),
                                       backgroundColor: Colors.redAccent,
                                       behavior: SnackBarBehavior.floating,
                                     ),
@@ -11519,13 +13591,22 @@ recusando a emissão de NFC-e (erro 403).
                                 }
                               }
                             },
-                            icon: const Icon(Icons.scale, color: Colors.white, size: 18),
-                            label: const Text('GERAR E EXPORTAR ARQUIVO TXTITENS.TXT', style: TextStyle(fontWeight: FontWeight.bold)),
+                            icon: const Icon(
+                              Icons.scale,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            label: const Text(
+                              'GERAR E EXPORTAR ARQUIVO TXTITENS.TXT',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.purple,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ],
@@ -11535,7 +13616,11 @@ recusando a emissão de NFC-e (erro 403).
                     const SizedBox(height: 20),
                     const Text(
                       'As alterações do sistema são aplicadas em nuvem, e as configurações de impressora e balança são mantidas apenas neste computador/terminal.',
-                      style: TextStyle(color: Colors.white38, fontSize: 11, fontStyle: FontStyle.italic),
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -11545,28 +13630,47 @@ recusando a emissão de NFC-e (erro 403).
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                child: const Text(
+                  'CANCELAR',
+                  style: TextStyle(color: Colors.white54),
+                ),
               ),
               ElevatedButton(
                 onPressed: () async {
                   // 1. Salvar configurações na Empresa (Global)
-                  final config = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+                  final config = Map<String, dynamic>.from(
+                    empresa.configuracoes ?? {},
+                  );
                   config['selecionarFornecedorPDV'] = selecionarFornecedorLocal;
-                  config['venda_direta_view_mode'] = _viewMode == ViewMode.list ? 'list' : 'grid';
-                  config['habilitarMesasComandas'] = habilitarMesasComandasLocal;
+                  config['solicitarQuantidadeAoAdicionarPDV'] =
+                      solicitarQuantidadeAoAdicionarLocal;
+                  config['venda_direta_view_mode'] = _viewMode == ViewMode.list
+                      ? 'list'
+                      : 'grid';
+                  config['habilitarMesasComandas'] =
+                      habilitarMesasComandasLocal;
                   config['habilitarCozinha'] = habilitarCozinhaLocal;
-                  
+
                   final novaEmpresa = empresa.copyWith(configuracoes: config);
                   await authService.atualizarEmpresa(novaEmpresa);
                   dataService.setEmpresaAtual(novaEmpresa);
-                  
+
                   // Salvar também como config LOCAL do terminal (não depende do Supabase)
-                  await _storage.salvar(_chavePDV('habilitarMesasComandas'), habilitarMesasComandasLocal);
-                  await _storage.salvar(_chavePDV('habilitarCozinha'), habilitarCozinhaLocal);
+                  await _storage.salvar(
+                    _chavePDV('habilitarMesasComandas'),
+                    habilitarMesasComandasLocal,
+                  );
+                  await _storage.salvar(
+                    _chavePDV('habilitarCozinha'),
+                    habilitarCozinhaLocal,
+                  );
 
                   // 2. Salvar configurações locais da balança
-                  final depto = deptoToledoController.text.trim().isEmpty ? '01' : deptoToledoController.text.trim();
-                  final validade = int.tryParse(validadeToledoController.text.trim()) ?? 0;
+                  final depto = deptoToledoController.text.trim().isEmpty
+                      ? '01'
+                      : deptoToledoController.text.trim();
+                  final validade =
+                      int.tryParse(validadeToledoController.text.trim()) ?? 0;
                   final novaConfigBalanca = {
                     'ativo': balancaAtiva,
                     'porta': portaSelecionada,
@@ -11581,32 +13685,50 @@ recusando a emissão de NFC-e (erro 403).
                     'validadeToledoDias': validade,
                   };
                   await balancaService.salvarConfiguracao(novaConfigBalanca);
-                  
-                    // Salvar se som está ativo (chave POR EMPRESA — a leitura em
-                    // _carregarPreferencias usa _chavePDV; gravar na chave crua
-                    // fazia a configuração não voltar e vazar entre empresas)
-                    _empresaIdStorage ??= dataService.currentEmpresaId;
-                    await _storage.salvar(_chavePDV(_keySomPDV), somHabilitadoLocal);
-                    await _storage.salvar(_chavePDV(_keySomAdicionar), somAdicionarLocal);
-                    await _storage.salvar(_chavePDV(_keySomRemover), somRemoverLocal);
-                    await _storage.salvar(_chavePDV(_keySomFinalizar), somFinalizarLocal);
-                    await _storage.salvar(_chavePDV(_keyAlertarLimiteGaveta), alertarLimiteLocal);
-                    await _storage.salvar(_chavePDV(_keyLimiteGavetaValor), limiteValorLocal);
 
-                    // Atualizar o estado da própria VendaDiretaPage
-                    if (mounted) {
-                      setState(() {
-                        _somHabilitado = somHabilitadoLocal;
-                        _somAdicionarHabilitado = somAdicionarLocal;
-                        _somRemoverHabilitado = somRemoverLocal;
-                        _somFinalizarHabilitado = somFinalizarLocal;
-                        _alertarLimiteGaveta = alertarLimiteLocal;
-                        _limiteGavetaValor = limiteValorLocal;
-                        _habilitarMesasComandas = habilitarMesasComandasLocal;
-                        _habilitarCozinha = habilitarCozinhaLocal;
-                      });
-                    }
-                  
+                  // Salvar se som está ativo (chave POR EMPRESA — a leitura em
+                  // _carregarPreferencias usa _chavePDV; gravar na chave crua
+                  // fazia a configuração não voltar e vazar entre empresas)
+                  _empresaIdStorage ??= dataService.currentEmpresaId;
+                  await _storage.salvar(
+                    _chavePDV(_keySomPDV),
+                    somHabilitadoLocal,
+                  );
+                  await _storage.salvar(
+                    _chavePDV(_keySomAdicionar),
+                    somAdicionarLocal,
+                  );
+                  await _storage.salvar(
+                    _chavePDV(_keySomRemover),
+                    somRemoverLocal,
+                  );
+                  await _storage.salvar(
+                    _chavePDV(_keySomFinalizar),
+                    somFinalizarLocal,
+                  );
+                  await _storage.salvar(
+                    _chavePDV(_keyAlertarLimiteGaveta),
+                    alertarLimiteLocal,
+                  );
+                  await _storage.salvar(
+                    _chavePDV(_keyLimiteGavetaValor),
+                    limiteValorLocal,
+                  );
+
+                  // Atualizar o estado da própria VendaDiretaPage
+                  if (mounted) {
+                    setState(() {
+                      _somHabilitado = somHabilitadoLocal;
+                      _somAdicionarHabilitado = somAdicionarLocal;
+                      _somRemoverHabilitado = somRemoverLocal;
+                      _somFinalizarHabilitado = somFinalizarLocal;
+                      _alertarLimiteGaveta = alertarLimiteLocal;
+                      _limiteGavetaValor = limiteValorLocal;
+                      _habilitarMesasComandas = habilitarMesasComandasLocal;
+                      _habilitarCozinha = habilitarCozinhaLocal;
+                    });
+                  }
+
                   if (context.mounted) {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -11627,12 +13749,20 @@ recusando a emissão de NFC-e (erro 403).
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blueAccent,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   elevation: 5,
                   shadowColor: Colors.blueAccent.withOpacity(0.4),
                 ),
-                child: const Text('SALVAR ALTERAÇÕES', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'SALVAR ALTERAÇÕES',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ],
           );
@@ -11641,9 +13771,17 @@ recusando a emissão de NFC-e (erro 403).
     );
   }
 
-  Future<void> _calcularTaxaAutomatica(EnderecoCliente end, DataService dataService, StateSetter setDialogState, TextEditingController taxaController) async {
+  Future<void> _calcularTaxaAutomatica(
+    EnderecoCliente end,
+    DataService dataService,
+    StateSetter setDialogState,
+    TextEditingController taxaController,
+  ) async {
     // 1. Prioridade: verificar se há taxa de entrega fixa por Bairro
-    final taxaBairro = dataService.getTaxaEntregaPorBairro(end.bairro, cidade: end.cidade);
+    final taxaBairro = dataService.getTaxaEntregaPorBairro(
+      end.bairro,
+      cidade: end.cidade,
+    );
     if (taxaBairro != null) {
       setState(() {
         _taxaEntrega = taxaBairro.valor;
@@ -11657,7 +13795,8 @@ recusando a emissão de NFC-e (erro 403).
 
     // 2. Segunda Prioridade: verificar se há configuração de Taxa por KM ativa
     final empresa = dataService.empresaAtual;
-    final config = empresa?.configuracoes?['taxa_km_config'] as Map<String, dynamic>?;
+    final config =
+        empresa?.configuracoes?['taxa_km_config'] as Map<String, dynamic>?;
     final habilitarKm = config?['habilitar'] as bool? ?? false;
 
     if (!habilitarKm) {
@@ -11684,8 +13823,10 @@ recusando a emissão de NFC-e (erro 403).
 
       final googleKey = config?['google_maps_api_key'] as String?;
       if (googleKey != null && googleKey.isNotEmpty) {
-        final addressOrigem = '${empresa?.endereco ?? ""}, ${empresa?.numero ?? ""}, ${empresa?.bairro ?? ""}, ${empresa?.cidade ?? ""}, ${empresa?.estado ?? ""}';
-        final addressDestino = '${end.logradouro}, ${end.numero}, ${end.bairro}, ${end.cidade}, ${end.uf}';
+        final addressOrigem =
+            '${empresa?.endereco ?? ""}, ${empresa?.numero ?? ""}, ${empresa?.bairro ?? ""}, ${empresa?.cidade ?? ""}, ${empresa?.estado ?? ""}';
+        final addressDestino =
+            '${end.logradouro}, ${end.numero}, ${end.bairro}, ${end.cidade}, ${end.uf}';
 
         dist = await FreteService.obterDistanciaGoogleMaps(
           origem: addressOrigem,
@@ -11704,17 +13845,25 @@ recusando a emissão de NFC-e (erro 403).
         if (cepOrigem != null && cepOrigem.length == 8) {
           coordOrigem = await FreteService.obterCoordenadasPorCEP(cepOrigem);
         }
-        if (coordOrigem == null && empresa?.endereco != null && empresa!.endereco!.isNotEmpty) {
-          final addressStr = '${empresa.endereco}, ${empresa.numero ?? ""}, ${empresa.cidade ?? ""}, ${empresa.estado ?? ""}';
-          coordOrigem = await FreteService.obterCoordenadasPorEndereco(addressStr);
+        if (coordOrigem == null &&
+            empresa?.endereco != null &&
+            empresa!.endereco!.isNotEmpty) {
+          final addressStr =
+              '${empresa.endereco}, ${empresa.numero ?? ""}, ${empresa.cidade ?? ""}, ${empresa.estado ?? ""}';
+          coordOrigem = await FreteService.obterCoordenadasPorEndereco(
+            addressStr,
+          );
         }
 
         if (cepDestino != null && cepDestino.length == 8) {
           coordDestino = await FreteService.obterCoordenadasPorCEP(cepDestino);
         }
         if (coordDestino == null) {
-          final addressStr = '${end.logradouro}, ${end.numero}, ${end.cidade}, ${end.uf}';
-          coordDestino = await FreteService.obterCoordenadasPorEndereco(addressStr);
+          final addressStr =
+              '${end.logradouro}, ${end.numero}, ${end.cidade}, ${end.uf}';
+          coordDestino = await FreteService.obterCoordenadasPorEndereco(
+            addressStr,
+          );
         }
 
         if (coordOrigem != null && coordDestino != null) {
@@ -11732,12 +13881,14 @@ recusando a emissão de NFC-e (erro 403).
         final valPerKm = (config?['valor_km'] as num?)?.toDouble() ?? 1.5;
         final valorMaximo = (config?['valor_maximo'] as num?)?.toDouble();
         final distLimite = (config?['distancia_maxima'] as num?)?.toDouble();
-        final freteGratisMin = (config?['valor_minimo_frete_gratis'] as num?)?.toDouble();
+        final freteGratisMin = (config?['valor_minimo_frete_gratis'] as num?)
+            ?.toDouble();
 
         // Verificar limite de distância
         if (distLimite != null && dist > distLimite) {
           setState(() {
-            _infoCalculoTaxa = 'Fora da área de entrega (${dist!.toStringAsFixed(1)} km - Limite: ${distLimite} km)';
+            _infoCalculoTaxa =
+                'Fora da área de entrega (${dist!.toStringAsFixed(1)} km - Limite: ${distLimite} km)';
             _calculandoTaxa = false;
           });
           setDialogState(() {});
@@ -11745,13 +13896,17 @@ recusando a emissão de NFC-e (erro 403).
         }
 
         // Verificar frete grátis por valor
-        final subtotalItens = _carrinho.fold(0.0, (sum, item) => sum + item.subtotal);
+        final subtotalItens = _carrinho.fold(
+          0.0,
+          (sum, item) => sum + item.subtotal,
+        );
         final valorTotalPedido = subtotalItens - _descontoTotal;
-        
+
         if (freteGratisMin != null && valorTotalPedido >= freteGratisMin) {
           setState(() {
             _taxaEntrega = 0.0;
-            _infoCalculoTaxa = 'Frete grátis por valor (${dist!.toStringAsFixed(1)} km)';
+            _infoCalculoTaxa =
+                'Frete grátis por valor (${dist!.toStringAsFixed(1)} km)';
             _calculandoTaxa = false;
           });
           taxaController.text = '0.00';
@@ -11766,7 +13921,7 @@ recusando a emissão de NFC-e (erro 403).
 
         setState(() {
           _taxaEntrega = double.parse(valorCalculado.toStringAsFixed(2));
-          _infoCalculoTaxa = isGoogle 
+          _infoCalculoTaxa = isGoogle
               ? 'Google Maps (Rota Real): ${dist!.toStringAsFixed(1)} km'
               : 'Automática por KM (Linha Reta): ${dist!.toStringAsFixed(1)} km';
           _calculandoTaxa = false;
@@ -11797,46 +13952,62 @@ recusando a emissão de NFC-e (erro 403).
     }
 
     final dataService = Provider.of<DataService>(context, listen: false);
-    final taxaController = TextEditingController(text: _taxaEntrega > 0 ? _taxaEntrega.toStringAsFixed(2) : '');
+    final taxaController = TextEditingController(
+      text: _taxaEntrega > 0 ? _taxaEntrega.toStringAsFixed(2) : '',
+    );
     final previsaoController = TextEditingController(text: _previsaoEntrega);
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final cliente = dataService.getClienteById(_clienteSelecionado!.id) ?? _clienteSelecionado!;
-          
-          if (_enderecoEntrega != null && _taxaEntrega == 0.0 && _infoCalculoTaxa.isEmpty) {
+          final cliente =
+              dataService.getClienteById(_clienteSelecionado!.id) ??
+              _clienteSelecionado!;
+
+          if (_enderecoEntrega != null &&
+              _taxaEntrega == 0.0 &&
+              _infoCalculoTaxa.isEmpty) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              _calcularTaxaAutomatica(_enderecoEntrega!, dataService, setDialogState, taxaController);
+              _calcularTaxaAutomatica(
+                _enderecoEntrega!,
+                dataService,
+                setDialogState,
+                taxaController,
+              );
             });
           }
-          
+
           // Combinar endereços da lista com o endereço principal se este estiver preenchido
           final List<EnderecoCliente> enderecos = [];
-          
+
           // 1. Adicionar o endereço principal do cadastro base se existir
           if (cliente.endereco != null && cliente.endereco!.trim().isNotEmpty) {
-            enderecos.add(EnderecoCliente(
-              id: 'principal',
-              tipo: 'Principal (Cadastro)',
-              logradouro: cliente.endereco!,
-              numero: cliente.numero ?? '',
-              complemento: cliente.complemento,
-              bairro: cliente.bairro ?? '',
-              cidade: cliente.cidade ?? '',
-              uf: cliente.estado ?? 'SP',
-              cep: cliente.cep,
-              isDefault: true,
-            ));
+            enderecos.add(
+              EnderecoCliente(
+                id: 'principal',
+                tipo: 'Principal (Cadastro)',
+                logradouro: cliente.endereco!,
+                numero: cliente.numero ?? '',
+                complemento: cliente.complemento,
+                bairro: cliente.bairro ?? '',
+                cidade: cliente.cidade ?? '',
+                uf: cliente.estado ?? 'SP',
+                cep: cliente.cep,
+                isDefault: true,
+              ),
+            );
           }
-          
+
           // 2. Adicionar os outros endereços cadastrados na lista adicional
           for (final end in cliente.enderecos) {
             // Evitar duplicar se o principal for igual a um da lista
-            bool duplicado = enderecos.any((e) => 
-               e.logradouro.trim().toLowerCase() == end.logradouro.trim().toLowerCase() && 
-               e.numero.trim().toLowerCase() == end.numero.trim().toLowerCase()
+            bool duplicado = enderecos.any(
+              (e) =>
+                  e.logradouro.trim().toLowerCase() ==
+                      end.logradouro.trim().toLowerCase() &&
+                  e.numero.trim().toLowerCase() ==
+                      end.numero.trim().toLowerCase(),
             );
             if (!duplicado) {
               enderecos.add(end);
@@ -11845,7 +14016,9 @@ recusando a emissão de NFC-e (erro 403).
 
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
             title: Row(
               children: [
                 Container(
@@ -11854,10 +14027,17 @@ recusando a emissão de NFC-e (erro 403).
                     color: Colors.orangeAccent.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.delivery_dining, color: Colors.orangeAccent, size: 24),
+                  child: const Icon(
+                    Icons.delivery_dining,
+                    color: Colors.orangeAccent,
+                    size: 24,
+                  ),
                 ),
                 const SizedBox(width: 12),
-                const Text('Configurar Entrega', style: TextStyle(color: Colors.white, fontSize: 18)),
+                const Text(
+                  'Configurar Entrega',
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
               ],
             ),
             content: SizedBox(
@@ -11869,23 +14049,40 @@ recusando a emissão de NFC-e (erro 403).
                   children: [
                     // Switch de Ativação
                     SwitchListTile(
-                      title: const Text('Entrega em Domicílio', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      subtitle: const Text('Ativa as taxas e informações de entrega para esta venda.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      title: const Text(
+                        'Entrega em Domicílio',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Ativa as taxas e informações de entrega para esta venda.',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
                       value: _isDelivery,
                       activeColor: Colors.orangeAccent,
                       onChanged: (value) {
-                         setState(() => _isDelivery = value);
-                         setDialogState(() {});
+                        setState(() => _isDelivery = value);
+                        setDialogState(() {});
                       },
                     ),
                     const Divider(color: Colors.white10),
-                    
+
                     if (_isDelivery) ...[
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 8.0),
-                        child: Text('ENDEREÇO DE ENTREGA', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                        child: Text(
+                          'ENDEREÇO DE ENTREGA',
+                          style: TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
                       ),
-                      
+
                       if (enderecos.isEmpty)
                         Container(
                           padding: const EdgeInsets.all(16),
@@ -11894,7 +14091,13 @@ recusando a emissão de NFC-e (erro 403).
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: Colors.white10),
                           ),
-                          child: const Text('Este cliente não possui endereços cadastrados.', style: TextStyle(color: Colors.white38, fontSize: 13)),
+                          child: const Text(
+                            'Este cliente não possui endereços cadastrados.',
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 13,
+                            ),
+                          ),
                         )
                       else
                         ...enderecos.map((end) {
@@ -11902,39 +14105,96 @@ recusando a emissão de NFC-e (erro 403).
                           return Container(
                             margin: const EdgeInsets.only(bottom: 8),
                             decoration: BoxDecoration(
-                              color: isSelected ? Colors.orangeAccent.withOpacity(0.1) : Colors.white.withOpacity(0.03),
+                              color: isSelected
+                                  ? Colors.orangeAccent.withOpacity(0.1)
+                                  : Colors.white.withOpacity(0.03),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: isSelected ? Colors.orangeAccent : Colors.white.withOpacity(0.05)),
+                              border: Border.all(
+                                color: isSelected
+                                    ? Colors.orangeAccent
+                                    : Colors.white.withOpacity(0.05),
+                              ),
                             ),
                             child: ListTile(
                               onTap: () {
                                 setState(() => _enderecoEntrega = end);
                                 setDialogState(() {});
-                                _calcularTaxaAutomatica(end, dataService, setDialogState, taxaController);
+                                _calcularTaxaAutomatica(
+                                  end,
+                                  dataService,
+                                  setDialogState,
+                                  taxaController,
+                                );
                               },
                               leading: Icon(
-                                end.tipo.contains('Principal') ? Icons.star_outline : (end.tipo == 'Trabalho' ? Icons.work_outline : (end.tipo == 'Casa' ? Icons.home_outlined : Icons.location_on_outlined)),
-                                color: isSelected ? Colors.orangeAccent : Colors.white38,
+                                end.tipo.contains('Principal')
+                                    ? Icons.star_outline
+                                    : (end.tipo == 'Trabalho'
+                                          ? Icons.work_outline
+                                          : (end.tipo == 'Casa'
+                                                ? Icons.home_outlined
+                                                : Icons.location_on_outlined)),
+                                color: isSelected
+                                    ? Colors.orangeAccent
+                                    : Colors.white38,
                               ),
-                              title: Text('${end.logradouro}, ${end.numero}', style: const TextStyle(color: Colors.white, fontSize: 14)),
-                              subtitle: Text('${end.bairro} - ${end.cidade}/${end.uf}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                              trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.orangeAccent, size: 20) : null,
+                              title: Text(
+                                '${end.logradouro}, ${end.numero}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '${end.bairro} - ${end.cidade}/${end.uf}',
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              trailing: isSelected
+                                  ? const Icon(
+                                      Icons.check_circle,
+                                      color: Colors.orangeAccent,
+                                      size: 20,
+                                    )
+                                  : null,
                             ),
                           );
                         }),
-                      
+
                       const SizedBox(height: 12),
                       // Botão Adicionar Endereço
                       TextButton.icon(
-                        onPressed: () => _abrirDialogNovoEndereco(cliente, setDialogState),
-                        icon: const Icon(Icons.add_location_alt_outlined, size: 18, color: Colors.orangeAccent),
-                        label: const Text('ADICIONAR NOVO ENDEREÇO', style: TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                        onPressed: () =>
+                            _abrirDialogNovoEndereco(cliente, setDialogState),
+                        icon: const Icon(
+                          Icons.add_location_alt_outlined,
+                          size: 18,
+                          color: Colors.orangeAccent,
+                        ),
+                        label: const Text(
+                          'ADICIONAR NOVO ENDEREÇO',
+                          style: TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                      
+
                       const SizedBox(height: 20),
-                      const Text('LOGÍSTICA', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                      const Text(
+                        'LOGÍSTICA',
+                        style: TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
                       const SizedBox(height: 12),
-                      
+
                       Row(
                         children: [
                           Expanded(
@@ -11950,99 +14210,167 @@ recusando a emissão de NFC-e (erro 403).
                               style: const TextStyle(color: Colors.white),
                               decoration: InputDecoration(
                                 labelText: 'Taxa de Entrega',
-                                labelStyle: const TextStyle(color: Colors.white54),
+                                labelStyle: const TextStyle(
+                                  color: Colors.white54,
+                                ),
                                 prefixText: 'R\$ ',
-                                helperText: _infoCalculoTaxa.isNotEmpty ? _infoCalculoTaxa : null,
+                                helperText: _infoCalculoTaxa.isNotEmpty
+                                    ? _infoCalculoTaxa
+                                    : null,
                                 helperStyle: TextStyle(
-                                  color: _infoCalculoTaxa.contains('Erro') || _infoCalculoTaxa.contains('fora') || _infoCalculoTaxa.contains('Não foi')
-                                      ? Colors.redAccent 
-                                      : (_infoCalculoTaxa.contains('grátis') ? Colors.greenAccent : Colors.orangeAccent),
+                                  color:
+                                      _infoCalculoTaxa.contains('Erro') ||
+                                          _infoCalculoTaxa.contains('fora') ||
+                                          _infoCalculoTaxa.contains('Não foi')
+                                      ? Colors.redAccent
+                                      : (_infoCalculoTaxa.contains('grátis')
+                                            ? Colors.greenAccent
+                                            : Colors.orangeAccent),
                                   fontSize: 10,
                                 ),
-                                suffixIcon: _calculandoTaxa 
+                                suffixIcon: _calculandoTaxa
                                     ? const SizedBox(
                                         width: 16,
                                         height: 16,
                                         child: Padding(
                                           padding: EdgeInsets.all(12),
-                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orangeAccent),
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.orangeAccent,
+                                          ),
                                         ),
                                       )
-                                    : (_enderecoEntrega != null && _enderecoEntrega!.bairro.isNotEmpty && (_infoCalculoTaxa == 'Bairro sem taxa cadastrada' || _infoCalculoTaxa == 'Manual'))
-                                        ? Tooltip(
-                                            message: 'Salvar esta taxa como padrão para o bairro ${_enderecoEntrega!.bairro}',
-                                            child: IconButton(
-                                              icon: const Icon(Icons.save_outlined, color: Colors.greenAccent),
-                                              onPressed: () async {
-                                                final novaTaxa = TaxaEntrega(
-                                                  id: const Uuid().v4(),
-                                                  bairro: _enderecoEntrega!.bairro,
-                                                  cidade: _enderecoEntrega!.cidade,
-                                                  valor: _taxaEntrega,
-                                                  createdAt: DateTime.now(),
-                                                  updatedAt: DateTime.now(),
-                                                );
-                                                await dataService.addTaxaEntrega(novaTaxa);
-                                                setState(() {
-                                                  _infoCalculoTaxa = 'Automática por bairro: ${_enderecoEntrega!.bairro}';
-                                                });
-                                                setDialogState(() {});
-                                                if (context.mounted) {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    SnackBar(
-                                                      content: Text('Taxa padrão cadastrada para ${_enderecoEntrega!.bairro}!'),
-                                                      backgroundColor: Colors.green,
-                                                    ),
-                                                  );
-                                                }
-                                              },
-                                            ),
-                                          )
-                                        : null,
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                                    : (_enderecoEntrega != null &&
+                                          _enderecoEntrega!.bairro.isNotEmpty &&
+                                          (_infoCalculoTaxa ==
+                                                  'Bairro sem taxa cadastrada' ||
+                                              _infoCalculoTaxa == 'Manual'))
+                                    ? Tooltip(
+                                        message:
+                                            'Salvar esta taxa como padrão para o bairro ${_enderecoEntrega!.bairro}',
+                                        child: IconButton(
+                                          icon: const Icon(
+                                            Icons.save_outlined,
+                                            color: Colors.greenAccent,
+                                          ),
+                                          onPressed: () async {
+                                            final novaTaxa = TaxaEntrega(
+                                              id: const Uuid().v4(),
+                                              bairro: _enderecoEntrega!.bairro,
+                                              cidade: _enderecoEntrega!.cidade,
+                                              valor: _taxaEntrega,
+                                              createdAt: DateTime.now(),
+                                              updatedAt: DateTime.now(),
+                                            );
+                                            await dataService.addTaxaEntrega(
+                                              novaTaxa,
+                                            );
+                                            setState(() {
+                                              _infoCalculoTaxa =
+                                                  'Automática por bairro: ${_enderecoEntrega!.bairro}';
+                                            });
+                                            setDialogState(() {});
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Taxa padrão cadastrada para ${_enderecoEntrega!.bairro}!',
+                                                  ),
+                                                  backgroundColor: Colors.green,
+                                                ),
+                                              );
+                                            }
+                                          },
+                                        ),
+                                      )
+                                    : null,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.white10),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                    color: Colors.orangeAccent,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                           const SizedBox(width: 16),
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: dataService.motoristas.any((m) => m.id == _motoristaId) ? _motoristaId : null,
+                              value:
+                                  dataService.motoristas.any(
+                                    (m) => m.id == _motoristaId,
+                                  )
+                                  ? _motoristaId
+                                  : null,
                               decoration: InputDecoration(
                                 labelText: 'Motorista / Motoboy',
-                                labelStyle: const TextStyle(color: Colors.white54),
-                                prefixIcon: const Icon(Icons.motorcycle, color: Colors.white24),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                                focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                                labelStyle: const TextStyle(
+                                  color: Colors.white54,
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.motorcycle,
+                                  color: Colors.white24,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                enabledBorder: const OutlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.white10),
+                                ),
+                                focusedBorder: const OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                    color: Colors.orangeAccent,
+                                  ),
+                                ),
                               ),
                               dropdownColor: const Color(0xFF1E1E2E),
                               style: const TextStyle(color: Colors.white),
                               items: [
-                                const DropdownMenuItem(value: null, child: Text('Nenhum')),
-                                ...dataService.motoristas.map((m) => DropdownMenuItem(
-                                  value: m.id,
-                                  child: Text(m.nome),
-                                )),
+                                const DropdownMenuItem(
+                                  value: null,
+                                  child: Text('Nenhum'),
+                                ),
+                                ...dataService.motoristas.map(
+                                  (m) => DropdownMenuItem(
+                                    value: m.id,
+                                    child: Text(m.nome),
+                                  ),
+                                ),
                               ],
                               onChanged: (value) {
                                 setState(() {
                                   _motoristaId = value;
-                                  _motoristaNome = value != null ? dataService.motoristas.firstWhere((m) => m.id == value).nome : null;
+                                  _motoristaNome = value != null
+                                      ? dataService.motoristas
+                                            .firstWhere((m) => m.id == value)
+                                            .nome
+                                      : null;
                                 });
                                 setDialogState(() {});
                               },
                             ),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.add_circle, color: Colors.orangeAccent),
+                            icon: const Icon(
+                              Icons.add_circle,
+                              color: Colors.orangeAccent,
+                            ),
                             tooltip: 'Cadastrar Motorista',
-                            onPressed: () => _abrirDialogCadastroMotorista(dataService, setDialogState),
+                            onPressed: () => _abrirDialogCadastroMotorista(
+                              dataService,
+                              setDialogState,
+                            ),
                           ),
                         ],
                       ),
-                      
+
                       const SizedBox(height: 16),
                       TextField(
                         controller: previsaoController,
@@ -12050,23 +14378,50 @@ recusando a emissão de NFC-e (erro 403).
                           setState(() => _previsaoEntrega = value);
                         },
                         keyboardType: TextInputType.text,
-                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                        ),
                         decoration: InputDecoration(
                           labelText: 'Previsão de Entrega',
                           hintText: 'Ex: 30-45 min ou 18:30',
-                          hintStyle: const TextStyle(color: Colors.white24, fontSize: 12),
-                          labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
-                          prefixIcon: const Icon(Icons.schedule, color: Colors.orangeAccent, size: 18),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                          enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                          focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                          hintStyle: const TextStyle(
+                            color: Colors.white24,
+                            fontSize: 12,
+                          ),
+                          labelStyle: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                          prefixIcon: const Icon(
+                            Icons.schedule,
+                            color: Colors.orangeAccent,
+                            size: 18,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          enabledBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.white10),
+                          ),
+                          focusedBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.orangeAccent),
+                          ),
                           filled: true,
                           fillColor: Colors.white.withOpacity(0.02),
                         ),
                       ),
-                      
+
                       const SizedBox(height: 20),
-                      const Text('FORMA DE RECEBIMENTO (PREFERENCIAL)', style: TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                      const Text(
+                        'FORMA DE RECEBIMENTO (PREFERENCIAL)',
+                        style: TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
@@ -12079,28 +14434,43 @@ recusando a emissão de NFC-e (erro 403).
                               setDialogState(() {});
                             },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
                               decoration: BoxDecoration(
-                                color: isSelected ? Colors.orangeAccent.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+                                color: isSelected
+                                    ? Colors.orangeAccent.withOpacity(0.2)
+                                    : Colors.white.withOpacity(0.05),
                                 borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: isSelected ? Colors.orangeAccent : Colors.white.withOpacity(0.1)),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? Colors.orangeAccent
+                                      : Colors.white.withOpacity(0.1),
+                                ),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
-                                    _getIconeTipo(tipo), 
-                                    size: 14, 
-                                    color: isSelected ? Colors.orangeAccent : Colors.white38
+                                    _getIconeTipo(tipo),
+                                    size: 14,
+                                    color: isSelected
+                                        ? Colors.orangeAccent
+                                        : Colors.white38,
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
-                                    tipo.nome, 
+                                    tipo.nome,
                                     style: TextStyle(
-                                      color: isSelected ? Colors.orangeAccent : Colors.white70, 
+                                      color: isSelected
+                                          ? Colors.orangeAccent
+                                          : Colors.white70,
                                       fontSize: 11,
-                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                    )
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -12108,24 +14478,53 @@ recusando a emissão de NFC-e (erro 403).
                           );
                         }).toList(),
                       ),
-                      
-                      if (_formaPagamentoDelivery == TipoPagamento.dinheiro) ...[
+
+                      if (_formaPagamentoDelivery ==
+                          TipoPagamento.dinheiro) ...[
                         const SizedBox(height: 16),
                         TextField(
                           onChanged: (value) {
-                            setState(() => _valorParaTroco = double.tryParse(value.replaceAll(',', '.')) ?? 0.0);
+                            setState(
+                              () => _valorParaTroco =
+                                  double.tryParse(value.replaceAll(',', '.')) ??
+                                  0.0,
+                            );
                           },
-                          controller: TextEditingController(text: _valorParaTroco > 0 ? _valorParaTroco.toStringAsFixed(2).replaceFirst('.', ',') : ''),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          controller: TextEditingController(
+                            text: _valorParaTroco > 0
+                                ? _valorParaTroco
+                                      .toStringAsFixed(2)
+                                      .replaceFirst('.', ',')
+                                : '',
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
                           decoration: InputDecoration(
                             labelText: 'Troco para quanto?',
-                            labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                            labelStyle: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                            ),
                             prefixText: r'R$ ',
-                            prefixStyle: const TextStyle(color: Colors.orangeAccent),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                            enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                            focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.orangeAccent)),
+                            prefixStyle: const TextStyle(
+                              color: Colors.orangeAccent,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            enabledBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.white10),
+                            ),
+                            focusedBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(
+                                color: Colors.orangeAccent,
+                              ),
+                            ),
                             filled: true,
                             fillColor: Colors.white.withOpacity(0.02),
                           ),
@@ -12139,48 +14538,82 @@ recusando a emissão de NFC-e (erro 403).
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+                child: const Text(
+                  'FECHAR',
+                  style: TextStyle(color: Colors.white54),
+                ),
               ),
               if (_isDelivery) ...[
                 OutlinedButton(
                   onPressed: () {
                     if (_isDelivery && _enderecoEntrega == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione um endereço para a Entrega')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Selecione um endereço para a Entrega'),
+                        ),
+                      );
                       return;
                     }
                     if (_estaFinalizando) return;
-                    
+
                     Navigator.pop(context);
                     // Salva diretamente usando a forma de pagamento selecionada no diálogo de delivery
-                    _salvarVendaPendente(dataService, [], mostrarPromptImpressao: true);
+                    _salvarVendaPendente(
+                      dataService,
+                      [],
+                      mostrarPromptImpressao: true,
+                    );
                   },
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.orangeAccent,
                     side: const BorderSide(color: Colors.orangeAccent),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
-                  child: const Text('SALVAR PEDIDO', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    'SALVAR PEDIDO',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () {
                     if (_isDelivery && _enderecoEntrega == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione um endereço para a Entrega')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Selecione um endereço para a Entrega'),
+                        ),
+                      );
                       return;
                     }
                     if (_estaFinalizando) return;
-                    
+
                     // Abre o diálogo de pagamento para lançar pagamentos detalhados
                     Navigator.pop(context);
                     _mostrarDialogPagamento(dataService);
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orangeAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
-                  child: const Text('IR PARA PAGAMENTO', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                  child: const Text(
+                    'IR PARA PAGAMENTO',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -12190,7 +14623,10 @@ recusando a emissão de NFC-e (erro 403).
     );
   }
 
-  void _abrirDialogCadastroMotorista(DataService dataService, StateSetter setDeliveryDialogState) {
+  void _abrirDialogCadastroMotorista(
+    DataService dataService,
+    StateSetter setDeliveryDialogState,
+  ) {
     final nomeC = TextEditingController();
     final telefoneC = TextEditingController();
     final placaC = TextEditingController();
@@ -12201,33 +14637,79 @@ recusando a emissão de NFC-e (erro 403).
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Cadastrar Motorista', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Cadastrar Motorista',
+          style: TextStyle(color: Colors.white),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: nomeC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Nome do Motorista', labelStyle: TextStyle(color: Colors.white54))),
-              TextField(controller: telefoneC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Telefone', labelStyle: TextStyle(color: Colors.white54))),
-              TextField(controller: placaC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Placa do Veículo (Opcional)', labelStyle: TextStyle(color: Colors.white54))),
+              TextField(
+                controller: nomeC,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Nome do Motorista',
+                  labelStyle: TextStyle(color: Colors.white54),
+                ),
+              ),
+              TextField(
+                controller: telefoneC,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Telefone',
+                  labelStyle: TextStyle(color: Colors.white54),
+                ),
+              ),
+              TextField(
+                controller: placaC,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Placa do Veículo (Opcional)',
+                  labelStyle: TextStyle(color: Colors.white54),
+                ),
+              ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 value: tipoComissao,
                 dropdownColor: const Color(0xFF1E1E2E),
-                items: ['Fixo por Entrega', 'Diária', 'Porcentagem'].map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(color: Colors.white)))).toList(),
+                items: ['Fixo por Entrega', 'Diária', 'Porcentagem']
+                    .map(
+                      (t) => DropdownMenuItem(
+                        value: t,
+                        child: Text(
+                          t,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    )
+                    .toList(),
                 onChanged: (v) => tipoComissao = v ?? 'Fixo por Entrega',
-                decoration: const InputDecoration(labelText: 'Tipo de Comissão', labelStyle: TextStyle(color: Colors.white54)),
+                decoration: const InputDecoration(
+                  labelText: 'Tipo de Comissão',
+                  labelStyle: TextStyle(color: Colors.white54),
+                ),
               ),
               TextField(
-                controller: valorComissaoC, 
-                style: const TextStyle(color: Colors.white), 
+                controller: valorComissaoC,
+                style: const TextStyle(color: Colors.white),
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Valor Comissão/Diária (R\$ ou %)', labelStyle: TextStyle(color: Colors.white54)),
+                decoration: const InputDecoration(
+                  labelText: 'Valor Comissão/Diária (R\$ ou %)',
+                  labelStyle: TextStyle(color: Colors.white54),
+                ),
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCELAR', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'CANCELAR',
+              style: TextStyle(color: Colors.white54),
+            ),
+          ),
           ElevatedButton(
             onPressed: () async {
               if (nomeC.text.isEmpty) return;
@@ -12236,12 +14718,16 @@ recusando a emissão de NFC-e (erro 403).
                 telefone: telefoneC.text,
                 placaVeiculo: placaC.text,
                 tipoComissao: tipoComissao,
-                valorComissao: double.tryParse(valorComissaoC.text.replaceAll(',', '.')) ?? 0.0,
-                taxaPadrao: double.tryParse(valorComissaoC.text.replaceAll(',', '.')) ?? 0.0, // fallback table
+                valorComissao:
+                    double.tryParse(valorComissaoC.text.replaceAll(',', '.')) ??
+                    0.0,
+                taxaPadrao:
+                    double.tryParse(valorComissaoC.text.replaceAll(',', '.')) ??
+                    0.0, // fallback table
               );
-              
+
               await dataService.addMotorista(novoMotoboy);
-              
+
               setState(() {
                 _motoristaId = novoMotoboy.id;
                 _motoristaNome = novoMotoboy.nome;
@@ -12269,7 +14755,10 @@ recusando a emissão de NFC-e (erro 403).
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Novo Endereço', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Novo Endereço',
+          style: TextStyle(color: Colors.white),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -12277,31 +14766,100 @@ recusando a emissão de NFC-e (erro 403).
               DropdownButtonFormField<String>(
                 value: tipo,
                 dropdownColor: const Color(0xFF1E1E2E),
-                items: ['Casa', 'Trabalho', 'Outro'].map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(color: Colors.white)))).toList(),
+                items: ['Casa', 'Trabalho', 'Outro']
+                    .map(
+                      (t) => DropdownMenuItem(
+                        value: t,
+                        child: Text(
+                          t,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    )
+                    .toList(),
                 onChanged: (v) => tipo = v ?? 'Casa',
-                decoration: InputDecoration(labelText: 'Tipo', labelStyle: const TextStyle(color: Colors.white54)),
+                decoration: InputDecoration(
+                  labelText: 'Tipo',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                ),
               ),
-              TextField(controller: logradouroC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Rua/Logradouro', labelStyle: TextStyle(color: Colors.white54))),
+              TextField(
+                controller: logradouroC,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Rua/Logradouro',
+                  labelStyle: TextStyle(color: Colors.white54),
+                ),
+              ),
               Row(
                 children: [
-                  Expanded(child: TextField(controller: numeroC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Número', labelStyle: TextStyle(color: Colors.white54)))),
+                  Expanded(
+                    child: TextField(
+                      controller: numeroC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Número',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 8),
-                  Expanded(child: TextField(controller: bairroC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Bairro', labelStyle: TextStyle(color: Colors.white54)))),
+                  Expanded(
+                    child: TextField(
+                      controller: bairroC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Bairro',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                    ),
+                  ),
                 ],
               ),
               Row(
                 children: [
-                  Expanded(child: TextField(controller: cidadeC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Cidade', labelStyle: TextStyle(color: Colors.white54)))),
+                  Expanded(
+                    child: TextField(
+                      controller: cidadeC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Cidade',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 8),
-                  Expanded(child: TextField(controller: ufC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'UF', labelStyle: TextStyle(color: Colors.white54)))),
+                  Expanded(
+                    child: TextField(
+                      controller: ufC,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'UF',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                    ),
+                  ),
                 ],
               ),
-              TextField(controller: cepC, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'CEP', labelStyle: TextStyle(color: Colors.white54))),
+              TextField(
+                controller: cepC,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'CEP',
+                  labelStyle: TextStyle(color: Colors.white54),
+                ),
+              ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCELAR', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'CANCELAR',
+              style: TextStyle(color: Colors.white54),
+            ),
+          ),
           ElevatedButton(
             onPressed: () {
               if (logradouroC.text.isEmpty) return;
@@ -12315,16 +14873,24 @@ recusando a emissão de NFC-e (erro 403).
                 cep: cepC.text,
                 tipo: tipo,
               );
-              
-              final dataService = Provider.of<DataService>(context, listen: false);
-              final List<EnderecoCliente> novosEnds = [...cliente.enderecos, novoEnd];
+
+              final dataService = Provider.of<DataService>(
+                context,
+                listen: false,
+              );
+              final List<EnderecoCliente> novosEnds = [
+                ...cliente.enderecos,
+                novoEnd,
+              ];
               dataService.updateCliente(cliente.copyWith(enderecos: novosEnds));
-              
+
               setState(() {
-                _clienteSelecionado = dataService.getClienteById(cliente.id) ?? cliente.copyWith(enderecos: novosEnds);
+                _clienteSelecionado =
+                    dataService.getClienteById(cliente.id) ??
+                    cliente.copyWith(enderecos: novosEnds);
                 _enderecoEntrega = novoEnd;
               });
-              
+
               setDialogState(() {});
               Navigator.pop(context);
             },
@@ -12341,7 +14907,7 @@ recusando a emissão de NFC-e (erro 403).
     // Tentar extrair solução se houver (padrões variados)
     String? solucao;
     String mensagemLimpa = mensagem;
-    
+
     final patterns = [
       'SOLUÇÃO:',
       'POSSÍVEL SOLUÇÃO:',
@@ -12356,8 +14922,18 @@ recusando a emissão de NFC-e (erro 403).
         mensagemLimpa = partes[0].trim();
         solucao = partes[1].trim();
         // Limpar separadores visuais comuns se ficarem na mensagem
-        mensagemLimpa = mensagemLimpa.replaceAll('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '').trim();
-        solucao = solucao.replaceAll('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '').trim();
+        mensagemLimpa = mensagemLimpa
+            .replaceAll(
+              '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+              '',
+            )
+            .trim();
+        solucao = solucao
+            .replaceAll(
+              '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+              '',
+            )
+            .trim();
         break;
       }
     }
@@ -12372,10 +14948,15 @@ recusando a emissão de NFC-e (erro 403).
     if (isMensagemLonga) {
       ExodoErrorDialog.mostrar(
         context,
-        titulo: mensagem.contains('cStat') ? 'Status da NFC-e' : 'Erro na Emissão',
+        titulo: mensagem.contains('cStat')
+            ? 'Status da NFC-e'
+            : 'Erro na Emissão',
         mensagem: mensagemLimpa,
         solucao: solucao,
-        detalhes: mensagem.contains('traceback') || mensagem.contains('Exception') ? mensagem : null,
+        detalhes:
+            mensagem.contains('traceback') || mensagem.contains('Exception')
+            ? mensagem
+            : null,
       );
     } else {
       // Usar SnackBar para mensagens curtas
@@ -12495,6 +15076,8 @@ recusando a emissão de NFC-e (erro 403).
         return Icons.swap_horiz;
       case TipoPagamento.cashBack:
         return Icons.local_atm;
+      case TipoPagamento.mercado_pago:
+        return Icons.qr_code;
     }
   }
 
@@ -13187,27 +15770,39 @@ recusando a emissão de NFC-e (erro 403).
     // Isso evita que o clique nos botões do popup (Imprimir/Fechar) pareça travado
     // enquanto o Firebase sincroniza 6.5k produtos no fundo.
     if (_estaComPopupAberto && _cachedItens != null) {
-       return _buildScaffoldContexto(context, dataService, _cachedItens!, _cachedCategorias!, _cachedProdutosCategoria!);
+      return _buildScaffoldContexto(
+        context,
+        dataService,
+        _cachedItens!,
+        _cachedCategorias!,
+        _cachedProdutosCategoria!,
+      );
     }
 
     // MEMOIZATION: Só re-processar busca se o termo, categoria ou o próprio DataService mudou significativamente
     final agora = DateTime.now();
     final termoAtual = _termoBusca;
     final catAtiva = _categoriaAtiva;
-    
+
     // Se o cache é recente (< 1s) e os parâmetros são iguais, usamos o cache
-    if (_cachedItens != null && 
-        _ultimoTermoCache == termoAtual && 
+    if (_cachedItens != null &&
+        _ultimoTermoCache == termoAtual &&
         _ultimaCategoriaCache == catAtiva &&
         _ultimaAtualizacaoCache != null &&
         agora.difference(_ultimaAtualizacaoCache!).inMilliseconds < 1000) {
-       return _buildScaffoldContexto(context, dataService, _cachedItens!, _cachedCategorias!, _cachedProdutosCategoria!);
+      return _buildScaffoldContexto(
+        context,
+        dataService,
+        _cachedItens!,
+        _cachedCategorias!,
+        _cachedProdutosCategoria!,
+      );
     }
 
     final itensEncontrados = _buscarItens(dataService);
     final categorias = _getCategorias(dataService);
     final produtosCategoria = _getProdutosPorCategoria(dataService);
-    
+
     // Atualizar cache
     _cachedItens = itensEncontrados;
     _cachedCategorias = categorias;
@@ -13216,15 +15811,21 @@ recusando a emissão de NFC-e (erro 403).
     _ultimaCategoriaCache = catAtiva;
     _ultimaAtualizacaoCache = agora;
 
-    return _buildScaffoldContexto(context, dataService, itensEncontrados, categorias, produtosCategoria);
+    return _buildScaffoldContexto(
+      context,
+      dataService,
+      itensEncontrados,
+      categorias,
+      produtosCategoria,
+    );
   }
 
   Widget _buildScaffoldContexto(
-    BuildContext context, 
-    DataService dataService, 
+    BuildContext context,
+    DataService dataService,
     List<dynamic> itensEncontrados,
     List<String> categorias,
-    List<Produto> produtosCategoria
+    List<Produto> produtosCategoria,
   ) {
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
@@ -13250,8 +15851,7 @@ recusando a emissão de NFC-e (erro 403).
     final content = GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () {
-        if (!_atalhosFocusNode.hasFocus &&
-            !_buscaFocusNode.hasFocus) {
+        if (!_atalhosFocusNode.hasFocus && !_buscaFocusNode.hasFocus) {
           _atalhosFocusNode.requestFocus();
         }
       },
@@ -13262,456 +15862,568 @@ recusando a emissão de NFC-e (erro 403).
           // Garante que o estado de foco visual seja atualizado se necessário
         },
         onKeyEvent: (node, event) {
-        if (event is KeyRepeatEvent) return KeyEventResult.ignored;
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event is KeyRepeatEvent) return KeyEventResult.ignored;
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
-        final key = event.logicalKey;
-        
-        // Debug: mostrar tecla pressionada
-        debugPrint('[PDV TECLADO] Tecla: ${key.debugName}, focoNoCarrinho: $_focoNoCarrinho, focoNasCategorias: $_focoNasCategorias, gridIndex: $_gridSelectedIndex');
+          final key = event.logicalKey;
 
-        // Tecla ESC - Limpar carrinho
-        if (key == LogicalKeyboardKey.escape) {
-          _limparCarrinho();
-          return KeyEventResult.handled;
-        }
+          // Debug: mostrar tecla pressionada
+          debugPrint(
+            '[PDV TECLADO] Tecla: ${key.debugName}, focoNoCarrinho: $_focoNoCarrinho, focoNasCategorias: $_focoNasCategorias, gridIndex: $_gridSelectedIndex',
+          );
 
-        // Tecla F6 - Selecionar Cliente
-        if (key == LogicalKeyboardKey.f6) {
-          _selecionarCliente(dataService);
-          return KeyEventResult.handled;
-        }
-
-        // Tecla F7 - Registrar Despesa (Sangria / CP)
-        if (key == LogicalKeyboardKey.f7) {
-          _abrirLancamentoDespesa();
-          return KeyEventResult.handled;
-        }
-
-
-
-
-        // Tecla F2 - Focar Campo de Busca
-        if (key == LogicalKeyboardKey.f2) {
-          _buscaFocusNode.requestFocus();
-          setState(() {
-            _focoNoCarrinho = false;
-            _focoNasCategorias = false;
-            _gridSelectedIndex = -1;
-            _cartSelectedIndex = -1;
-            _categoriaSelectedIndex = -1;
-          });
-          return KeyEventResult.handled;
-        }
-
-        // Tecla F4 - Focar Categorias
-        if (key == LogicalKeyboardKey.f4) {
-          setState(() {
-            _focoNasCategorias = true;
-            _categoriaSelectedIndex = 0;
-            _focoNoCarrinho = false;
-            _gridSelectedIndex = -1;
-            _cartSelectedIndex = -1;
-            _atalhosFocusNode.requestFocus();
-          });
-          return KeyEventResult.handled;
-        }
-
-        // Tecla CONTROL + Shift - Focar Carrinho rapidamente (removido Shift puro por conflito com asterisco)
-        if ((key == LogicalKeyboardKey.shiftLeft || key == LogicalKeyboardKey.shiftRight) && HardwareKeyboard.instance.isControlPressed) {
-          if (_carrinho.isNotEmpty) {
-            setState(() {
-              _focoNoCarrinho = true;
-              _cartSelectedIndex = 0;
-              _focoNasCategorias = false;
-              _gridSelectedIndex = -1;
-              _categoriaSelectedIndex = -1;
-              _atalhosFocusNode.requestFocus();
-            });
-          }
-          return KeyEventResult.handled;
-        }
-
-        // Tecla CONTROL - Conferência de Itens
-        if (key == LogicalKeyboardKey.controlLeft || key == LogicalKeyboardKey.controlRight) {
-           _abrirConferenciaItens();
-           return KeyEventResult.handled;
-        }
-
-        // Teclas F8, F9, etc agora são tratadas pelo handler do HardwareKeyboard global para maior confiabilidade
-        if (key == LogicalKeyboardKey.f8) {
-          if (_carrinho.isNotEmpty) {
-            _salvarVendaPendente(dataService, [], mostrarPromptImpressao: true);
-          }
-          return KeyEventResult.handled;
-        }
-
-        // Navegação por Setas
-        if (key == LogicalKeyboardKey.arrowRight) {
-          if (_focoNasCategorias) {
-            final numCategorias = categorias.length + 1;
-            if (_categoriaSelectedIndex < numCategorias - 1) {
-              setState(() => _categoriaSelectedIndex++);
-              return KeyEventResult.handled;
-            } else if (_carrinho.isNotEmpty) {
-              setState(() {
-                _focoNasCategorias = false;
-                _focoNoCarrinho = true;
-                _cartSelectedIndex = 0;
-                _categoriaSelectedIndex = -1;
-                _gridSelectedIndex = -1;
-              });
-              return KeyEventResult.handled;
-            }
-          }
-          // Navegação dentro do grid (quando já está navegando nele)
-          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex >= 0) {
-            final screenWidth = MediaQuery.of(context).size.width;
-            final isList = _viewMode == ViewMode.list;
-            final crossAxisCount = isList ? 1 : _getGridCrossAxisCount(screenWidth);
-            final maxItems = _termoBusca.isNotEmpty
-                ? _buscarItens(dataService).length
-                : _getProdutosPorCategoria(dataService).length;
-
-            final isEndOfRow = isList ? true : ((_gridSelectedIndex + 1) % crossAxisCount == 0);
-
-            if (_gridSelectedIndex < maxItems - 1 && !isEndOfRow) {
-              setState(() => _gridSelectedIndex++);
-              // Auto-scroll após navegação lateral
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0); // altura será decidida na função
-              });
-              return KeyEventResult.handled;
-            } else if (!isList && _carrinho.isNotEmpty) {
-              // Somente no modo GRADE (grid) a seta direita pula para o carrinho ao fim da linha
-              setState(() {
-                _focoNoCarrinho = true;
-                _cartSelectedIndex = 0;
-                _gridSelectedIndex = -1;
-              });
-              return KeyEventResult.handled;
-            }
-          }
-
-          // Fora do grid/carrinho/categorias (“modo lançar novo item”): seta → incrementa QTD
-          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex < 0) {
-            setState(() => _quantidadeDigitada++);
-            return KeyEventResult.handled;
-          }
-        }
-
-        if (key == LogicalKeyboardKey.arrowLeft) {
-          if (_focoNasCategorias) {
-            if (_categoriaSelectedIndex > 0) {
-              setState(() => _categoriaSelectedIndex--);
-              return KeyEventResult.handled;
-            } else {
-              // Se estiver na primeira categoria, foca na busca
-              _buscaFocusNode.requestFocus();
-              setState(() {
-                _focoNasCategorias = false;
-                _categoriaSelectedIndex = -1;
-              });
-              return KeyEventResult.handled;
-            }
-          }
-          // Navegação lateral esquerda no grid (quando já está navegando nele)
-          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex > 0) {
-            final screenWidth = MediaQuery.of(context).size.width;
-            final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
-            
-            // Na lista, seta esquerda volta para categorias
-            if (_viewMode == ViewMode.list) {
-              setState(() {
-                _gridSelectedIndex = -1;
-                _focoNasCategorias = true;
-                _categoriaSelectedIndex = 0;
-              });
-              return KeyEventResult.handled;
-            }
-
-            setState(() => _gridSelectedIndex--);
-            // Auto-scroll após navegação lateral
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0);
-            });
-            return KeyEventResult.handled;
-          } else if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex == 0) {
-            // Primeiro item do grid: volta para categorias
-            setState(() {
-              _gridSelectedIndex = -1;
-              _focoNasCategorias = true;
-              _categoriaSelectedIndex = 0;
-            });
+          // Tecla ESC - Limpar carrinho
+          if (key == LogicalKeyboardKey.escape) {
+            _limparCarrinho();
             return KeyEventResult.handled;
           }
 
-          // Estando no carrinho: seta esquerda volta para busca
-          if (_focoNoCarrinho) {
+          // Alt+P - Abrir a tela Pedidos (delivery e vendas salvas).
+          // Fica disponível mesmo quando o foco está no grid de produtos.
+          if (key == LogicalKeyboardKey.keyP &&
+              HardwareKeyboard.instance.isAltPressed) {
+            _abrirPedidos();
+            return KeyEventResult.handled;
+          }
+
+          // Tecla F6 - Selecionar Cliente
+          if (key == LogicalKeyboardKey.f6) {
+            _selecionarCliente(dataService);
+            return KeyEventResult.handled;
+          }
+
+          // Tecla F7 - Registrar Despesa (Sangria / CP)
+          if (key == LogicalKeyboardKey.f7) {
+            _abrirLancamentoDespesa();
+            return KeyEventResult.handled;
+          }
+
+          // Tecla F2 - Focar Campo de Busca
+          if (key == LogicalKeyboardKey.f2) {
             _buscaFocusNode.requestFocus();
             setState(() {
               _focoNoCarrinho = false;
               _focoNasCategorias = false;
-              _cartSelectedIndex = -1;
               _gridSelectedIndex = -1;
+              _cartSelectedIndex = -1;
               _categoriaSelectedIndex = -1;
             });
             return KeyEventResult.handled;
           }
 
-          // Fora do grid/carrinho/categorias (“modo lançar novo item”): seta ← decrementa QTD
-          if (!_focoNoCarrinho && !_focoNasCategorias && _gridSelectedIndex < 0 && _quantidadeDigitada > 1) {
-            setState(() => _quantidadeDigitada--);
-            return KeyEventResult.handled;
-          }
-        }
-
-        if (key == LogicalKeyboardKey.arrowDown) {
-          setState(() {
-            if (_focoNoCarrinho) {
-              // No carrinho reversedIndex = length - 1 - index
-              // Para IR PARA BAIXO visualmente, o index do carrinho deve DIMINUIR
-              if (_cartSelectedIndex > 0) {
-                _cartSelectedIndex--;
-                _scrollToSelectedCartItem(_cartSelectedIndex);
-              }
-            } else if (_focoNasCategorias) {
-              final maxItemsCat = _termoBusca.isNotEmpty
-                  ? _buscarItens(dataService).length
-                  : _getProdutosPorCategoria(dataService).length;
-              // So sai das categorias para a grade se houver itens (grade vazia por padrao)
-              if (maxItemsCat > 0) {
-                _focoNasCategorias = false;
-                _categoriaSelectedIndex = -1;
-                _gridSelectedIndex = 0;
-              }
-            } else if (_buscaFocusNode.hasFocus) {
+          // Tecla F4 - Focar Categorias
+          if (key == LogicalKeyboardKey.f4) {
+            setState(() {
               _focoNasCategorias = true;
               _categoriaSelectedIndex = 0;
+              _focoNoCarrinho = false;
               _gridSelectedIndex = -1;
               _cartSelectedIndex = -1;
               _atalhosFocusNode.requestFocus();
-            } else {
+            });
+            return KeyEventResult.handled;
+          }
+
+          // Tecla CONTROL + Shift - Focar Carrinho rapidamente (removido Shift puro por conflito com asterisco)
+          if ((key == LogicalKeyboardKey.shiftLeft ||
+                  key == LogicalKeyboardKey.shiftRight) &&
+              HardwareKeyboard.instance.isControlPressed) {
+            if (_carrinho.isNotEmpty) {
+              setState(() {
+                _focoNoCarrinho = true;
+                _cartSelectedIndex = 0;
+                _focoNasCategorias = false;
+                _gridSelectedIndex = -1;
+                _categoriaSelectedIndex = -1;
+                _atalhosFocusNode.requestFocus();
+              });
+            }
+            return KeyEventResult.handled;
+          }
+
+          // Tecla CONTROL - Conferência de Itens
+          if (key == LogicalKeyboardKey.controlLeft ||
+              key == LogicalKeyboardKey.controlRight) {
+            _abrirConferenciaItens();
+            return KeyEventResult.handled;
+          }
+
+          // Teclas F8, F9, etc agora são tratadas pelo handler do HardwareKeyboard global para maior confiabilidade
+          if (key == LogicalKeyboardKey.f8) {
+            if (_carrinho.isNotEmpty) {
+              _salvarVendaPendente(
+                dataService,
+                [],
+                mostrarPromptImpressao: true,
+              );
+            }
+            return KeyEventResult.handled;
+          }
+
+          // Navegação por Setas
+          if (key == LogicalKeyboardKey.arrowRight) {
+            if (_focoNasCategorias) {
+              final numCategorias = categorias.length + 1;
+              if (_categoriaSelectedIndex < numCategorias - 1) {
+                _aplicarCategoriaPeloTeclado(
+                  _categoriaSelectedIndex + 1,
+                  categorias,
+                );
+                return KeyEventResult.handled;
+              } else if (_carrinho.isNotEmpty) {
+                setState(() {
+                  _focoNasCategorias = false;
+                  _focoNoCarrinho = true;
+                  _cartSelectedIndex = 0;
+                  _categoriaSelectedIndex = -1;
+                  _gridSelectedIndex = -1;
+                });
+                return KeyEventResult.handled;
+              }
+            }
+            // Navegação dentro do grid (quando já está navegando nele)
+            if (!_focoNoCarrinho &&
+                !_focoNasCategorias &&
+                _gridSelectedIndex >= 0) {
               final screenWidth = MediaQuery.of(context).size.width;
-              final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
+              final isList = _viewMode == ViewMode.list;
+              final crossAxisCount = isList
+                  ? 1
+                  : _getGridCrossAxisCount(screenWidth);
               final maxItems = _termoBusca.isNotEmpty
                   ? _buscarItens(dataService).length
                   : _getProdutosPorCategoria(dataService).length;
 
-              if (_gridSelectedIndex < 0 && maxItems > 0) {
-                _gridSelectedIndex = 0;
-              } else if (_gridSelectedIndex + crossAxisCount < maxItems) {
-                _gridSelectedIndex += crossAxisCount;
-                
-                // Expansão Antecipada: Se chegarmos perto do fim dos itens visíveis, carregamos mais 500
-                if (_termoBusca.isEmpty && _gridSelectedIndex >= _itensVisiveisPDV - 50) {
-                   _itensVisiveisPDV += 500;
-                   debugPrint('>>> ArrowDown Expansão: Agora com $_itensVisiveisPDV itens');
-                }
-              } else if (_gridSelectedIndex >= 0 && _gridSelectedIndex + crossAxisCount >= maxItems) {
-                if (_gridSelectedIndex < maxItems - 1) {
-                   _gridSelectedIndex = maxItems - 1;
-                }
+              final isEndOfRow = isList
+                  ? true
+                  : ((_gridSelectedIndex + 1) % crossAxisCount == 0);
+
+              if (_gridSelectedIndex < maxItems - 1 && !isEndOfRow) {
+                setState(() => _gridSelectedIndex++);
+                // Auto-scroll após navegação lateral
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  _scrollToSelectedGridItem(
+                    _gridSelectedIndex,
+                    crossAxisCount,
+                    0,
+                  ); // altura será decidida na função
+                });
+                return KeyEventResult.handled;
+              } else if (!isList && _carrinho.isNotEmpty) {
+                // Somente no modo GRADE (grid) a seta direita pula para o carrinho ao fim da linha
+                setState(() {
+                  _focoNoCarrinho = true;
+                  _cartSelectedIndex = 0;
+                  _gridSelectedIndex = -1;
+                });
+                return KeyEventResult.handled;
               }
             }
-          });
-          // Auto-scroll após navegação
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final screenWidth = MediaQuery.of(context).size.width;
-            final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
-            _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0);
-          });
-          return KeyEventResult.handled;
-        }
 
-        if (key == LogicalKeyboardKey.arrowUp) {
-          setState(() {
-            if (_focoNoCarrinho) {
-              // No carrinho reversedIndex = length - 1 - index
-              // Para IR PARA CIMA visualmente, o index do carrinho deve AUMENTAR
-              if (_cartSelectedIndex < _carrinho.length - 1) {
-                _cartSelectedIndex++;
-                _scrollToSelectedCartItem(_cartSelectedIndex);
-              }
-            } else if (_focoNasCategorias) {
-              _focoNasCategorias = false;
-              _buscaFocusNode.requestFocus();
-            } else {
-              final screenWidth = MediaQuery.of(context).size.width;
-              final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
-              if (_gridSelectedIndex >= crossAxisCount) {
-                _gridSelectedIndex -= crossAxisCount;
+            // Fora do grid/carrinho/categorias (“modo lançar novo item”): seta → incrementa QTD
+            if (!_focoNoCarrinho &&
+                !_focoNasCategorias &&
+                _gridSelectedIndex < 0) {
+              setState(() => _quantidadeDigitada++);
+              return KeyEventResult.handled;
+            }
+          }
+
+          if (key == LogicalKeyboardKey.arrowLeft) {
+            if (_focoNasCategorias) {
+              if (_categoriaSelectedIndex > 0) {
+                _aplicarCategoriaPeloTeclado(
+                  _categoriaSelectedIndex - 1,
+                  categorias,
+                );
+                return KeyEventResult.handled;
               } else {
-                // Se estiver na primeira linha, sobe para categorias
+                // Se estiver na primeira categoria, foca na busca
+                _buscaFocusNode.requestFocus();
+                setState(() {
+                  _focoNasCategorias = false;
+                  _categoriaSelectedIndex = -1;
+                });
+                return KeyEventResult.handled;
+              }
+            }
+            // Navegação lateral esquerda no grid (quando já está navegando nele)
+            if (!_focoNoCarrinho &&
+                !_focoNasCategorias &&
+                _gridSelectedIndex > 0) {
+              final screenWidth = MediaQuery.of(context).size.width;
+              final crossAxisCount = _viewMode == ViewMode.list
+                  ? 1
+                  : _getGridCrossAxisCount(screenWidth);
+
+              // Na lista, seta esquerda volta para categorias
+              if (_viewMode == ViewMode.list) {
+                setState(() {
+                  _gridSelectedIndex = -1;
+                  _focoNasCategorias = true;
+                  _categoriaSelectedIndex = 0;
+                });
+                return KeyEventResult.handled;
+              }
+
+              setState(() => _gridSelectedIndex--);
+              // Auto-scroll após navegação lateral
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _scrollToSelectedGridItem(
+                  _gridSelectedIndex,
+                  crossAxisCount,
+                  0,
+                );
+              });
+              return KeyEventResult.handled;
+            } else if (!_focoNoCarrinho &&
+                !_focoNasCategorias &&
+                _gridSelectedIndex == 0) {
+              // Primeiro item do grid: volta para categorias
+              setState(() {
                 _gridSelectedIndex = -1;
                 _focoNasCategorias = true;
                 _categoriaSelectedIndex = 0;
-                _atalhosFocusNode.requestFocus();
-              }
-            }
-          });
-          // Auto-scroll para cima também
-          if (_focoNoCarrinho) {
-            _scrollToSelectedCartItem(_cartSelectedIndex);
-          } else if (!_focoNoCarrinho && (_focoNasCategorias || _gridSelectedIndex >= -1)) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              final screenWidth = MediaQuery.of(context).size.width;
-              final crossAxisCount = _viewMode == ViewMode.list ? 1 : _getGridCrossAxisCount(screenWidth);
-              _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0);
-            });
-          }
-          return KeyEventResult.handled;
-        }
-
-        // Enter - Adicionar ao carrinho ou Ações
-        if (key == LogicalKeyboardKey.enter ||
-            key == LogicalKeyboardKey.numpadEnter) {
-          if (_focoNasCategorias && !_buscaFocusNode.hasFocus) {
-            final index = _categoriaSelectedIndex;
-            if (index == 0) {
-              // "Todos": vai direto para o campo de busca com Todos os produtos
-              _irParaBuscaTodos();
-            } else if (index > 0 && index <= categorias.length) {
-              final cat = categorias[index - 1];
-              setState(() {
-                _categoriaAtiva = cat;
-                _termoBusca = '';
-                _buscaController.clear();
-                _gridSelectedIndex = -1;
-                _focoNasCategorias = false;
-                _categoriaSelectedIndex = -1;
-                _focoNoCarrinho = false;
               });
-              _buscaFocusNode.requestFocus();
-            }
-            return KeyEventResult.handled;
-          }
-
-          // Se a busca estiver focada, NÃO tratar o Enter aqui, deixar o TextField.onSubmitted tratar
-          if (_buscaFocusNode.hasFocus) {
-            debugPrint('[PDV ENTER] Busca focada, permitindo processamento do TextField');
-            return KeyEventResult.ignored;
-          }
-
-          if (!_focoNoCarrinho && _gridSelectedIndex >= 0) {
-            final itens = _termoBusca.isNotEmpty
-                ? _buscarItens(dataService)
-                : _getProdutosPorCategoria(dataService);
-            debugPrint('[PDV ENTER] Grid selecionado, index: $_gridSelectedIndex, total itens: ${itens.length}');
-            if (_gridSelectedIndex < itens.length) {
-              // Lê o item ANTES de _irParaBuscaTodos(): ele zera o índice da grade.
-              final itemSelecionado = itens[_gridSelectedIndex];
-              debugPrint('[PDV ENTER] Adicionando item ${itemSelecionado.nome} ao carrinho');
-              _irParaBuscaTodos();
-              _adicionarAoCarrinho(itemSelecionado, manterFoco: true);
               return KeyEventResult.handled;
             }
-          } else {
-            // ENTER com nada selecionado (o PDV abre com o foco na tela, não na
-            // busca): vai para o campo de busca com TODOS OS PRODUTOS.
-            debugPrint('[PDV ENTER] Nada selecionado → busca com todos os produtos');
-            _irParaBuscaTodos();
+
+            // Estando no carrinho: seta esquerda volta para busca
+            if (_focoNoCarrinho) {
+              _buscaFocusNode.requestFocus();
+              setState(() {
+                _focoNoCarrinho = false;
+                _focoNasCategorias = false;
+                _cartSelectedIndex = -1;
+                _gridSelectedIndex = -1;
+                _categoriaSelectedIndex = -1;
+              });
+              return KeyEventResult.handled;
+            }
+
+            // Fora do grid/carrinho/categorias (“modo lançar novo item”): seta ← decrementa QTD
+            if (!_focoNoCarrinho &&
+                !_focoNasCategorias &&
+                _gridSelectedIndex < 0 &&
+                _quantidadeDigitada > 1) {
+              setState(() => _quantidadeDigitada--);
+              return KeyEventResult.handled;
+            }
+          }
+
+          if (key == LogicalKeyboardKey.arrowDown) {
+            setState(() {
+              if (_focoNoCarrinho) {
+                // No carrinho reversedIndex = length - 1 - index
+                // Para IR PARA BAIXO visualmente, o index do carrinho deve DIMINUIR
+                if (_cartSelectedIndex > 0) {
+                  _cartSelectedIndex--;
+                  _scrollToSelectedCartItem(_cartSelectedIndex);
+                }
+              } else if (_focoNasCategorias) {
+                final maxItemsCat = _termoBusca.isNotEmpty
+                    ? _buscarItens(dataService).length
+                    : _getProdutosPorCategoria(dataService).length;
+                // So sai das categorias para a grade se houver itens (grade vazia por padrao)
+                if (maxItemsCat > 0) {
+                  _focoNasCategorias = false;
+                  _categoriaSelectedIndex = -1;
+                  _gridSelectedIndex = 0;
+                }
+              } else if (_buscaFocusNode.hasFocus) {
+                _focoNasCategorias = true;
+                _categoriaSelectedIndex = 0;
+                _gridSelectedIndex = -1;
+                _cartSelectedIndex = -1;
+                _atalhosFocusNode.requestFocus();
+              } else {
+                final screenWidth = MediaQuery.of(context).size.width;
+                final crossAxisCount = _viewMode == ViewMode.list
+                    ? 1
+                    : _getGridCrossAxisCount(screenWidth);
+                final maxItems = _termoBusca.isNotEmpty
+                    ? _buscarItens(dataService).length
+                    : _getProdutosPorCategoria(dataService).length;
+
+                if (_gridSelectedIndex < 0 && maxItems > 0) {
+                  _gridSelectedIndex = 0;
+                } else if (_gridSelectedIndex + crossAxisCount < maxItems) {
+                  _gridSelectedIndex += crossAxisCount;
+
+                  // Expansão Antecipada: Se chegarmos perto do fim dos itens visíveis, carregamos mais 500
+                  if (_termoBusca.isEmpty &&
+                      _gridSelectedIndex >= _itensVisiveisPDV - 50) {
+                    _itensVisiveisPDV += 500;
+                    debugPrint(
+                      '>>> ArrowDown Expansão: Agora com $_itensVisiveisPDV itens',
+                    );
+                  }
+                } else if (_gridSelectedIndex >= 0 &&
+                    _gridSelectedIndex + crossAxisCount >= maxItems) {
+                  if (_gridSelectedIndex < maxItems - 1) {
+                    _gridSelectedIndex = maxItems - 1;
+                  }
+                }
+              }
+            });
+            // Auto-scroll após navegação
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final screenWidth = MediaQuery.of(context).size.width;
+              final crossAxisCount = _viewMode == ViewMode.list
+                  ? 1
+                  : _getGridCrossAxisCount(screenWidth);
+              _scrollToSelectedGridItem(_gridSelectedIndex, crossAxisCount, 0);
+            });
             return KeyEventResult.handled;
           }
-        }
 
-        // Delete/Backspace - Remover do carrinho
-        if (key == LogicalKeyboardKey.delete ||
-            key == LogicalKeyboardKey.backspace) {
-          // Shift + Del → limpar TODO o carrinho
-          final shiftPressed = HardwareKeyboard.instance.isShiftPressed;
-          if (key == LogicalKeyboardKey.delete && shiftPressed) {
-            if (_carrinho.isNotEmpty) {
-              _limparCarrinho();
+          if (key == LogicalKeyboardKey.arrowUp) {
+            setState(() {
+              if (_focoNoCarrinho) {
+                // No carrinho reversedIndex = length - 1 - index
+                // Para IR PARA CIMA visualmente, o index do carrinho deve AUMENTAR
+                if (_cartSelectedIndex < _carrinho.length - 1) {
+                  _cartSelectedIndex++;
+                  _scrollToSelectedCartItem(_cartSelectedIndex);
+                }
+              } else if (_focoNasCategorias) {
+                _focoNasCategorias = false;
+                _buscaFocusNode.requestFocus();
+              } else {
+                final screenWidth = MediaQuery.of(context).size.width;
+                final crossAxisCount = _viewMode == ViewMode.list
+                    ? 1
+                    : _getGridCrossAxisCount(screenWidth);
+                if (_gridSelectedIndex >= crossAxisCount) {
+                  _gridSelectedIndex -= crossAxisCount;
+                } else {
+                  // Se estiver na primeira linha, sobe para categorias
+                  _gridSelectedIndex = -1;
+                  _focoNasCategorias = true;
+                  _categoriaSelectedIndex = 0;
+                  _atalhosFocusNode.requestFocus();
+                }
+              }
+            });
+            // Auto-scroll para cima também
+            if (_focoNoCarrinho) {
+              _scrollToSelectedCartItem(_cartSelectedIndex);
+            } else if (!_focoNoCarrinho &&
+                (_focoNasCategorias || _gridSelectedIndex >= -1)) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                final screenWidth = MediaQuery.of(context).size.width;
+                final crossAxisCount = _viewMode == ViewMode.list
+                    ? 1
+                    : _getGridCrossAxisCount(screenWidth);
+                _scrollToSelectedGridItem(
+                  _gridSelectedIndex,
+                  crossAxisCount,
+                  0,
+                );
+              });
             }
             return KeyEventResult.handled;
           }
-          // Del normal → remover item selecionado no carrinho
+
+          // Enter - Adicionar ao carrinho ou Ações
+          if (key == LogicalKeyboardKey.enter ||
+              key == LogicalKeyboardKey.numpadEnter) {
+            if (_focoNasCategorias && !_buscaFocusNode.hasFocus) {
+              final index = _categoriaSelectedIndex;
+              if (index == 0) {
+                // "Todos": vai direto para o campo de busca com Todos os produtos
+                _irParaBuscaTodos();
+              } else if (index > 0 && index <= categorias.length) {
+                final cat = categorias[index - 1];
+                setState(() {
+                  _categoriaAtiva = cat;
+                  _termoBusca = '';
+                  _buscaController.clear();
+                  _gridSelectedIndex = -1;
+                  _focoNasCategorias = false;
+                  _categoriaSelectedIndex = -1;
+                  _focoNoCarrinho = false;
+                });
+                _buscaFocusNode.requestFocus();
+              }
+              return KeyEventResult.handled;
+            }
+
+            // Se a busca estiver focada, NÃO tratar o Enter aqui, deixar o TextField.onSubmitted tratar
+            if (_buscaFocusNode.hasFocus) {
+              debugPrint(
+                '[PDV ENTER] Busca focada, permitindo processamento do TextField',
+              );
+              return KeyEventResult.ignored;
+            }
+
+            if (!_focoNoCarrinho && _gridSelectedIndex >= 0) {
+              final itens = _termoBusca.isNotEmpty
+                  ? _buscarItens(dataService)
+                  : _getProdutosPorCategoria(dataService);
+              debugPrint(
+                '[PDV ENTER] Grid selecionado, index: $_gridSelectedIndex, total itens: ${itens.length}',
+              );
+              if (_gridSelectedIndex < itens.length) {
+                // Lê o item ANTES de _irParaBuscaTodos(): ele zera o índice da grade.
+                final itemSelecionado = itens[_gridSelectedIndex];
+                debugPrint(
+                  '[PDV ENTER] Adicionando item ${itemSelecionado.nome} ao carrinho',
+                );
+                _irParaBuscaTodos();
+                _adicionarAoCarrinho(itemSelecionado, manterFoco: true);
+                return KeyEventResult.handled;
+              }
+            } else {
+              // ENTER com nada selecionado (o PDV abre com o foco na tela, não na
+              // busca): vai para o campo de busca com TODOS OS PRODUTOS.
+              debugPrint(
+                '[PDV ENTER] Nada selecionado → busca com todos os produtos',
+              );
+              _irParaBuscaTodos();
+              return KeyEventResult.handled;
+            }
+          }
+
+          // Delete/Backspace - Remover do carrinho
+          if (key == LogicalKeyboardKey.delete ||
+              key == LogicalKeyboardKey.backspace) {
+            // Shift + Del → limpar TODO o carrinho
+            final shiftPressed = HardwareKeyboard.instance.isShiftPressed;
+            if (key == LogicalKeyboardKey.delete && shiftPressed) {
+              if (_carrinho.isNotEmpty) {
+                _limparCarrinho();
+              }
+              return KeyEventResult.handled;
+            }
+            // Del normal → remover item selecionado no carrinho
+            if (_focoNoCarrinho &&
+                _cartSelectedIndex >= 0 &&
+                _cartSelectedIndex < _carrinho.length) {
+              _removerItem(_cartSelectedIndex);
+              setState(() {
+                if (_carrinho.isEmpty) {
+                  _focoNoCarrinho = false;
+                  _cartSelectedIndex = -1;
+                } else if (_cartSelectedIndex >= _carrinho.length) {
+                  _cartSelectedIndex = _carrinho.length - 1;
+                }
+              });
+              return KeyEventResult.handled;
+            }
+          }
+
+          // Teclas + e - para alterar quantidade no carrinho
           if (_focoNoCarrinho &&
               _cartSelectedIndex >= 0 &&
               _cartSelectedIndex < _carrinho.length) {
-            _removerItem(_cartSelectedIndex);
-            setState(() {
-              if (_carrinho.isEmpty) {
-                _focoNoCarrinho = false;
-                _cartSelectedIndex = -1;
-              } else if (_cartSelectedIndex >= _carrinho.length) {
-                _cartSelectedIndex = _carrinho.length - 1;
-              }
-            });
-            return KeyEventResult.handled;
+            if (key == LogicalKeyboardKey.numpadAdd ||
+                key == LogicalKeyboardKey.equal) {
+              _alterarQuantidade(_cartSelectedIndex, 1);
+              return KeyEventResult.handled;
+            }
+            if (key == LogicalKeyboardKey.minus ||
+                key == LogicalKeyboardKey.numpadSubtract) {
+              _alterarQuantidade(_cartSelectedIndex, -1);
+              return KeyEventResult.handled;
+            }
           }
-        }
 
-        // Teclas + e - para alterar quantidade no carrinho
-        if (_focoNoCarrinho &&
-            _cartSelectedIndex >= 0 &&
-            _cartSelectedIndex < _carrinho.length) {
-          if (key == LogicalKeyboardKey.numpadAdd ||
-              key == LogicalKeyboardKey.equal) {
-            _alterarQuantidade(_cartSelectedIndex, 1);
-            return KeyEventResult.handled;
-          }
-          if (key == LogicalKeyboardKey.minus ||
-              key == LogicalKeyboardKey.numpadSubtract) {
-            _alterarQuantidade(_cartSelectedIndex, -1);
-            return KeyEventResult.handled;
-          }
-        }
-
-        return KeyEventResult.ignored;
-      },
-      child: Column(
-        children: [
-          // Barra superior com busca, quantidade e cliente
-          _buildBarraSuperior(dataService),
-          // Alerta de limite de dinheiro na gaveta
-          _buildAlertaLimiteDinheiro(dataService),
-          // Área principal
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Lado esquerdo: Categorias + Produtos
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    children: [
-                      // Categorias
-                      _buildCategorias(categorias),
-                      // Área de produtos
-                      Expanded(
-                        child: _termoBusca.isNotEmpty
-                            ? (itensEncontrados.isEmpty
-                                  ? _buildNenhumResultado()
-                                  : _buildGridItens(itensEncontrados))
-                            : _buildGridProdutos(produtosCategoria),
-                      ),
-                    ],
+          return KeyEventResult.ignored;
+        },
+        child: Column(
+          children: [
+            // Barra superior com busca, quantidade e cliente
+            _buildBarraSuperior(dataService),
+            // Alerta de limite de dinheiro na gaveta
+            _buildAlertaLimiteDinheiro(dataService),
+            // Área principal
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Lado esquerdo: Categorias + Produtos
+                  Expanded(
+                    flex: 3,
+                    child: Column(
+                      children: [
+                        // Categorias
+                        _buildCategorias(categorias),
+                        // Área de produtos
+                        Expanded(
+                          child: _termoBusca.isNotEmpty
+                              ? (itensEncontrados.isEmpty
+                                    ? _buildNenhumResultado()
+                                    : _buildGridItens(itensEncontrados))
+                              : _buildGridProdutos(produtosCategoria),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                // Lado direito: Carrinho com efeito glow
-                screenWidth < 1100
-                    ? Expanded(
-                        flex: 2,
-                        child: Container(
+                  // Lado direito: Carrinho com efeito glow
+                  screenWidth < 1100
+                      ? Expanded(
+                          flex: 2,
+                          child: Container(
+                            margin: const EdgeInsets.only(
+                              right: 16,
+                              bottom: 16,
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  const Color(0xFF0D0D15),
+                                  const Color(0xFF12121C),
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.cyanAccent.withOpacity(0.15),
+                                  blurRadius: 40,
+                                  spreadRadius: 5,
+                                ),
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.5),
+                                  blurRadius: 30,
+                                  offset: const Offset(0, 15),
+                                ),
+                              ],
+                            ),
+                            child: _buildCarrinhoMelhorado(dataService),
+                          ),
+                        )
+                      : Container(
+                          width: 400,
                           margin: const EdgeInsets.only(right: 16, bottom: 16),
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
-                              colors: [
-                                const Color(0xFF0D0D15),
-                                const Color(0xFF12121C),
-                              ],
+                              colors: isDark
+                                  ? [
+                                      const Color(0xFF0D0D15),
+                                      const Color(0xFF12121C),
+                                    ]
+                                  : [Colors.white, const Color(0xFFF1F5F9)],
                             ),
                             borderRadius: BorderRadius.circular(20),
                             boxShadow: [
+                              // Glow ciano externo
                               BoxShadow(
                                 color: Colors.cyanAccent.withOpacity(0.15),
                                 blurRadius: 40,
                                 spreadRadius: 5,
                               ),
+                              // Glow interno sutil
+                              BoxShadow(
+                                color: Colors.cyan.withOpacity(0.08),
+                                blurRadius: 20,
+                                spreadRadius: -5,
+                              ),
+                              // Sombra de profundidade
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.5),
                                 blurRadius: 30,
@@ -13721,55 +16433,15 @@ recusando a emissão de NFC-e (erro 403).
                           ),
                           child: _buildCarrinhoMelhorado(dataService),
                         ),
-                      )
-                    : Container(
-                        width: 400,
-                        margin: const EdgeInsets.only(right: 16, bottom: 16),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: isDark ? [
-                              const Color(0xFF0D0D15),
-                              const Color(0xFF12121C),
-                            ] : [
-                              Colors.white,
-                              const Color(0xFFF1F5F9),
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            // Glow ciano externo
-                            BoxShadow(
-                              color: Colors.cyanAccent.withOpacity(0.15),
-                              blurRadius: 40,
-                              spreadRadius: 5,
-                            ),
-                            // Glow interno sutil
-                            BoxShadow(
-                              color: Colors.cyan.withOpacity(0.08),
-                              blurRadius: 20,
-                              spreadRadius: -5,
-                            ),
-                            // Sombra de profundidade
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.5),
-                              blurRadius: 30,
-                              offset: const Offset(0, 15),
-                            ),
-                          ],
-                        ),
-                        child: _buildCarrinhoMelhorado(dataService),
-                      ),
-              ],
+                ],
+              ),
             ),
-          ),
-          // Barra inferior de atalhos (Legenda)
-          _buildBarraAtalhosLegenda(),
-        ],
+            // Barra inferior de atalhos (Legenda)
+            _buildBarraAtalhosLegenda(),
+          ],
+        ),
       ),
-    ),
-   );
+    );
 
     // Na versão mobile (muito estreita), mudar Row para Column
     if (screenWidth < 750) {
@@ -13801,9 +16473,15 @@ recusando a emissão de NFC-e (erro 403).
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.white.withOpacity(0.2)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.2),
+                        ),
                       ),
-                      child: Icon(Icons.settings, color: Colors.white70, size: isSmallHeight ? 18 : 20),
+                      child: Icon(
+                        Icons.settings,
+                        color: Colors.white70,
+                        size: isSmallHeight ? 18 : 20,
+                      ),
                     ),
                     tooltip: 'Configurações do PDV',
                   ),
@@ -13838,7 +16516,10 @@ recusando a emissão de NFC-e (erro 403).
                             ),
                             labelColor: Colors.blueAccent,
                             unselectedLabelColor: Colors.white54,
-                            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            labelStyle: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
                             indicatorColor: Colors.blueAccent,
                             tabs: [
                               const Tab(
@@ -13855,16 +16536,24 @@ recusando a emissão de NFC-e (erro 403).
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    const Icon(Icons.shopping_cart_rounded, size: 20),
+                                    const Icon(
+                                      Icons.shopping_cart_rounded,
+                                      size: 20,
+                                    ),
                                     const SizedBox(width: 8),
                                     const Text('CARRINHO'),
                                     if (_carrinho.isNotEmpty) ...[
                                       const SizedBox(width: 8),
                                       Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
                                         decoration: BoxDecoration(
                                           color: Colors.orangeAccent,
-                                          borderRadius: BorderRadius.circular(10),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
                                         ),
                                         child: Text(
                                           '${_carrinho.length}',
@@ -13891,17 +16580,25 @@ recusando a emissão de NFC-e (erro 403).
                                       child: _termoBusca.isNotEmpty
                                           ? (itensEncontrados.isEmpty
                                                 ? _buildNenhumResultado()
-                                                : _buildGridItens(itensEncontrados))
-                                            : _buildGridProdutos(produtosCategoria),
+                                                : _buildGridItens(
+                                                    itensEncontrados,
+                                                  ))
+                                          : _buildGridProdutos(
+                                              produtosCategoria,
+                                            ),
                                     ),
                                   ],
                                 ),
                                 Container(
                                   margin: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
-                                    color: isDark ? const Color(0xFF0D0D15) : Colors.white,
+                                    color: isDark
+                                        ? const Color(0xFF0D0D15)
+                                        : Colors.white,
                                     borderRadius: BorderRadius.circular(20),
-                                    border: isDark ? null : Border.all(color: Colors.black12),
+                                    border: isDark
+                                        ? null
+                                        : Border.all(color: Colors.black12),
                                   ),
                                   child: _buildCarrinhoMelhorado(dataService),
                                 ),
@@ -13914,44 +16611,85 @@ recusando a emissão de NFC-e (erro 403).
                   ),
                 ],
               ),
-              bottomNavigationBar: _carrinho.isNotEmpty ? SafeArea(child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                height: isSmallHeight ? 60 : 70,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF161624),
-                  border: const Border(top: BorderSide(color: Colors.white10)),
-                  boxShadow: [
-                    BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, -2))
-                  ],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                     Column(
-                       mainAxisSize: MainAxisSize.min,
-                       crossAxisAlignment: CrossAxisAlignment.start,
-                       children: [
-                         Text('${_totalItens} ITENS', style: const TextStyle(color: Colors.grey, fontSize: 9, fontWeight: FontWeight.bold)),
-                         Text(
-                           NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_totalCarrinho), 
-                           style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)
-                         ),
-                       ],
-                     ),
-                     ElevatedButton.icon(
-                       onPressed: () => _finalizarVenda(dataService),
-                       icon: const Icon(Icons.payments_outlined, size: 16),
-                       label: const Text('FINALIZAR', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
-                       style: ElevatedButton.styleFrom(
-                         backgroundColor: Colors.green,
-                         foregroundColor: Colors.white,
-                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                       ),
-                     )
-                  ],
-                ),
-              )) : null,
+              bottomNavigationBar: _carrinho.isNotEmpty
+                  ? SafeArea(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        height: isSmallHeight ? 60 : 70,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF161624),
+                          border: const Border(
+                            top: BorderSide(color: Colors.white10),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.5),
+                              blurRadius: 10,
+                              offset: const Offset(0, -2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${_totalItens} ITENS',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  NumberFormat.currency(
+                                    locale: 'pt_BR',
+                                    symbol: 'R\$',
+                                  ).format(_totalCarrinho),
+                                  style: const TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            ElevatedButton.icon(
+                              onPressed: () => _finalizarVenda(dataService),
+                              icon: const Icon(
+                                Icons.payments_outlined,
+                                size: 16,
+                              ),
+                              label: const Text(
+                                'FINALIZAR',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : null,
             ),
           ],
         ),
@@ -13989,9 +16727,15 @@ recusando a emissão de NFC-e (erro 403).
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.white.withOpacity(0.2)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.2),
+                        ),
                       ),
-                      child: Icon(Icons.settings, color: Colors.white70, size: isSmallHeight ? 18 : 20),
+                      child: Icon(
+                        Icons.settings,
+                        color: Colors.white70,
+                        size: isSmallHeight ? 18 : 20,
+                      ),
                     ),
                     tooltip: 'Configurações do PDV',
                   ),
@@ -14006,7 +16750,9 @@ recusando a emissão de NFC-e (erro 403).
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.white.withOpacity(0.2)),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.2),
+                          ),
                         ),
                         child: Icon(
                           !html_helper.isFullscreen()
@@ -14020,85 +16766,89 @@ recusando a emissão de NFC-e (erro 403).
                     ),
                   // No celular estes três atalhos descem para o menu "⋮".
                   if (!ehCelular) ...[
-                  // Botão Sangria (menor, apenas ícone)
-                  IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    onPressed: () => _abrirDialogPagamento(),
-                    icon: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.withOpacity(0.5)),
+                    // Botão Sangria (menor, apenas ícone)
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () => _abrirDialogPagamento(),
+                      icon: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.red.withOpacity(0.5),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.remove_circle_outline,
+                          color: Colors.red.withOpacity(0.9),
+                          size: isSmallHeight ? 18 : 20,
+                        ),
                       ),
-                      child: Icon(
-                        Icons.remove_circle_outline,
-                        color: Colors.red.withOpacity(0.9),
-                        size: isSmallHeight ? 18 : 20,
-                      ),
+                      tooltip: 'Fazer Pagamento',
                     ),
-                    tooltip: 'Fazer Pagamento',
-                  ),
-                  // Botão Suprimento (menor, apenas ícone)
-                  IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    onPressed: () => _abrirDialogSuprimento(),
-                    icon: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.green.withOpacity(0.5)),
+                    // Botão Suprimento (menor, apenas ícone)
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () => _abrirDialogSuprimento(),
+                      icon: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.green.withOpacity(0.5),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.add_circle_outline,
+                          color: Colors.green.withOpacity(0.9),
+                          size: isSmallHeight ? 18 : 20,
+                        ),
                       ),
-                      child: Icon(
-                        Icons.add_circle_outline,
-                        color: Colors.green.withOpacity(0.9),
-                        size: isSmallHeight ? 18 : 20,
-                      ),
+                      tooltip: 'Suprimento',
                     ),
-                    tooltip: 'Suprimento',
-                  ),
-                  // Botão Observações
-                  IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    onPressed: () => _abrirDialogObservacoes(),
-                    icon: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color:
-                            _observacoesVenda != null &&
-                                _observacoesVenda!.isNotEmpty
-                            ? Colors.blue.withOpacity(0.3)
-                            : Colors.blue.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
+                    // Botão Observações
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () => _abrirDialogObservacoes(),
+                      icon: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
                           color:
                               _observacoesVenda != null &&
                                   _observacoesVenda!.isNotEmpty
-                              ? Colors.blue.withOpacity(0.7)
-                              : Colors.blue.withOpacity(0.5),
-                          width:
+                              ? Colors.blue.withOpacity(0.3)
+                              : Colors.blue.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color:
+                                _observacoesVenda != null &&
+                                    _observacoesVenda!.isNotEmpty
+                                ? Colors.blue.withOpacity(0.7)
+                                : Colors.blue.withOpacity(0.5),
+                            width:
+                                _observacoesVenda != null &&
+                                    _observacoesVenda!.isNotEmpty
+                                ? 2
+                                : 1,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.note_outlined,
+                          color:
                               _observacoesVenda != null &&
                                   _observacoesVenda!.isNotEmpty
-                              ? 2
-                              : 1,
+                              ? Colors.blueAccent
+                              : Colors.blue.withOpacity(0.9),
+                          size: isSmallHeight ? 18 : 20,
                         ),
                       ),
-                      child: Icon(
-                        Icons.note_outlined,
-                        color:
-                            _observacoesVenda != null &&
-                                _observacoesVenda!.isNotEmpty
-                            ? Colors.blueAccent
-                            : Colors.blue.withOpacity(0.9),
-                        size: isSmallHeight ? 18 : 20,
-                      ),
+                      tooltip: 'Observações da Venda',
                     ),
-                    tooltip: 'Observações da Venda',
-                  ),
                   ],
                   if (ehCelular)
                     PopupMenuButton<String>(
@@ -14116,30 +16866,45 @@ recusando a emissão de NFC-e (erro 403).
                       itemBuilder: (context) => const [
                         PopupMenuItem(
                           value: 'pagamento',
-                          child: Row(children: [
-                            Icon(Icons.remove_circle_outline,
-                                size: 18, color: Colors.redAccent),
-                            SizedBox(width: 8),
-                            Text('Pagamento / Sangria'),
-                          ]),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.remove_circle_outline,
+                                size: 18,
+                                color: Colors.redAccent,
+                              ),
+                              SizedBox(width: 8),
+                              Text('Pagamento / Sangria'),
+                            ],
+                          ),
                         ),
                         PopupMenuItem(
                           value: 'suprimento',
-                          child: Row(children: [
-                            Icon(Icons.add_circle_outline,
-                                size: 18, color: Colors.greenAccent),
-                            SizedBox(width: 8),
-                            Text('Suprimento'),
-                          ]),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.add_circle_outline,
+                                size: 18,
+                                color: Colors.greenAccent,
+                              ),
+                              SizedBox(width: 8),
+                              Text('Suprimento'),
+                            ],
+                          ),
                         ),
                         PopupMenuItem(
                           value: 'obs',
-                          child: Row(children: [
-                            Icon(Icons.note_outlined,
-                                size: 18, color: Colors.blueAccent),
-                            SizedBox(width: 8),
-                            Text('Observações da Venda'),
-                          ]),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.note_outlined,
+                                size: 18,
+                                color: Colors.blueAccent,
+                              ),
+                              SizedBox(width: 8),
+                              Text('Observações da Venda'),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -14154,12 +16919,7 @@ recusando a emissão de NFC-e (erro 403).
     }
 
     // Se já existe Scaffold (dentro do TabBarView), retornar apenas o conteúdo
-    return Stack(
-      children: [
-        _buildPhoenixTraces(),
-        content,
-      ],
-    );
+    return Stack(children: [_buildPhoenixTraces(), content]);
   }
 
   Widget _buildPhoenixTraces() {
@@ -14207,38 +16967,53 @@ recusando a emissão de NFC-e (erro 403).
   Widget _buildBarraResumoFiscal(DataService dataService) {
     final now = DateTime.now();
     final nfces = dataService.nfces;
-    
-    final pendentes = nfces.where((n) => n.status == 'contingencia' || n.status == 'pendente').length;
-    final autorizadasHoje = nfces.where((n) => 
-      (n.status == 'autorizada' || n.status == 'sucesso') &&
-      n.createdAt.year == now.year && n.createdAt.month == now.month && n.createdAt.day == now.day
+
+    final pendentes = nfces
+        .where((n) => n.status == 'contingencia' || n.status == 'pendente')
+        .length;
+    final autorizadasHoje = nfces.where(
+      (n) =>
+          (n.status == 'autorizada' || n.status == 'sucesso') &&
+          n.createdAt.year == now.year &&
+          n.createdAt.month == now.month &&
+          n.createdAt.day == now.day,
     );
     final totalHoje = autorizadasHoje.fold(0.0, (sum, n) => sum + n.valorTotal);
     final qtdHoje = autorizadasHoje.length;
-    
-    final autorizadasMes = nfces.where((n) => 
-      (n.status == 'autorizada' || n.status == 'sucesso') &&
-      n.createdAt.year == now.year && n.createdAt.month == now.month
+
+    final autorizadasMes = nfces.where(
+      (n) =>
+          (n.status == 'autorizada' || n.status == 'sucesso') &&
+          n.createdAt.year == now.year &&
+          n.createdAt.month == now.month,
     );
     final totalMes = autorizadasMes.fold(0.0, (sum, n) => sum + n.valorTotal);
     final qtdMes = autorizadasMes.length;
-    
+
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: pendentes > 0
-            ? [Colors.orange.shade900.withOpacity(0.5), Colors.deepOrange.shade900.withOpacity(0.3)]
-            : [Colors.green.shade900.withOpacity(0.3), Colors.teal.shade900.withOpacity(0.2)],
+              ? [
+                  Colors.orange.shade900.withOpacity(0.5),
+                  Colors.deepOrange.shade900.withOpacity(0.3),
+                ]
+              : [
+                  Colors.green.shade900.withOpacity(0.3),
+                  Colors.teal.shade900.withOpacity(0.2),
+                ],
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
         ),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: pendentes > 0 ? Colors.orange.withOpacity(0.3) : Colors.green.withOpacity(0.2),
+          color: pendentes > 0
+              ? Colors.orange.withOpacity(0.3)
+              : Colors.green.withOpacity(0.2),
         ),
       ),
       child: GestureDetector(
@@ -14255,72 +17030,96 @@ recusando a emissão de NFC-e (erro 403).
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
           child: Row(
-          children: [
-            Icon(
-              pendentes > 0 ? Icons.warning_amber_rounded : Icons.receipt_long,
-              color: pendentes > 0 ? Colors.orangeAccent : Colors.greenAccent,
-              size: 18,
-            ),
-            const SizedBox(width: 8),
-            
-            // Fiscal Hoje
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(5),
+            children: [
+              Icon(
+                pendentes > 0
+                    ? Icons.warning_amber_rounded
+                    : Icons.receipt_long,
+                color: pendentes > 0 ? Colors.orangeAccent : Colors.greenAccent,
+                size: 18,
               ),
-              child: Text(
-                'Hoje: $qtdHoje notas | ${formatoMoeda.format(totalHoje)}',
-                style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold),
-              ),
-            ),
-            
-            const SizedBox(width: 6),
-            
-            // Fiscal Mês
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(5),
-              ),
-              child: Text(
-                'Mês: $qtdMes notas | ${formatoMoeda.format(totalMes)}',
-                style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 11, fontWeight: FontWeight.bold),
-              ),
-            ),
-            
-            // Pendentes
-            if (pendentes > 0) ...[
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
+
+              // Fiscal Hoje
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.25),
+                  color: Colors.green.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(5),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.sync_problem, color: Colors.orangeAccent, size: 12),
-                    const SizedBox(width: 3),
-                    Text(
-                      '$pendentes pendente${pendentes != 1 ? 's' : ''}',
-                      style: const TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold),
-                    ),
-                  ],
+                child: Text(
+                  'Hoje: $qtdHoje notas | ${formatoMoeda.format(totalHoje)}',
+                  style: const TextStyle(
+                    color: Colors.greenAccent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 6),
+
+              // Fiscal Mês
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: Text(
+                  'Mês: $qtdMes notas | ${formatoMoeda.format(totalMes)}',
+                  style: const TextStyle(
+                    color: Colors.lightBlueAccent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+
+              // Pendentes
+              if (pendentes > 0) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.25),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.sync_problem,
+                        color: Colors.orangeAccent,
+                        size: 12,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        '$pendentes pendente${pendentes != 1 ? 's' : ''}',
+                        style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              const SizedBox(width: 12),
+              Text(
+                'Histórico  ›',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.4),
+                  fontSize: 10,
                 ),
               ),
             ],
-            
-            const SizedBox(width: 12),
-            Text(
-              'Histórico  ›',
-              style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10),
-            ),
-          ],
-        ),
+          ),
         ),
       ),
     );
@@ -14336,10 +17135,7 @@ recusando a emissão de NFC-e (erro 403).
       return const SizedBox.shrink();
     }
 
-    final formatoMoeda = NumberFormat.currency(
-      locale: 'pt_BR',
-      symbol: 'R\$',
-    );
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
     return Container(
       width: double.infinity,
@@ -14362,7 +17158,11 @@ recusando a emissão de NFC-e (erro 403).
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 24),
+          const Icon(
+            Icons.warning_amber_rounded,
+            color: Colors.white,
+            size: 24,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -14379,10 +17179,7 @@ recusando a emissão de NFC-e (erro 403).
                 const SizedBox(height: 2),
                 Text(
                   'O saldo em dinheiro é de ${formatoMoeda.format(totalDinheiro)}, superando o limite seguro configurado de ${formatoMoeda.format(_limiteGavetaValor)}.',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
                 ),
               ],
             ),
@@ -14390,7 +17187,11 @@ recusando a emissão de NFC-e (erro 403).
           const SizedBox(width: 12),
           ElevatedButton.icon(
             onPressed: () => _abrirDialogPagamento(),
-            icon: const Icon(Icons.money_off, size: 16, color: Color(0xFFC62828)),
+            icon: const Icon(
+              Icons.money_off,
+              size: 16,
+              color: Color(0xFFC62828),
+            ),
             label: const Text(
               'REALIZAR SANGRIA',
               style: TextStyle(
@@ -14450,16 +17251,17 @@ recusando a emissão de NFC-e (erro 403).
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1E1E2E) : Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: isDark ? Colors.blue.withOpacity(0.3) : Colors.black12),
+          border: Border.all(
+            color: isDark ? Colors.blue.withOpacity(0.3) : Colors.black12,
+          ),
         ),
         child: Focus(
           onKeyEvent: (node, event) {
             if (event is! KeyDownEvent) return KeyEventResult.ignored;
             final key = event.logicalKey;
-            
+
             // F9 tratado globalmente
-        
-            
+
             // Seta para baixo: sair do campo e ir para categorias/grid
             if (key == LogicalKeyboardKey.arrowDown) {
               _atalhosFocusNode.requestFocus();
@@ -14472,7 +17274,9 @@ recusando a emissão de NFC-e (erro 403).
             }
 
             // Backspace no campo vazio: resetar quantidade para 1.0
-            if (key == LogicalKeyboardKey.backspace && _buscaController.text.isEmpty && _quantidadeDigitada != 1.0) {
+            if (key == LogicalKeyboardKey.backspace &&
+                _buscaController.text.isEmpty &&
+                _quantidadeDigitada != 1.0) {
               setState(() {
                 _quantidadeDigitada = 1.0;
               });
@@ -14518,22 +17322,36 @@ recusando a emissão de NFC-e (erro 403).
           child: TextField(
             controller: _buscaController,
             focusNode: _buscaFocusNode,
-            style: TextStyle(color: textColor, fontSize: isSmallHeight ? 14 : 15),
+            style: TextStyle(
+              color: textColor,
+              fontSize: isSmallHeight ? 14 : 15,
+            ),
             decoration: InputDecoration(
-              hintText: _categoriaAtiva != null ? '🔍 $_categoriaAtiva...' : '🔍 Buscar...',
-              hintStyle: TextStyle(color: textColor.withOpacity(0.4), fontSize: isSmallHeight ? 12 : 13),
+              hintText: _categoriaAtiva != null
+                  ? '🔍 $_categoriaAtiva...'
+                  : '🔍 Buscar...',
+              hintStyle: TextStyle(
+                color: textColor.withOpacity(0.4),
+                fontSize: isSmallHeight ? 12 : 13,
+              ),
               prefixIcon: GestureDetector(
                 onTap: () => _abrirBuscaFacilitada(context),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const SizedBox(width: 12),
-                    Icon(Icons.search,
-                        color: Colors.blue, size: isSmallHeight ? 18 : 22),
+                    Icon(
+                      Icons.search,
+                      color: Colors.blue,
+                      size: isSmallHeight ? 18 : 22,
+                    ),
                     if (_quantidadeDigitada != 1.0) ...[
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.orange,
                           borderRadius: BorderRadius.circular(4),
@@ -14563,8 +17381,10 @@ recusando a emissão de NFC-e (erro 403).
               filled: true,
               fillColor: Colors.transparent,
               border: InputBorder.none,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
             ),
             onChanged: (value) {
               if (_debounce?.isActive ?? false) _debounce!.cancel();
@@ -14572,18 +17392,21 @@ recusando a emissão de NFC-e (erro 403).
                 if (!mounted) return;
                 setState(() {
                   _termoBusca = value;
-                  
+
                   // Se terminar com '*' ou ' ', tenta extrair a quantidade
-                  if ((value.endsWith('*') || value.endsWith(' ')) && value.length > 1) {
-                    final valorSemPrefixo = value.substring(0, value.length - 1).replaceAll(',', '.');
+                  if ((value.endsWith('*') || value.endsWith(' ')) &&
+                      value.length > 1) {
+                    final valorSemPrefixo = value
+                        .substring(0, value.length - 1)
+                        .replaceAll(',', '.');
                     final double? qtd = double.tryParse(valorSemPrefixo);
                     if (qtd != null && qtd > 0) {
                       _quantidadeDigitada = qtd;
                       _termoBusca = '';
-                      
+
                       _buscaController.clear();
                       _buscaFocusNode.requestFocus();
-                      
+
                       _mostrarNotificacaoSucesso(
                         icone: Icons.scale,
                         titulo: 'Quantidade: ${qtd.toStringAsFixed(3)}',
@@ -14598,9 +17421,13 @@ recusando a emissão de NFC-e (erro 403).
             },
             onSubmitted: (value) {
               if (value.isEmpty) {
-                if (_carrinho.isNotEmpty && !_estaFinalizando && !_dialogAberto) {
+                if (_carrinho.isNotEmpty &&
+                    !_estaFinalizando &&
+                    !_dialogAberto) {
                   // Se o carrinho tem itens e o campo está vazio, Enter finaliza a venda
-                  _finalizarVenda(Provider.of<DataService>(context, listen: false));
+                  _finalizarVenda(
+                    Provider.of<DataService>(context, listen: false),
+                  );
                 } else {
                   // ENTER no PDV vai para a busca com "Todos os produtos"
                   _irParaBuscaTodos();
@@ -14628,7 +17455,10 @@ recusando a emissão de NFC-e (erro 403).
               // 1. VERIFICAÇÃO DE PREÇO COM VÍRGULA (ex: "10,00", "15,50", "5,00"):
               // Se o termo contém VÍRGULA e é um número (ex: "10,00"), DEVE ABRIR A JANELA DE DIVERSOS DIRETO!
               // Não pode buscar código de produto "1000" tirando a vírgula!
-              final bool ehValorComVirgula = (termo.contains(',') || value.contains(',')) && numPuro != null && numPuro > 0;
+              final bool ehValorComVirgula =
+                  (termo.contains(',') || value.contains(',')) &&
+                  numPuro != null &&
+                  numPuro > 0;
 
               if (ehValorComVirgula) {
                 final valorDigitado = numPuro;
@@ -14648,7 +17478,11 @@ recusando a emissão de NFC-e (erro 403).
 
               if (itens.isNotEmpty) {
                 final primeiroItem = itens.first;
-                setState(() => _quantidadeDigitada = temMultiplicador ? qtd : _quantidadeDigitada);
+                setState(
+                  () => _quantidadeDigitada = temMultiplicador
+                      ? qtd
+                      : _quantidadeDigitada,
+                );
                 _irParaBuscaTodos();
                 _adicionarAoCarrinho(primeiroItem, manterFoco: true);
                 _buscaController.clear();
@@ -14658,7 +17492,12 @@ recusando a emissão de NFC-e (erro 403).
               }
 
               // Se não encontrou nenhum item e o termo for APENAS um número de quantidade puro sem vírgula (ex: "5*"):
-              final bool ehQtdValida = !temMultiplicador && numPuro != null && numPuro > 0 && numPuro <= 100 && !value.contains(',');
+              final bool ehQtdValida =
+                  !temMultiplicador &&
+                  numPuro != null &&
+                  numPuro > 0 &&
+                  numPuro <= 100 &&
+                  !value.contains(',');
 
               if (ehQtdValida) {
                 setState(() {
@@ -14669,12 +17508,13 @@ recusando a emissão de NFC-e (erro 403).
                 _mostrarNotificacaoSucesso(
                   icone: Icons.scale,
                   titulo: 'Quantidade Definida',
-                  subtitulo: 'Próximo item será adicionado com: ${numPuro.toStringAsFixed(3)}',
+                  subtitulo:
+                      'Próximo item será adicionado com: ${numPuro.toStringAsFixed(3)}',
                   cor: Colors.blueAccent,
                 );
                 return;
               }
-              
+
               // Se não encontrou nenhum item e não é uma quantidade válida (ex: código inexistente 22222)
               _irParaBuscaTodos();
               _mostrarNotificacaoSucesso(
@@ -14706,46 +17546,72 @@ recusando a emissão de NFC-e (erro 403).
         mainAxisSize: MainAxisSize.min,
         children: [
           if (mostrarCliente) ...[
-            _buildCompactHeaderButton(icon: Icons.person, label: _clienteSelecionado?.nome ?? 'Cliente', color: _clienteSelecionado != null ? Colors.greenAccent : Colors.white54, onTap: () => _selecionarCliente(dataService)),
+            _buildCompactHeaderButton(
+              icon: Icons.person,
+              label: _clienteSelecionado?.nome ?? 'Cliente',
+              color: _clienteSelecionado != null
+                  ? Colors.greenAccent
+                  : Colors.white54,
+              onTap: () => _selecionarCliente(dataService),
+            ),
             const SizedBox(width: 8),
           ],
           if (_obterTabelasPrecoEmpresa().isNotEmpty) ...[
             _buildCompactHeaderButton(
               icon: Icons.price_change,
               label: _tabelaPrecoAtiva ?? 'Tabela',
-              color: _tabelaPrecoAtiva != null ? Colors.orangeAccent : Colors.white54,
+              color: _tabelaPrecoAtiva != null
+                  ? Colors.orangeAccent
+                  : Colors.white54,
               onTap: () => _selecionarTabelaPreco(dataService),
             ),
             const SizedBox(width: 8),
           ],
           if (mostrarVendedor) ...[
             _buildCompactHeaderButton(
-              icon: Icons.badge, 
-              label: _vendedorSelecionado?.nome ?? 'Vendedor', 
-              color: _vendedorSelecionado != null ? Colors.purpleAccent : Colors.white54, 
-              onTap: () => _selecionarVendedor(dataService)
+              icon: Icons.badge,
+              label: _vendedorSelecionado?.nome ?? 'Vendedor',
+              color: _vendedorSelecionado != null
+                  ? Colors.purpleAccent
+                  : Colors.white54,
+              onTap: () => _selecionarVendedor(dataService),
             ),
             const SizedBox(width: 8),
           ],
           if (mostrarEntregas) ...[
             _buildCompactHeaderButton(
-              icon: Icons.delivery_dining, 
-              label: _isDelivery ? 'Entrega Ativa' : 'Entregas', 
-              color: _isDelivery ? Colors.orangeAccent : Colors.white54, 
-              onTap: () => _abrirDialogDelivery()
+              icon: Icons.delivery_dining,
+              label: _isDelivery ? 'Entrega Ativa' : 'Entregas',
+              color: _isDelivery ? Colors.orangeAccent : Colors.white54,
+              onTap: () => _abrirDialogDelivery(),
             ),
             const SizedBox(width: 8),
           ],
           if (mostrarHistorico) ...[
-            _buildCompactHeaderButton(icon: Icons.history, label: 'Histórico', color: Colors.amber, onTap: () => _abrirHistoricoVendas()),
+            _buildCompactHeaderButton(
+              icon: Icons.history,
+              label: 'Histórico',
+              color: Colors.amber,
+              onTap: () => _abrirHistoricoVendas(),
+            ),
             const SizedBox(width: 8),
           ],
           if (mostrarCentral) ...[
-            _buildCompactHeaderButton(icon: Icons.assignment, label: 'Central', color: Colors.blueAccent, onTap: () => _abrirPedidos()),
+            _buildCompactHeaderButton(
+              icon: Icons.assignment,
+              label: 'Central',
+              color: Colors.blueAccent,
+              onTap: () => _abrirPedidos(),
+            ),
             const SizedBox(width: 8),
           ],
           if (mostrarDespesa)
-            _buildCompactHeaderButton(icon: Icons.money_off, label: 'Despesa', color: Colors.redAccent, onTap: () => _abrirLancamentoDespesa()),
+            _buildCompactHeaderButton(
+              icon: Icons.money_off,
+              label: 'Despesa',
+              color: Colors.redAccent,
+              onTap: () => _abrirLancamentoDespesa(),
+            ),
         ],
       ),
     );
@@ -14754,66 +17620,89 @@ recusando a emissão de NFC-e (erro 403).
     final habilitarCozinha = _habilitarCozinha;
 
     return Container(
-      padding: EdgeInsets.fromLTRB(16, isSmallHeight ? 4 : 8, 16, isSmallHeight ? 4 : 8),
-      child: isMobile 
-        ? Column(
-            children: [
-              Row(
-                children: [
-                  if (habilitarMesasComandas) ...[
-                    _buildBotaoMapaMesas(dataService, compact: true),
-                    const SizedBox(width: 4),
-                    _buildBotaoComandas(dataService, compact: true),
-                    const SizedBox(width: 4),
-                    _buildBotaoAbrirPorNumero(dataService, compact: true),
-                    const SizedBox(width: 4),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        isSmallHeight ? 4 : 8,
+        16,
+        isSmallHeight ? 4 : 8,
+      ),
+      child: isMobile
+          ? Column(
+              children: [
+                Row(
+                  children: [
+                    if (habilitarMesasComandas) ...[
+                      _buildBotaoMapaMesas(dataService, compact: true),
+                      const SizedBox(width: 4),
+                      _buildBotaoComandas(dataService, compact: true),
+                      const SizedBox(width: 4),
+                      _buildBotaoAbrirPorNumero(dataService, compact: true),
+                      const SizedBox(width: 4),
+                    ],
+                    if (habilitarCozinha) ...[
+                      _buildBotaoCozinha(dataService, compact: true),
+                      const SizedBox(width: 8),
+                    ],
+                    searchField,
                   ],
-                  if (habilitarCozinha) ...[
-                    _buildBotaoCozinha(dataService, compact: true),
-                    const SizedBox(width: 8),
-                  ],
-                  searchField,
+                ),
+                const SizedBox(height: 8),
+                actionButtons,
+              ],
+            )
+          : Row(
+              children: [
+                if (habilitarMesasComandas) ...[
+                  _buildBotaoMapaMesas(dataService, compact: true),
+                  const SizedBox(width: 4),
+                  _buildBotaoComandas(dataService, compact: true),
+                  const SizedBox(width: 4),
+                  _buildBotaoAbrirPorNumero(dataService, compact: true),
+                  const SizedBox(width: 4),
                 ],
-              ),
-              const SizedBox(height: 8),
-              actionButtons,
-            ],
-          )
-        : Row(
-            children: [
-              if (habilitarMesasComandas) ...[
-                _buildBotaoMapaMesas(dataService, compact: true),
-                const SizedBox(width: 4),
-                _buildBotaoComandas(dataService, compact: true),
-                const SizedBox(width: 4),
-                _buildBotaoAbrirPorNumero(dataService, compact: true),
-                const SizedBox(width: 4),
-              ],
-              if (habilitarCozinha) ...[
-                _buildBotaoCozinha(dataService, compact: true),
+                if (habilitarCozinha) ...[
+                  _buildBotaoCozinha(dataService, compact: true),
+                  const SizedBox(width: 8),
+                ],
+                if (_mesaComandaVinculada != null) ...[
+                  _buildBadgeVinculoHeader(),
+                  const SizedBox(width: 8),
+                ],
+                searchField,
                 const SizedBox(width: 8),
-              ],
-              if (_mesaComandaVinculada != null) ...[
-                _buildBadgeVinculoHeader(),
+                _buildBotaoOrdenacao(dataService), // Novo botão de ordenação
                 const SizedBox(width: 8),
+                actionButtons,
               ],
-              searchField,
-              const SizedBox(width: 8),
-              _buildBotaoOrdenacao(dataService), // Novo botão de ordenação
-              const SizedBox(width: 8),
-              actionButtons,
-            ],
-          ),
+            ),
     );
   }
 
-  Widget _buildCompactHeaderButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
+  Widget _buildCompactHeaderButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(color: const Color(0xFF1E1E2E), borderRadius: BorderRadius.circular(12)),
-        child: Row(children: [Icon(icon, color: color, size: 18), const SizedBox(width: 6), Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12), overflow: TextOverflow.ellipsis)]),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E2E),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -14821,8 +17710,41 @@ recusando a emissão de NFC-e (erro 403).
   Widget _buildBadgeVinculoHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purple.withOpacity(0.2) : Colors.orange.withOpacity(0.2), borderRadius: BorderRadius.circular(12), border: Border.all(color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purple : Colors.orange)),
-      child: Row(children: [Icon(_mesaComandaVinculada!.tipo == TipoControle.comanda ? Icons.receipt_long : Icons.table_restaurant, size: 14, color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purpleAccent : Colors.orangeAccent), const SizedBox(width: 6), Text(_mesaComandaVinculada!.numero, style: TextStyle(color: _mesaComandaVinculada!.tipo == TipoControle.comanda ? Colors.purpleAccent : Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12))]),
+      decoration: BoxDecoration(
+        color: _mesaComandaVinculada!.tipo == TipoControle.comanda
+            ? Colors.purple.withOpacity(0.2)
+            : Colors.orange.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _mesaComandaVinculada!.tipo == TipoControle.comanda
+              ? Colors.purple
+              : Colors.orange,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _mesaComandaVinculada!.tipo == TipoControle.comanda
+                ? Icons.receipt_long
+                : Icons.table_restaurant,
+            size: 14,
+            color: _mesaComandaVinculada!.tipo == TipoControle.comanda
+                ? Colors.purpleAccent
+                : Colors.orangeAccent,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _mesaComandaVinculada!.numero,
+            style: TextStyle(
+              color: _mesaComandaVinculada!.tipo == TipoControle.comanda
+                  ? Colors.purpleAccent
+                  : Colors.orangeAccent,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -14837,7 +17759,11 @@ recusando a emissão de NFC-e (erro 403).
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.white.withOpacity(0.1)),
         ),
-        child: const Icon(Icons.sort_rounded, color: Colors.blueAccent, size: 20),
+        child: const Icon(
+          Icons.sort_rounded,
+          color: Colors.blueAccent,
+          size: 20,
+        ),
       ),
       onSelected: (option) {
         setState(() {
@@ -14852,9 +17778,16 @@ recusando a emissão de NFC-e (erro 403).
           value: SortOption.nome,
           child: Row(
             children: [
-              Icon(Icons.sort_by_alpha_rounded, color: Colors.white70, size: 18),
+              Icon(
+                Icons.sort_by_alpha_rounded,
+                color: Colors.white70,
+                size: 18,
+              ),
               SizedBox(width: 12),
-              Text('Ordem Alfabética (A-Z)', style: TextStyle(color: Colors.white)),
+              Text(
+                'Ordem Alfabética (A-Z)',
+                style: TextStyle(color: Colors.white),
+              ),
             ],
           ),
         ),
@@ -14864,7 +17797,10 @@ recusando a emissão de NFC-e (erro 403).
             children: [
               Icon(Icons.history_rounded, color: Colors.white70, size: 18),
               SizedBox(width: 12),
-              Text('Últimos Cadastrados', style: TextStyle(color: Colors.white)),
+              Text(
+                'Últimos Cadastrados',
+                style: TextStyle(color: Colors.white),
+              ),
             ],
           ),
         ),
@@ -14884,12 +17820,45 @@ recusando a emissão de NFC-e (erro 403).
             children: [
               Icon(Icons.category_rounded, color: Colors.white70, size: 18),
               SizedBox(width: 12),
-              Text('Por Categoria/Grupo', style: TextStyle(color: Colors.white)),
+              Text(
+                'Por Categoria/Grupo',
+                style: TextStyle(color: Colors.white),
+              ),
             ],
           ),
         ),
       ],
     );
+  }
+
+  /// Mostra a lista de produtos de um grupo apenas passando o mouse por
+  /// cima do chip, sem precisar clicar.
+  /// Aplica na grade a categoria que o teclado acabou de destacar com ←/→.
+  ///
+  /// Diferente do Enter, NÃO devolve o foco para o campo de busca: quem está
+  /// correndo as categorias com as setas continua nelas.
+  void _aplicarCategoriaPeloTeclado(int indice, List<String> categorias) {
+    if (indice < 0 || indice > categorias.length) return;
+    // Uma busca ativa deixaria a grade presa nos resultados da busca, por isso
+    // ela é limpa para a categoria escolhida aparecer.
+    final tinhaBusca =
+        _termoBusca.isNotEmpty || _buscaController.text.isNotEmpty;
+    setState(() {
+      _categoriaAtiva = indice == 0 ? 'Todos' : categorias[indice - 1];
+      _categoriaSelectedIndex = indice;
+      _gridSelectedIndex = -1; // A grade mudou de conteúdo
+      if (tinhaBusca) _termoBusca = '';
+    });
+    if (tinhaBusca) _buscaController.clear();
+  }
+
+  void _mostrarGrupoPorHover(String? categoria, int indice) {
+    if (_categoriaAtiva == categoria) return;
+    setState(() {
+      _categoriaAtiva = categoria;
+      _categoriaSelectedIndex = indice;
+      _gridSelectedIndex = -1;
+    });
   }
 
   Widget _buildCategorias(List<String> categorias) {
@@ -14934,18 +17903,121 @@ recusando a emissão de NFC-e (erro 403).
                     final isActive = _categoriaAtiva == 'Todos';
                     final isSelected =
                         _focoNasCategorias && _categoriaSelectedIndex == 0;
-                    return GestureDetector(
+                    return MouseRegion(
+                      onEnter: (_) => _mostrarGrupoPorHover('Todos', 0),
+                      child: GestureDetector(
+                        onTap: () {
+                          final desmarcandoTodos = _categoriaAtiva == 'Todos';
+                          setState(() {
+                            _categoriaAtiva = desmarcandoTodos ? null : 'Todos';
+                            _termoBusca = '';
+                            _buscaController.clear();
+                            _focoNasCategorias = !desmarcandoTodos;
+                            _categoriaSelectedIndex = desmarcandoTodos ? -1 : 0;
+                            _gridSelectedIndex =
+                                -1; // Evita RangeError com grade vazia
+                            _focoNoCarrinho = false;
+                          });
+                          _buscaFocusNode.requestFocus();
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: isSmallHeight ? 6 : 10,
+                          ),
+                          decoration: BoxDecoration(
+                            gradient: isActive
+                                ? LinearGradient(
+                                    colors: [
+                                      Colors.blue.shade600,
+                                      Colors.blue.shade400,
+                                    ],
+                                  )
+                                : null,
+                            color: isActive ? null : const Color(0xFF1E1E2E),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSelected
+                                  ? Colors.cyanAccent
+                                  : (isActive
+                                        ? Colors.blue
+                                        : (isDark
+                                              ? Colors.white.withOpacity(0.1)
+                                              : Colors.black12)),
+                              width: isSelected ? 3 : 1,
+                            ),
+                            boxShadow: isSelected
+                                ? [
+                                    BoxShadow(
+                                      color: Colors.cyanAccent.withOpacity(0.3),
+                                      blurRadius: 10,
+                                    ),
+                                  ]
+                                : (isActive
+                                      ? [
+                                          BoxShadow(
+                                            color: Colors.blue.withOpacity(0.3),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ]
+                                      : null),
+                          ),
+                          alignment: Alignment.center,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.apps_rounded,
+                                color: isActive ? Colors.white : Colors.white60,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Todos',
+                                style: TextStyle(
+                                  color: isActive
+                                      ? Colors.white
+                                      : Colors.white70,
+                                  fontWeight: isActive
+                                      ? FontWeight.bold
+                                      : FontWeight.w500,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  final categoria = categorias[index - 1];
+                  final isActive = _categoriaAtiva == categoria;
+                  final isSelected =
+                      _focoNasCategorias && _categoriaSelectedIndex == index;
+                  return MouseRegion(
+                    onEnter: (_) => _mostrarGrupoPorHover(categoria, index),
+                    child: GestureDetector(
                       onTap: () {
-                        final desmarcandoTodos = _categoriaAtiva == 'Todos';
-                        setState(() {
-                          _categoriaAtiva = desmarcandoTodos ? null : 'Todos';
-                          _termoBusca = '';
-                          _buscaController.clear();
-                          _focoNasCategorias = !desmarcandoTodos;
-                          _categoriaSelectedIndex = desmarcandoTodos ? -1 : 0;
-                          _gridSelectedIndex = -1; // Evita RangeError com grade vazia
-                          _focoNoCarrinho = false;
-                        });
+                        if (_categoriaAtiva == categoria) {
+                          // Se já está selecionada, apenas foca mas não limpa busca nem reseta grid
+                          setState(() {
+                            _focoNasCategorias = true;
+                            _categoriaSelectedIndex = index;
+                          });
+                        } else {
+                          setState(() {
+                            _categoriaAtiva = categoria; // Remove toggle
+                            _termoBusca = '';
+                            _buscaController.clear();
+                            _focoNasCategorias = true;
+                            _categoriaSelectedIndex = index;
+                            _gridSelectedIndex = -1;
+                            _focoNoCarrinho = false;
+                          });
+                        }
                         _buscaFocusNode.requestFocus();
                       },
                       child: Container(
@@ -14958,8 +18030,8 @@ recusando a emissão de NFC-e (erro 403).
                           gradient: isActive
                               ? LinearGradient(
                                   colors: [
-                                    Colors.blue.shade600,
-                                    Colors.blue.shade400,
+                                    Colors.purple.shade600,
+                                    Colors.purple.shade400,
                                   ],
                                 )
                               : null,
@@ -14969,8 +18041,8 @@ recusando a emissão de NFC-e (erro 403).
                             color: isSelected
                                 ? Colors.cyanAccent
                                 : (isActive
-                                      ? Colors.blue
-                                      : (isDark ? Colors.white.withOpacity(0.1) : Colors.black12)),
+                                      ? Colors.purple
+                                      : Colors.white.withOpacity(0.1)),
                             width: isSelected ? 3 : 1,
                           ),
                           boxShadow: isSelected
@@ -14983,7 +18055,7 @@ recusando a emissão de NFC-e (erro 403).
                               : (isActive
                                     ? [
                                         BoxShadow(
-                                          color: Colors.blue.withOpacity(0.3),
+                                          color: Colors.purple.withOpacity(0.3),
                                           blurRadius: 8,
                                           offset: const Offset(0, 2),
                                         ),
@@ -14991,107 +18063,15 @@ recusando a emissão de NFC-e (erro 403).
                                     : null),
                         ),
                         alignment: Alignment.center,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.apps_rounded,
-                              color: isActive ? Colors.white : Colors.white60,
-                              size: 16,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Todos',
-                              style: TextStyle(
-                                color: isActive ? Colors.white : Colors.white70,
-                                fontWeight: isActive
-                                    ? FontWeight.bold
-                                    : FontWeight.w500,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }
-
-                  final categoria = categorias[index - 1];
-                  final isActive = _categoriaAtiva == categoria;
-                  final isSelected =
-                      _focoNasCategorias && _categoriaSelectedIndex == index;
-                  return GestureDetector(
-                    onTap: () {
-                      if (_categoriaAtiva == categoria) {
-                        // Se já está selecionada, apenas foca mas não limpa busca nem reseta grid
-                        setState(() {
-                          _focoNasCategorias = true;
-                          _categoriaSelectedIndex = index;
-                        });
-                      } else {
-                        setState(() {
-                          _categoriaAtiva = categoria; // Remove toggle
-                          _termoBusca = '';
-                          _buscaController.clear();
-                          _focoNasCategorias = true;
-                          _categoriaSelectedIndex = index;
-                          _gridSelectedIndex = -1;
-                          _focoNoCarrinho = false;
-                        });
-                      }
-                      _buscaFocusNode.requestFocus();
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: isSmallHeight ? 6 : 10,
-                      ),
-                      decoration: BoxDecoration(
-                        gradient: isActive
-                            ? LinearGradient(
-                                colors: [
-                                  Colors.purple.shade600,
-                                  Colors.purple.shade400,
-                                ],
-                              )
-                            : null,
-                        color: isActive ? null : const Color(0xFF1E1E2E),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isSelected
-                              ? Colors.cyanAccent
-                              : (isActive
-                                    ? Colors.purple
-                                    : Colors.white.withOpacity(0.1)),
-                          width: isSelected ? 3 : 1,
-                        ),
-                        boxShadow: isSelected
-                            ? [
-                                BoxShadow(
-                                  color: Colors.cyanAccent.withOpacity(0.3),
-                                  blurRadius: 10,
-                                ),
-                              ]
-                            : (isActive
-                                  ? [
-                                      BoxShadow(
-                                        color: Colors.purple.withOpacity(0.3),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ]
-                                  : null),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        categoria,
-                        style: TextStyle(
-                          color: isActive ? Colors.white : Colors.white70,
-                          fontWeight: isActive
-                              ? FontWeight.bold
-                              : FontWeight.w500,
-                          fontSize: 13,
+                        child: Text(
+                          categoria,
+                          style: TextStyle(
+                            color: isActive ? Colors.white : Colors.white70,
+                            fontWeight: isActive
+                                ? FontWeight.bold
+                                : FontWeight.w500,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ),
@@ -15243,6 +18223,75 @@ recusando a emissão de NFC-e (erro 403).
     String? mesaVinculadaId;
     var termoBusca = '';
     var resultadosBusca = <Pedido>[];
+    // Item destacado na lista de vendas salvas: as setas cima/baixo mudam o
+    // destaque e o Enter abre a venda escolhida direto no PDV.
+    var indiceSelecionado = 0;
+    final chavesResultados = <GlobalKey>[];
+    StateSetter? atualizarDialogo;
+    BuildContext? ctxDialogo;
+    var dialogoFechado = false;
+
+    void rolarAteSelecionado() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (indiceSelecionado < 0 ||
+            indiceSelecionado >= chavesResultados.length) {
+          return;
+        }
+        final itemCtx = chavesResultados[indiceSelecionado].currentContext;
+        if (itemCtx == null) return;
+        Scrollable.ensureVisible(
+          itemCtx,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 120),
+        );
+      });
+    }
+
+    // Setas cima/baixo dentro do campo de busca navegam pela lista sem tirar
+    // o foco do texto (o TextField usaria as setas para mover o cursor) e o
+    // Enter abre a venda destacada.
+    final focoBusca = FocusNode(
+      onKeyEvent: (node, event) {
+        if (event is KeyUpEvent) return KeyEventResult.ignored;
+        final tecla = event.logicalKey;
+
+        // Enter: abre o item destacado (ou a mesa/comanda pelo número), sem
+        // depender do onSubmitted — que no Windows nem sempre dispara.
+        if (tecla == LogicalKeyboardKey.enter ||
+            tecla == LogicalKeyboardKey.numpadEnter) {
+          final ctxD = ctxDialogo;
+          if (ctxD == null || dialogoFechado) {
+            return KeyEventResult.ignored;
+          }
+          dialogoFechado = _finalizarDialogoAbrir(
+            ctxD,
+            texto: controller.text,
+            tipo: tipoSelecionado,
+            mesaId: mesaVinculadaId,
+            resultados: resultadosBusca,
+            indiceSelecionado: indiceSelecionado,
+          );
+          return KeyEventResult.handled;
+        }
+
+        final desce = tecla == LogicalKeyboardKey.arrowDown;
+        final sobe = tecla == LogicalKeyboardKey.arrowUp;
+        if (!desce && !sobe) return KeyEventResult.ignored;
+        final setD = atualizarDialogo;
+        if (setD == null || resultadosBusca.isEmpty) {
+          return KeyEventResult.ignored;
+        }
+        setD(() {
+          final passo = desce ? 1 : -1;
+          indiceSelecionado = (indiceSelecionado + passo).clamp(
+            0,
+            resultadosBusca.length - 1,
+          );
+        });
+        rolarAteSelecionado();
+        return KeyEventResult.handled;
+      },
+    );
     final mesasAbertas = dataService.mesasComandas
         .where((m) => m.tipo == TipoControle.mesa && m.status == 'Aberta')
         .toList();
@@ -15252,8 +18301,10 @@ recusando a emissão de NFC-e (erro 403).
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          title: const Text('O que deseja abrir?',
-              style: TextStyle(color: Colors.white)),
+          title: const Text(
+            'O que deseja abrir?',
+            style: TextStyle(color: Colors.white),
+          ),
           content: SizedBox(
             width: 340,
             child: Column(
@@ -15282,6 +18333,7 @@ recusando a emissão de NFC-e (erro 403).
                 TextField(
                   controller: controller,
                   autofocus: true,
+                  focusNode: focoBusca,
                   style: const TextStyle(color: Colors.white),
                   keyboardType: TextInputType.text,
                   textInputAction: TextInputAction.search,
@@ -15293,30 +18345,53 @@ recusando a emissão de NFC-e (erro 403).
                     hintStyle: TextStyle(color: Colors.white38),
                   ),
                   onChanged: (valor) => setDialogState(() {
+                    atualizarDialogo = setDialogState;
+                    ctxDialogo = ctx;
                     termoBusca = valor.trim();
                     resultadosBusca = _ehBuscaPorNome(termoBusca)
                         ? _buscarVendasSalvas(termoBusca, dataService)
                         : <Pedido>[];
+                    indiceSelecionado = 0;
+                    chavesResultados
+                      ..clear()
+                      ..addAll(
+                        List.generate(
+                          resultadosBusca.length,
+                          (_) => GlobalKey(),
+                        ),
+                      );
                   }),
-                  onSubmitted: (_) => _finalizarDialogoAbrir(
-                    ctx,
-                    texto: controller.text,
-                    tipo: tipoSelecionado,
-                    mesaId: mesaVinculadaId,
-                    resultados: resultadosBusca,
-                  ),
+                  onSubmitted: (_) {
+                    if (dialogoFechado) return;
+                    dialogoFechado = _finalizarDialogoAbrir(
+                      ctx,
+                      texto: controller.text,
+                      tipo: tipoSelecionado,
+                      mesaId: mesaVinculadaId,
+                      resultados: resultadosBusca,
+                      indiceSelecionado: indiceSelecionado,
+                    );
+                  },
                 ),
                 // Busca por nome: lista as vendas salvas encontradas
                 if (_ehBuscaPorNome(termoBusca)) ...[
                   const SizedBox(height: 12),
                   if (resultadosBusca.isNotEmpty)
-                    _buildResultadosVendasSalvas(ctx, resultadosBusca)
+                    _buildResultadosVendasSalvas(
+                      ctx,
+                      resultadosBusca,
+                      selecionado: indiceSelecionado,
+                      chaves: chavesResultados,
+                    )
                   else
                     Text(
                       termoBusca.length < 2
                           ? 'Digite pelo menos 2 letras para buscar vendas salvas.'
                           : 'Nenhuma venda salva encontrada para "${termoBusca}".',
-                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                 ],
@@ -15353,16 +18428,23 @@ recusando a emissão de NFC-e (erro 403).
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.grey),
+              ),
             ),
             ElevatedButton.icon(
-              onPressed: () => _finalizarDialogoAbrir(
-                ctx,
-                texto: controller.text,
-                tipo: tipoSelecionado,
-                mesaId: mesaVinculadaId,
-                resultados: resultadosBusca,
-              ),
+              onPressed: () {
+                if (dialogoFechado) return;
+                dialogoFechado = _finalizarDialogoAbrir(
+                  ctx,
+                  texto: controller.text,
+                  tipo: tipoSelecionado,
+                  mesaId: mesaVinculadaId,
+                  resultados: resultadosBusca,
+                  indiceSelecionado: indiceSelecionado,
+                );
+              },
               icon: const Icon(Icons.open_in_new),
               label: const Text('ABRIR'),
             ),
@@ -15372,6 +18454,7 @@ recusando a emissão de NFC-e (erro 403).
     );
 
     controller.dispose();
+    focoBusca.dispose();
     if (dadosEntrada == null) return;
 
     // Venda salva escolhida na busca por nome: abre direto no PDV.
@@ -15380,7 +18463,9 @@ recusando a emissão de NFC-e (erro 403).
       if (!mounted) return;
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => PdvPage(pedidoInicial: pedidoEscolhido)),
+        MaterialPageRoute(
+          builder: (_) => PdvPage(pedidoInicial: pedidoEscolhido),
+        ),
       );
       return;
     }
@@ -15440,26 +18525,25 @@ recusando a emissão de NFC-e (erro 403).
   }
 
   /// Fecha o diálogo de abertura: para números retorna os dados da comanda/
-  /// mesa; para busca por nome, com um único resultado já abre direto e com
-  /// vários mantém o diálogo aberto para o usuário escolher na lista.
-  void _finalizarDialogoAbrir(
+  /// mesa; para busca por nome abre direto a venda salva destacada na lista
+  /// (a mais recente quando nenhuma foi escolhida com as setas).
+  bool _finalizarDialogoAbrir(
     BuildContext ctx, {
     required String texto,
     required TipoControle tipo,
     required String? mesaId,
     required List<Pedido> resultados,
+    int indiceSelecionado = 0,
   }) {
     if (_ehBuscaPorNome(texto)) {
-      if (resultados.length == 1) {
-        Navigator.pop(ctx, {'pedido': resultados.first});
-      }
-      return;
+      // Com resultados na tela (Enter ou ABRIR) abre o item destacado.
+      if (resultados.isEmpty) return false;
+      final indice = indiceSelecionado.clamp(0, resultados.length - 1);
+      Navigator.pop(ctx, {'pedido': resultados[indice]});
+      return true;
     }
-    Navigator.pop(ctx, {
-      'numero': texto,
-      'tipo': tipo,
-      'mesaId': mesaId,
-    });
+    Navigator.pop(ctx, {'numero': texto, 'tipo': tipo, 'mesaId': mesaId});
+    return true;
   }
 
   /// Indica se o texto digitado é uma busca por nome (qualquer coisa que não
@@ -15494,7 +18578,8 @@ recusando a emissão de NFC-e (erro 403).
 
       // Só pedidos em aberto: quitados não entram na lista.
       // (totalRecebido > 0 evita tratar pedido sem itens/total zero como pago.)
-      final quitado = status == 'pago' ||
+      final quitado =
+          status == 'pago' ||
           (pedido.totalRecebido > 0 && pedido.totalmenteRecebido);
       if (quitado) return false;
 
@@ -15540,27 +18625,31 @@ recusando a emissão de NFC-e (erro 403).
 
     for (final item in venda.itens) {
       if (item.isServico) {
-        servicos.add(ItemServico(
-          id: item.id,
-          descricao: item.nome,
-          valor: item.precoUnitario,
-          valorAdicional: 0.0,
-          dataAgendamento: venda.dataVenda,
-          observacao: item.observacao,
-        ));
+        servicos.add(
+          ItemServico(
+            id: item.id,
+            descricao: item.nome,
+            valor: item.precoUnitario,
+            valorAdicional: 0.0,
+            dataAgendamento: venda.dataVenda,
+            observacao: item.observacao,
+          ),
+        );
       } else {
-        produtos.add(ItemPedido(
-          id: item.id,
-          nome: item.nome,
-          preco: item.precoUnitario,
-          quantidade: item.quantidade,
-          observacao: item.observacao,
-          fornecedorNome: item.fornecedorNome,
-          adicionais: item.adicionais,
-          unidadeVenda: item.unidadeVenda,
-          quantidadeBaixa: item.quantidadeBaixa,
-          precoSemPromocao: item.precoSemPromocao,
-        ));
+        produtos.add(
+          ItemPedido(
+            id: item.id,
+            nome: item.nome,
+            preco: item.precoUnitario,
+            quantidade: item.quantidade,
+            observacao: item.observacao,
+            fornecedorNome: item.fornecedorNome,
+            adicionais: item.adicionais,
+            unidadeVenda: item.unidadeVenda,
+            quantidadeBaixa: item.quantidadeBaixa,
+            precoSemPromocao: item.precoSemPromocao,
+          ),
+        );
       }
     }
 
@@ -15587,17 +18676,51 @@ recusando a emissão de NFC-e (erro 403).
   /// acento (ex.: "jose" encontra "José").
   String _semAcentos(String texto) {
     const acentos = {
-      'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
-      'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-      'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-      'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
-      'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+      'á': 'a',
+      'à': 'a',
+      'ã': 'a',
+      'â': 'a',
+      'ä': 'a',
+      'é': 'e',
+      'è': 'e',
+      'ê': 'e',
+      'ë': 'e',
+      'í': 'i',
+      'ì': 'i',
+      'î': 'i',
+      'ï': 'i',
+      'ó': 'o',
+      'ò': 'o',
+      'õ': 'o',
+      'ô': 'o',
+      'ö': 'o',
+      'ú': 'u',
+      'ù': 'u',
+      'û': 'u',
+      'ü': 'u',
       'ç': 'c',
-      'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A',
-      'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
-      'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
-      'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O',
-      'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
+      'Á': 'A',
+      'À': 'A',
+      'Ã': 'A',
+      'Â': 'A',
+      'Ä': 'A',
+      'É': 'E',
+      'È': 'E',
+      'Ê': 'E',
+      'Ë': 'E',
+      'Í': 'I',
+      'Ì': 'I',
+      'Î': 'I',
+      'Ï': 'I',
+      'Ó': 'O',
+      'Ò': 'O',
+      'Õ': 'O',
+      'Ô': 'O',
+      'Ö': 'O',
+      'Ú': 'U',
+      'Ù': 'U',
+      'Û': 'U',
+      'Ü': 'U',
       'Ç': 'C',
     };
     var resultado = texto;
@@ -15610,7 +18733,11 @@ recusando a emissão de NFC-e (erro 403).
   /// Lista as vendas salvas encontradas na busca por nome dentro do diálogo
   /// de abertura. Ao tocar em uma delas, ela é aberta no PDV.
   Widget _buildResultadosVendasSalvas(
-      BuildContext ctx, List<Pedido> resultados) {
+    BuildContext ctx,
+    List<Pedido> resultados, {
+    int selecionado = 0,
+    List<GlobalKey> chaves = const [],
+  }) {
     return Container(
       constraints: const BoxConstraints(maxHeight: 260),
       decoration: BoxDecoration(
@@ -15645,7 +18772,13 @@ recusando a emissão de NFC-e (erro 403).
                 ],
               ),
             ),
-            for (final pedido in resultados) _buildItemVendaSalva(ctx, pedido),
+            for (var i = 0; i < resultados.length; i++)
+              _buildItemVendaSalva(
+                ctx,
+                resultados[i],
+                key: i < chaves.length ? chaves[i] : null,
+                destacado: i == selecionado,
+              ),
           ],
         ),
       ),
@@ -15653,10 +18786,18 @@ recusando a emissão de NFC-e (erro 403).
   }
 
   /// Linha de uma venda salva na lista de resultados da busca por nome.
-  Widget _buildItemVendaSalva(BuildContext ctx, Pedido pedido) {
+  Widget _buildItemVendaSalva(
+    BuildContext ctx,
+    Pedido pedido, {
+    Key? key,
+    bool destacado = false,
+  }) {
     final nome = (pedido.clienteNome ?? '').trim();
     return Material(
-      color: Colors.transparent,
+      key: key,
+      color: destacado
+          ? Colors.cyanAccent.withOpacity(0.16)
+          : Colors.transparent,
       child: InkWell(
         onTap: () => Navigator.pop(ctx, {'pedido': pedido}),
         child: Padding(
@@ -15665,8 +18806,14 @@ recusando a emissão de NFC-e (erro 403).
             children: [
               CircleAvatar(
                 radius: 15,
-                backgroundColor: Colors.cyanAccent.withOpacity(0.15),
-                child: const Icon(Icons.person, size: 16, color: Colors.cyanAccent),
+                backgroundColor: destacado
+                    ? Colors.cyanAccent.withOpacity(0.28)
+                    : Colors.cyanAccent.withOpacity(0.15),
+                child: const Icon(
+                  Icons.person,
+                  size: 16,
+                  color: Colors.cyanAccent,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -15675,10 +18822,12 @@ recusando a emissão de NFC-e (erro 403).
                   children: [
                     Text(
                       nome.isEmpty ? 'Sem nome' : nome,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: destacado ? Colors.cyanAccent : Colors.white,
                         fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: destacado
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -15712,8 +18861,10 @@ recusando a emissão de NFC-e (erro 403).
     );
   }
 
-  Widget _buildBotaoAbrirPorNumero(DataService dataService,
-      {bool compact = false}) {
+  Widget _buildBotaoAbrirPorNumero(
+    DataService dataService, {
+    bool compact = false,
+  }) {
     return IconButton(
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(),
@@ -15725,9 +18876,13 @@ recusando a emissão de NFC-e (erro 403).
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: Colors.cyanAccent.withOpacity(0.4)),
         ),
-        child: Icon(Icons.dialpad, color: Colors.cyanAccent, size: compact ? 18 : 22),
+        child: Icon(
+          Icons.dialpad,
+          color: Colors.cyanAccent,
+          size: compact ? 18 : 22,
+        ),
       ),
-      tooltip: 'Abrir comanda/mesa por número ou buscar venda salva',
+      tooltip: 'ALT: Abrir comanda/mesa por número ou buscar venda salva',
     );
   }
 
@@ -15738,7 +18893,9 @@ recusando a emissão de NFC-e (erro 403).
       onPressed: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const CozinhaMesasFuncionarioPage()),
+          MaterialPageRoute(
+            builder: (context) => const CozinhaMesasFuncionarioPage(),
+          ),
         );
       },
       icon: Container(
@@ -15748,7 +18905,11 @@ recusando a emissão de NFC-e (erro 403).
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: Colors.orange.withOpacity(0.4)),
         ),
-        child: Icon(Icons.table_bar, color: Colors.orange, size: compact ? 18 : 22),
+        child: Icon(
+          Icons.table_bar,
+          color: Colors.orange,
+          size: compact ? 18 : 22,
+        ),
       ),
       tooltip: 'Mapa de Mesas',
     );
@@ -15761,7 +18922,10 @@ recusando a emissão de NFC-e (erro 403).
       onPressed: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const CozinhaMesasFuncionarioPage(abaInicial: 1)),
+          MaterialPageRoute(
+            builder: (context) =>
+                const CozinhaMesasFuncionarioPage(abaInicial: 1),
+          ),
         );
       },
       icon: Container(
@@ -15771,7 +18935,11 @@ recusando a emissão de NFC-e (erro 403).
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: Colors.purpleAccent.withOpacity(0.4)),
         ),
-        child: Icon(Icons.receipt_long, color: Colors.purpleAccent, size: compact ? 18 : 22),
+        child: Icon(
+          Icons.receipt_long,
+          color: Colors.purpleAccent,
+          size: compact ? 18 : 22,
+        ),
       ),
       tooltip: 'Comandas',
     );
@@ -15794,7 +18962,11 @@ recusando a emissão de NFC-e (erro 403).
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
         ),
-        child: Icon(Icons.kitchen, color: Colors.greenAccent, size: compact ? 18 : 22),
+        child: Icon(
+          Icons.kitchen,
+          color: Colors.greenAccent,
+          size: compact ? 18 : 22,
+        ),
       ),
       tooltip: 'Cozinha / Preparos',
     );
@@ -15812,42 +18984,54 @@ recusando a emissão de NFC-e (erro 403).
         curve: Curves.easeOutCubic,
         child: Container(
           width: double.infinity,
-          height: _mostrarBarraLegenda ? null : 6, // 6 pixels de 'sensor' no rodapé
+          height: _mostrarBarraLegenda
+              ? null
+              : 6, // 6 pixels de 'sensor' no rodapé
           decoration: BoxDecoration(
             color: const Color(0xFF0D0D15),
-            border: Border(top: BorderSide(color: Colors.white.withOpacity(_mostrarBarraLegenda ? 0.1 : 0.05))),
-          ),
-          child: _mostrarBarraLegenda 
-            ? AnimatedOpacity(
-                duration: const Duration(milliseconds: 200),
-                opacity: 1.0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 0,
-                    runSpacing: 8,
-                    children: [
-                      _buildItemLegenda('SETAS', 'NAVEGAR'),
-                      _buildItemLegenda('F2', 'BUSCA'),
-                      _buildItemLegenda('F6', 'CLIENTE'),
-                      _buildItemLegenda('F7', 'DESPESA'),
-
-                      _buildItemLegenda('F4', 'CATEGORIAS'),
-                      _buildItemLegenda('SHIFT', 'CARRINHO'),
-                      _buildItemLegenda('CTRL', 'CONFERIR'),
-                      _buildItemLegenda('ENTER', 'ADICIONAR'),
-                      _buildItemLegenda('+', 'QUANTIDADE'),
-                      _buildItemLegenda('DEL', 'REMOVER'),
-                      _buildItemLegenda('⇧+DEL', 'LIMPAR TUDO'),
-                      _buildItemLegenda('F8', 'SALVAR'),
-                      _buildItemLegenda('F9', 'FINALIZAR', isPrimary: true),
-                    ],
-                  ),
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withOpacity(
+                  _mostrarBarraLegenda ? 0.1 : 0.05,
                 ),
-              )
-            : const SizedBox.shrink(),
+              ),
+            ),
+          ),
+          child: _mostrarBarraLegenda
+              ? AnimatedOpacity(
+                  duration: const Duration(milliseconds: 200),
+                  opacity: 1.0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 0,
+                      runSpacing: 8,
+                      children: [
+                        _buildItemLegenda('SETAS', 'NAVEGAR'),
+                        _buildItemLegenda('ALT', 'ABRIR COMANDA / MESA'),
+                        _buildItemLegenda('F2', 'BUSCA'),
+                        _buildItemLegenda('F6', 'CLIENTE'),
+                        _buildItemLegenda('F7', 'DESPESA'),
+
+                        _buildItemLegenda('F4', 'CATEGORIAS'),
+                        _buildItemLegenda('SHIFT', 'CARRINHO'),
+                        _buildItemLegenda('CTRL', 'CONFERIR'),
+                        _buildItemLegenda('ENTER', 'ADICIONAR'),
+                        _buildItemLegenda('+', 'QUANTIDADE'),
+                        _buildItemLegenda('DEL', 'REMOVER'),
+                        _buildItemLegenda('⇧+DEL', 'LIMPAR TUDO'),
+                        _buildItemLegenda('F8', 'SALVAR'),
+                        _buildItemLegenda('F9', 'FINALIZAR', isPrimary: true),
+                      ],
+                    ),
+                  ),
+                )
+              : const SizedBox.shrink(),
         ),
       ),
     );
@@ -16058,7 +19242,9 @@ recusando a emissão de NFC-e (erro 403).
                 textInputAction: TextInputAction.next,
                 onSubmitted: (value) {
                   final descInput = value.trim();
-                  final descricao = descInput.isNotEmpty ? descInput : 'Diversos';
+                  final descricao = descInput.isNotEmpty
+                      ? descInput
+                      : 'Diversos';
 
                   // Se o preço já estiver preenchido, adicionar diretamente
                   if (precoController.text.isNotEmpty) {
@@ -16124,7 +19310,9 @@ recusando a emissão de NFC-e (erro 403).
                 autofocus: !focusDescricao,
                 onSubmitted: (value) {
                   final descInput = descricaoController.text.trim();
-                  final descricao = descInput.isNotEmpty ? descInput : 'Diversos';
+                  final descricao = descInput.isNotEmpty
+                      ? descInput
+                      : 'Diversos';
                   final preco =
                       double.tryParse(value.replaceAll(',', '.')) ?? 0.0;
 
@@ -16195,23 +19383,29 @@ recusando a emissão de NFC-e (erro 403).
   ) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final descLimpa = descricao.trim();
-    final nomeFormatado = descLimpa.isNotEmpty 
-        ? (descLimpa.toLowerCase().startsWith('diversos') ? descLimpa : 'Diversos $descLimpa') 
+    final nomeFormatado = descLimpa.isNotEmpty
+        ? (descLimpa.toLowerCase().startsWith('diversos')
+              ? descLimpa
+              : 'Diversos $descLimpa')
         : 'Diversos R\$ ${preco.toStringAsFixed(2)}';
 
     // Cadastrar produto automaticamente no catálogo de produtos do sistema
     try {
       final jaExiste = dataService.produtos.any(
-        (p) => p.nome.toLowerCase() == nomeFormatado.toLowerCase() && (p.precoAtual - preco).abs() < 0.01,
+        (p) =>
+            p.nome.toLowerCase() == nomeFormatado.toLowerCase() &&
+            (p.precoAtual - preco).abs() < 0.01,
       );
       if (!jaExiste) {
         final timestampStr = DateTime.now().millisecondsSinceEpoch.toString();
-        final codigoNovo = 'DIV-${timestampStr.substring(timestampStr.length - 4)}';
+        final codigoNovo =
+            'DIV-${timestampStr.substring(timestampStr.length - 4)}';
         final novoProduto = Produto(
           id: const Uuid().v4(),
           codigo: codigoNovo,
           nome: nomeFormatado,
-          descricao: 'Produto cadastrado automaticamente via lançamento Diversos',
+          descricao:
+              'Produto cadastrado automaticamente via lançamento Diversos',
           preco: preco,
           unidade: 'UN',
           grupo: 'Diversos',
@@ -16220,7 +19414,9 @@ recusando a emissão de NFC-e (erro 403).
           updatedAt: DateTime.now(),
         );
         await dataService.addProduto(novoProduto);
-        debugPrint('>>> [Diversos] ✅ Produto "$nomeFormatado" (R\$ ${preco.toStringAsFixed(2)}) cadastrado automaticamente no catálogo!');
+        debugPrint(
+          '>>> [Diversos] ✅ Produto "$nomeFormatado" (R\$ ${preco.toStringAsFixed(2)}) cadastrado automaticamente no catálogo!',
+        );
       }
     } catch (e) {
       debugPrint('>>> [Diversos] Erro ao cadastrar produto automático: $e');
@@ -16244,7 +19440,9 @@ recusando a emissão de NFC-e (erro 403).
           ItemCarrinho(
             id: id,
             nome: nome,
-            descricao: descLimpa.isNotEmpty ? descLimpa : 'Diversos R\$ ${preco.toStringAsFixed(2)}',
+            descricao: descLimpa.isNotEmpty
+                ? descLimpa
+                : 'Diversos R\$ ${preco.toStringAsFixed(2)}',
             preco: preco,
             quantidade: _quantidadeDigitada,
             isServico: false,
@@ -16296,7 +19494,12 @@ recusando a emissão de NFC-e (erro 403).
         child: ListView.builder(
           controller: _gridScrollController,
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.only(left: 8, right: 8, top: 4, bottom: 100),
+          padding: const EdgeInsets.only(
+            left: 8,
+            right: 8,
+            top: 4,
+            bottom: 100,
+          ),
           itemCount: itens.length,
           itemBuilder: (context, index) {
             final item = itens[index];
@@ -16319,12 +19522,12 @@ recusando a emissão de NFC-e (erro 403).
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(left: 4, right: 4, top: 4, bottom: 100),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        childAspectRatio: aspectRatio,
-        crossAxisSpacing: 4,
-        mainAxisSpacing: 4,
-      ),
-      itemCount: itens.length,
+          crossAxisCount: crossAxisCount,
+          childAspectRatio: aspectRatio,
+          crossAxisSpacing: 4,
+          mainAxisSpacing: 4,
+        ),
+        itemCount: itens.length,
         itemBuilder: (context, index) {
           final item = itens[index];
           final isProduto = item is Produto;
@@ -16340,22 +19543,33 @@ recusando a emissão de NFC-e (erro 403).
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search_rounded, size: 64, color: Colors.white.withOpacity(0.1)),
+            Icon(
+              Icons.search_rounded,
+              size: 64,
+              color: Colors.white.withOpacity(0.1),
+            ),
             const SizedBox(height: 16),
             Text(
               'Pronto para vender!',
-              style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               'Busque um produto ou selecione uma categoria acima.',
-              style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 14),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.3),
+                fontSize: 14,
+              ),
             ),
           ],
         ),
       );
     }
-    
+
     Widget corpo;
     if (_viewMode == ViewMode.list) {
       corpo = Scrollbar(
@@ -16364,11 +19578,18 @@ recusando a emissão de NFC-e (erro 403).
         child: ListView.builder(
           controller: _gridScrollController,
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.only(left: 8, right: 8, top: 20, bottom: 100),
+          padding: const EdgeInsets.only(
+            left: 8,
+            right: 8,
+            top: 20,
+            bottom: 100,
+          ),
           itemExtent: 82.0, // Altura fixa garantida para precisão de scroll
-          itemCount: _termoBusca.isNotEmpty 
-              ? produtos.length 
-              : (_itensVisiveisPDV > produtos.length ? produtos.length : _itensVisiveisPDV),
+          itemCount: _termoBusca.isNotEmpty
+              ? produtos.length
+              : (_itensVisiveisPDV > produtos.length
+                    ? produtos.length
+                    : _itensVisiveisPDV),
           itemBuilder: (context, index) {
             return _buildLinhaProduto(produtos[index], true, index: index);
           },
@@ -16387,16 +19608,23 @@ recusando a emissão de NFC-e (erro 403).
         child: GridView.builder(
           controller: _gridScrollController,
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.only(left: 4, right: 4, top: 4, bottom: 100),
+          padding: const EdgeInsets.only(
+            left: 4,
+            right: 4,
+            top: 4,
+            bottom: 100,
+          ),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
             childAspectRatio: aspectRatio,
             crossAxisSpacing: 4,
             mainAxisSpacing: 4,
           ),
-          itemCount: _termoBusca.isNotEmpty 
-              ? produtos.length 
-              : (_itensVisiveisPDV > produtos.length ? produtos.length : _itensVisiveisPDV),
+          itemCount: _termoBusca.isNotEmpty
+              ? produtos.length
+              : (_itensVisiveisPDV > produtos.length
+                    ? produtos.length
+                    : _itensVisiveisPDV),
           itemBuilder: (context, index) {
             return _buildCardProduto(produtos[index], true, index: index);
           },
@@ -16418,7 +19646,9 @@ recusando a emissão de NFC-e (erro 403).
     final estoque = isProduto ? (item as Produto).estoque : null;
     final isDesativado = isProduto && !(item as Produto).ativo;
     final indisponivel =
-        isProduto && (item as Produto).ativo && !(item as Produto).disponivelAgora;
+        isProduto &&
+        (item as Produto).ativo &&
+        !(item as Produto).disponivelAgora;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -16431,31 +19661,39 @@ recusando a emissão de NFC-e (erro 403).
           decoration: BoxDecoration(
             color: isDesativado
                 ? Colors.redAccent.withOpacity(0.08)
-                : (isSelected 
-                    ? Colors.blueAccent.withOpacity(0.15) 
-                    : (isDark ? Colors.white.withOpacity(0.04) : Colors.white)),
+                : (isSelected
+                      ? Colors.blueAccent.withOpacity(0.15)
+                      : (isDark
+                            ? Colors.white.withOpacity(0.04)
+                            : Colors.white)),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isDesativado
                   ? Colors.redAccent.withOpacity(0.3)
-                  : (isSelected ? Colors.blueAccent : (isDark ? Colors.white.withOpacity(0.05) : Colors.black12)),
+                  : (isSelected
+                        ? Colors.blueAccent
+                        : (isDark
+                              ? Colors.white.withOpacity(0.05)
+                              : Colors.black12)),
               width: isSelected ? 3 : 1,
             ),
-            boxShadow: isSelected ? [
-              BoxShadow(
-                color: Colors.blueAccent.withOpacity(0.5),
-                blurRadius: 15,
-                spreadRadius: 4,
-                offset: const Offset(0, 0),
-              )
-            ] : [
-              if (!isDark)
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.03),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-            ],
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.blueAccent.withOpacity(0.5),
+                      blurRadius: 15,
+                      spreadRadius: 4,
+                      offset: const Offset(0, 0),
+                    ),
+                  ]
+                : [
+                    if (!isDark)
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.03),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                  ],
           ),
           child: Row(
             children: [
@@ -16466,12 +19704,20 @@ recusando a emissão de NFC-e (erro 403).
                 decoration: BoxDecoration(
                   color: isDesativado
                       ? Colors.redAccent.withOpacity(0.1)
-                      : (isProduto ? Colors.blueAccent.withOpacity(0.1) : Colors.purpleAccent.withOpacity(0.1)),
+                      : (isProduto
+                            ? Colors.blueAccent.withOpacity(0.1)
+                            : Colors.purpleAccent.withOpacity(0.1)),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
-                  isDesativado ? Icons.lock_outline : (isProduto ? Icons.inventory_2_rounded : Icons.miscellaneous_services_rounded),
-                  color: isDesativado ? Colors.redAccent : (isProduto ? Colors.blueAccent : Colors.purpleAccent),
+                  isDesativado
+                      ? Icons.lock_outline
+                      : (isProduto
+                            ? Icons.inventory_2_rounded
+                            : Icons.miscellaneous_services_rounded),
+                  color: isDesativado
+                      ? Colors.redAccent
+                      : (isProduto ? Colors.blueAccent : Colors.purpleAccent),
                   size: 20,
                 ),
               ),
@@ -16485,7 +19731,10 @@ recusando a emissão de NFC-e (erro 403).
                       children: [
                         if (codigo != null && codigo.isNotEmpty)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             margin: const EdgeInsets.only(right: 6),
                             decoration: BoxDecoration(
                               color: Colors.blueAccent.withOpacity(0.2),
@@ -16493,7 +19742,11 @@ recusando a emissão de NFC-e (erro 403).
                             ),
                             child: Text(
                               codigo,
-                              style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                color: Colors.blueAccent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         Expanded(
@@ -16502,11 +19755,17 @@ recusando a emissão de NFC-e (erro 403).
                             style: TextStyle(
                               color: isDesativado
                                   ? Colors.white38
-                                  : (isDark ? Colors.white.withOpacity(0.9) : Colors.black87),
+                                  : (isDark
+                                        ? Colors.white.withOpacity(0.9)
+                                        : Colors.black87),
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
-                              decoration: isDesativado ? TextDecoration.lineThrough : null,
-                              decorationColor: Colors.redAccent.withOpacity(0.6),
+                              decoration: isDesativado
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                              decorationColor: Colors.redAccent.withOpacity(
+                                0.6,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -16516,7 +19775,12 @@ recusando a emissão de NFC-e (erro 403).
                     if (isProduto && (item as Produto).grupo.isNotEmpty)
                       Text(
                         item.grupo,
-                        style: TextStyle(color: isDark ? Colors.white.withOpacity(0.4) : Colors.black54, fontSize: 11),
+                        style: TextStyle(
+                          color: isDark
+                              ? Colors.white.withOpacity(0.4)
+                              : Colors.black54,
+                          fontSize: 11,
+                        ),
                       ),
                   ],
                 ),
@@ -16529,13 +19793,17 @@ recusando a emissão de NFC-e (erro 403).
                   Text(
                     isDesativado
                         ? 'DESATIVADO'
-                        : (indisponivel ? 'INDISPONÍVEL' : _formatoMoeda.format(preco)),
+                        : (indisponivel
+                              ? 'INDISPONÍVEL'
+                              : _formatoMoeda.format(preco)),
                     style: TextStyle(
                       color: isDesativado
                           ? Colors.redAccent
                           : (indisponivel
-                              ? Colors.orangeAccent
-                              : (isDark ? Colors.greenAccent : const Color(0xFF15803D))),
+                                ? Colors.orangeAccent
+                                : (isDark
+                                      ? Colors.greenAccent
+                                      : const Color(0xFF15803D))),
                       fontWeight: FontWeight.bold,
                       fontSize: (isDesativado || indisponivel) ? 10 : 15,
                     ),
@@ -16544,7 +19812,13 @@ recusando a emissão de NFC-e (erro 403).
                     Text(
                       'Estoque: ${estoque.toInt()}',
                       style: TextStyle(
-                        color: (estoque <= 0) ? (isDark ? Colors.redAccent.withOpacity(0.7) : Colors.red.shade800) : (isDark ? Colors.white.withOpacity(0.4) : Colors.black54),
+                        color: (estoque <= 0)
+                            ? (isDark
+                                  ? Colors.redAccent.withOpacity(0.7)
+                                  : Colors.red.shade800)
+                            : (isDark
+                                  ? Colors.white.withOpacity(0.4)
+                                  : Colors.black54),
                         fontSize: 11,
                       ),
                     ),
@@ -16556,10 +19830,14 @@ recusando a emissão de NFC-e (erro 403).
                 icon: Icon(
                   isDesativado
                       ? Icons.lock_outline
-                      : (indisponivel ? Icons.schedule_outlined : Icons.add_circle_outline_rounded),
+                      : (indisponivel
+                            ? Icons.schedule_outlined
+                            : Icons.add_circle_outline_rounded),
                   color: isDesativado
                       ? Colors.redAccent
-                      : (indisponivel ? Colors.orangeAccent : Colors.blueAccent),
+                      : (indisponivel
+                            ? Colors.orangeAccent
+                            : Colors.blueAccent),
                   size: 24,
                 ),
                 onPressed: () => _adicionarAoCarrinho(item, manterFoco: true),
@@ -16581,7 +19859,9 @@ recusando a emissão de NFC-e (erro 403).
     final estoque = isProduto ? (item as Produto).estoque : null;
     final isDesativado = isProduto && !(item as Produto).ativo;
     final indisponivel =
-        isProduto && (item as Produto).ativo && !(item as Produto).disponivelAgora;
+        isProduto &&
+        (item as Produto).ativo &&
+        !(item as Produto).disponivelAgora;
 
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallHeight = screenHeight < 750;
@@ -16612,10 +19892,22 @@ recusando a emissão de NFC-e (erro 403).
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: isDesativado
-                  ? (isDark ? [const Color(0xFF3A1E1E), const Color(0xFF2C2020)] : [const Color(0xFFFFF0F0), const Color(0xFFF5E5E5)])
+                  ? (isDark
+                        ? [const Color(0xFF3A1E1E), const Color(0xFF2C2020)]
+                        : [const Color(0xFFFFF0F0), const Color(0xFFF5E5E5)])
                   : (isProduto
-                      ? (isDark ? [const Color(0xFF1E3A5F), const Color(0xFF2C3E50)] : [Colors.white, const Color(0xFFF1F5F9)])
-                      : (isDark ? [const Color(0xFF4A1E5F), const Color(0xFF3E2C50)] : [Colors.white, const Color(0xFFF3E8FF)])),
+                        ? (isDark
+                              ? [
+                                  const Color(0xFF1E3A5F),
+                                  const Color(0xFF2C3E50),
+                                ]
+                              : [Colors.white, const Color(0xFFF1F5F9)])
+                        : (isDark
+                              ? [
+                                  const Color(0xFF4A1E5F),
+                                  const Color(0xFF3E2C50),
+                                ]
+                              : [Colors.white, const Color(0xFFF3E8FF)])),
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -16624,18 +19916,23 @@ recusando a emissão de NFC-e (erro 403).
               color: isSelected
                   ? Colors.cyanAccent
                   : isDesativado
-                      ? Colors.redAccent.withOpacity(0.5)
-                      : (promocao
-                            ? Colors.orange.withOpacity(0.5)
-                            : (isDark ? Colors.transparent : Colors.black12)),
-              width: isSelected ? 3 : (isDark ? 2 : 1),
+                  ? Colors.redAccent.withOpacity(0.5)
+                  : (promocao
+                        ? Colors.orange.withOpacity(0.5)
+                        : (isDark ? Colors.transparent : Colors.black12)),
+              width: isSelected ? 4 : (isDark ? 2 : 1),
             ),
             boxShadow: isSelected
                 ? [
                     BoxShadow(
-                      color: Colors.cyanAccent.withOpacity(0.3),
-                      blurRadius: 15,
-                      spreadRadius: 2,
+                      color: Colors.cyanAccent.withOpacity(0.65),
+                      blurRadius: 20,
+                      spreadRadius: 3,
+                    ),
+                    BoxShadow(
+                      color: Colors.white.withOpacity(0.12),
+                      blurRadius: 4,
+                      spreadRadius: 1,
                     ),
                   ]
                 : [
@@ -16657,8 +19954,12 @@ recusando a emissão de NFC-e (erro 403).
                     Icon(
                       isProduto ? Icons.inventory_2 : Icons.build,
                       color: isProduto
-                          ? (isDark ? Colors.lightBlueAccent : Colors.blue.shade700)
-                          : (isDark ? Colors.purpleAccent : Colors.purple.shade700),
+                          ? (isDark
+                                ? Colors.lightBlueAccent
+                                : Colors.blue.shade700)
+                          : (isDark
+                                ? Colors.purpleAccent
+                                : Colors.purple.shade700),
                       size: 14,
                     ),
                     const SizedBox(width: 4),
@@ -16677,15 +19978,20 @@ recusando a emissão de NFC-e (erro 403).
                     if (isProduto && estoque != null) ...[
                       const SizedBox(width: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
-                          color: (estoque <= 0) 
-                              ? Colors.red.withOpacity(0.2) 
-                              : (isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.04)),
+                          color: (estoque <= 0)
+                              ? Colors.red.withOpacity(0.2)
+                              : (isDark
+                                    ? Colors.white.withOpacity(0.05)
+                                    : Colors.black.withOpacity(0.04)),
                           borderRadius: BorderRadius.circular(4),
                           border: Border.all(
-                            color: (estoque <= 0) 
-                                ? Colors.redAccent.withOpacity(0.5) 
+                            color: (estoque <= 0)
+                                ? Colors.redAccent.withOpacity(0.5)
                                 : (isDark ? Colors.white10 : Colors.black12),
                             width: 1,
                           ),
@@ -16696,13 +20002,23 @@ recusando a emissão de NFC-e (erro 403).
                             Icon(
                               Icons.inventory_2_outlined,
                               size: 8,
-                              color: (estoque <= 0) ? (isDark ? Colors.redAccent : Colors.red.shade800) : (isDark ? Colors.white54 : Colors.black54),
+                              color: (estoque <= 0)
+                                  ? (isDark
+                                        ? Colors.redAccent
+                                        : Colors.red.shade800)
+                                  : (isDark ? Colors.white54 : Colors.black54),
                             ),
                             const SizedBox(width: 2),
                             Text(
                               estoque.toStringAsFixed(0),
                               style: TextStyle(
-                                color: (estoque <= 0) ? (isDark ? Colors.redAccent : Colors.red.shade800) : (isDark ? Colors.white70 : Colors.black87),
+                                color: (estoque <= 0)
+                                    ? (isDark
+                                          ? Colors.redAccent
+                                          : Colors.red.shade800)
+                                    : (isDark
+                                          ? Colors.white70
+                                          : Colors.black87),
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -16714,7 +20030,10 @@ recusando a emissão de NFC-e (erro 403).
                     if (promocao) ...[
                       const SizedBox(width: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.orange,
                           borderRadius: BorderRadius.circular(4),
@@ -16731,7 +20050,10 @@ recusando a emissão de NFC-e (erro 403).
                     ],
                     if (isDesativado) ...[
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.redAccent.withOpacity(0.8),
                           borderRadius: BorderRadius.circular(4),
@@ -16749,7 +20071,10 @@ recusando a emissão de NFC-e (erro 403).
                     if (indisponivel) ...[
                       const SizedBox(width: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.orangeAccent.withOpacity(0.85),
                           borderRadius: BorderRadius.circular(4),
@@ -16768,12 +20093,16 @@ recusando a emissão de NFC-e (erro 403).
                     Icon(
                       isDesativado
                           ? Icons.lock_outline
-                          : (indisponivel ? Icons.schedule_outlined : Icons.add_circle),
+                          : (indisponivel
+                                ? Icons.schedule_outlined
+                                : Icons.add_circle),
                       color: isDesativado
                           ? Colors.redAccent.withOpacity(0.7)
                           : (indisponivel
-                              ? Colors.orangeAccent.withOpacity(0.8)
-                              : (isDark ? Colors.greenAccent.withOpacity(0.6) : Colors.green.shade700)),
+                                ? Colors.orangeAccent.withOpacity(0.8)
+                                : (isDark
+                                      ? Colors.greenAccent.withOpacity(0.6)
+                                      : Colors.green.shade700)),
                       size: 18,
                     ),
                   ],
@@ -16784,34 +20113,48 @@ recusando a emissão de NFC-e (erro 403).
                   style: TextStyle(
                     color: isDesativado
                         ? Colors.white38
-                        : (isDark ? Colors.yellow.shade200 : const Color(0xFF0F172A)),
+                        : (isDark
+                              ? Colors.yellow.shade200
+                              : const Color(0xFF0F172A)),
                     fontWeight: FontWeight.w900,
                     fontSize: 15,
                     height: 1.1,
                     letterSpacing: 0.3,
-                    decoration: isDesativado ? TextDecoration.lineThrough : null,
+                    decoration: isDesativado
+                        ? TextDecoration.lineThrough
+                        : null,
                     decorationColor: Colors.redAccent.withOpacity(0.6),
-                    shadows: isDark && !isDesativado ? const [
-                      Shadow(
-                        color: Colors.black87,
-                        blurRadius: 3,
-                        offset: Offset(0, 1),
-                      ),
-                    ] : null,
+                    shadows: isDark && !isDesativado
+                        ? const [
+                            Shadow(
+                              color: Colors.black87,
+                              blurRadius: 3,
+                              offset: Offset(0, 1),
+                            ),
+                          ]
+                        : null,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  isDesativado ? 'INDISPONÍVEL' : 'R\$ ${preco.toStringAsFixed(2)}',
+                  isDesativado
+                      ? 'INDISPONÍVEL'
+                      : 'R\$ ${preco.toStringAsFixed(2)}',
                   style: TextStyle(
                     color: isDesativado
                         ? Colors.redAccent.withOpacity(0.6)
-                        : (promocao ? Colors.orange.shade800 : (isDark ? Colors.greenAccent : const Color(0xFF15803D))),
+                        : (promocao
+                              ? Colors.orange.shade800
+                              : (isDark
+                                    ? Colors.greenAccent
+                                    : const Color(0xFF15803D))),
                     fontWeight: FontWeight.w900,
                     fontSize: isDesativado ? 10 : 13,
-                    decoration: isDesativado ? TextDecoration.lineThrough : null,
+                    decoration: isDesativado
+                        ? TextDecoration.lineThrough
+                        : null,
                   ),
                 ),
               ],
@@ -16873,35 +20216,41 @@ recusando a emissão de NFC-e (erro 403).
               if (_mesaComandaVinculada != null) ...[
                 const SizedBox(width: 12),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
-                    color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
-                        ? Colors.purple.withOpacity(0.2) 
+                    color: _mesaComandaVinculada!.tipo == TipoControle.comanda
+                        ? Colors.purple.withOpacity(0.2)
                         : Colors.orange.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
-                          ? Colors.purple.withOpacity(0.5) 
+                      color: _mesaComandaVinculada!.tipo == TipoControle.comanda
+                          ? Colors.purple.withOpacity(0.5)
                           : Colors.orange.withOpacity(0.5),
                     ),
                   ),
                   child: Row(
                     children: [
                       Icon(
-                        _mesaComandaVinculada!.tipo == TipoControle.comanda 
-                            ? Icons.receipt_long 
+                        _mesaComandaVinculada!.tipo == TipoControle.comanda
+                            ? Icons.receipt_long
                             : Icons.table_restaurant,
                         size: 14,
-                        color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
-                            ? Colors.purpleAccent 
+                        color:
+                            _mesaComandaVinculada!.tipo == TipoControle.comanda
+                            ? Colors.purpleAccent
                             : Colors.orangeAccent,
                       ),
                       const SizedBox(width: 6),
                       Text(
                         _mesaComandaVinculada!.numero,
                         style: TextStyle(
-                          color: _mesaComandaVinculada!.tipo == TipoControle.comanda 
-                              ? Colors.purpleAccent 
+                          color:
+                              _mesaComandaVinculada!.tipo ==
+                                  TipoControle.comanda
+                              ? Colors.purpleAccent
                               : Colors.orangeAccent,
                           fontWeight: FontWeight.bold,
                           fontSize: 12,
@@ -16919,27 +20268,35 @@ recusando a emissão de NFC-e (erro 403).
                   vertical: 4,
                 ),
                 decoration: BoxDecoration(
-                  color: isDark ? Colors.cyanAccent.withOpacity(0.2) : const Color(0xFFE0F2FE),
+                  color: isDark
+                      ? Colors.cyanAccent.withOpacity(0.2)
+                      : const Color(0xFFE0F2FE),
                   borderRadius: BorderRadius.circular(12),
-                  border: isDark ? null : Border.all(color: const Color(0xFFBAE6FD)),
-                  boxShadow: isDark ? [
-                    BoxShadow(
-                      color: Colors.cyanAccent.withOpacity(0.4),
-                      blurRadius: 10,
-                      spreadRadius: 1,
-                    ),
-                    BoxShadow(
-                      color: Colors.cyanAccent.withOpacity(0.2),
-                      blurRadius: 20,
-                    ),
-                  ] : null,
+                  border: isDark
+                      ? null
+                      : Border.all(color: const Color(0xFFBAE6FD)),
+                  boxShadow: isDark
+                      ? [
+                          BoxShadow(
+                            color: Colors.cyanAccent.withOpacity(0.4),
+                            blurRadius: 10,
+                            spreadRadius: 1,
+                          ),
+                          BoxShadow(
+                            color: Colors.cyanAccent.withOpacity(0.2),
+                            blurRadius: 20,
+                          ),
+                        ]
+                      : null,
                 ),
                 child: Row(
                   children: [
                     Text(
                       '$_totalItens',
                       style: TextStyle(
-                        color: isDark ? Colors.cyanAccent : const Color(0xFF0369A1),
+                        color: isDark
+                            ? Colors.cyanAccent
+                            : const Color(0xFF0369A1),
                         fontWeight: FontWeight.w900,
                         fontSize: 15,
                       ),
@@ -16948,7 +20305,9 @@ recusando a emissão de NFC-e (erro 403).
                     Text(
                       _totalItens == 1 ? 'ITEM' : 'ITENS',
                       style: TextStyle(
-                        color: isDark ? Colors.cyanAccent : const Color(0xFF0369A1),
+                        color: isDark
+                            ? Colors.cyanAccent
+                            : const Color(0xFF0369A1),
                         fontWeight: FontWeight.bold,
                         fontSize: 10,
                       ),
@@ -16960,7 +20319,8 @@ recusando a emissão de NFC-e (erro 403).
                 const SizedBox(width: 8),
                 if (_mesaComandaVinculada != null) ...[
                   Tooltip(
-                    message: 'Limpar ${_mesaComandaVinculada!.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa'} e Salvar Histórico',
+                    message:
+                        'Limpar ${_mesaComandaVinculada!.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa'} e Salvar Histórico',
                     child: GestureDetector(
                       onTap: _limparMesaComandaVinculada,
                       child: Container(
@@ -17031,13 +20391,17 @@ recusando a emissão de NFC-e (erro 403).
                       Icon(
                         Icons.shopping_cart_outlined,
                         size: 64,
-                        color: isDark ? Colors.white.withOpacity(0.15) : Colors.black26,
+                        color: isDark
+                            ? Colors.white.withOpacity(0.15)
+                            : Colors.black26,
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'Carrinho vazio',
                         style: TextStyle(
-                          color: isDark ? Colors.white.withOpacity(0.4) : Colors.black54,
+                          color: isDark
+                              ? Colors.white.withOpacity(0.4)
+                              : Colors.black54,
                           fontSize: 16,
                         ),
                       ),
@@ -17045,7 +20409,9 @@ recusando a emissão de NFC-e (erro 403).
                       Text(
                         'Adicione produtos para começar',
                         style: TextStyle(
-                          color: isDark ? Colors.white.withOpacity(0.25) : Colors.black38,
+                          color: isDark
+                              ? Colors.white.withOpacity(0.25)
+                              : Colors.black38,
                           fontSize: 12,
                         ),
                       ),
@@ -17066,7 +20432,9 @@ recusando a emissão de NFC-e (erro 403).
                     final isNewest = index == 0;
 
                     return Dismissible(
-                      key: Key('${item.id}_${reversedIndex}_${item.quantidade}'),
+                      key: Key(
+                        '${item.id}_${reversedIndex}_${item.quantidade}',
+                      ),
                       direction: DismissDirection.endToStart,
                       onDismissed: (_) => _removerItem(reversedIndex),
                       background: Container(
@@ -17097,9 +20465,10 @@ recusando a emissão de NFC-e (erro 403).
                           border: Border.all(
                             color: isNewest
                                 ? Colors.greenAccent.withOpacity(0.75)
-                                : (_focoNoCarrinho && _cartSelectedIndex == reversedIndex
-                                    ? Colors.cyanAccent
-                                    : Colors.transparent),
+                                : (_focoNoCarrinho &&
+                                          _cartSelectedIndex == reversedIndex
+                                      ? Colors.cyanAccent
+                                      : Colors.transparent),
                             width: 2,
                           ),
                           boxShadow: isNewest
@@ -17108,7 +20477,7 @@ recusando a emissão de NFC-e (erro 403).
                                     color: Colors.greenAccent.withOpacity(0.2),
                                     blurRadius: 10,
                                     spreadRadius: 1,
-                                  )
+                                  ),
                                 ]
                               : null,
                         ),
@@ -17117,8 +20486,10 @@ recusando a emissão de NFC-e (erro 403).
                           index: reversedIndex,
                           onAlterarQuantidade: (delta) =>
                               _alterarQuantidade(reversedIndex, delta),
-                          onAplicarDesconto: () => _aplicarDescontoItem(reversedIndex),
-                          onAlterarPreco: () => _alterarPrecoItem(reversedIndex),
+                          onAplicarDesconto: () =>
+                              _aplicarDescontoItem(reversedIndex),
+                          onAlterarPreco: () =>
+                              _alterarPrecoItem(reversedIndex),
                           onRemover: () => _removerItem(reversedIndex),
                           onRemoverDescontoDirect: () {
                             setState(() {
@@ -17127,12 +20498,15 @@ recusando a emissão de NFC-e (erro 403).
                             _salvarCarrinho();
                           },
                           onDarBaixa: () => _darBaixaEstoqueItem(reversedIndex),
-                          onAdicionarObservacao: () => _adicionarObservacaoItem(reversedIndex),
+                          onAdicionarObservacao: () =>
+                              _adicionarObservacaoItem(reversedIndex),
                           onToggleBrinde: () {
                             setState(() {
-                              _carrinho[reversedIndex].isBrinde = !_carrinho[reversedIndex].isBrinde;
+                              _carrinho[reversedIndex].isBrinde =
+                                  !_carrinho[reversedIndex].isBrinde;
                               if (_carrinho[reversedIndex].isBrinde) {
-                                _carrinho[reversedIndex].desconto = 0.0; // Reseta o desconto normal se virar brinde
+                                _carrinho[reversedIndex].desconto =
+                                    0.0; // Reseta o desconto normal se virar brinde
                               }
                             });
                             _salvarCarrinho();
@@ -17224,8 +20598,11 @@ recusando a emissão de NFC-e (erro 403).
                           // Botão EDITAR
                           GestureDetector(
                             onTap: () {
-                              final dataService = Provider.of<DataService>(context, listen: false);
-                               _editarCliente(dataService, _clienteSelecionado!);
+                              final dataService = Provider.of<DataService>(
+                                context,
+                                listen: false,
+                              );
+                              _editarCliente(dataService, _clienteSelecionado!);
                             },
                             child: Icon(
                               Icons.edit,
@@ -17251,7 +20628,10 @@ recusando a emissão de NFC-e (erro 403).
                   if (_tabelaPrecoAtiva != null)
                     GestureDetector(
                       onTap: () {
-                        final dataService = Provider.of<DataService>(context, listen: false);
+                        final dataService = Provider.of<DataService>(
+                          context,
+                          listen: false,
+                        );
                         _selecionarTabelaPreco(dataService);
                       },
                       child: Container(
@@ -17265,7 +20645,9 @@ recusando a emissão de NFC-e (erro 403).
                         decoration: BoxDecoration(
                           color: Colors.orangeAccent.withOpacity(0.08),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.orangeAccent.withOpacity(0.2)),
+                          border: Border.all(
+                            color: Colors.orangeAccent.withOpacity(0.2),
+                          ),
                         ),
                         child: Row(
                           children: [
@@ -17352,9 +20734,14 @@ recusando a emissão de NFC-e (erro 403).
                           ),
                           SizedBox(height: isVerySmallHeight ? 2 : 4),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF1E4620).withOpacity(0.2), // Fundo verde escuro sutil
+                              color: const Color(
+                                0xFF1E4620,
+                              ).withOpacity(0.2), // Fundo verde escuro sutil
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: Colors.greenAccent.withOpacity(0.4),
@@ -17396,14 +20783,18 @@ recusando a emissão de NFC-e (erro 403).
                                     const SizedBox(width: 6),
                                     GestureDetector(
                                       onTap: () {
-                                         setState(() {
-                                           _descontoTotal = 0.0;
-                                         });
-                                         _storage.salvar(_chavePDV(_keyDescontoTotalPDV), 0.0);
+                                        setState(() {
+                                          _descontoTotal = 0.0;
+                                        });
+                                        _storage.salvar(
+                                          _chavePDV(_keyDescontoTotalPDV),
+                                          0.0,
+                                        );
                                       },
                                       child: Icon(
                                         Icons.close_rounded,
-                                        color: Colors.greenAccent[400]?.withOpacity(0.7),
+                                        color: Colors.greenAccent[400]
+                                            ?.withOpacity(0.7),
                                         size: 16,
                                       ),
                                     ),
@@ -17436,26 +20827,26 @@ recusando a emissão de NFC-e (erro 403).
                           fit: BoxFit.scaleDown,
                           child: Text(
                             'R\$ ${_totalCarrinho.toStringAsFixed(2)}',
-                              style: TextStyle(
-                                color: Colors.greenAccent,
-                                fontSize: isVerySmallHeight
-                                    ? 28
-                                    : (isSmallHeight ? 32 : 42),
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -1.5,
-                                shadows: [
-                                  Shadow(
-                                    color: Colors.greenAccent.withOpacity(0.7),
-                                    offset: const Offset(0, 0),
-                                    blurRadius: 10,
-                                  ),
-                                  Shadow(
-                                    color: Colors.greenAccent.withOpacity(0.4),
-                                    offset: const Offset(0, 0),
-                                    blurRadius: 20,
-                                  ),
-                                ],
-                              ),
+                            style: TextStyle(
+                              color: Colors.greenAccent,
+                              fontSize: isVerySmallHeight
+                                  ? 28
+                                  : (isSmallHeight ? 32 : 42),
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -1.5,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.greenAccent.withOpacity(0.7),
+                                  offset: const Offset(0, 0),
+                                  blurRadius: 10,
+                                ),
+                                Shadow(
+                                  color: Colors.greenAccent.withOpacity(0.4),
+                                  offset: const Offset(0, 0),
+                                  blurRadius: 20,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -17501,20 +20892,22 @@ recusando a emissão de NFC-e (erro 403).
                               const SizedBox(width: 8),
                             ],
                             GestureDetector(
-                              onTap: _carrinho.isEmpty ? null : () => _abrirDialogDividirConta(),
+                              onTap: _carrinho.isEmpty
+                                  ? null
+                                  : () => _abrirDialogDividirConta(),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 10,
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: _carrinho.isEmpty 
-                                      ? Colors.white.withOpacity(0.05) 
+                                  color: _carrinho.isEmpty
+                                      ? Colors.white.withOpacity(0.05)
                                       : Colors.blue.withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(6),
                                   border: Border.all(
-                                    color: _carrinho.isEmpty 
-                                        ? Colors.white.withOpacity(0.1) 
+                                    color: _carrinho.isEmpty
+                                        ? Colors.white.withOpacity(0.1)
                                         : Colors.blueAccent.withOpacity(0.2),
                                   ),
                                 ),
@@ -17523,14 +20916,18 @@ recusando a emissão de NFC-e (erro 403).
                                   children: [
                                     Icon(
                                       Icons.call_split_rounded,
-                                      color: _carrinho.isEmpty ? Colors.white24 : Colors.blueAccent,
+                                      color: _carrinho.isEmpty
+                                          ? Colors.white24
+                                          : Colors.blueAccent,
                                       size: 12,
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
                                       'DIVIDIR CONTA',
                                       style: TextStyle(
-                                        color: _carrinho.isEmpty ? Colors.white24 : Colors.blueAccent,
+                                        color: _carrinho.isEmpty
+                                            ? Colors.white24
+                                            : Colors.blueAccent,
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -17611,20 +21008,30 @@ recusando a emissão de NFC-e (erro 403).
                         child: GestureDetector(
                           onTap: _carrinho.isEmpty
                               ? null
-                              : () => _salvarVendaPendente(dataService, [], mostrarPromptImpressao: true),
+                              : () => _salvarVendaPendente(
+                                  dataService,
+                                  [],
+                                  mostrarPromptImpressao: true,
+                                ),
                           child: Container(
                             padding: EdgeInsets.symmetric(
                               vertical: isVerySmallHeight ? 8 : 12,
                             ),
                             decoration: BoxDecoration(
                               color: _carrinho.isEmpty
-                                  ? (isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200)
-                                  : (isDark ? Colors.orange.withOpacity(0.15) : const Color(0xFFFEF3C7)),
+                                  ? (isDark
+                                        ? Colors.white.withOpacity(0.05)
+                                        : Colors.grey.shade200)
+                                  : (isDark
+                                        ? Colors.orange.withOpacity(0.15)
+                                        : const Color(0xFFFEF3C7)),
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
                                 color: _carrinho.isEmpty
                                     ? Colors.transparent
-                                    : (isDark ? Colors.orange.withOpacity(0.3) : const Color(0xFFFCD34D)),
+                                    : (isDark
+                                          ? Colors.orange.withOpacity(0.3)
+                                          : const Color(0xFFFCD34D)),
                               ),
                               boxShadow: _carrinho.isEmpty
                                   ? null
@@ -17641,8 +21048,12 @@ recusando a emissão de NFC-e (erro 403).
                                 Icon(
                                   Icons.bookmark_add_rounded,
                                   color: _carrinho.isEmpty
-                                      ? (isDark ? Colors.white.withOpacity(0.2) : Colors.black26)
-                                      : (isDark ? Colors.orange : const Color(0xFFD97706)),
+                                      ? (isDark
+                                            ? Colors.white.withOpacity(0.2)
+                                            : Colors.black26)
+                                      : (isDark
+                                            ? Colors.orange
+                                            : const Color(0xFFD97706)),
                                   size: 18,
                                 ),
                                 const SizedBox(width: 8),
@@ -17650,8 +21061,12 @@ recusando a emissão de NFC-e (erro 403).
                                   'SALVAR',
                                   style: TextStyle(
                                     color: _carrinho.isEmpty
-                                        ? (isDark ? Colors.white.withOpacity(0.2) : Colors.black26)
-                                        : (isDark ? Colors.orange : const Color(0xFFD97706)),
+                                        ? (isDark
+                                              ? Colors.white.withOpacity(0.2)
+                                              : Colors.black26)
+                                        : (isDark
+                                              ? Colors.orange
+                                              : const Color(0xFFD97706)),
                                     fontWeight: FontWeight.bold,
                                     fontSize: 11,
                                     letterSpacing: 0.5,
@@ -17679,12 +21094,20 @@ recusando a emissão de NFC-e (erro 403).
                                   ? null
                                   : LinearGradient(
                                       colors: [
-                                        isDark ? Colors.greenAccent.withOpacity(0.3) : const Color(0xFF10B981),
-                                        isDark ? Colors.green.withOpacity(0.3) : const Color(0xFF059669),
+                                        isDark
+                                            ? Colors.greenAccent.withOpacity(
+                                                0.3,
+                                              )
+                                            : const Color(0xFF10B981),
+                                        isDark
+                                            ? Colors.green.withOpacity(0.3)
+                                            : const Color(0xFF059669),
                                       ],
                                     ),
                               color: _carrinho.isEmpty
-                                  ? (isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200)
+                                  ? (isDark
+                                        ? Colors.white.withOpacity(0.05)
+                                        : Colors.grey.shade200)
                                   : null,
                               borderRadius: BorderRadius.circular(10),
                               boxShadow: _carrinho.isEmpty
@@ -17705,8 +21128,12 @@ recusando a emissão de NFC-e (erro 403).
                                 Icon(
                                   Icons.shopping_cart_checkout_rounded,
                                   color: _carrinho.isEmpty
-                                      ? (isDark ? Colors.white.withOpacity(0.2) : Colors.black26)
-                                      : (isDark ? Colors.greenAccent : Colors.white),
+                                      ? (isDark
+                                            ? Colors.white.withOpacity(0.2)
+                                            : Colors.black26)
+                                      : (isDark
+                                            ? Colors.greenAccent
+                                            : Colors.white),
                                   size: 20,
                                 ),
                                 const SizedBox(width: 8),
@@ -17714,8 +21141,12 @@ recusando a emissão de NFC-e (erro 403).
                                   'FINALIZAR (F9)',
                                   style: TextStyle(
                                     color: _carrinho.isEmpty
-                                        ? (isDark ? Colors.white.withOpacity(0.2) : Colors.black26)
-                                        : (isDark ? Colors.greenAccent : Colors.white),
+                                        ? (isDark
+                                              ? Colors.white.withOpacity(0.2)
+                                              : Colors.black26)
+                                        : (isDark
+                                              ? Colors.greenAccent
+                                              : Colors.white),
                                     fontWeight: FontWeight.bold,
                                     fontSize: 13,
                                     letterSpacing: 1,
@@ -17736,6 +21167,7 @@ recusando a emissão de NFC-e (erro 403).
       ],
     );
   }
+
   bool _globalKeyHandler(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
     if (_dialogAberto || _estaFinalizando) return false;
@@ -17744,6 +21176,14 @@ recusando a emissão de NFC-e (erro 403).
     final dataService = Provider.of<DataService>(context, listen: false);
     final key = event.logicalKey;
     final bool searchFocused = _buscaFocusNode.hasFocus;
+
+    if ((key == LogicalKeyboardKey.altLeft ||
+            key == LogicalKeyboardKey.altRight) &&
+        !HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isShiftPressed) {
+      _abrirMesaComandaPorNumero(dataService);
+      return true;
+    }
 
     // --- TECLAS DE FUNÇÃO (Sempre funcionam) ---
     if (key == LogicalKeyboardKey.f2) {
@@ -17777,7 +21217,8 @@ recusando a emissão de NFC-e (erro 403).
       return true;
     }
     if (key == LogicalKeyboardKey.f8) {
-      if (_carrinho.isNotEmpty) _salvarVendaPendente(dataService, [], mostrarPromptImpressao: true);
+      if (_carrinho.isNotEmpty)
+        _salvarVendaPendente(dataService, [], mostrarPromptImpressao: true);
       return true;
     }
     if (key == LogicalKeyboardKey.f9) {
@@ -17795,7 +21236,8 @@ recusando a emissão de NFC-e (erro 403).
     // --- TECLA ENTER FORA DO CAMPO DE BUSCA ---
     // Se o operador clicou fora ou soltou o foco, com APENAS 1 Enter o foco retorna
     // imediatamente para o campo de busca com o grupo "Todos" selecionado.
-    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
       if (!_focoNoCarrinho && _gridSelectedIndex >= 0) {
         final itens = _termoBusca.isNotEmpty
             ? _buscarItens(dataService)
@@ -17831,13 +21273,15 @@ recusando a emissão de NFC-e (erro 403).
     }
 
     // CTRL para Conferência
-    if (key == LogicalKeyboardKey.controlLeft || key == LogicalKeyboardKey.controlRight) {
-       _abrirConferenciaItens();
-       return true;
+    if (key == LogicalKeyboardKey.controlLeft ||
+        key == LogicalKeyboardKey.controlRight) {
+      _abrirConferenciaItens();
+      return true;
     }
 
     // SHIFT para Carrinho
-    if (key == LogicalKeyboardKey.shiftLeft || key == LogicalKeyboardKey.shiftRight) {
+    if (key == LogicalKeyboardKey.shiftLeft ||
+        key == LogicalKeyboardKey.shiftRight) {
       if (_carrinho.isNotEmpty) {
         setState(() {
           _focoNoCarrinho = true;
@@ -17858,28 +21302,33 @@ recusando a emissão de NFC-e (erro 403).
     }
 
     // SHIFT + DEL para Limpar Tudo
-    if (key == LogicalKeyboardKey.delete && HardwareKeyboard.instance.isShiftPressed) {
+    if (key == LogicalKeyboardKey.delete &&
+        HardwareKeyboard.instance.isShiftPressed) {
       _limparCarrinho();
       return true;
     }
 
     // Operações no carrinho
     if (_carrinho.isNotEmpty) {
-      if (key == LogicalKeyboardKey.add || key == LogicalKeyboardKey.numpadAdd) {
+      if (key == LogicalKeyboardKey.add ||
+          key == LogicalKeyboardKey.numpadAdd) {
         _alterarQuantidade(_carrinho.length - 1, 1);
         return true;
       }
-      if (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract) {
+      if (key == LogicalKeyboardKey.minus ||
+          key == LogicalKeyboardKey.numpadSubtract) {
         if (_carrinho.last.quantidade > 1) {
           _alterarQuantidade(_carrinho.length - 1, -1);
         }
         return true;
       }
-      if (HardwareKeyboard.instance.isControlPressed && key == LogicalKeyboardKey.keyD) {
+      if (HardwareKeyboard.instance.isControlPressed &&
+          key == LogicalKeyboardKey.keyD) {
         _aplicarDescontoItem(_carrinho.length - 1);
         return true;
       }
-      if (HardwareKeyboard.instance.isControlPressed && key == LogicalKeyboardKey.delete) {
+      if (HardwareKeyboard.instance.isControlPressed &&
+          key == LogicalKeyboardKey.delete) {
         _removerItem(_carrinho.length - 1);
         return true;
       }
@@ -18199,7 +21648,10 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
   @override
   Widget build(BuildContext context) {
     return Align(
-      alignment: const Alignment(0.0, -0.3), // Quase centro, um pouco acima para não cobrir tudo
+      alignment: const Alignment(
+        0.0,
+        -0.3,
+      ), // Quase centro, um pouco acima para não cobrir tudo
       child: ScaleTransition(
         scale: _scaleAnimation,
         child: FadeTransition(
@@ -18284,7 +21736,10 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
                     const SizedBox(height: 12),
                     // Detalhes da quantidade e preço
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.05),
                         borderRadius: BorderRadius.circular(12),
@@ -18305,7 +21760,9 @@ class _NotificacaoItemAdicionadoState extends State<_NotificacaoItemAdicionado>
                           const SizedBox(width: 12),
                           Text(
                             '•',
-                            style: TextStyle(color: Colors.white.withOpacity(0.3)),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.3),
+                            ),
                           ),
                           const SizedBox(width: 12),
                           Text(
@@ -18493,9 +21950,10 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
             child: Text(
               widget.item.descricao!,
               style: const TextStyle(
-                color: Colors.white,
+                color: Colors.cyanAccent,
                 fontSize: 12,
                 height: 1.4,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -18544,9 +22002,13 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
         margin: EdgeInsets.only(bottom: isSmallHeight ? 4 : 8),
         padding: EdgeInsets.all(isSmallHeight ? 8 : 12),
         decoration: BoxDecoration(
-          color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFF8FAFC),
+          color: isDark
+              ? Colors.white.withOpacity(0.05)
+              : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(isSmallHeight ? 12 : 16),
-          border: Border.all(color: isDark ? Colors.white.withOpacity(0.03) : Colors.black12),
+          border: Border.all(
+            color: isDark ? Colors.white.withOpacity(0.03) : Colors.black12,
+          ),
           boxShadow: [
             if (!isDark)
               BoxShadow(
@@ -18566,14 +22028,22 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                 Container(
                   padding: const EdgeInsets.all(7),
                   decoration: BoxDecoration(
-                    color: isDark ? corBackground.withOpacity(0.15) : (item.isServico ? Colors.purple.shade50 : Colors.green.shade50),
+                    color: isDark
+                        ? corBackground.withOpacity(0.15)
+                        : (item.isServico
+                              ? Colors.purple.shade50
+                              : Colors.green.shade50),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
                     item.isServico
                         ? Icons.build_rounded
                         : Icons.inventory_2_rounded,
-                    color: isDark ? corPrincipal.withOpacity(0.8) : (item.isServico ? Colors.purple.shade700 : Colors.green.shade700),
+                    color: isDark
+                        ? corPrincipal.withOpacity(0.8)
+                        : (item.isServico
+                              ? Colors.purple.shade700
+                              : Colors.green.shade700),
                     size: isSmallHeight ? 16 : 20,
                   ),
                 ),
@@ -18601,11 +22071,16 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                           if (item.isBrinde) ...[
                             const SizedBox(width: 6),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.redAccent.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+                                border: Border.all(
+                                  color: Colors.redAccent.withOpacity(0.5),
+                                ),
                               ),
                               child: const Text(
                                 'BRINDE',
@@ -18629,10 +22104,14 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: isDark ? Colors.white.withOpacity(0.07) : Colors.grey.shade200,
+                              color: isDark
+                                  ? Colors.white.withOpacity(0.07)
+                                  : Colors.grey.shade200,
                               borderRadius: BorderRadius.circular(999),
                               border: Border.all(
-                                color: isDark ? Colors.white.withOpacity(0.12) : Colors.black12,
+                                color: isDark
+                                    ? Colors.white.withOpacity(0.12)
+                                    : Colors.black12,
                               ),
                             ),
                             child: Row(
@@ -18641,13 +22120,17 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                 Icon(
                                   Icons.qr_code_2_rounded,
                                   size: isSmallHeight ? 10 : 12,
-                                  color: isDark ? Colors.white.withOpacity(0.65) : Colors.black54,
+                                  color: isDark
+                                      ? Colors.white.withOpacity(0.65)
+                                      : Colors.black54,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
                                   'Cod: $codigoProduto',
                                   style: TextStyle(
-                                    color: isDark ? Colors.white.withOpacity(0.75) : Colors.black87,
+                                    color: isDark
+                                        ? Colors.white.withOpacity(0.75)
+                                        : Colors.black87,
                                     fontSize: isSmallHeight ? 9 : 10,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -18658,11 +22141,15 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                             ),
                           ),
                         ),
-                      if (item.unidadeVenda != null && item.unidadeVenda!.isNotEmpty)
+                      if (item.unidadeVenda != null &&
+                          item.unidadeVenda!.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
                               color: isDark
                                   ? Colors.blueAccent.withOpacity(0.15)
@@ -18681,10 +22168,11 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                   item.unidadeVenda == 'caixa'
                                       ? Icons.inventory_outlined
                                       : (item.unidadeVenda == 'pacote'
-                                          ? Icons.widgets_outlined
-                                          : (item.unidadeVenda == 'saco'
-                                              ? Icons.shopping_bag_outlined
-                                              : Icons.inventory_2_outlined)),
+                                            ? Icons.widgets_outlined
+                                            : (item.unidadeVenda == 'saco'
+                                                  ? Icons.shopping_bag_outlined
+                                                  : Icons
+                                                        .inventory_2_outlined)),
                                   size: isSmallHeight ? 10 : 12,
                                   color: isDark
                                       ? Colors.blueAccent
@@ -18710,16 +22198,25 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                         Padding(
                           padding: const EdgeInsets.only(top: 6),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.orangeAccent.withOpacity(0.15),
                               borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: Colors.orangeAccent.withOpacity(0.45)),
+                              border: Border.all(
+                                color: Colors.orangeAccent.withOpacity(0.45),
+                              ),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(Icons.local_offer_outlined, size: 12, color: Colors.orangeAccent),
+                                const Icon(
+                                  Icons.local_offer_outlined,
+                                  size: 12,
+                                  color: Colors.orangeAccent,
+                                ),
                                 const SizedBox(width: 4),
                                 Text(
                                   '${item.descontoPromocionalPercent!.toStringAsFixed(0)}% OFF',
@@ -18737,10 +22234,14 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                         Padding(
                           padding: const EdgeInsets.only(top: 6),
                           child: InkWell(
-                            onTap: () => widget.onToggleBaixaProporcional?.call(),
+                            onTap: () =>
+                                widget.onToggleBaixaProporcional?.call(),
                             borderRadius: BorderRadius.circular(999),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
                               decoration: BoxDecoration(
                                 color: item.baixaProporcional
                                     ? Colors.amber.withOpacity(0.15)
@@ -18756,9 +22257,13 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
-                                    item.baixaProporcional ? Icons.scale_outlined : Icons.inventory_2_outlined,
+                                    item.baixaProporcional
+                                        ? Icons.scale_outlined
+                                        : Icons.inventory_2_outlined,
                                     size: 12,
-                                    color: item.baixaProporcional ? Colors.amber : Colors.blueAccent,
+                                    color: item.baixaProporcional
+                                        ? Colors.amber
+                                        : Colors.blueAccent,
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
@@ -18766,7 +22271,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                         ? 'Baixa proporcional: $textoConversaoBaixa'
                                         : 'Baixa direta (unidade)',
                                     style: TextStyle(
-                                      color: item.baixaProporcional ? Colors.amber : Colors.blueAccent,
+                                      color: item.baixaProporcional
+                                          ? Colors.amber
+                                          : Colors.blueAccent,
                                       fontSize: isSmallHeight ? 9 : 10,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -18776,79 +22283,128 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                             ),
                           ),
                         ),
-                      if (item.adicionais != null && item.adicionais!.isNotEmpty)
+                      if (item.adicionais != null &&
+                          item.adicionais!.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            children: item.adicionais!.map((a) => Padding(
-                              padding: const EdgeInsets.only(bottom: 2),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.add_circle_outline, color: isDark ? Colors.greenAccent.withOpacity(0.5) : Colors.green.shade700, size: 10),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child: Text(
-                                      '${a.nome} (+ R\$ ${a.preco.toStringAsFixed(2)})',
-                                      style: TextStyle(
-                                        color: isDark ? Colors.white.withOpacity(0.5) : Colors.black54,
-                                        fontSize: 10,
-                                      ),
+                            children: item.adicionais!
+                                .map(
+                                  (a) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 2),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.add_circle_outline,
+                                          color: isDark
+                                              ? Colors.greenAccent.withOpacity(
+                                                  0.5,
+                                                )
+                                              : Colors.green.shade700,
+                                          size: 10,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            '${a.nome} (+ R\$ ${a.preco.toStringAsFixed(2)})',
+                                            style: TextStyle(
+                                              color: isDark
+                                                  ? Colors.white.withOpacity(
+                                                      0.5,
+                                                    )
+                                                  : Colors.black54,
+                                              fontSize: 10,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
-                            )).toList(),
+                                )
+                                .toList(),
                           ),
                         ),
-                      if (item.opcoesCombo != null && item.opcoesCombo.isNotEmpty)
+                      if (item.opcoesCombo != null &&
+                          item.opcoesCombo.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            children: item.opcoesCombo.map((o) => Padding(
-                              padding: const EdgeInsets.only(bottom: 2),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.subdirectory_arrow_right_rounded, color: isDark ? Colors.blueAccent.withOpacity(0.6) : Colors.blue.shade700, size: 10),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child: Text(
-                                      '${o.nome}${o.precoAdicional > 0 ? " (+ R\$ ${o.precoAdicional.toStringAsFixed(2)})" : ""}',
-                                      style: TextStyle(
-                                        color: isDark ? Colors.white.withOpacity(0.55) : Colors.black54,
-                                        fontSize: 10.5,
-                                      ),
+                            children: item.opcoesCombo
+                                .map(
+                                  (o) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 2),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons
+                                              .subdirectory_arrow_right_rounded,
+                                          color: isDark
+                                              ? Colors.blueAccent.withOpacity(
+                                                  0.6,
+                                                )
+                                              : Colors.blue.shade700,
+                                          size: 10,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            '${o.nome}${o.precoAdicional > 0 ? " (+ R\$ ${o.precoAdicional.toStringAsFixed(2)})" : ""}',
+                                            style: TextStyle(
+                                              color: isDark
+                                                  ? Colors.white.withOpacity(
+                                                      0.55,
+                                                    )
+                                                  : Colors.black54,
+                                              fontSize: 10.5,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
-                            )).toList(),
+                                )
+                                .toList(),
                           ),
                         ),
                       // Exibir variações selecionadas (Tamanho G, Cor Azul, etc)
-                      if (item.variacoesSelecionadas != null && item.variacoesSelecionadas!.isNotEmpty)
+                      if (item.variacoesSelecionadas != null &&
+                          item.variacoesSelecionadas!.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Wrap(
                             spacing: 6,
                             runSpacing: 2,
-                            children: item.variacoesSelecionadas!.map((v) => Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.tealAccent.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
-                              ),
-                              child: Text(
-                                '${v.nomeAtributo}: ${v.valor}${v.precoAdicional != null && v.precoAdicional != 0 ? " (${v.precoAdicional! > 0 ? '+' : ''}R\$ ${v.precoAdicional!.toStringAsFixed(2)})" : ""}',
-                                style: TextStyle(
-                                  color: Colors.tealAccent,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            )).toList(),
+                            children: item.variacoesSelecionadas!
+                                .map(
+                                  (v) => Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.tealAccent.withOpacity(
+                                        0.15,
+                                      ),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: Colors.tealAccent.withOpacity(
+                                          0.3,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '${v.nomeAtributo}: ${v.valor}${v.precoAdicional != null && v.precoAdicional != 0 ? " (${v.precoAdicional! > 0 ? '+' : ''}R\$ ${v.precoAdicional!.toStringAsFixed(2)})" : ""}',
+                                      style: TextStyle(
+                                        color: Colors.tealAccent,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
                           ),
                         ),
                     ],
@@ -18860,7 +22416,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                   onTap: widget.onRemover,
                   child: Icon(
                     Icons.close_rounded,
-                    color: isDark ? Colors.white.withOpacity(0.25) : Colors.black38,
+                    color: isDark
+                        ? Colors.white.withOpacity(0.25)
+                        : Colors.black38,
                     size: isSmallHeight ? 16 : 18,
                   ),
                 ),
@@ -18871,20 +22429,29 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.orange.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline_rounded, color: Colors.orangeAccent, size: 14),
+                      const Icon(
+                        Icons.info_outline_rounded,
+                        color: Colors.orangeAccent,
+                        size: 14,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           item.observacao!,
                           style: TextStyle(
-                            color: isDark ? Colors.white.withOpacity(0.7) : Colors.black87,
+                            color: isDark
+                                ? Colors.white.withOpacity(0.7)
+                                : Colors.black87,
                             fontSize: 11,
                             fontStyle: FontStyle.italic,
                           ),
@@ -18902,7 +22469,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                 Container(
                   padding: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    color: isDark ? Colors.black.withOpacity(0.2) : Colors.grey.shade200,
+                    color: isDark
+                        ? Colors.black.withOpacity(0.2)
+                        : Colors.grey.shade200,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
@@ -18913,7 +22482,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                         child: Container(
                           padding: EdgeInsets.all(isSmallHeight ? 4 : 6),
                           decoration: BoxDecoration(
-                            color: isDark ? Colors.white.withOpacity(0.05) : Colors.white,
+                            color: isDark
+                                ? Colors.white.withOpacity(0.05)
+                                : Colors.white,
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
@@ -18942,12 +22513,20 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                         child: Container(
                           padding: EdgeInsets.all(isSmallHeight ? 4 : 6),
                           decoration: BoxDecoration(
-                            color: isDark ? corPrincipal.withOpacity(0.1) : (item.isServico ? Colors.purple.shade100 : Colors.green.shade100),
+                            color: isDark
+                                ? corPrincipal.withOpacity(0.1)
+                                : (item.isServico
+                                      ? Colors.purple.shade100
+                                      : Colors.green.shade100),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
                             Icons.add_rounded,
-                            color: isDark ? corPrincipal : (item.isServico ? Colors.purple.shade800 : Colors.green.shade800),
+                            color: isDark
+                                ? corPrincipal
+                                : (item.isServico
+                                      ? Colors.purple.shade800
+                                      : Colors.green.shade800),
                             size: isSmallHeight ? 12 : 14,
                           ),
                         ),
@@ -18964,7 +22543,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                     decoration: BoxDecoration(
                       color: item.desconto > 0
                           ? Colors.orange.withOpacity(0.2)
-                          : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200),
+                          : (isDark
+                                ? Colors.white.withOpacity(0.05)
+                                : Colors.grey.shade200),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
@@ -18991,7 +22572,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                       ),
                       child: Icon(
                         Icons.swap_horiz_rounded,
-                        color: isDark ? Colors.blueAccent : Colors.blue.shade700,
+                        color: isDark
+                            ? Colors.blueAccent
+                            : Colors.blue.shade700,
                         size: isSmallHeight ? 12 : 14,
                       ),
                     ),
@@ -19004,14 +22587,20 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                   child: Container(
                     padding: EdgeInsets.all(isSmallHeight ? 6 : 8),
                     decoration: BoxDecoration(
-                      color: (item.observacao != null && item.observacao!.isNotEmpty)
+                      color:
+                          (item.observacao != null &&
+                              item.observacao!.isNotEmpty)
                           ? Colors.blue.withOpacity(0.15)
-                          : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200),
+                          : (isDark
+                                ? Colors.white.withOpacity(0.05)
+                                : Colors.grey.shade200),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
                       Icons.notes_rounded,
-                      color: (item.observacao != null && item.observacao!.isNotEmpty)
+                      color:
+                          (item.observacao != null &&
+                              item.observacao!.isNotEmpty)
                           ? Colors.blueAccent
                           : (isDark ? Colors.white30 : Colors.black38),
                       size: isSmallHeight ? 12 : 14,
@@ -19027,7 +22616,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                     decoration: BoxDecoration(
                       color: item.isBrinde
                           ? Colors.redAccent.withOpacity(0.2)
-                          : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200),
+                          : (isDark
+                                ? Colors.white.withOpacity(0.05)
+                                : Colors.grey.shade200),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                         color: item.isBrinde
@@ -19037,7 +22628,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                       ),
                     ),
                     child: Icon(
-                      item.isBrinde ? Icons.card_giftcard : Icons.card_giftcard_outlined,
+                      item.isBrinde
+                          ? Icons.card_giftcard
+                          : Icons.card_giftcard_outlined,
                       color: item.isBrinde
                           ? Colors.redAccent
                           : (isDark ? Colors.white30 : Colors.black38),
@@ -19057,7 +22650,7 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                         children: [
                           GestureDetector(
                             onTap: () {
-                               widget.onRemoverDescontoDirect();
+                              widget.onRemoverDescontoDirect();
                             },
                             child: Icon(
                               Icons.close_rounded,
@@ -19079,15 +22672,21 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                     GestureDetector(
                       onTap: widget.onAlterarPreco,
                       child: Tooltip(
-                        message: 'Clique para alterar o preço unitário do produto',
+                        message:
+                            'Clique para alterar o preço unitário do produto',
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: item.tevePrecoAlterado
                                 ? (item.foiVendidoMenor
-                                    ? Colors.redAccent.withOpacity(0.18)
-                                    : Colors.greenAccent.withOpacity(0.18))
-                                : (isDark ? Colors.white.withOpacity(0.04) : Colors.grey.shade100),
+                                      ? Colors.redAccent.withOpacity(0.18)
+                                      : Colors.greenAccent.withOpacity(0.18))
+                                : (isDark
+                                      ? Colors.white.withOpacity(0.04)
+                                      : Colors.grey.shade100),
                             borderRadius: BorderRadius.circular(6),
                             border: item.tevePrecoAlterado
                                 ? Border.all(
@@ -19096,7 +22695,12 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                         : Colors.greenAccent.withOpacity(0.5),
                                     width: 1,
                                   )
-                                : Border.all(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black12, width: 1),
+                                : Border.all(
+                                    color: isDark
+                                        ? Colors.white.withOpacity(0.08)
+                                        : Colors.black12,
+                                    width: 1,
+                                  ),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
@@ -19107,7 +22711,9 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                       ? '🔻 Orig: R\$ ${item.precoOriginal.toStringAsFixed(2)}'
                                       : '🔺 Orig: R\$ ${item.precoOriginal.toStringAsFixed(2)}',
                                   style: TextStyle(
-                                    color: item.foiVendidoMenor ? Colors.redAccent : Colors.greenAccent,
+                                    color: item.foiVendidoMenor
+                                        ? Colors.redAccent
+                                        : Colors.greenAccent,
                                     fontSize: 9,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -19118,13 +22724,21 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                                   Icon(
                                     Icons.edit_outlined,
                                     size: 11,
-                                    color: isDark ? corPrincipal.withOpacity(0.7) : (item.isServico ? Colors.purple.shade700 : Colors.green.shade700),
+                                    color: isDark
+                                        ? corPrincipal.withOpacity(0.7)
+                                        : (item.isServico
+                                              ? Colors.purple.shade700
+                                              : Colors.green.shade700),
                                   ),
                                   const SizedBox(width: 3),
                                   Text(
                                     'R\$ ${item.subtotal.toStringAsFixed(2)}',
                                     style: TextStyle(
-                                      color: isDark ? corPrincipal : (item.isServico ? Colors.purple.shade800 : Colors.green.shade800),
+                                      color: isDark
+                                          ? corPrincipal
+                                          : (item.isServico
+                                                ? Colors.purple.shade800
+                                                : Colors.green.shade800),
                                       fontWeight: FontWeight.w900,
                                       fontSize: isSmallHeight ? 14 : 16,
                                     ),
@@ -19268,7 +22882,10 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
                         ),
                         suffixIcon: _busca.isNotEmpty
                             ? IconButton(
-                                icon: const Icon(Icons.clear, color: Colors.white54),
+                                icon: const Icon(
+                                  Icons.clear,
+                                  color: Colors.white54,
+                                ),
                                 onPressed: () {
                                   _buscaController.clear();
                                   setState(() => _busca = '');
@@ -19328,7 +22945,6 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
       ),
     );
   }
-
 
   @override
   void dispose() {
@@ -19507,7 +23123,8 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
                     final resultado = await Navigator.push<Cliente>(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => ClienteDetalhesPage(cliente: cliente),
+                        builder: (context) =>
+                            ClienteDetalhesPage(cliente: cliente),
                       ),
                     );
                     if (resultado != null && mounted) {
@@ -19544,7 +23161,7 @@ class _DialogPagamentoPDV extends StatefulWidget {
   final Function(List<PagamentoPedido>, double, double) onConfirmar;
   final Function(List<PagamentoPedido>) onSalvarPendente;
   final Cliente? cliente; // Cliente para validar limite de crédito
-  final String? cpfCnpjInicial; 
+  final String? cpfCnpjInicial;
   final String? nomeInicial;
   final Function(String?, String?) onDadosConsumidorChanged;
 
@@ -19586,7 +23203,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     _cpfController = TextEditingController(text: widget.cpfCnpjInicial);
     _nomeController = TextEditingController(text: widget.nomeInicial);
     _focusNode.requestFocus();
-    
+
     // Handler global para o diálogo de pagamento
     HardwareKeyboard.instance.addHandler(_dialogKeyHandler);
   }
@@ -19599,7 +23216,11 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       if (_estaConfirmando) return true;
       if (_pagamentoCompleto) {
         setState(() => _estaConfirmando = true);
-        widget.onConfirmar(_pagamentos, _descontoAutomatico, _acrescimoAutomatico);
+        widget.onConfirmar(
+          _pagamentos,
+          _descontoAutomatico,
+          _acrescimoAutomatico,
+        );
       } else {
         widget.onSalvarPendente(_pagamentos);
       }
@@ -19651,15 +23272,15 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       }
     }
 
-    
     final dataService = Provider.of<DataService>(context, listen: false);
-    final pagamentosConfig = dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
+    final pagamentosConfig =
+        dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
     final config = pagamentosConfig?[tipo.name] as Map?;
     final descontoPerc = (config?['descontoPerc'] as num?)?.toDouble() ?? 0.0;
     final acrescimoPerc = (config?['acrescimoPerc'] as num?)?.toDouble() ?? 0.0;
 
     double valorASugerir = _valorRestante > 0 ? _valorRestante : 0.0;
-    
+
     // Calcula desconto ou acréscimo automático sobre o valor restante
     double descontoAplicadoLocal = 0.0;
     double acrescimoAplicadoLocal = 0.0;
@@ -19676,7 +23297,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     if (_valorRestante <= 0 && tipo != TipoPagamento.outro) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('A venda já está totalmente paga. Remova um pagamento se desejar alterar.'),
+          content: Text(
+            'A venda já está totalmente paga. Remova um pagamento se desejar alterar.',
+          ),
           backgroundColor: Colors.orange,
           behavior: SnackBarBehavior.floating,
         ),
@@ -19823,7 +23446,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       if (widget.cliente == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Para usar Cash Back, selecione um cliente identificado.'),
+            content: Text(
+              'Para usar Cash Back, selecione um cliente identificado.',
+            ),
             backgroundColor: Colors.amber,
           ),
         );
@@ -19836,7 +23461,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       if (saldoDisp <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Este cliente não tem saldo de Cash Back disponível.'),
+            content: Text(
+              'Este cliente não tem saldo de Cash Back disponível.',
+            ),
             backgroundColor: Colors.amber,
           ),
         );
@@ -19848,7 +23475,12 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       }
     }
 
-    _mostrarDialogPagamento(tipo, valorSugerido, descontoCalc: descontoAplicadoLocal, acrescimoCalc: acrescimoAplicadoLocal);
+    _mostrarDialogPagamento(
+      tipo,
+      valorSugerido,
+      descontoCalc: descontoAplicadoLocal,
+      acrescimoCalc: acrescimoAplicadoLocal,
+    );
   }
 
   /// Saldo de cash back do cliente selecionado nesta venda (lido do
@@ -19857,7 +23489,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     final cliente = widget.cliente;
     if (cliente == null) return 0.0;
     final idx = dataService.clientes.indexWhere((c) => c.id == cliente.id);
-    return idx == -1 ? cliente.saldoCashback : dataService.clientes[idx].saldoCashback;
+    return idx == -1
+        ? cliente.saldoCashback
+        : dataService.clientes[idx].saldoCashback;
   }
 
   // Mostra mensagem de erro centralizada quando tenta usar crediário sem cliente
@@ -20269,10 +23903,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
           void concluir() {
             final valorOriginal =
-                double.tryParse(
-                  valorController.text.replaceAll(',', '.'),
-                ) ??
-                0;
+                double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
             if (valorOriginal <= 0) return;
 
             // Cash Back: valor não pode passar do saldo do cliente
@@ -20313,7 +23944,7 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
             final String? obs = observacaoController.text.isNotEmpty
                 ? observacaoController.text
                 : null;
-            
+
             double valorALancar = valorOriginal;
             double? valorRecebidoFinal;
             double? trocoFinal;
@@ -20327,10 +23958,12 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 trocoFinal = valorOriginal - valorALancar;
               } else {
                 // Caso contrário, usa os campos específicos de troco se preenchidos
-                final vr = double.tryParse(valorRecebidoController.text.replaceAll(',', '.'));
+                final vr = double.tryParse(
+                  valorRecebidoController.text.replaceAll(',', '.'),
+                );
                 if (vr != null && vr > valorOriginal) {
-                   valorRecebidoFinal = vr;
-                   trocoFinal = vr - valorOriginal;
+                  valorRecebidoFinal = vr;
+                  trocoFinal = vr - valorOriginal;
                 }
               }
             } else {
@@ -20342,9 +23975,10 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
             // Impede lançamentos sem valor real, a menos que seja um ajuste (valor ALancar == 0)
             if (valorALancar <= 0) {
-                Navigator.pop(context);
-                return;
-            };
+              Navigator.pop(context);
+              return;
+            }
+            ;
 
             // Update auto discount/acrescimo
             _descontoAutomatico += descontoCalc;
@@ -20415,10 +24049,10 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
             setState(() => _pagamentos = novaLista);
             Navigator.pop(context);
-            
+
             // SE O PAGAMENTO JÁ COMPLETOU O TOTAL, FINALIZAR AUTOMATICAMENTE (VAPT-VUPT)
             if (_pagamentoCompleto && !isFiado && !suportaParcelamento) {
-               widget.onConfirmar(novaLista, 0.0, 0.0);
+              widget.onConfirmar(novaLista, 0.0, 0.0);
             }
           }
 
@@ -20436,14 +24070,16 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
               if (key == LogicalKeyboardKey.enter) {
                 if (quickValueIndex >= 0) {
-                   setDialogState(() {
-                      valorRecebidoController.text = valoresRapidos[quickValueIndex].toStringAsFixed(2);
-                      calcularTroco();
-                      quickValueIndex = -1; // Retorna para o fluxo normal ou confirma
-                   });
-                   // Opcional: confirmar direto se quiser
-                   concluir();
-                   return KeyEventResult.handled;
+                  setDialogState(() {
+                    valorRecebidoController.text =
+                        valoresRapidos[quickValueIndex].toStringAsFixed(2);
+                    calcularTroco();
+                    quickValueIndex =
+                        -1; // Retorna para o fluxo normal ou confirma
+                  });
+                  // Opcional: confirmar direto se quiser
+                  concluir();
+                  return KeyEventResult.handled;
                 }
                 concluir();
                 return KeyEventResult.handled;
@@ -20451,28 +24087,30 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
               if (isDinheiro) {
                 if (key == LogicalKeyboardKey.arrowDown) {
-                   if (quickValueIndex == -1) {
-                      setDialogState(() => quickValueIndex = 0);
-                   }
-                   return KeyEventResult.handled;
+                  if (quickValueIndex == -1) {
+                    setDialogState(() => quickValueIndex = 0);
+                  }
+                  return KeyEventResult.handled;
                 }
                 if (key == LogicalKeyboardKey.arrowUp) {
-                   if (quickValueIndex >= 0) {
-                      setDialogState(() => quickValueIndex = -1);
-                   }
-                   return KeyEventResult.handled;
+                  if (quickValueIndex >= 0) {
+                    setDialogState(() => quickValueIndex = -1);
+                  }
+                  return KeyEventResult.handled;
                 }
-                if (key == LogicalKeyboardKey.arrowRight && quickValueIndex >= 0) {
-                   if (quickValueIndex < valoresRapidos.length - 1) {
-                      setDialogState(() => quickValueIndex++);
-                   }
-                   return KeyEventResult.handled;
+                if (key == LogicalKeyboardKey.arrowRight &&
+                    quickValueIndex >= 0) {
+                  if (quickValueIndex < valoresRapidos.length - 1) {
+                    setDialogState(() => quickValueIndex++);
+                  }
+                  return KeyEventResult.handled;
                 }
-                if (key == LogicalKeyboardKey.arrowLeft && quickValueIndex >= 0) {
-                   if (quickValueIndex > 0) {
-                      setDialogState(() => quickValueIndex--);
-                   }
-                   return KeyEventResult.handled;
+                if (key == LogicalKeyboardKey.arrowLeft &&
+                    quickValueIndex >= 0) {
+                  if (quickValueIndex > 0) {
+                    setDialogState(() => quickValueIndex--);
+                  }
+                  return KeyEventResult.handled;
                 }
               }
 
@@ -20488,7 +24126,6 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                 valorFocusNode.requestFocus();
                 return KeyEventResult.handled;
               }
-
 
               return KeyEventResult.ignored;
             },
@@ -20587,9 +24224,10 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
-                              keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
                               onChanged: (_) => calcularTroco(),
                               decoration: InputDecoration(
                                 prefixText: 'R\$ ',
@@ -20607,24 +24245,29 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                                   borderRadius: BorderRadius.circular(10),
                                   borderSide: BorderSide.none,
                                 ),
-                                focusedBorder: quickValueIndex == -1 ? null : OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide.none,
-                                ),
+                                focusedBorder: quickValueIndex == -1
+                                    ? null
+                                    : OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                        borderSide: BorderSide.none,
+                                      ),
                               ),
                             ),
                             const SizedBox(height: 8),
                             Wrap(
                               spacing: 6,
                               runSpacing: 6,
-                              children: List.generate(valoresRapidos.length, (index) {
+                              children: List.generate(valoresRapidos.length, (
+                                index,
+                              ) {
                                 final valor = valoresRapidos[index];
                                 final isSelected = index == quickValueIndex;
                                 return GestureDetector(
                                   onTap: () {
                                     setDialogState(() {
                                       quickValueIndex = index;
-                                      valorRecebidoController.text = valor.toStringAsFixed(2);
+                                      valorRecebidoController.text = valor
+                                          .toStringAsFixed(2);
                                       calcularTroco();
                                     });
                                   },
@@ -20635,23 +24278,30 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                                       vertical: 6,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: isSelected 
+                                      color: isSelected
                                           ? Colors.greenAccent
                                           : Colors.white.withOpacity(0.1),
                                       borderRadius: BorderRadius.circular(8),
-                                      boxShadow: isSelected ? [
-                                        BoxShadow(
-                                          color: Colors.greenAccent.withOpacity(0.3),
-                                          blurRadius: 8,
-                                        )
-                                      ] : null,
+                                      boxShadow: isSelected
+                                          ? [
+                                              BoxShadow(
+                                                color: Colors.greenAccent
+                                                    .withOpacity(0.3),
+                                                blurRadius: 8,
+                                              ),
+                                            ]
+                                          : null,
                                     ),
                                     child: Text(
                                       'R\$ $valor',
                                       style: TextStyle(
-                                        color: isSelected ? Colors.black : Colors.white70,
+                                        color: isSelected
+                                            ? Colors.black
+                                            : Colors.white70,
                                         fontSize: 12,
-                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                        fontWeight: isSelected
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
                                       ),
                                     ),
                                   ),
@@ -20845,7 +24495,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                         decoration: BoxDecoration(
                           color: Colors.red.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                          border: Border.all(
+                            color: Colors.red.withOpacity(0.3),
+                          ),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -20933,7 +24585,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: Text(
-                                        _formatoData.format(dataVencimentoFiado),
+                                        _formatoData.format(
+                                          dataVencimentoFiado,
+                                        ),
                                         style: const TextStyle(
                                           color: Colors.white,
                                           fontSize: 16,
@@ -21171,18 +24825,27 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
             if (falta > 0 && totalPago > 0) ...[
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.orange.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(15),
-                  border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
+                  border: Border.all(
+                    color: Colors.orangeAccent.withOpacity(0.3),
+                  ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.info_outline, color: Colors.orangeAccent, size: 16),
+                        const Icon(
+                          Icons.info_outline,
+                          color: Colors.orangeAccent,
+                          size: 16,
+                        ),
                         const SizedBox(width: 8),
                         const Text(
                           'FALTA RECEBER:',
@@ -21240,6 +24903,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         return Colors.blueAccent;
       case TipoPagamento.cashBack:
         return Colors.amber;
+      case TipoPagamento.mercado_pago:
+        return Colors.amber;
     }
   }
 
@@ -21267,6 +24932,8 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         return Icons.swap_horiz;
       case TipoPagamento.cashBack:
         return Icons.local_atm;
+      case TipoPagamento.mercado_pago:
+        return Icons.qr_code;
     }
   }
 
@@ -21283,44 +24950,52 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
         final key = event.logicalKey;
-        
+
         // ESC e F9 tratados no handler do HardwareKeyboard para maior confiabilidade
-        
 
         // Teclas 1 a 8 para formas de pagamento
         // NÃO interceptar se o cursor estiver num campo de texto (CPF ou Nome)
-        final bool campoTextoFocado = _cpfFocusNode.hasFocus || _nomeFocusNode.hasFocus;
+        final bool campoTextoFocado =
+            _cpfFocusNode.hasFocus || _nomeFocusNode.hasFocus;
         if (!campoTextoFocado) {
           final types = TipoPagamento.values;
-          if (key == LogicalKeyboardKey.digit1 || key == LogicalKeyboardKey.numpad1) {
+          if (key == LogicalKeyboardKey.digit1 ||
+              key == LogicalKeyboardKey.numpad1) {
             _adicionarPagamento(types[0]);
             return KeyEventResult.handled;
           }
-          if (key == LogicalKeyboardKey.digit2 || key == LogicalKeyboardKey.numpad2) {
+          if (key == LogicalKeyboardKey.digit2 ||
+              key == LogicalKeyboardKey.numpad2) {
             _adicionarPagamento(types[1]);
             return KeyEventResult.handled;
           }
-          if (key == LogicalKeyboardKey.digit3 || key == LogicalKeyboardKey.numpad3) {
+          if (key == LogicalKeyboardKey.digit3 ||
+              key == LogicalKeyboardKey.numpad3) {
             _adicionarPagamento(types[2]);
             return KeyEventResult.handled;
           }
-          if (key == LogicalKeyboardKey.digit4 || key == LogicalKeyboardKey.numpad4) {
+          if (key == LogicalKeyboardKey.digit4 ||
+              key == LogicalKeyboardKey.numpad4) {
             _adicionarPagamento(types[3]);
             return KeyEventResult.handled;
           }
-          if (key == LogicalKeyboardKey.digit5 || key == LogicalKeyboardKey.numpad5) {
+          if (key == LogicalKeyboardKey.digit5 ||
+              key == LogicalKeyboardKey.numpad5) {
             _adicionarPagamento(types[4]);
             return KeyEventResult.handled;
           }
-          if (key == LogicalKeyboardKey.digit6 || key == LogicalKeyboardKey.numpad6) {
+          if (key == LogicalKeyboardKey.digit6 ||
+              key == LogicalKeyboardKey.numpad6) {
             _adicionarPagamento(types[5]);
             return KeyEventResult.handled;
           }
-          if (key == LogicalKeyboardKey.digit7 || key == LogicalKeyboardKey.numpad7) {
+          if (key == LogicalKeyboardKey.digit7 ||
+              key == LogicalKeyboardKey.numpad7) {
             _adicionarPagamento(types[6]);
             return KeyEventResult.handled;
           }
-          if (key == LogicalKeyboardKey.digit8 || key == LogicalKeyboardKey.numpad8) {
+          if (key == LogicalKeyboardKey.digit8 ||
+              key == LogicalKeyboardKey.numpad8) {
             _adicionarPagamento(types[7]);
             return KeyEventResult.handled;
           }
@@ -21332,8 +25007,10 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
           if (key == LogicalKeyboardKey.arrowDown) {
             if (_pagamentos.isNotEmpty) {
               setState(() {
-                _selectedPaymentIndex =
-                    (_selectedPaymentIndex + 1).clamp(0, _pagamentos.length - 1);
+                _selectedPaymentIndex = (_selectedPaymentIndex + 1).clamp(
+                  0,
+                  _pagamentos.length - 1,
+                );
               });
             }
             return KeyEventResult.handled;
@@ -21353,14 +25030,17 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
 
           // DEL: remove o pagamento selecionado
           if (key == LogicalKeyboardKey.delete) {
-            if (_selectedPaymentIndex >= 0 && _selectedPaymentIndex < _pagamentos.length) {
+            if (_selectedPaymentIndex >= 0 &&
+                _selectedPaymentIndex < _pagamentos.length) {
               _removerPagamento(_selectedPaymentIndex);
               setState(() {
                 if (_pagamentos.isEmpty) {
                   _selectedPaymentIndex = -1;
                 } else {
-                  _selectedPaymentIndex =
-                      _selectedPaymentIndex.clamp(0, _pagamentos.length - 1);
+                  _selectedPaymentIndex = _selectedPaymentIndex.clamp(
+                    0,
+                    _pagamentos.length - 1,
+                  );
                 }
               });
             }
@@ -21369,9 +25049,14 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         }
 
         // ENTER para finalizar se houver pagamentos E valor completo
-        if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+        if (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) {
           if (_pagamentos.isNotEmpty && _pagamentoCompleto) {
-            widget.onConfirmar(_pagamentos, _descontoAutomatico, _acrescimoAutomatico);
+            widget.onConfirmar(
+              _pagamentos,
+              _descontoAutomatico,
+              _acrescimoAutomatico,
+            );
           } else if (_pagamentos.isNotEmpty && !_pagamentoCompleto) {
             // Avisar que falta valor
             ScaffoldMessenger.of(context).showSnackBar(
@@ -21412,485 +25097,549 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
         ),
         child: Column(
           children: [
-          // Handle
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white24,
-              borderRadius: BorderRadius.circular(2),
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-          ),
 
-          // Título Fixo no topo
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.greenAccent.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.payment,
-                    color: Colors.greenAccent,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Text(
-                  'Resumo da Venda',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          if (!isSmallHeight) _buildPainelTotalFull(),
-
-          // LISTA FRÁGIL: Parte que pode rolar se o conteúdo crescer demais
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Column(
+            // Título Fixo no topo
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Row(
                 children: [
-                  // Painel de Total Vibrante - Movido para dentro do scroll se a tela for pequena
-                  if (isSmallHeight) ...[
-                    _buildPainelTotalCompacto(),
-                    const SizedBox(height: 16),
-                  ],
-
-                  // Formas de pagamento
-                  const Text(
-                    'Adicionar Pagamento',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.payment,
+                      color: Colors.greenAccent,
+                      size: 24,
+                    ),
                   ),
-                  const SizedBox(height: 10),
-                  // Saldo de cash back do cliente identificado
-                  if (widget.cliente != null) ...[
-                    CashBackBadge(
-                      saldo: _saldoCashbackDoClienteSelecionado(
-                        Provider.of<DataService>(context, listen: true),
-                      ),
-                      tituloExtra: 'Saldo Cash Back',
-                      somenteVisu: true,
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Resumo da Venda',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            if (!isSmallHeight) _buildPainelTotalFull(),
+
+            // LISTA FRÁGIL: Parte que pode rolar se o conteúdo crescer demais
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  children: [
+                    // Painel de Total Vibrante - Movido para dentro do scroll se a tela for pequena
+                    if (isSmallHeight) ...[
+                      _buildPainelTotalCompacto(),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Formas de pagamento
+                    const Text(
+                      'Adicionar Pagamento',
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                     const SizedBox(height: 10),
-                  ],
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    
-                    children: [
-                      ...TipoPagamento.values.where((t) {
-                      final dataService = Provider.of<DataService>(context, listen: false);
-                      final pagamentosConfig = dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
-                      return (pagamentosConfig?[t.name]?['ativo'] as bool?) ?? true;
-                    }).toList().asMap().entries.map((entry) {
+                    // Saldo de cash back do cliente identificado
+                    if (widget.cliente != null) ...[
+                      CashBackBadge(
+                        saldo: _saldoCashbackDoClienteSelecionado(
+                          Provider.of<DataService>(context, listen: true),
+                        ),
+                        tituloExtra: 'Saldo Cash Back',
+                        somenteVisu: true,
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
 
-                      final index = entry.key;
-                      final tipo = entry.value;
-                      final shortcut = index + 1;
+                      children: [
+                        ...TipoPagamento.values
+                            .where((t) {
+                              final dataService = Provider.of<DataService>(
+                                context,
+                                listen: false,
+                              );
+                              final pagamentosConfig =
+                                  dataService
+                                          .empresaAtual
+                                          ?.configuracoes?['pagamentos']
+                                      as Map?;
+                              return (pagamentosConfig?[t.name]?['ativo']
+                                      as bool?) ??
+                                  true;
+                            })
+                            .toList()
+                            .asMap()
+                            .entries
+                            .map((entry) {
+                              final index = entry.key;
+                              final tipo = entry.value;
+                              final shortcut = index + 1;
 
-                      return GestureDetector(
-                        onTap: () => _adicionarPagamento(tipo),
-                        child: Tooltip(
-                          message: 'Pressione $shortcut para selecionar',
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _getCorTipo(tipo).withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: _getCorTipo(tipo).withOpacity(0.3),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Atalho numérico
-                                if (shortcut <= 8)
-                                  Container(
+                              return GestureDetector(
+                                onTap: () => _adicionarPagamento(tipo),
+                                child: Tooltip(
+                                  message:
+                                      'Pressione $shortcut para selecionar',
+                                  child: Container(
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 1,
+                                      horizontal: 10,
+                                      vertical: 8,
                                     ),
-                                    margin: const EdgeInsets.only(right: 6),
                                     decoration: BoxDecoration(
-                                      color: _getCorTipo(tipo).withOpacity(0.3),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      '$shortcut',
-                                      style: TextStyle(
-                                        color: _getCorTipo(tipo),
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
+                                      color: _getCorTipo(
+                                        tipo,
+                                      ).withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: _getCorTipo(
+                                          tipo,
+                                        ).withOpacity(0.3),
                                       ),
                                     ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        // Atalho numérico
+                                        if (shortcut <= 8)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                              vertical: 1,
+                                            ),
+                                            margin: const EdgeInsets.only(
+                                              right: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: _getCorTipo(
+                                                tipo,
+                                              ).withOpacity(0.3),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              '$shortcut',
+                                              style: TextStyle(
+                                                color: _getCorTipo(tipo),
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        Icon(
+                                          _getIconeTipo(tipo),
+                                          color: _getCorTipo(tipo),
+                                          size: 14,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          tipo.nome,
+                                          style: TextStyle(
+                                            color: _getCorTipo(tipo),
+                                            fontWeight: FontWeight.w500,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                Icon(
-                                  _getIconeTipo(tipo),
-                                  color: _getCorTipo(tipo),
-                                  size: 14,
                                 ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  tipo.nome,
-                                  style: TextStyle(
-                                    color: _getCorTipo(tipo),
-                                    fontWeight: FontWeight.w500,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                      ..._buildBotoesFormaCustom(context),
-                    ],
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  // Identificação do Consumidor para NFC-e
-                  if (widget.cliente == null) ...[
-                    const Divider(color: Colors.white10, height: 32),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.badge_outlined,
-                          color: Colors.blueAccent.withOpacity(0.8),
-                          size: 16,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'IDENTIFICAÇÃO PARA NFC-E (OPCIONAL)',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1,
-                          ),
-                        ),
+                              );
+                            })
+                            .toList(),
+                        ..._buildBotoesFormaCustom(context),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 2,
-                          child: TextField(
-                            controller: _cpfController,
-                            focusNode: _cpfFocusNode,
-                            style: const TextStyle(color: Colors.white, fontSize: 13),
-                            decoration: InputDecoration(
-                              hintText: 'CPF/CNPJ na Nota',
-                              hintStyle: TextStyle(
-                                color: Colors.white.withOpacity(0.2),
-                              ),
-                              prefixIcon: Icon(
-                                Icons.badge,
-                                size: 16,
-                                color: Colors.white.withOpacity(0.3),
-                              ),
-                              filled: true,
-                              fillColor: Colors.black26,
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 12,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                                borderSide: BorderSide.none,
-                              ),
-                            ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (val) => widget.onDadosConsumidorChanged(
-                              val,
-                              _nomeController.text,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          flex: 3,
-                          child: TextField(
-                            controller: _nomeController,
-                            focusNode: _nomeFocusNode,
-                            style: const TextStyle(color: Colors.white, fontSize: 13),
-                            decoration: InputDecoration(
-                              hintText: 'Nome do Consumidor',
-                              hintStyle: TextStyle(
-                                color: Colors.white.withOpacity(0.2),
-                              ),
-                              prefixIcon: Icon(
-                                Icons.person_outline,
-                                size: 16,
-                                color: Colors.white.withOpacity(0.3),
-                              ),
-                              filled: true,
-                              fillColor: Colors.black26,
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 12,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                                borderSide: BorderSide.none,
-                              ),
-                            ),
-                            onChanged: (val) => widget.onDadosConsumidorChanged(
-                              _cpfController.text,
-                              val,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Pressione F9 ou clique em Finalizar para concluir com estes dados.',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.3),
-                        fontSize: 9,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                  ],
 
-                  const SizedBox(height: 20),
+                    const SizedBox(height: 10),
 
-                  if (_pagamentos.isEmpty)
-                    Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                    // Identificação do Consumidor para NFC-e
+                    if (widget.cliente == null) ...[
+                      const Divider(color: Colors.white10, height: 32),
+                      Row(
                         children: [
                           Icon(
-                            Icons.payment_outlined,
-                            size: 48,
-                            color: Colors.white.withOpacity(0.2),
+                            Icons.badge_outlined,
+                            color: Colors.blueAccent.withOpacity(0.8),
+                            size: 16,
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Nenhum pagamento adicionado',
+                          const SizedBox(width: 8),
+                          const Text(
+                            'IDENTIFICAÇÃO PARA NFC-E (OPCIONAL)',
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.4),
+                              color: Colors.white54,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
                             ),
                           ),
                         ],
                       ),
-                    )
-                  else ...[
-                    // Resumo de Troco se houver
-                    if (_totalTroco > 0)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 20),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.amber.withOpacity(0.3)),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'TROCO TOTAL:',
-                              style: TextStyle(
-                                color: Colors.amber,
-                                fontWeight: FontWeight.bold,
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: TextField(
+                              controller: _cpfController,
+                              focusNode: _cpfFocusNode,
+                              style: const TextStyle(
+                                color: Colors.white,
                                 fontSize: 13,
                               ),
+                              decoration: InputDecoration(
+                                hintText: 'CPF/CNPJ na Nota',
+                                hintStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.2),
+                                ),
+                                prefixIcon: Icon(
+                                  Icons.badge,
+                                  size: 16,
+                                  color: Colors.white.withOpacity(0.3),
+                                ),
+                                filled: true,
+                                fillColor: Colors.black26,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 12,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              keyboardType: TextInputType.number,
+                              onChanged: (val) =>
+                                  widget.onDadosConsumidorChanged(
+                                    val,
+                                    _nomeController.text,
+                                  ),
                             ),
-                            Text(
-                              _formatoMoeda.format(_totalTroco),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 3,
+                            child: TextField(
+                              controller: _nomeController,
+                              focusNode: _nomeFocusNode,
                               style: const TextStyle(
-                                color: Colors.amber,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
+                                color: Colors.white,
+                                fontSize: 13,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'Nome do Consumidor',
+                                hintStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.2),
+                                ),
+                                prefixIcon: Icon(
+                                  Icons.person_outline,
+                                  size: 16,
+                                  color: Colors.white.withOpacity(0.3),
+                                ),
+                                filled: true,
+                                fillColor: Colors.black26,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 12,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onChanged: (val) =>
+                                  widget.onDadosConsumidorChanged(
+                                    _cpfController.text,
+                                    val,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Pressione F9 ou clique em Finalizar para concluir com estes dados.',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.3),
+                          fontSize: 9,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 20),
+
+                    if (_pagamentos.isEmpty)
+                      Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.payment_outlined,
+                              size: 48,
+                              color: Colors.white.withOpacity(0.2),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Nenhum pagamento adicionado',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.4),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    // Lista de pagamentos já adicionados
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _pagamentos.length,
-                      itemBuilder: (context, index) {
-                        final pagamento = _pagamentos[index];
-                        final isSelected = index == _selectedPaymentIndex;
-                        return GestureDetector(
-                          onTap: () => setState(() => _selectedPaymentIndex = index),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? Colors.orange.withOpacity(0.12)
-                                  : Colors.white.withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(12),
-                              border: isSelected
-                                  ? Border.all(color: Colors.orange, width: 1.5)
-                                  : null,
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: _getCorTipo(
-                                      pagamento.tipo,
-                                    ).withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Icon(
-                                    _getIconeTipo(pagamento.tipo),
-                                    color: _getCorTipo(pagamento.tipo),
-                                    size: 18,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        pagamento.tipo.nome,
-                                        style: TextStyle(
-                                          color: isSelected ? Colors.orange : Colors.white,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      if (pagamento.isParcela)
-                                        Text(
-                                          'Parcela ${pagamento.numeroParcela}/${pagamento.parcelas}',
-                                          style: TextStyle(
-                                            color: Colors.white.withOpacity(0.5),
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                Text(
-                                  _formatoMoeda.format(pagamento.valor),
-                                  style: TextStyle(
-                                    color: isSelected ? Colors.orange : _getCorTipo(pagamento.tipo),
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                GestureDetector(
-                                  onTap: () => _removerPagamento(index),
-                                  child: Icon(
-                                    Icons.close,
-                                    color: isSelected
-                                        ? Colors.orange.withOpacity(0.8)
-                                        : Colors.white.withOpacity(0.3),
-                                    size: 18,
-                                  ),
-                                ),
-                              ],
+                      )
+                    else ...[
+                      // Resumo de Troco se houver
+                      if (_totalTroco > 0)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 20),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.amber.withOpacity(0.3),
                             ),
                           ),
-                        );
-                      },
-                    ),
-                ],
-              ],
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'TROCO TOTAL:',
+                                style: TextStyle(
+                                  color: Colors.amber,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                _formatoMoeda.format(_totalTroco),
+                                style: const TextStyle(
+                                  color: Colors.amber,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      // Lista de pagamentos já adicionados
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _pagamentos.length,
+                        itemBuilder: (context, index) {
+                          final pagamento = _pagamentos[index];
+                          final isSelected = index == _selectedPaymentIndex;
+                          return GestureDetector(
+                            onTap: () =>
+                                setState(() => _selectedPaymentIndex = index),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? Colors.orange.withOpacity(0.12)
+                                    : Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(12),
+                                border: isSelected
+                                    ? Border.all(
+                                        color: Colors.orange,
+                                        width: 1.5,
+                                      )
+                                    : null,
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: _getCorTipo(
+                                        pagamento.tipo,
+                                      ).withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Icon(
+                                      _getIconeTipo(pagamento.tipo),
+                                      color: _getCorTipo(pagamento.tipo),
+                                      size: 18,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          pagamento.tipo.nome,
+                                          style: TextStyle(
+                                            color: isSelected
+                                                ? Colors.orange
+                                                : Colors.white,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        if (pagamento.isParcela)
+                                          Text(
+                                            'Parcela ${pagamento.numeroParcela}/${pagamento.parcelas}',
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.5,
+                                              ),
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    _formatoMoeda.format(pagamento.valor),
+                                    style: TextStyle(
+                                      color: isSelected
+                                          ? Colors.orange
+                                          : _getCorTipo(pagamento.tipo),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: () => _removerPagamento(index),
+                                    child: Icon(
+                                      Icons.close,
+                                      color: isSelected
+                                          ? Colors.orange.withOpacity(0.8)
+                                          : Colors.white.withOpacity(0.3),
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
 
-          // Botões de ação
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                // Botão Salvar
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => widget.onSalvarPendente(_pagamentos),
-                    icon: const Icon(Icons.save_outlined, size: 20),
-                    label: const Text(
-                      'Salvar (Receber Depois)',
-                      style: TextStyle(fontSize: 14),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.orange,
-                      side: BorderSide(color: Colors.orange.withOpacity(0.5)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+            // Botões de ação
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  // Botão Salvar
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => widget.onSalvarPendente(_pagamentos),
+                      icon: const Icon(Icons.save_outlined, size: 20),
+                      label: const Text(
+                        'Salvar (Receber Depois)',
+                        style: TextStyle(fontSize: 14),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.orange,
+                        side: BorderSide(color: Colors.orange.withOpacity(0.5)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                // Botão Finalizar
-                 SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: (_pagamentos.isEmpty || !_pagamentoCompleto || _estaConfirmando)
-                        ? null
-                        : () {
-                            setState(() => _estaConfirmando = true);
-                            widget.onConfirmar(_pagamentos, _descontoAutomatico, _acrescimoAutomatico);
-                          },
-                    icon: _estaConfirmando 
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                        : const Icon(Icons.check_circle, size: 24),
-                    label: Text(
-                      _estaConfirmando 
-                          ? 'PROCESSANDO...' 
-                          : (_pagamentoCompleto
-                              ? 'FINALIZAR VENDA'
-                              : 'FALTA ${_formatoMoeda.format(_valorRestante)}'),
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                  const SizedBox(height: 10),
+                  // Botão Finalizar
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed:
+                          (_pagamentos.isEmpty ||
+                              !_pagamentoCompleto ||
+                              _estaConfirmando)
+                          ? null
+                          : () {
+                              setState(() => _estaConfirmando = true);
+                              widget.onConfirmar(
+                                _pagamentos,
+                                _descontoAutomatico,
+                                _acrescimoAutomatico,
+                              );
+                            },
+                      icon: _estaConfirmando
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Icon(Icons.check_circle, size: 24),
+                      label: Text(
+                        _estaConfirmando
+                            ? 'PROCESSANDO...'
+                            : (_pagamentoCompleto
+                                  ? 'FINALIZAR VENDA'
+                                  : 'FALTA ${_formatoMoeda.format(_valorRestante)}'),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _estaConfirmando
-                          ? Colors.grey
-                          : (_pagamentoCompleto ? Colors.green : Colors.red.shade800),
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.grey.withOpacity(0.3),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _estaConfirmando
+                            ? Colors.grey
+                            : (_pagamentoCompleto
+                                  ? Colors.green
+                                  : Colors.red.shade800),
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: Colors.grey.withOpacity(0.3),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 /// Popup animado de sucesso com dinheiro caindo - centralizado na tela
@@ -21966,7 +25715,7 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
   late AnimationController _scaleController;
   late Animation<double> _scaleAnimation;
   final math.Random _random = math.Random();
-  
+
   // Foco para botões
   final FocusNode _fecharNode = FocusNode();
   final FocusNode _nfceNode = FocusNode();
@@ -22012,14 +25761,14 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
         }
       }
     });
-    
+
     // Adicionar listeners para reconstruir quando o foco mudar (para atualizar estilos)
     _fecharNode.addListener(_onFocusChange);
     _nfceNode.addListener(_onFocusChange);
     _whatsappNode.addListener(_onFocusChange);
     _imprimirNode.addListener(_onFocusChange);
   }
-  
+
   void _onFocusChange() {
     if (mounted) setState(() {});
   }
@@ -22072,11 +25821,11 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
 
   /// Lista dos botões visíveis, na ordem em que aparecem na tela.
   List<FocusNode> get _botoes => <FocusNode>[
-        if (widget.onEmitirNFCe != null) _nfceNode,
-        if (widget.onWhatsApp != null) _whatsappNode,
-        if (widget.onImprimir != null) _imprimirNode,
-        _fecharNode,
-      ];
+    if (widget.onEmitirNFCe != null) _nfceNode,
+    if (widget.onWhatsApp != null) _whatsappNode,
+    if (widget.onImprimir != null) _imprimirNode,
+    _fecharNode,
+  ];
 
   /// Teclado do popup. Centraliza Enter/Esc/setas.
   ///
@@ -22090,7 +25839,8 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
     final botoes = _botoes;
     final bool algumBotaoComFoco = botoes.any((b) => b.hasFocus);
 
-    final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
+    final isEnter =
+        event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter;
 
     if (isEnter) {
@@ -22224,16 +25974,12 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
             borderRadius: BorderRadius.circular(16),
             side: _fecharNode.hasFocus
                 ? const BorderSide(color: Colors.white, width: 2)
-                : BorderSide(
-                    color: Colors.white.withOpacity(0.3), width: 1),
+                : BorderSide(color: Colors.white.withOpacity(0.3), width: 1),
           ),
         ),
         child: const Text(
           'Fechar',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
       ),
     ];
@@ -22256,10 +26002,8 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
 
     // Ajuste exclusivo da versão WEB (hospedagem) em tela de celular.
     // No aplicativo de PC e no APK o popup continua exatamente como era.
-    final bool celularWeb =
-        kIsWeb && MediaQuery.of(context).size.width < 750;
-    final List<Widget> botoesAcao =
-        _construirBotoesAcao(compacto: celularWeb);
+    final bool celularWeb = kIsWeb && MediaQuery.of(context).size.width < 750;
+    final List<Widget> botoesAcao = _construirBotoesAcao(compacto: celularWeb);
 
     return Focus(
       focusNode: _tecladoNode,
@@ -22273,245 +26017,255 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
         color: Colors.transparent,
         child: Stack(
           children: [
-          // O fundo animado foi removido para evitar travamentos em dispositivos lentos
+            // O fundo animado foi removido para evitar travamentos em dispositivos lentos
 
-          // Popup central
-          Center(
-            child: ScaleTransition(
-              scale: _scaleAnimation,
-              child: Container(
-                margin: EdgeInsets.all(celularWeb ? 8 : 32),
-                padding: EdgeInsets.all(celularWeb ? 16 : 32),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      (widget.corBase ?? Colors.green).withBlue(50).withRed(20),
-                      widget.corBase ?? Colors.green,
-                      (widget.corBase ?? Colors.green).withOpacity(0.8),
+            // Popup central
+            Center(
+              child: ScaleTransition(
+                scale: _scaleAnimation,
+                child: Container(
+                  margin: EdgeInsets.all(celularWeb ? 8 : 32),
+                  padding: EdgeInsets.all(celularWeb ? 16 : 32),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        (widget.corBase ?? Colors.green)
+                            .withBlue(50)
+                            .withRed(20),
+                        widget.corBase ?? Colors.green,
+                        (widget.corBase ?? Colors.green).withOpacity(0.8),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (widget.corBase ?? Colors.green).withOpacity(
+                          0.5,
+                        ),
+                        blurRadius: 40,
+                        spreadRadius: 10,
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
+                      ),
                     ],
                   ),
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: (widget.corBase ?? Colors.green).withOpacity(0.5),
-                      blurRadius: 40,
-                      spreadRadius: 10,
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Ícone animado
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0.0, end: 1.0),
-                      duration: const Duration(milliseconds: 600),
-                      curve: Curves.elasticOut,
-                      builder: (context, value, child) {
-                        return Transform.scale(
-                          scale: value,
-                          child: Container(
-                            padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.white.withOpacity(0.3),
-                                  blurRadius: 20,
-                                  spreadRadius: 5,
-                                ),
-                              ],
-                            ),
-                            child: Icon(
-                              widget.icone ?? Icons.check_circle,
-                              size: 70,
-                              color: Colors.white,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Título
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0.0, end: 1.0),
-                      duration: const Duration(milliseconds: 400),
-                      curve: Curves.easeOut,
-                      builder: (context, value, child) {
-                        return Opacity(
-                          opacity: value,
-                          child: Transform.translate(
-                            offset: Offset(0, 20 * (1 - value)),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: Text(
-                        widget.titulo,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.5,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Subtítulo (número da venda)
-                    Text(
-                      widget.subtitulo,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Valor com animação
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0.0, end: 1.0),
-                      duration: const Duration(milliseconds: 600),
-                      curve: Curves.elasticOut,
-                      builder: (context, value, child) {
-                        return Transform.scale(
-                          scale: 0.5 + (value * 0.5),
-                          child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
-                        );
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 28,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.3),
-                            width: 2,
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            if (widget.infoExtra != null) ...[
-                              Text(
-                                widget.infoExtra!,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Ícone animado
+                      TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        duration: const Duration(milliseconds: 600),
+                        curve: Curves.elasticOut,
+                        builder: (context, value, child) {
+                          return Transform.scale(
+                            scale: value,
+                            child: Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.white.withOpacity(0.3),
+                                    blurRadius: 20,
+                                    spreadRadius: 5,
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 8),
-                            ],
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.attach_money,
-                                  color: Colors.white,
-                                  size: 32,
-                                ),
-                                const SizedBox(width: 8),
+                              child: Icon(
+                                widget.icone ?? Icons.check_circle,
+                                size: 70,
+                                color: Colors.white,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Título
+                      TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        duration: const Duration(milliseconds: 400),
+                        curve: Curves.easeOut,
+                        builder: (context, value, child) {
+                          return Opacity(
+                            opacity: value,
+                            child: Transform.translate(
+                              offset: Offset(0, 20 * (1 - value)),
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: Text(
+                          widget.titulo,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Subtítulo (número da venda)
+                      Text(
+                        widget.subtitulo,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Valor com animação
+                      TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        duration: const Duration(milliseconds: 600),
+                        curve: Curves.elasticOut,
+                        builder: (context, value, child) {
+                          return Transform.scale(
+                            scale: 0.5 + (value * 0.5),
+                            child: Opacity(
+                              opacity: value.clamp(0.0, 1.0),
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 28,
+                            vertical: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.3),
+                              width: 2,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              if (widget.infoExtra != null) ...[
                                 Text(
-                                  formatoMoeda.format(widget.valor),
+                                  widget.infoExtra!,
                                   style: const TextStyle(
                                     color: Colors.white,
-                                    fontSize: 32,
+                                    fontSize: 18,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
+                                const SizedBox(height: 8),
                               ],
-                            ),
-                            if (widget.troco != null && widget.troco! > 0) ...[
-                              const SizedBox(height: 12),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black26,
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.attach_money,
+                                    color: Colors.white,
+                                    size: 32,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    formatoMoeda.format(widget.valor),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 32,
+                                      fontWeight: FontWeight.bold,
                                     ),
-                                  ],
-                                ),
-                                child: Column(
-                                  children: [
-                                    const Text(
-                                      'TROCO DO CLIENTE',
-                                      style: TextStyle(
-                                        color: Colors.black54,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 10,
-                                        letterSpacing: 1,
-                                      ),
-                                    ),
-                                    Text(
-                                      formatoMoeda.format(widget.troco),
-                                      style: TextStyle(
-                                        color: widget.corBase ?? Colors.green.shade700,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 24,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
+                              if (widget.troco != null &&
+                                  widget.troco! > 0) ...[
+                                const SizedBox(height: 12),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black26,
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      const Text(
+                                        'TROCO DO CLIENTE',
+                                        style: TextStyle(
+                                          color: Colors.black54,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 10,
+                                          letterSpacing: 1,
+                                        ),
+                                      ),
+                                      Text(
+                                        formatoMoeda.format(widget.troco),
+                                        style: TextStyle(
+                                          color:
+                                              widget.corBase ??
+                                              Colors.green.shade700,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 24,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Botões de ação
+                      if (celularWeb)
+                        SizedBox(
+                          width: double.infinity,
+                          child: Wrap(
+                            alignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: botoesAcao,
+                          ),
+                        )
+                      else
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            for (int i = 0; i < botoesAcao.length; i++) ...[
+                              if (i > 0) const SizedBox(width: 16),
+                              botoesAcao[i],
                             ],
                           ],
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Botões de ação
-                    if (celularWeb)
-                      SizedBox(
-                        width: double.infinity,
-                        child: Wrap(
-                          alignment: WrapAlignment.center,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: botoesAcao,
-                        ),
-                      )
-                    else
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          for (int i = 0; i < botoesAcao.length; i++) ...[
-                            if (i > 0) const SizedBox(width: 16),
-                            botoesAcao[i],
-                          ],
-                        ],
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-   );
+    );
   }
 }
 
@@ -22657,14 +26411,17 @@ class _LogoDouradoBrilhanteState extends State<_LogoDouradoBrilhante>
 class _DialogConferenciaItens extends StatefulWidget {
   final List<ItemCarrinho> carrinho;
   final Function(int) onRemoverItem;
+  final void Function(int, int) onAlterarQuantidade;
 
   const _DialogConferenciaItens({
     required this.carrinho,
     required this.onRemoverItem,
+    required this.onAlterarQuantidade,
   });
 
   @override
-  State<_DialogConferenciaItens> createState() => _DialogConferenciaItensState();
+  State<_DialogConferenciaItens> createState() =>
+      _DialogConferenciaItensState();
 }
 
 class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
@@ -22714,19 +26471,24 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
 
   int _selectedIndex = 0;
   final ScrollController _scrollController = ScrollController();
-  final NumberFormat _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  final NumberFormat _formatoMoeda = NumberFormat.currency(
+    locale: 'pt_BR',
+    symbol: 'R\$',
+  );
 
-  double get _totalCarrinho => widget.carrinho.fold(0.0, (sum, item) => sum + item.subtotalSemDesconto);
-  double get _totalItens => widget.carrinho.fold(0.0, (sum, item) => sum + item.quantidade);
+  double get _totalCarrinho =>
+      widget.carrinho.fold(0.0, (sum, item) => sum + item.subtotalSemDesconto);
+  double get _totalItens =>
+      widget.carrinho.fold(0.0, (sum, item) => sum + item.quantidade);
 
   void _scrollToSelected() {
     if (!_scrollController.hasClients) return;
-    
+
     const double itemHeight = 80.0;
-    final double viewportHeight = 400.0; 
+    final double viewportHeight = 400.0;
     final targetOffset = _selectedIndex * itemHeight;
-    
-    if (targetOffset < _scrollController.offset || 
+
+    if (targetOffset < _scrollController.offset ||
         targetOffset > _scrollController.offset + viewportHeight - itemHeight) {
       _scrollController.animateTo(
         targetOffset.clamp(0, _scrollController.position.maxScrollExtent),
@@ -22760,6 +26522,32 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final key = event.logicalKey;
+        final controlPressed = HardwareKeyboard.instance.isControlPressed;
+
+        if (controlPressed && key == LogicalKeyboardKey.arrowUp) {
+          if (_selectedIndex < widget.carrinho.length) {
+            _alterarQuantidadeSelecionada(1);
+          }
+          return KeyEventResult.handled;
+        }
+        if (controlPressed && key == LogicalKeyboardKey.arrowDown) {
+          if (_selectedIndex < widget.carrinho.length) {
+            _alterarQuantidadeSelecionada(-1);
+          }
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowRight) {
+          if (_selectedIndex < widget.carrinho.length) {
+            _alterarQuantidadeSelecionada(1);
+          }
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowLeft) {
+          if (_selectedIndex < widget.carrinho.length) {
+            _alterarQuantidadeSelecionada(-1);
+          }
+          return KeyEventResult.handled;
+        }
 
         if (key == LogicalKeyboardKey.arrowDown) {
           if (_selectedIndex < widget.carrinho.length - 1) {
@@ -22775,7 +26563,8 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
           }
           return KeyEventResult.handled;
         }
-        if (key == LogicalKeyboardKey.delete || key == LogicalKeyboardKey.backspace) {
+        if (key == LogicalKeyboardKey.delete ||
+            key == LogicalKeyboardKey.backspace) {
           _removerItemAt(_selectedIndex);
           return KeyEventResult.handled;
         }
@@ -22799,17 +26588,17 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
               colors: [Color(0xFF161625), Color(0xFF0D0D14)],
             ),
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: Colors.cyanAccent.withOpacity(0.3), width: 2),
+            border: Border.all(
+              color: Colors.cyanAccent.withOpacity(0.3),
+              width: 2,
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.cyanAccent.withOpacity(0.1),
                 blurRadius: 40,
                 spreadRadius: 5,
               ),
-              BoxShadow(
-                color: Colors.black.withOpacity(0.5),
-                blurRadius: 20,
-              ),
+              BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 20),
             ],
           ),
           child: Column(
@@ -22823,7 +26612,11 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                       color: Colors.cyanAccent.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.fact_check_rounded, color: Colors.cyanAccent, size: 28),
+                    child: const Icon(
+                      Icons.fact_check_rounded,
+                      color: Colors.cyanAccent,
+                      size: 28,
+                    ),
                   ),
                   const SizedBox(width: 16),
                   const Text(
@@ -22856,28 +26649,53 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                     shrinkWrap: true,
                     padding: const EdgeInsets.all(16),
                     itemCount: widget.carrinho.length,
-                    separatorBuilder: (_, __) => Divider(color: Colors.white.withOpacity(0.05), height: 16),
+                    separatorBuilder: (_, __) => Divider(
+                      color: Colors.white.withOpacity(0.05),
+                      height: 16,
+                    ),
                     itemBuilder: (context, index) {
                       final item = widget.carrinho[index];
                       final isSelected = index == _selectedIndex;
-                      
+
                       return AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: isSelected ? Colors.cyanAccent.withOpacity(0.08) : Colors.transparent,
+                          color: isSelected
+                              ? Colors.cyanAccent.withOpacity(0.08)
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: isSelected ? Colors.cyanAccent.withOpacity(0.3) : Colors.transparent,
+                            color: isSelected
+                                ? Colors.cyanAccent.withOpacity(0.3)
+                                : Colors.transparent,
                           ),
                         ),
                         child: Row(
                           children: [
+                            IconButton(
+                              onPressed: item.quantidade <= 1
+                                  ? null
+                                  : () => _alterarQuantidadeItem(index, -1),
+                              tooltip: 'Diminuir quantidade',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 30,
+                                height: 36,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              iconSize: 18,
+                              color: Colors.cyanAccent,
+                              disabledColor: Colors.white24,
+                              icon: const Icon(Icons.remove_circle_outline),
+                            ),
                             Container(
                               width: 36,
                               height: 36,
                               decoration: BoxDecoration(
-                                color: isSelected ? Colors.cyanAccent : Colors.cyanAccent.withOpacity(0.1),
+                                color: isSelected
+                                    ? Colors.cyanAccent
+                                    : Colors.cyanAccent.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               alignment: Alignment.center,
@@ -22886,11 +26704,26 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                                     ? '${item.quantidade.toStringAsFixed(item.quantidade == item.quantidade.roundToDouble() ? 0 : 2)} ${_unidadeVendaLabelItem(item).toLowerCase()}${item.quantidade > 1 ? 's' : ''}'
                                     : '${item.quantidade.toStringAsFixed(item.quantidade == item.quantidade.roundToDouble() ? 0 : 2)}x',
                                 style: TextStyle(
-                                  color: isSelected ? Colors.black : Colors.cyanAccent,
+                                  color: isSelected
+                                      ? Colors.black
+                                      : Colors.cyanAccent,
                                   fontWeight: FontWeight.w900,
                                   fontSize: 13,
                                 ),
                               ),
+                            ),
+                            IconButton(
+                              onPressed: () => _alterarQuantidadeItem(index, 1),
+                              tooltip: 'Aumentar quantidade',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 30,
+                                height: 36,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              iconSize: 18,
+                              color: Colors.cyanAccent,
+                              icon: const Icon(Icons.add_circle_outline),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
@@ -22900,20 +26733,29 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                                   Text(
                                     item.nome.toUpperCase(),
                                     style: TextStyle(
-                                      color: isSelected ? Colors.cyanAccent : Colors.white,
+                                      color: isSelected
+                                          ? Colors.cyanAccent
+                                          : Colors.white,
                                       fontSize: 15,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  if (item.descricao != null && item.descricao!.isNotEmpty)
+                                  if (item.descricao != null &&
+                                      item.descricao!.isNotEmpty)
                                     Text(
                                       item.descricao!,
                                       style: TextStyle(
-                                        color: isSelected ? Colors.white70 : Colors.white38,
+                                        color: isSelected
+                                            ? Colors.cyanAccent
+                                            : Colors.cyanAccent.withOpacity(
+                                                0.85,
+                                              ),
                                         fontSize: 12,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                  if (item.descontoPromocionalPercent != null) ...[
+                                  if (item.descontoPromocionalPercent !=
+                                      null) ...[
                                     const SizedBox(height: 4),
                                     Text(
                                       '${item.descontoPromocionalPercent!.toStringAsFixed(0)}% promocional · -${_formatoMoeda.format(item.descontoPromocionalValor!)}',
@@ -22931,9 +26773,13 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Text(
-                                  _formatoMoeda.format(item.subtotalSemDesconto),
+                                  _formatoMoeda.format(
+                                    item.subtotalSemDesconto,
+                                  ),
                                   style: TextStyle(
-                                    color: isSelected ? Colors.cyanAccent : Colors.white,
+                                    color: isSelected
+                                        ? Colors.cyanAccent
+                                        : Colors.white,
                                     fontSize: 16,
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -22941,7 +26787,9 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                                 Text(
                                   'un: ${_formatoMoeda.format(item.preco)}',
                                   style: TextStyle(
-                                    color: isSelected ? Colors.white38 : Colors.white24,
+                                    color: isSelected
+                                        ? Colors.white38
+                                        : Colors.white24,
                                     fontSize: 11,
                                   ),
                                 ),
@@ -22959,7 +26807,10 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [Colors.cyanAccent.withOpacity(0.15), Colors.transparent],
+                    colors: [
+                      Colors.cyanAccent.withOpacity(0.15),
+                      Colors.transparent,
+                    ],
                   ),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: Colors.cyanAccent.withOpacity(0.2)),
@@ -22981,7 +26832,10 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                         ),
                         Text(
                           '${_totalItens} produtos lançados',
-                          style: const TextStyle(color: Colors.white38, fontSize: 13),
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 13,
+                          ),
                         ),
                       ],
                     ),
@@ -23000,28 +26854,51 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
                 ),
               ),
               const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 16,
+                runSpacing: 8,
                 children: [
-                   Icon(Icons.swap_vert, color: Colors.cyanAccent, size: 16),
-                  const SizedBox(width: 4),
+                  Icon(Icons.swap_vert, color: Colors.cyanAccent, size: 16),
                   const Text(
                     'SETAS PARA NAVEGAR',
-                    style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(width: 16),
-                   Icon(Icons.backspace_outlined, color: Colors.redAccent, size: 16),
-                  const SizedBox(width: 4),
+                  Icon(Icons.add, color: Colors.greenAccent, size: 16),
+                  const Text(
+                    '← DIMINUI  |  → AUMENTA',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Icon(
+                    Icons.backspace_outlined,
+                    color: Colors.redAccent,
+                    size: 16,
+                  ),
                   const Text(
                     'DEL/BACKSPACE PARA REMOVER',
-                    style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(width: 16),
-                   Icon(Icons.close, color: Colors.white24, size: 16),
-                  const SizedBox(width: 4),
+                  Icon(Icons.close, color: Colors.white24, size: 16),
                   const Text(
                     'ESC PARA FECHAR',
-                    style: TextStyle(color: Colors.white24, fontSize: 11, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white24,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ],
               ),
@@ -23031,6 +26908,17 @@ class _DialogConferenciaItensState extends State<_DialogConferenciaItens> {
       ),
     );
   }
+
+  void _alterarQuantidadeSelecionada(int delta) {
+    if (_selectedIndex < 0 || _selectedIndex >= widget.carrinho.length) return;
+    _alterarQuantidadeItem(_selectedIndex, delta);
+  }
+
+  void _alterarQuantidadeItem(int index, int delta) {
+    if (index < 0 || index >= widget.carrinho.length) return;
+    final item = widget.carrinho[index];
+    if (delta < 0 && item.quantidade <= 1) return;
+    widget.onAlterarQuantidade(index, delta);
+    setState(() {});
+  }
 }
-
-

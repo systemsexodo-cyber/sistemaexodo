@@ -18,6 +18,7 @@ import 'package:sistema_exodo_novo/services/env_config.dart';
 import 'package:sistema_exodo_novo/services/config_servidor_mobile.dart';
 import 'package:sistema_exodo_novo/services/app_update_service.dart';
 import 'package:sistema_exodo_novo/services/nfce_contingencia_service.dart';
+import 'package:sistema_exodo_novo/services/nfce_xml_local_service.dart';
 import 'package:sistema_exodo_novo/services/clock_check_service.dart';
 import 'package:sistema_exodo_novo/services/diagnostico_layout_service.dart';
 import 'package:sistema_exodo_novo/services/app_log_service.dart';
@@ -83,6 +84,24 @@ Future<void> _logBoot(String msg) async {
       mode: FileMode.append,
     );
   } catch (_) {}
+}
+
+/// Instala a empresa no DataService na ordem segura (usada no pós-frame do
+/// builder quando a empresa do AuthService mudou).
+///
+/// ORDEM IMPORTANTE (igual ao `onEmpresaSelecionada`): `definirEmpresaAtual`
+/// PRIMEIRO — ele limpa a memória e fixa `_currentEmpresaId` na empresa nova.
+/// Se `setEmpresaAtual` rodasse antes, as listas de configuração (perfis,
+/// estoques, métodos de pagamento) eram recarregadas da empresa nova no
+/// estado DE:empresa-ANTIGA, e qualquer gravação nesse intervalo usava a
+/// chave da empresa antiga — era assim que os estoques de uma empresa
+/// apareciam/eram gravados na outra ao trocar de empresa.
+Future<void> _migrarEmpresaBoot(
+  DataService dataService,
+  Empresa empresa,
+) async {
+  await dataService.definirEmpresaAtual(empresa.id);
+  dataService.setEmpresaAtual(empresa);
 }
 
 /// Fila de gravação do log de erros.
@@ -323,6 +342,24 @@ Future<void> _main() async {
   // config antiga seja reaplicada ao reabrir/trocar a empresa.
   dataService.onEmpresaAtualizada = authService.sincronizarEmpresaEmMemoria;
 
+  // Toda troca de empresa (inclusive pela tela "Empresas") precisa passar pelo
+  // DataService: limpar a memória e recarregar somente os dados da empresa nova.
+  // Antes, alguns fluxos chamavam só `setEmpresaAtual`, e funcionários/perfis da
+  // empresa anterior continuavam visíveis e eram gravados na empresa errada.
+  //
+  // ORDEM IMPORTANTE: `definirEmpresaAtual` PRIMEIRO. Ele limpa a memória e
+  // fixa `_currentEmpresaId` na empresa nova. Se `setEmpresaAtual` rodasse
+  // antes, `setEmpresaAtual` recarregava as listas de configuração (perfis,
+  // departamentos, estoques) da empresa nova enquanto `_currentEmpresaId` era
+  // ainda a empresa ANTERIOR — e qualquer "Tomar principal"/edição de estoque
+  // feite nessa janela gravava a lista da empresa nova no cache da empresa
+  // antiga (`_getChaveComEmpresa` usa `_currentEmpresaId`). Era assim que o
+  // estoque principal mudado numa empresa aparecia trocado na outra.
+  authService.onEmpresaSelecionada = (empresa) async {
+    await dataService.definirEmpresaAtual(empresa.id);
+    dataService.setEmpresaAtual(empresa);
+  };
+
   // Inicializa o serviço de contingência (nunca deve impedir o app de abrir)
   try {
     await NfceContingenciaService.instance.inicializar();
@@ -330,6 +367,17 @@ Future<void> _main() async {
   } catch (e) {
     debugPrint('>>> [SISTEMA] ⚠️ Erro ao inicializar contingência: $e');
     await _logBoot('ERRO contingência: $e');
+  }
+
+  // Fila de upload de XML: quando a nuvem recusa/está fora na hora da
+  // autorização, o XML fica em disco e é reenviado a cada 5 min — sem isso a
+  // nota nunca aparecia no Portal do Contador.
+  try {
+    await NfceXmlLocalService.inicializar();
+    await _logBoot('Fila de upload de XML inicializada');
+  } catch (e) {
+    debugPrint('>>> [SISTEMA] ⚠️ Erro ao inicializar a fila de XML: $e');
+    await _logBoot('ERRO fila de XML: $e');
   }
 
   // Rejeição de NFC-e não descarta a venda: a nota fica salva como 'pendente'.
@@ -347,6 +395,9 @@ Future<void> _main() async {
       await dataService.atualizarNFCe(
         antiga.copyWith(
           status: 'autorizada',
+          numero: nfce.numero,
+          vendaNumero: nfce.numero,
+          serie: nfce.serie,
           chaveAcesso: nfce.chaveAcesso,
           protocolo: nfce.protocolo,
           xmlEnviado: nfce.xmlEnviado,
@@ -358,7 +409,79 @@ Future<void> _main() async {
         '>>> [SISTEMA] NFC-e ${antiga.numero} reconciliada: pendente -> autorizada',
       );
     }
+
+    // Nota autorizada pelo reenvio automático da fila (timer de 30 s) ou pelos
+    // botões "Reenviar" NÃO passa pela emissão direta — e era justamente ela
+    // que ficava sem XML no disco e no bucket `xmls` do Portal do Contador.
+    var empresaDaNota = authService.empresaAtual;
+    final empresaIdNota = nfce.empresaId.trim();
+    if (empresaIdNota.isNotEmpty && empresaDaNota?.id != empresaIdNota) {
+      for (final empresa in authService.empresas) {
+        if (empresa.id == empresaIdNota) {
+          empresaDaNota = empresa;
+          break;
+        }
+      }
+    }
+    if (empresaDaNota != null) {
+      unawaited(
+        NfceXmlLocalService.salvarXmlAposEmissao(
+          nfce: nfce,
+          empresa: empresaDaNota,
+        ),
+      );
+    }
   };
+
+  // Rejeição 539 sem número livre: a fila para de retransmitir (a entrada já
+  // é removida pelo serviço), e o histórico também não pode seguir 'pendente'
+  // — a nota original nunca vai ser autorizada com aquele número. Marca a
+  // falha na nota e trava TODOS os números que a SEFAZ confirmou ocupados
+  // para que a sequência nunca mais os sugira.
+  NfceContingenciaService.onDuplicidadeSemNumero =
+      (empresaId, serie, numeroOriginal, motivo, numerosDuplicados) async {
+        for (final numero in numerosDuplicados) {
+          await dataService.marcarNumeroNfceComoOcupado(
+            numero: numero,
+            serie: serie,
+          );
+        }
+        final antigas = dataService.nfces
+            .where(
+              (n) =>
+                  n.numero == numeroOriginal &&
+                  (n.status == 'pendente' || n.status == 'contingencia'),
+            )
+            .toList();
+        for (final antiga in antigas) {
+          await dataService.atualizarNFCe(
+            antiga.copyWith(
+              status: 'rejeitada',
+              xmlRetorno: motivo,
+              updatedAt: DateTime.now(),
+            ),
+          );
+          debugPrint(
+            '>>> [SISTEMA] NFC-e ${antiga.numero} marcada como rejeitada: '
+            'duplicidade 539 sem número livre na série $serie',
+          );
+        }
+      };
+
+  // Números que a SEFAZ apontou como ocupados (539) viram reserva de
+  // numeração no histórico — usado pelo emissor na busca automática de
+  // número menor.
+  NfceContingenciaService.onMarcarNumeroOcupado = (numero, serie) =>
+      dataService.marcarNumeroNfceComoOcupado(numero: numero, serie: serie);
+
+  // Régua do MENOR número livre usada pela fila de reenvio ao renumerar nota
+  // que bateu em duplicidade: sem ela a busca continuava para baixo do número
+  // rejeitado e terminava autorizando a nota lá em cima.
+  NfceContingenciaService.onProximoNumeroLivre =
+      (serie, numeroInicial) => dataService.getProximoNumeroNfce(
+        serie: serie,
+        numeroInicial: numeroInicial,
+      );
 
   // Inicia verificação do relógio em background (não bloqueia a inicialização)
   Future.delayed(const Duration(seconds: 5), () {
@@ -1112,8 +1235,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
               // Só dispara o setup se realmente a empresa mudou
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (dataService.currentEmpresaId != empresaAtual.id) {
-                  dataService.setEmpresaAtual(empresaAtual);
-                  dataService.definirEmpresaAtual(empresaAtual.id);
+                  // Mesma ordem do onEmpresaSelecionada: trocar primeiro,
+                  // instalar o objeto da empresa depois (evita o estado
+                  // misto "empresa nova em memória + empresa antiga ativa").
+                  unawaited(_migrarEmpresaBoot(dataService, empresaAtual));
                 }
               });
               // Retornar loading enquanto o setup acontece (evita flash de tela)

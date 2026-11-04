@@ -894,6 +894,8 @@ class PedidoPDFService {
         return 'Outro';
       case TipoPagamento.alimentacao:
         return 'Ticket/Alimentação';
+      case TipoPagamento.mercado_pago:
+        return 'Mercado Pago';
       case TipoPagamento.transferencia:
         return 'Transferência';
       case TipoPagamento.cashBack:

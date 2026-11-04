@@ -12,6 +12,9 @@ import 'package:sistema_exodo_novo/models/item_servico.dart';
 import 'package:sistema_exodo_novo/models/cliente.dart';
 import 'package:sistema_exodo_novo/models/comissao_vendedor.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
+import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
+import 'package:sistema_exodo_novo/models/delivery_info.dart';
+import 'package:sistema_exodo_novo/models/entrega.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/cliente_auth_service.dart';
@@ -22,6 +25,8 @@ import 'package:sistema_exodo_novo/pages/cliente_cadastro_page.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class LojaCheckoutPage extends StatefulWidget {
   final LinkVendedor? linkVendedor;
@@ -65,9 +70,15 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
   List<OpcaoFrete> _opcoesFrete = [];
   OpcaoFrete? _opcaoFreteSelecionada;
 
+  /// Retirada na loja é o padrão: garante que o cliente consiga concluir o
+  /// pedido mesmo quando a loja não tem frete/transportadora configurada.
+  bool _retiradaNaLoja = true;
+  TipoPagamento _tipoPagamento = TipoPagamento.pix;
+
   @override
   void initState() {
     super.initState();
+    _retiradaNaLoja = widget.opcaoFreteInicial == null;
     _carregarDadosLoja();
     _carregarDadosCliente();
 
@@ -119,8 +130,10 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
       _estadoController.text = cliente.estado ?? '';
       _cepController.text = cliente.cep ?? '';
       
-      // Calcular frete automaticamente se tiver CEP
-      if (cliente.cep != null && cliente.cep!.replaceAll(RegExp(r'[^\d]'), '').length == 8) {
+      // Calcular frete automaticamente se tiver CEP e a entrega estiver marcada
+      if (!_retiradaNaLoja &&
+          cliente.cep != null &&
+          cliente.cep!.replaceAll(RegExp(r'[^\d]'), '').length == 8) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _calcularFrete();
         });
@@ -173,9 +186,68 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
     return carrinhoService.valorTotal;
   }
 
+  Map<String, dynamic>? get _configEcommerce {
+    final empresa = Provider.of<AuthService>(context, listen: false).empresaAtual;
+    final config = empresa?.configuracoes?['ecommerce'];
+    return config is Map<String, dynamic> ? config : null;
+  }
+
+  bool get _descontoPixAtivo =>
+      _configEcommerce?['descontoPixAtivo'] as bool? ?? true;
+
+  double get _percentualDescontoPix =>
+      (_configEcommerce?['percentualDescontoPix'] as num?)?.toDouble() ?? 5.0;
+
+  double _calcularDescontoPix() {
+    if (!_descontoPixAtivo || _tipoPagamento != TipoPagamento.pix) return 0.0;
+    final desconto = _calcularTotal() * (_percentualDescontoPix / 100);
+    return desconto > 0 ? desconto : 0.0;
+  }
+
   double _calcularTotalComFrete() {
-    final frete = _opcaoFreteSelecionada?.valor ?? _valorFrete;
-    return _calcularTotal() + frete;
+    final frete = _retiradaNaLoja
+        ? 0.0
+        : (_opcaoFreteSelecionada?.valor ?? _valorFrete);
+    return (_calcularTotal() - _calcularDescontoPix()) + frete;
+  }
+
+  String _enderecoLojaFormatado() {
+    final empresa = Provider.of<AuthService>(context, listen: false).empresaAtual;
+    if (empresa == null) return '';
+    final partes = <String?>[
+      empresa.endereco,
+      empresa.numero,
+      empresa.complemento,
+      empresa.bairro,
+      empresa.cidade,
+      empresa.estado,
+      empresa.cep,
+    ].where((p) => p != null && p.trim().isNotEmpty).cast<String>();
+    return partes.join(', ');
+  }
+
+  String? _normalizarTelefone(String? valor) {
+    var digitos = (valor ?? '').replaceAll(RegExp(r'\D'), '');
+    if (digitos.isEmpty) return null;
+    if (digitos.startsWith('0')) digitos = digitos.substring(1);
+    if (!digitos.startsWith('55')) digitos = '55$digitos';
+    if (digitos.length < 12 || digitos.length > 15) return null;
+    return digitos;
+  }
+
+  String? _telefoneLoja() {
+    final empresa = Provider.of<AuthService>(context, listen: false).empresaAtual;
+    final config = _configEcommerce;
+    final candidatos = <String?>[
+      config?['whatsapp']?.toString(),
+      empresa?.celular,
+      empresa?.telefone,
+    ];
+    for (final candidato in candidatos) {
+      final normalizado = _normalizarTelefone(candidato);
+      if (normalizado != null) return normalizado;
+    }
+    return null;
   }
 
   double _calcularPesoTotal() {
@@ -250,6 +322,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
   }
 
   Future<void> _calcularFrete() async {
+    if (_retiradaNaLoja) return;
     if (_estadoController.text.isEmpty || _estadoLoja == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -435,18 +508,172 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
     }
   }
 
-  String _gerarNumeroPedido() {
+  /// Número do pedido pela trilha SEGURA multi-PC: bloco reservado + piso da
+  /// nuvem (getProximoNumeroPedidoSeguro) antes do cálculo local. Aqui era
+  /// max(local)+1, o que colidia com pedido lançado no PC da loja ou em outra
+  /// máquina — e podia voltar para PED-0001 se a lista local ainda não tivesse
+  /// carregado no portal.
+  Future<String> _gerarNumeroPedido() async {
     final dataService = Provider.of<DataService>(context, listen: false);
-    final pedidos = dataService.pedidos;
-    final ultimoNumero = pedidos.isEmpty
-        ? 0
-        : pedidos
-            .map((p) {
-              final match = RegExp(r'PED-(\d+)').firstMatch(p.numero);
-              return match != null ? int.parse(match.group(1)!) : 0;
-            })
-            .reduce((a, b) => a > b ? a : b);
-    return 'PED-${(ultimoNumero + 1).toString().padLeft(4, '0')}';
+    final usados = dataService.pedidos.map((p) => p.numero).toSet();
+    var numero = await dataService.getProximoNumeroPedidoSeguro();
+
+    // Colisão rara (bloco reservado x lista local): pula para o próximo livre.
+    final match = RegExp(r'^PED-(\d+)$').firstMatch(numero);
+    if (match != null && usados.contains(numero)) {
+      var proximo = int.parse(match.group(1)!);
+      do {
+        proximo++;
+        numero = 'PED-${proximo.toString().padLeft(4, '0')}';
+      } while (usados.contains(numero));
+    }
+    return numero;
+  }
+
+  Future<void> _enviarPedidoWhatsApp(Pedido pedido) async {
+    final telefone = _telefoneLoja();
+    if (telefone == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('WhatsApp da loja não configurado.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final linhas = <String>[
+      'Olá! Acabei de fazer um pedido no site.',
+      'Pedido: ${pedido.numero}',
+      'Cliente: ${pedido.clienteNome ?? ''}',
+      if ((pedido.clienteTelefone ?? '').isNotEmpty)
+        'Telefone: ${pedido.clienteTelefone}',
+      'Forma de recebimento: ${(pedido.origem ?? 'E-commerce').replaceFirst('E-commerce - ', '')}',
+      if (pedido.pagamentos.isNotEmpty)
+        'Pagamento: ${pedido.pagamentos.first.tipo.nome}',
+      '',
+      'Itens:',
+      ...pedido.produtos.map(
+        (item) =>
+            '- ${item.quantidade.toStringAsFixed(item.quantidade % 1 == 0 ? 0 : 1)}x ${item.nome} — ${moeda.format(item.preco * item.quantidade)}',
+      ),
+      if (pedido.servicos.isNotEmpty) ...pedido.servicos.map(
+        (item) => '- ${item.descricao} — ${moeda.format(item.valor + item.valorAdicional)}',
+      ),
+      '',
+      'Total: ${moeda.format(pedido.totalGeral)}',
+      if ((pedido.observacoes ?? '').trim().isNotEmpty) ...[
+        '',
+        'Observações:',
+        pedido.observacoes!,
+      ],
+    ];
+    final uri = Uri.parse(
+      'https://wa.me/$telefone?text=${Uri.encodeComponent(linhas.join('\n'))}',
+    );
+    try {
+      final abriu = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!abriu && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível abrir o WhatsApp.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Não foi possível abrir o WhatsApp: $e'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _mostrarConfirmacaoPedido(Pedido pedido) async {
+    final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          title: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.green[300], size: 30),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Pedido recebido!',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Pedido ${pedido.numero}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Recebimento: ${(pedido.origem ?? 'E-commerce').replaceFirst('E-commerce - ', '')}',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                if (pedido.pagamentos.isNotEmpty)
+                  Text(
+                    'Pagamento: ${pedido.pagamentos.first.tipo.nome}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  'Total: ${moeda.format(pedido.totalGeral)}',
+                  style: TextStyle(
+                    color: Colors.green[300],
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'O pedido já foi enviado para a tela de Pedidos da loja. '
+                  'Guarde o número acima. Se quiser, envie o resumo no WhatsApp para agilizar o atendimento.',
+                  style: TextStyle(color: Colors.white60, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Fechar'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => _enviarPedidoWhatsApp(pedido),
+              icon: const Icon(Icons.chat_bubble_outline, size: 18),
+              label: const Text('Enviar no WhatsApp'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _finalizarPedido() async {
@@ -454,44 +681,52 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
       return;
     }
 
-    // Validar se o frete foi calculado e uma opção foi selecionada
-    if (!_freteCalculado || _opcoesFrete.isEmpty) {
-      if (_estadoController.text.isNotEmpty) {
-        await _calcularFrete();
-        // Aguardar um pouco para as opções serem calculadas
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-      
+    // Frete só é obrigatório quando o cliente escolheu receber em casa.
+    if (!_retiradaNaLoja) {
       if (!_freteCalculado || _opcoesFrete.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Por favor, calcule e selecione uma opção de frete antes de finalizar o pedido.'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 3),
-          ),
-        );
+        if (_estadoController.text.isNotEmpty) {
+          await _calcularFrete();
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+        if (!_freteCalculado || _opcoesFrete.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Não foi possível calcular o frete para este endereço. '
+                  'Escolha "Retirar na loja" ou confira o CEP/bairro.',
+                ),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 4),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
+      if (_opcaoFreteSelecionada == null && _opcoesFrete.isNotEmpty) {
+        setState(() {
+          _opcaoFreteSelecionada = _opcoesFrete.first;
+          _valorFrete = _opcoesFrete.first.valor;
+          _prazoFrete = _opcoesFrete.first.prazo;
+        });
+      }
+
+      if (_opcaoFreteSelecionada == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Por favor, selecione uma opção de frete.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
         return;
       }
-    }
-    
-    if (_opcaoFreteSelecionada == null && _opcoesFrete.isNotEmpty) {
-      // Se não selecionou, selecionar a primeira automaticamente
-      setState(() {
-        _opcaoFreteSelecionada = _opcoesFrete.first;
-        _valorFrete = _opcoesFrete.first.valor;
-        _prazoFrete = _opcoesFrete.first.prazo;
-      });
-    }
-    
-    if (_opcaoFreteSelecionada == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Por favor, selecione uma opção de frete antes de finalizar o pedido.'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 3),
-        ),
-      );
-      return;
+    } else {
+      _valorFrete = 0.0;
+      _opcaoFreteSelecionada = null;
     }
 
     setState(() => _isLoading = true);
@@ -499,60 +734,85 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
     try {
       final dataService = Provider.of<DataService>(context, listen: false);
 
-      // Criar ou buscar cliente
+      // Criar ou buscar cliente por CPF ou telefone (evita duplicidade)
       Cliente? cliente;
       final clientes = dataService.clientes;
       final cpfLimpo = _cpfController.text.replaceAll(RegExp(r'[^\d]'), '');
-      
+      final telefoneLimpo =
+          _telefoneController.text.replaceAll(RegExp(r'[^\d]'), '');
+
       Cliente? clienteExistente;
-      try {
-        clienteExistente = clientes.firstWhere(
-          (c) => c.cpfCnpj != null && 
-                 c.cpfCnpj!.replaceAll(RegExp(r'[^\d]'), '') == cpfLimpo && 
-                 cpfLimpo.isNotEmpty,
-        );
-      } catch (e) {
-        clienteExistente = null;
+      for (final c in clientes) {
+        final cpfCliente =
+            (c.cpfCnpj ?? '').replaceAll(RegExp(r'[^\d]'), '');
+        final telefoneCliente =
+            (c.telefone ?? '').replaceAll(RegExp(r'[^\d]'), '');
+        if ((cpfLimpo.isNotEmpty && cpfCliente == cpfLimpo) ||
+            (telefoneLimpo.isNotEmpty && telefoneCliente == telefoneLimpo)) {
+          clienteExistente = c;
+          break;
+        }
       }
 
+      final enderecoCliente =
+          _retiradaNaLoja ? null : _enderecoController.text.trim();
+      final numeroCliente =
+          _retiradaNaLoja ? null : _numeroController.text.trim();
+      final complementoCliente = _retiradaNaLoja
+          ? null
+          : (_complementoController.text.trim().isNotEmpty
+              ? _complementoController.text.trim()
+              : null);
+      final bairroCliente =
+          _retiradaNaLoja ? null : _bairroController.text.trim();
+      final cidadeCliente =
+          _retiradaNaLoja ? null : _cidadeController.text.trim();
+      final estadoCliente =
+          _retiradaNaLoja ? null : _estadoController.text.trim();
+      final cepCliente = _retiradaNaLoja
+          ? null
+          : _cepController.text.replaceAll(RegExp(r'[^\d]'), '');
+
       if (clienteExistente != null) {
-        // Atualizar cliente existente
         cliente = clienteExistente.copyWith(
           nome: _nomeController.text.trim(),
           telefone: _telefoneController.text.trim(),
-          email: _emailController.text.trim().isNotEmpty ? _emailController.text.trim() : null,
-          endereco: _enderecoController.text.trim(),
-          numero: _numeroController.text.trim(),
-          complemento: _complementoController.text.trim().isNotEmpty ? _complementoController.text.trim() : null,
-          bairro: _bairroController.text.trim(),
-          cidade: _cidadeController.text.trim(),
-          estado: _estadoController.text.trim(),
-          cep: _cepController.text.trim(),
+          email: _emailController.text.trim().isNotEmpty
+              ? _emailController.text.trim()
+              : null,
+          endereco: enderecoCliente,
+          numero: numeroCliente,
+          complemento: complementoCliente,
+          bairro: bairroCliente,
+          cidade: cidadeCliente,
+          estado: estadoCliente,
+          cep: cepCliente,
           updatedAt: DateTime.now(),
         );
-        dataService.updateCliente(cliente);
+        await dataService.updateCliente(cliente);
       } else {
-        // Criar novo cliente
         cliente = Cliente(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          id: const Uuid().v4(),
           nome: _nomeController.text.trim(),
           telefone: _telefoneController.text.trim(),
-          email: _emailController.text.trim().isNotEmpty ? _emailController.text.trim() : null,
+          email: _emailController.text.trim().isNotEmpty
+              ? _emailController.text.trim()
+              : null,
           cpfCnpj: cpfLimpo.isNotEmpty ? cpfLimpo : null,
-          endereco: _enderecoController.text.trim(),
-          numero: _numeroController.text.trim(),
-          complemento: _complementoController.text.trim().isNotEmpty ? _complementoController.text.trim() : null,
-          bairro: _bairroController.text.trim(),
-          cidade: _cidadeController.text.trim(),
-          estado: _estadoController.text.trim(),
-          cep: _cepController.text.trim(),
+          endereco: enderecoCliente,
+          numero: numeroCliente,
+          complemento: complementoCliente,
+          bairro: bairroCliente,
+          cidade: cidadeCliente,
+          estado: estadoCliente,
+          cep: cepCliente,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
         );
         await dataService.addCliente(cliente);
       }
 
-      // Montar endereço completo
+      // Montar endereço completo (somente para entrega)
       final enderecoCompleto = [
         _enderecoController.text.trim(),
         _numeroController.text.trim(),
@@ -562,9 +822,14 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
         _estadoController.text.trim(),
         _cepController.text.trim(),
       ].where((s) => s.isNotEmpty).join(', ');
+      final enderecoLoja = _enderecoLojaFormatado();
+      final enderecoPedido = _retiradaNaLoja
+          ? 'Retirada na loja${enderecoLoja.isNotEmpty ? ' - $enderecoLoja' : ''}'
+          : enderecoCompleto;
 
       // Converter carrinho para itens de pedido
-      final carrinhoService = Provider.of<CarrinhoService>(context, listen: false);
+      final carrinhoService =
+          Provider.of<CarrinhoService>(context, listen: false);
       final produtos = carrinhoService.itens
           .where((item) => item.isProduto)
           .map((item) => ItemPedido(
@@ -586,48 +851,183 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
               ))
           .toList();
 
-      // Criar pedido
-      final totalComFrete = _calcularTotalComFrete();
+      if (produtos.isEmpty && servicos.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Seu carrinho está vazio.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          setState(() => _isLoading = false);
+        }
+        return;
+      }
+
+      // O estoque pode ter mudado desde que o item entrou no carrinho (outro
+      // cliente comprou antes). Confere tudo ANTES de criar o pedido, senão o
+      // lojista recebe uma venda que não pode atender.
+      final faltasDeEstoque = <String>[];
+      for (final item in carrinhoService.itens.where((i) => i.isProduto)) {
+        Produto? produto;
+        for (final p in dataService.produtos) {
+          if (p.id == item.itemId) {
+            produto = p;
+            break;
+          }
+        }
+        if (produto == null) continue;
+        final falta = dataService.validarEstoqueDisponivel(
+          produto,
+          quantidade: item.quantidade.toDouble(),
+        );
+        if (falta != null) faltasDeEstoque.add('${item.nome}: $falta');
+      }
+      if (faltasDeEstoque.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Item sem estoque suficiente — ajuste a quantidade no carrinho.\n'
+                '${faltasDeEstoque.join('\n')}',
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        }
+        return;
+      }
+
+      final taxaEntrega = _retiradaNaLoja
+          ? 0.0
+          : (_opcaoFreteSelecionada?.valor ?? _valorFrete);
+      final prazoEntrega = _opcaoFreteSelecionada?.prazo ?? _prazoFrete;
+      final desconto = _calcularDescontoPix();
+      final totalFinal = _calcularTotalComFrete();
+
+      final deliveryInfo = _retiradaNaLoja
+          ? null
+          : DeliveryInfo(
+              id: const Uuid().v4(),
+              enderecoId: cliente.id,
+              logradouro: _enderecoController.text.trim(),
+              numero: _numeroController.text.trim(),
+              bairro: _bairroController.text.trim(),
+              cidade: _cidadeController.text.trim(),
+              uf: _estadoController.text.trim().toUpperCase(),
+              cep: _cepController.text.replaceAll(RegExp(r'[^\d]'), ''),
+              taxaEntrega: taxaEntrega,
+              status: 'Pendente',
+              dataPedido: DateTime.now(),
+              observacoes: 'Pedido e-commerce',
+              previsaoEntrega:
+                  '$prazoEntrega dia${prazoEntrega == 1 ? '' : 's'} útil${prazoEntrega == 1 ? '' : 'eis'}',
+            );
+
+      final pagamento = PagamentoPedido(
+        id: const Uuid().v4(),
+        tipo: _tipoPagamento,
+        valor: totalFinal,
+        recebido: false,
+        observacao: _retiradaNaLoja
+            ? 'Pagamento na retirada'
+            : 'Pagamento na entrega',
+      );
+
+      final observacoesPartes = <String>[];
+      if (_retiradaNaLoja) {
+        observacoesPartes.add('RETIRADA NA LOJA');
+        if (enderecoLoja.isNotEmpty) {
+          observacoesPartes.add('Endereço da loja: $enderecoLoja');
+        }
+      } else if (_opcaoFreteSelecionada != null) {
+        observacoesPartes.add(
+          'Entrega: ${_opcaoFreteSelecionada!.nome} - '
+          'R\$ ${_opcaoFreteSelecionada!.valor.toStringAsFixed(2)} '
+          '(${_opcaoFreteSelecionada!.prazo} dia${_opcaoFreteSelecionada!.prazo == 1 ? '' : 's'} útil${_opcaoFreteSelecionada!.prazo == 1 ? '' : 'eis'})',
+        );
+      }
+      if (_observacoesController.text.trim().isNotEmpty) {
+        observacoesPartes.add(_observacoesController.text.trim());
+      }
+
       final pedido = Pedido(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        numero: _gerarNumeroPedido(),
+        id: const Uuid().v4(),
+        numero: await _gerarNumeroPedido(),
         clienteId: cliente.id,
         clienteNome: cliente.nome,
         clienteTelefone: cliente.telefone,
-        clienteEndereco: enderecoCompleto,
+        clienteEndereco: enderecoPedido,
         clienteCpfCnpj: cliente.cpfCnpj,
         vendedorId: widget.linkVendedor?.funcionarioId,
         vendedorNome: widget.linkVendedor?.funcionarioNome,
         linkVendedorId: widget.linkVendedor?.id,
         linkVendedorCodigo: widget.linkVendedor?.codigoLink,
-        origemEcommerce: true, // SEMPRE marcar como pedido do e-commerce
+        origemEcommerce: true,
+        origem: _retiradaNaLoja
+            ? 'E-commerce - Retirada'
+            : 'E-commerce - Entrega',
         dataPedido: DateTime.now(),
         status: 'Pendente',
-        total: totalComFrete,
-        observacoes: _observacoesController.text.trim().isNotEmpty
-            ? '${_observacoesController.text.trim()}\nFrete: ${_opcaoFreteSelecionada?.nome ?? "Padrão"} - R\$ ${(_opcaoFreteSelecionada?.valor ?? _valorFrete).toStringAsFixed(2)} (${_opcaoFreteSelecionada?.prazo ?? _prazoFrete} dia${(_opcaoFreteSelecionada?.prazo ?? _prazoFrete) > 1 ? 's' : ''} útil${(_opcaoFreteSelecionada?.prazo ?? _prazoFrete) > 1 ? 'eis' : ''})'
-            : 'Frete: ${_opcaoFreteSelecionada?.nome ?? "Padrão"} - R\$ ${(_opcaoFreteSelecionada?.valor ?? _valorFrete).toStringAsFixed(2)} (${_opcaoFreteSelecionada?.prazo ?? _prazoFrete} dia${(_opcaoFreteSelecionada?.prazo ?? _prazoFrete) > 1 ? 's' : ''} útil${(_opcaoFreteSelecionada?.prazo ?? _prazoFrete) > 1 ? 'eis' : ''})',
+        total: totalFinal,
+        descontoTotal: desconto,
+        observacoes:
+            observacoesPartes.isEmpty ? null : observacoesPartes.join('\n'),
         produtos: produtos,
         servicos: servicos,
+        pagamentos: [pagamento],
+        deliveryInfo: deliveryInfo,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
       );
 
-      // Salvar pedido
+      // Salvar pedido (local + nuvem). A tela de Pedidos escuta o DataService
+      // e recebe o pedido automaticamente.
       await dataService.addPedido(pedido);
+
+      // Criar registro de entrega para o controle de entregas, quando houver.
+      if (deliveryInfo != null) {
+        try {
+          await dataService.addEntrega(
+            Entrega(
+              id: const Uuid().v4(),
+              pedidoId: pedido.id,
+              pedidoNumero: pedido.numero,
+              clienteNome: cliente.nome,
+              clienteTelefone: cliente.telefone,
+              enderecoEntrega: enderecoCompleto,
+              complemento: _complementoController.text.trim().isNotEmpty
+                  ? _complementoController.text.trim()
+                  : null,
+              bairro: _bairroController.text.trim(),
+              cidade: _cidadeController.text.trim(),
+              cep: _cepController.text.replaceAll(RegExp(r'[^\d]'), ''),
+              status: StatusEntrega.aguardando,
+              dataCriacao: DateTime.now(),
+              taxaEntrega: taxaEntrega,
+              tipoEntrega: 'E-commerce',
+              observacoes: 'Pedido ${pedido.numero}',
+            ),
+          );
+        } catch (e) {
+          debugPrint('>>> [Checkout] Entrega não criada: $e');
+        }
+      }
 
       // Criar comissão se houver link de vendedor
       if (widget.linkVendedor != null && widget.linkVendedor!.id.isNotEmpty) {
-        final valorComissao = totalComFrete * (widget.linkVendedor!.percentualComissao / 100);
-        
+        final valorComissao =
+            totalFinal * (widget.linkVendedor!.percentualComissao / 100);
+
         final comissao = ComissaoVendedor(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          id: const Uuid().v4(),
           linkVendedorId: widget.linkVendedor!.id,
           funcionarioId: widget.linkVendedor!.funcionarioId,
           funcionarioNome: widget.linkVendedor!.funcionarioNome,
           pedidoId: pedido.id,
           pedidoNumero: pedido.numero,
-          valorPedido: totalComFrete,
+          valorPedido: totalFinal,
           percentualComissao: widget.linkVendedor!.percentualComissao,
           valorComissao: valorComissao,
           status: 'Pendente',
@@ -637,7 +1037,6 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
 
         await dataService.addComissaoVendedor(comissao);
 
-        // Atualizar estatísticas do link
         final linkAtualizado = widget.linkVendedor!.copyWith(
           totalVendas: widget.linkVendedor!.totalVendas + 1,
           totalComissao: widget.linkVendedor!.totalComissao + valorComissao,
@@ -648,14 +1047,10 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
 
       if (mounted) {
         carrinhoService.limparCarrinho();
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Pedido ${pedido.numero} criado com sucesso!'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        await _mostrarConfirmacaoPedido(pedido);
+        if (mounted) {
+          Navigator.of(context).pop(pedido);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -866,6 +1261,55 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
                                   ),
                                 ],
                               ),
+                              if (_calcularDescontoPix() > 0) ...[
+                                const SizedBox(height: 6),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Desconto Pix (${_percentualDescontoPix.toStringAsFixed(0)}%):',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.green[300],
+                                      ),
+                                    ),
+                                    Text(
+                                      '- ${formatoMoeda.format(_calcularDescontoPix())}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.green[300],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                              if (!_retiradaNaLoja &&
+                                  (_opcaoFreteSelecionada != null || _valorFrete > 0)) ...[
+                                const SizedBox(height: 6),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text(
+                                      'Frete:',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                    Text(
+                                      formatoMoeda.format(
+                                        _opcaoFreteSelecionada?.valor ?? _valorFrete,
+                                      ),
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                               if (_calculandoFrete) ...[
                                 const SizedBox(height: 8),
                                 Row(
@@ -887,7 +1331,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
                                   ],
                                 ),
                               ],
-                              if ((Provider.of<AuthService>(context, listen: false).empresaAtual?.moduloPet ?? false) && _freteCalculado && !_calculandoFrete && _opcoesFrete.isNotEmpty) ...[
+                              if (!_retiradaNaLoja && _freteCalculado && !_calculandoFrete && _opcoesFrete.isNotEmpty) ...[
                                 const SizedBox(height: 16),
                                 Container(
                                   padding: const EdgeInsets.all(12),
@@ -1236,7 +1680,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       const Text(
-                                        'Crie sua conta',
+                                        'Crie sua conta (opcional)',
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold,
@@ -1245,7 +1689,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        'Cadastre-se para não precisar preencher seus dados toda vez',
+                                        'Você pode comprar sem cadastro. Crie uma conta apenas se quiser salvar seus dados para as próximas compras.',
                                         style: TextStyle(
                                           fontSize: 13,
                                           color: Colors.white70,

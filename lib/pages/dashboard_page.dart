@@ -829,6 +829,12 @@ class _DashboardPageState extends State<DashboardPage> {
       }
     }
 
+    // 6. Consumo Interno da Loja (Saídas) - lançado no PDV/estoque
+    final consumosInternosList = dataService.estoqueHistorico.where((h) => h.ehConsumoInterno).toList();
+    for (var h in consumosInternosList) {
+      totalSaidas += h.valorCusto ?? 0;
+    }
+
     double lucroLiquido = totalEntradas - totalSaidas;
 
     return {

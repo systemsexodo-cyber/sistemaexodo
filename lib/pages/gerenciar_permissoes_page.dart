@@ -15,7 +15,8 @@ class GerenciarPermissoesPage extends StatefulWidget {
   const GerenciarPermissoesPage({super.key, this.usuario});
 
   @override
-  State<GerenciarPermissoesPage> createState() => _GerenciarPermissoesPageState();
+  State<GerenciarPermissoesPage> createState() =>
+      _GerenciarPermissoesPageState();
 }
 
 class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
@@ -54,32 +55,33 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
       _permissoesNegadas = Set.from(
         _usuarioSelecionado!.permissoesNegadas ?? {},
       );
-      _telasOcultas = Set.from(
-        _usuarioSelecionado!.telasOcultas ?? {},
-      );
+      _telasOcultas = Set.from(_usuarioSelecionado!.telasOcultas ?? {});
     });
   }
 
   Future<void> _salvarPermissoes() async {
     final authService = Provider.of<AuthService>(context, listen: false);
     final usuarioAtual = authService.usuarioAtual;
-    
+
     // Verificar se o usuário atual é master, "user" ou administrador
-    final podeGerenciar = usuarioAtual != null && 
-        (usuarioAtual.isMaster || 
-         usuarioAtual.email.toLowerCase() == 'user' ||
-         usuarioAtual.tipo == TipoUsuario.administrador);
-    
+    final podeGerenciar =
+        usuarioAtual != null &&
+        (usuarioAtual.isMaster ||
+            usuarioAtual.email.toLowerCase() == 'user' ||
+            usuarioAtual.tipo == TipoUsuario.administrador);
+
     if (!podeGerenciar) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Apenas o usuário master, "user" ou administrador pode gerenciar permissões'),
+          content: Text(
+            'Apenas o usuário master, "user" ou administrador pode gerenciar permissões',
+          ),
           backgroundColor: Colors.red,
         ),
       );
       return;
     }
-    
+
     if (_usuarioSelecionado == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -99,15 +101,11 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
 
       // Atualizar usuário com novas permissões
       final usuarioAtualizado = _usuarioSelecionado!.copyWith(
-        permissoesPersonalizadas: _permissoesSelecionadas.isEmpty
-            ? null
-            : _permissoesSelecionadas,
-        permissoesNegadas: _permissoesNegadas.isEmpty
-            ? null
-            : _permissoesNegadas,
-        telasOcultas: _telasOcultas.isEmpty
-            ? null
-            : _telasOcultas.toList(),
+        // `Usuario.copyWith` trata null como "manter valor". Coleções vazias
+        // são necessárias para persistir a remoção das últimas permissões.
+        permissoesPersonalizadas: _permissoesSelecionadas,
+        permissoesNegadas: _permissoesNegadas,
+        telasOcultas: _telasOcultas.toList(),
         updatedAt: DateTime.now(),
       );
 
@@ -152,7 +150,9 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: Row(
             children: [
               const Icon(Icons.password, color: Colors.blueAccent),
@@ -178,18 +178,27 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                   decoration: InputDecoration(
                     labelText: 'Nova Senha',
                     labelStyle: const TextStyle(color: Colors.white70),
-                    enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
-                    focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                    enabledBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white30),
+                    ),
+                    focusedBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.blueAccent),
+                    ),
                     suffixIcon: IconButton(
                       icon: Icon(
-                        _senhaLocalVisivel ? Icons.visibility : Icons.visibility_off,
+                        _senhaLocalVisivel
+                            ? Icons.visibility
+                            : Icons.visibility_off,
                         color: Colors.white54,
                       ),
-                      onPressed: () => setState(() => _senhaLocalVisivel = !_senhaLocalVisivel),
+                      onPressed: () => setState(
+                        () => _senhaLocalVisivel = !_senhaLocalVisivel,
+                      ),
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Informe a nova senha';
+                    if (value == null || value.isEmpty)
+                      return 'Informe a nova senha';
                     if (value.length < 4) return 'Mínimo 4 caracteres';
                     return null;
                   },
@@ -202,11 +211,16 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                   decoration: const InputDecoration(
                     labelText: 'Confirmar Nova Senha',
                     labelStyle: TextStyle(color: Colors.white70),
-                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
-                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white30),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.blueAccent),
+                    ),
                   ),
                   validator: (value) {
-                    if (value != senhaController.text) return 'As senhas não conferem';
+                    if (value != senhaController.text)
+                      return 'As senhas não conferem';
                     return null;
                   },
                 ),
@@ -216,17 +230,23 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton(
               onPressed: () async {
                 if (formKey.currentState!.validate()) {
-                  final authService = Provider.of<AuthService>(context, listen: false);
+                  final authService = Provider.of<AuthService>(
+                    context,
+                    listen: false,
+                  );
                   final usuarioAtualizado = usuario.copyWith(
                     senha: senhaController.text,
                     updatedAt: DateTime.now(),
                   );
-                  
+
                   try {
                     await authService.atualizarUsuario(usuarioAtualizado);
                     if (dialogContext.mounted) {
@@ -265,7 +285,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
   void _togglePermissao(TipoPermissao permissao, bool adicionar) {
     setState(() {
       final codigo = permissao.codigo;
-      
+
       if (adicionar) {
         // Adicionar permissão personalizada
         _permissoesSelecionadas.add(codigo);
@@ -273,7 +293,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
       } else {
         // Remover permissão personalizada
         _permissoesSelecionadas.remove(codigo);
-        
+
         // Se a permissão está nas permissões padrão do tipo, adicionar à lista negada
         final permissoesPadrao = _permissionService.obterPermissoesPadrao(
           _usuarioSelecionado!.tipo,
@@ -287,19 +307,19 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
 
   bool _temPermissao(TipoPermissao permissao) {
     if (_usuarioSelecionado == null) return false;
-    
+
     final codigo = permissao.codigo;
-    
+
     // Se está nas permissões personalizadas, tem
     if (_permissoesSelecionadas.contains(codigo)) {
       return true;
     }
-    
+
     // Se está nas permissões negadas, não tem
     if (_permissoesNegadas.contains(codigo)) {
       return false;
     }
-    
+
     // Verificar permissões padrão do tipo
     final permissoesPadrao = _permissionService.obterPermissoesPadrao(
       _usuarioSelecionado!.tipo,
@@ -311,13 +331,14 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final usuarioAtual = authService.usuarioAtual;
-    
+
     // Verificar se o usuário atual é master, "user" ou administrador
-    final podeGerenciar = usuarioAtual != null && 
-        (usuarioAtual.isMaster || 
-         usuarioAtual.email.toLowerCase() == 'user' ||
-         usuarioAtual.tipo == TipoUsuario.administrador);
-    
+    final podeGerenciar =
+        usuarioAtual != null &&
+        (usuarioAtual.isMaster ||
+            usuarioAtual.email.toLowerCase() == 'user' ||
+            usuarioAtual.tipo == TipoUsuario.administrador);
+
     if (!podeGerenciar) {
       return AppTheme.appBackground(
         child: Scaffold(
@@ -352,10 +373,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                   Text(
                     'Apenas o usuário master, "user" ou administrador pode gerenciar permissões de usuários.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white70,
-                    ),
+                    style: TextStyle(fontSize: 16, color: Colors.white70),
                   ),
                 ],
               ),
@@ -364,12 +382,13 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
         ),
       );
     }
-    
+
     // Master e "user" podem ver TODOS os usuários de TODAS as empresas
     final todosUsuarios = authService.usuarios.where((u) => u.ativo).toList();
     final isUser = usuarioAtual.email.toLowerCase() == 'user';
-    
-    final permissoesPorCategoria = _permissionService.obterPermissoesPorCategoria();
+
+    final permissoesPorCategoria = _permissionService
+        .obterPermissoesPorCategoria();
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -381,11 +400,17 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
           elevation: 0,
           actions: [
             // Botão para trocar senha - Apenas para master/user
-            if (usuarioAtual != null && (usuarioAtual.isMaster || usuarioAtual.email.toLowerCase() == 'user'))
+            if (usuarioAtual != null &&
+                (usuarioAtual.isMaster ||
+                    usuarioAtual.email.toLowerCase() == 'user'))
               IconButton(
-                icon: const Icon(Icons.password_outlined, color: Colors.blueAccent),
+                icon: const Icon(
+                  Icons.password_outlined,
+                  color: Colors.blueAccent,
+                ),
                 tooltip: 'Trocar Senha Master',
-                onPressed: () => _mostrarDialogoTrocarSenha(context, usuarioAtual),
+                onPressed: () =>
+                    _mostrarDialogoTrocarSenha(context, usuarioAtual),
               ),
             Padding(
               padding: const EdgeInsets.only(right: 16.0),
@@ -397,10 +422,14 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                     color: isUser ? Colors.blue : Colors.amber,
                   ),
                   label: Text(
-                    isUser ? 'User - Todas as Empresas' : 'Master - Todas as Empresas',
+                    isUser
+                        ? 'User - Todas as Empresas'
+                        : 'Master - Todas as Empresas',
                     style: TextStyle(fontSize: 12, color: Colors.white),
                   ),
-                  backgroundColor: isUser ? Colors.blue.shade700 : Colors.amber.shade700,
+                  backgroundColor: isUser
+                      ? Colors.blue.shade700
+                      : Colors.amber.shade700,
                 ),
               ),
             ),
@@ -422,38 +451,28 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.people_outline,
-                size: 80,
-                color: Colors.white54,
-              ),
+              Icon(Icons.people_outline, size: 80, color: Colors.white54),
               const SizedBox(height: 16),
               Text(
                 'Nenhum usuário encontrado',
-                style: TextStyle(
-                  fontSize: 18,
-                  color: Colors.white70,
-                ),
+                style: TextStyle(fontSize: 18, color: Colors.white70),
               ),
               const SizedBox(height: 8),
               Text(
                 'Não há usuários cadastrados no sistema.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.white54,
-                ),
+                style: TextStyle(fontSize: 14, color: Colors.white54),
               ),
             ],
           ),
         ),
       );
     }
-    
+
     // Agrupar usuários por empresa
     final usuariosPorEmpresa = <String, List<Usuario>>{};
     final authService = Provider.of<AuthService>(context, listen: false);
-    
+
     for (final usuario in usuarios) {
       final empresaId = usuario.empresaId ?? 'Sem Empresa';
       if (!usuariosPorEmpresa.containsKey(empresaId)) {
@@ -461,14 +480,14 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
       }
       usuariosPorEmpresa[empresaId]!.add(usuario);
     }
-    
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: usuariosPorEmpresa.length,
       itemBuilder: (context, index) {
         final empresaId = usuariosPorEmpresa.keys.elementAt(index);
         final usuariosDaEmpresa = usuariosPorEmpresa[empresaId]!;
-        
+
         // Buscar nome da empresa
         String nomeEmpresa = 'Sem Empresa';
         final empresasPermitidas = authService.getEmpresasDoUsuario();
@@ -482,7 +501,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
             nomeEmpresa = 'Empresa não encontrada';
           }
         }
-        
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -490,11 +509,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
               padding: const EdgeInsets.only(top: 16, bottom: 8, left: 4),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.business,
-                    size: 18,
-                    color: Colors.blue.shade300,
-                  ),
+                  Icon(Icons.business, size: 18, color: Colors.blue.shade300),
                   const SizedBox(width: 8),
                   Text(
                     nomeEmpresa,
@@ -506,17 +521,17 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.blue.shade700,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       '${usuariosDaEmpresa.length} usuário(s)',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white,
-                      ),
+                      style: TextStyle(fontSize: 11, color: Colors.white),
                     ),
                   ),
                 ],
@@ -524,7 +539,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
             ),
             ...usuariosDaEmpresa.map((usuario) {
               final isMaster = usuario.isMaster;
-              
+
               return Card(
                 margin: const EdgeInsets.only(bottom: 8, left: 16),
                 child: ListTile(
@@ -562,7 +577,10 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                       Expanded(child: Text(usuario.nome)),
                       if (isMaster)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.amber.shade700,
                             borderRadius: BorderRadius.circular(12),
@@ -583,9 +601,14 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.password, size: 20, color: Colors.blueAccent),
+                        icon: const Icon(
+                          Icons.password,
+                          size: 20,
+                          color: Colors.blueAccent,
+                        ),
                         tooltip: 'Trocar Senha',
-                        onPressed: () => _mostrarDialogoTrocarSenha(context, usuario),
+                        onPressed: () =>
+                            _mostrarDialogoTrocarSenha(context, usuario),
                       ),
                       const Icon(Icons.arrow_forward_ios, size: 16),
                     ],
@@ -606,7 +629,9 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
     );
   }
 
-  Widget _buildEditorPermissoes(Map<String, List<TipoPermissao>> permissoesPorCategoria) {
+  Widget _buildEditorPermissoes(
+    Map<String, List<TipoPermissao>> permissoesPorCategoria,
+  ) {
     return Column(
       children: [
         // Cabeçalho com informações do usuário
@@ -618,7 +643,9 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
               Row(
                 children: [
                   CircleAvatar(
-                    backgroundColor: _getColorPorTipo(_usuarioSelecionado!.tipo),
+                    backgroundColor: _getColorPorTipo(
+                      _usuarioSelecionado!.tipo,
+                    ),
                     child: Text(
                       _usuarioSelecionado!.nome[0].toUpperCase(),
                       style: const TextStyle(color: Colors.white),
@@ -638,10 +665,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                         ),
                         Text(
                           '${_usuarioSelecionado!.tipo.nome} • ${_usuarioSelecionado!.email}',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.white70,
-                          ),
+                          style: TextStyle(fontSize: 14, color: Colors.white70),
                         ),
                       ],
                     ),
@@ -665,17 +689,17 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Icon(
-                      Icons.business,
-                      size: 16,
-                      color: Colors.blue.shade300,
-                    ),
+                    Icon(Icons.business, size: 16, color: Colors.blue.shade300),
                     const SizedBox(width: 8),
                     Builder(
                       builder: (context) {
-                        final authService = Provider.of<AuthService>(context, listen: false);
+                        final authService = Provider.of<AuthService>(
+                          context,
+                          listen: false,
+                        );
                         String nomeEmpresa = 'Empresa não encontrada';
-                        final empresasPermitidas = authService.getEmpresasDoUsuario();
+                        final empresasPermitidas = authService
+                            .getEmpresasDoUsuario();
                         if (empresasPermitidas.isNotEmpty) {
                           try {
                             final empresa = empresasPermitidas.firstWhere(
@@ -756,10 +780,12 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                   children: [
                     _buildFiltroChip('Todas', _filtroCategoria == 'Todas'),
                     const SizedBox(width: 8),
-                    ...permissoesPorCategoria.keys.map((cat) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: _buildFiltroChip(cat, _filtroCategoria == cat),
-                    )),
+                    ...permissoesPorCategoria.keys.map(
+                      (cat) => Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _buildFiltroChip(cat, _filtroCategoria == cat),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -816,60 +842,64 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
                 // Lista de permissões por categoria (com filtros)
                 _buildListaPermissoesFiltrada(permissoesPorCategoria),
 
-        // Seção de controle de telas
-        Container(
-          padding: const EdgeInsets.all(16),
-          color: Colors.black26,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.visibility_off, color: Colors.orange, size: 24),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Ocultar Telas',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${_telasOcultas.length} oculta(s)',
-                      style: TextStyle(
-                        color: Colors.orange,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                // Seção de controle de telas
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  color: Colors.black26,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.visibility_off,
+                            color: Colors.orange,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Ocultar Telas',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${_telasOcultas.length} oculta(s)',
+                              style: TextStyle(
+                                color: Colors.orange,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Selecione as telas que este usuário NÃO poderá ver ou acessar:',
+                        style: TextStyle(fontSize: 13, color: Colors.white70),
+                      ),
+                      const SizedBox(height: 12),
+                      ...TelaSistema.porCategoria().entries.map((entry) {
+                        final categoria = entry.key;
+                        final telas = entry.value;
+                        return _buildCategoriaTelas(categoria, telas);
+                      }),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Selecione as telas que este usuário NÃO poderá ver ou acessar:',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.white70,
                 ),
-              ),
-              const SizedBox(height: 12),
-              ...TelaSistema.porCategoria().entries.map((entry) {
-                final categoria = entry.key;
-                final telas = entry.value;
-                return _buildCategoriaTelas(categoria, telas);
-              }),
-            ],
-          ),
-        ),
               ],
             ),
           ),
@@ -921,17 +951,19 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
 
   Widget _buildEstatisticasPermissoes() {
     if (_usuarioSelecionado == null) return const SizedBox.shrink();
-    
-    final permissoesPadrao = _permissionService.obterPermissoesPadrao(_usuarioSelecionado!.tipo);
+
+    final permissoesPadrao = _permissionService.obterPermissoesPadrao(
+      _usuarioSelecionado!.tipo,
+    );
     final totalPadrao = permissoesPadrao.length;
     final totalPersonalizadas = _permissoesSelecionadas.length;
     final totalNegadas = _permissoesNegadas.length;
     final totalAtivas = _contarPermissoesAtivas();
     final totalDisponiveis = TipoPermissao.values.length;
-    final percentualAtivas = totalDisponiveis > 0 
+    final percentualAtivas = totalDisponiveis > 0
         ? ((totalAtivas / totalDisponiveis) * 100).toStringAsFixed(1)
         : '0.0';
-    
+
     return Row(
       children: [
         Expanded(
@@ -1030,10 +1062,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
             const SizedBox(height: 2),
             Text(
               subtitle,
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 9,
-              ),
+              style: TextStyle(color: Colors.white54, fontSize: 9),
               textAlign: TextAlign.center,
             ),
           ],
@@ -1044,34 +1073,36 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
 
   int _contarPermissoesAtivas() {
     if (_usuarioSelecionado == null) return 0;
-    
+
     int total = 0;
-    
+
     for (final permissao in TipoPermissao.values) {
       if (_temPermissao(permissao)) {
         total++;
       }
     }
-    
+
     return total;
   }
 
-  Widget _buildCategoriaPermissoes(String categoria, List<TipoPermissao> permissoes) {
+  Widget _buildCategoriaPermissoes(
+    String categoria,
+    List<TipoPermissao> permissoes,
+  ) {
     // As permissões já vêm filtradas do método _buildListaPermissoesFiltrada
     final permissoesFiltradas = permissoes;
-    
+
     if (permissoesFiltradas.isEmpty) return const SizedBox.shrink();
-    
+
     final totalNaCategoria = permissoesFiltradas.length;
-    final ativasNaCategoria = permissoesFiltradas.where((p) => _temPermissao(p)).length;
-    
+    final ativasNaCategoria = permissoesFiltradas
+        .where((p) => _temPermissao(p))
+        .length;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: ExpansionTile(
-        leading: Icon(
-          _getIconeCategoria(categoria),
-          color: Colors.blueAccent,
-        ),
+        leading: Icon(_getIconeCategoria(categoria), color: Colors.blueAccent),
         title: Row(
           children: [
             Expanded(
@@ -1142,7 +1173,9 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
               ],
             ),
           ),
-          ...permissoesFiltradas.map((permissao) => _buildPermissaoItem(permissao)),
+          ...permissoesFiltradas.map(
+            (permissao) => _buildPermissaoItem(permissao),
+          ),
         ],
       ),
     );
@@ -1152,31 +1185,34 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
     final temPermissao = _temPermissao(permissao);
     final isPersonalizada = _permissoesSelecionadas.contains(permissao.codigo);
     final isNegada = _permissoesNegadas.contains(permissao.codigo);
-    
+
     final permissoesPadrao = _usuarioSelecionado != null
         ? _permissionService.obterPermissoesPadrao(_usuarioSelecionado!.tipo)
         : <String>{};
-    final isPadrao = permissoesPadrao.contains(permissao.codigo) && !isNegada && !isPersonalizada;
-    
+    final isPadrao =
+        permissoesPadrao.contains(permissao.codigo) &&
+        !isNegada &&
+        !isPersonalizada;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: isPersonalizada
             ? Colors.amber.withOpacity(0.1)
             : isNegada
-                ? Colors.red.withOpacity(0.1)
-                : isPadrao
-                    ? Colors.blue.withOpacity(0.1)
-                    : Colors.transparent,
+            ? Colors.red.withOpacity(0.1)
+            : isPadrao
+            ? Colors.blue.withOpacity(0.1)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: isPersonalizada
               ? Colors.amber.withOpacity(0.3)
               : isNegada
-                  ? Colors.red.withOpacity(0.3)
-                  : isPadrao
-                      ? Colors.blue.withOpacity(0.3)
-                      : Colors.transparent,
+              ? Colors.red.withOpacity(0.3)
+              : isPadrao
+              ? Colors.blue.withOpacity(0.3)
+              : Colors.transparent,
           width: 1,
         ),
       ),
@@ -1196,7 +1232,10 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
               Tooltip(
                 message: 'Permissão personalizada (adicionada manualmente)',
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.amber.withOpacity(0.3),
                     borderRadius: BorderRadius.circular(8),
@@ -1222,7 +1261,10 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
               Tooltip(
                 message: 'Permissão negada (removida do padrão)',
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.red.withOpacity(0.3),
                     borderRadius: BorderRadius.circular(8),
@@ -1265,11 +1307,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
             const SizedBox(height: 4),
             Row(
               children: [
-                Icon(
-                  Icons.info_outline,
-                  size: 12,
-                  color: Colors.white38,
-                ),
+                Icon(Icons.info_outline, size: 12, color: Colors.white38),
                 const SizedBox(width: 4),
                 Text(
                   'Código: ${permissao.codigo}',
@@ -1291,11 +1329,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
         checkColor: Colors.white,
         secondary: Tooltip(
           message: permissao.descricao,
-          child: Icon(
-            Icons.help_outline,
-            size: 20,
-            color: Colors.white54,
-          ),
+          child: Icon(Icons.help_outline, size: 20, color: Colors.white54),
         ),
       ),
     );
@@ -1330,15 +1364,20 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
     }
   }
 
-  void _selecionarTodasCategoria(List<TipoPermissao> permissoes, bool selecionar) {
+  void _selecionarTodasCategoria(
+    List<TipoPermissao> permissoes,
+    bool selecionar,
+  ) {
     setState(() {
       for (final permissao in permissoes) {
         if (selecionar) {
           // Adicionar como personalizada se não for padrão
           final permissoesPadrao = _usuarioSelecionado != null
-              ? _permissionService.obterPermissoesPadrao(_usuarioSelecionado!.tipo)
+              ? _permissionService.obterPermissoesPadrao(
+                  _usuarioSelecionado!.tipo,
+                )
               : <String>{};
-          
+
           if (!permissoesPadrao.contains(permissao.codigo)) {
             _permissoesSelecionadas.add(permissao.codigo);
           }
@@ -1347,9 +1386,11 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
           // Remover personalizada e adicionar como negada
           _permissoesSelecionadas.remove(permissao.codigo);
           final permissoesPadrao = _usuarioSelecionado != null
-              ? _permissionService.obterPermissoesPadrao(_usuarioSelecionado!.tipo)
+              ? _permissionService.obterPermissoesPadrao(
+                  _usuarioSelecionado!.tipo,
+                )
               : <String>{};
-          
+
           if (permissoesPadrao.contains(permissao.codigo)) {
             _permissoesNegadas.add(permissao.codigo);
           }
@@ -1377,7 +1418,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
       final permissoesPadrao = _usuarioSelecionado != null
           ? _permissionService.obterPermissoesPadrao(_usuarioSelecionado!.tipo)
           : <String>{};
-      
+
       for (final permissao in TipoPermissao.values) {
         if (!permissoesPadrao.contains(permissao.codigo)) {
           _permissoesSelecionadas.add(permissao.codigo);
@@ -1392,10 +1433,10 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
       final permissoesPadrao = _usuarioSelecionado != null
           ? _permissionService.obterPermissoesPadrao(_usuarioSelecionado!.tipo)
           : <String>{};
-      
+
       _permissoesSelecionadas.clear();
       _permissoesNegadas.clear();
-      
+
       // Negar todas as permissões padrão
       for (final codigo in permissoesPadrao) {
         _permissoesNegadas.add(codigo);
@@ -1428,32 +1469,38 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
     );
   }
 
-  Widget _buildListaPermissoesFiltrada(Map<String, List<TipoPermissao>> permissoesPorCategoria) {
+  Widget _buildListaPermissoesFiltrada(
+    Map<String, List<TipoPermissao>> permissoesPorCategoria,
+  ) {
     final busca = _buscaController.text.toLowerCase();
     final categoriasFiltradas = <String, List<TipoPermissao>>{};
-    
+
     for (final entry in permissoesPorCategoria.entries) {
       final categoria = entry.key;
       final permissoes = entry.value;
-      
+
       // Filtrar por categoria
       if (_filtroCategoria != 'Todas' && categoria != _filtroCategoria) {
         continue;
       }
-      
+
       // Filtrar por busca
       final permissoesFiltradas = busca.isEmpty
           ? permissoes
-          : permissoes.where((p) =>
-              p.nome.toLowerCase().contains(busca) ||
-              p.descricao.toLowerCase().contains(busca) ||
-              p.codigo.toLowerCase().contains(busca)).toList();
-      
+          : permissoes
+                .where(
+                  (p) =>
+                      p.nome.toLowerCase().contains(busca) ||
+                      p.descricao.toLowerCase().contains(busca) ||
+                      p.codigo.toLowerCase().contains(busca),
+                )
+                .toList();
+
       if (permissoesFiltradas.isNotEmpty) {
         categoriasFiltradas[categoria] = permissoesFiltradas;
       }
     }
-    
+
     if (categoriasFiltradas.isEmpty) {
       return Center(
         child: Padding(
@@ -1484,7 +1531,7 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
         ),
       );
     }
-    
+
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -1493,23 +1540,22 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
       itemBuilder: (context, index) {
         final categoria = categoriasFiltradas.keys.elementAt(index);
         final permissoes = categoriasFiltradas[categoria]!;
-        
+
         return _buildCategoriaPermissoes(categoria, permissoes);
       },
     );
   }
 
   Widget _buildCategoriaTelas(String categoria, List<TelaSistema> telas) {
-    final telasOcultasNaCategoria = telas.where((t) => _telasOcultas.contains(t.codigo)).length;
-    
+    final telasOcultasNaCategoria = telas
+        .where((t) => _telasOcultas.contains(t.codigo))
+        .length;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       color: const Color(0xFF2A2A3E),
       child: ExpansionTile(
-        leading: Icon(
-          _getIconeCategoriaTela(categoria),
-          color: Colors.orange,
-        ),
+        leading: Icon(_getIconeCategoriaTela(categoria), color: Colors.orange),
         title: Row(
           children: [
             Expanded(
@@ -1594,4 +1640,3 @@ class _GerenciarPermissoesPageState extends State<GerenciarPermissoesPage> {
     }
   }
 }
-

@@ -305,19 +305,39 @@ class NFCeItem {
 class NFCePagamento {
   final String tipo; // '01'=Dinheiro, '02'=Cheque, '03'=Cartão Crédito, etc
   final double valor;
+  final double troco;
   final String? descricao;
+  // ── Dados do cartão (obrigatório para tPag 03=Crédito e 04=Débito) ──
+  // Evita Rejeição SEFAZ 391
+  final String? cnpjAdminCartao; // CNPJ da Credenciadora de cartão
+  final int? bandeira; // 01=Visa, 02=Mastercard, 03=Elo, etc.
+  final String? operadora; // Nome da operadora/adquirente
+  final String? aut; // Número de autorização (NSU/autorização)
+  final String? tpIntegra; // '1' integrado, '2' não integrado
 
   NFCePagamento({
     required this.tipo,
     required this.valor,
+    this.troco = 0.0,
     this.descricao,
+    this.cnpjAdminCartao,
+    this.bandeira,
+    this.operadora,
+    this.aut,
+    this.tpIntegra,
   });
 
   factory NFCePagamento.fromMap(Map<String, dynamic> map) {
     return NFCePagamento(
       tipo: map['tipo'] ?? '',
       valor: (map['valor'] as num?)?.toDouble() ?? 0.0,
+      troco: (map['troco'] as num?)?.toDouble() ?? 0.0,
       descricao: map['descricao'],
+      cnpjAdminCartao: map['cnpjAdminCartao'] ?? map['cnpj_admin_cartao'],
+      bandeira: (map['bandeira'] as num?)?.toInt(),
+      operadora: map['operadora'],
+      aut: map['aut'],
+      tpIntegra: map['tpIntegra'] ?? map['tp_integra'],
     );
   }
 
@@ -325,19 +345,37 @@ class NFCePagamento {
     return {
       'tipo': tipo,
       'valor': valor,
+      'troco': troco,
       'descricao': descricao,
+      'cnpjAdminCartao': cnpjAdminCartao,
+      'bandeira': bandeira,
+      'operadora': operadora,
+      'aut': aut,
+      'tpIntegra': tpIntegra,
     };
   }
 
   NFCePagamento copyWith({
     String? tipo,
     double? valor,
+    double? troco,
     String? descricao,
+    String? cnpjAdminCartao,
+    int? bandeira,
+    String? operadora,
+    String? aut,
+    String? tpIntegra,
   }) {
     return NFCePagamento(
       tipo: tipo ?? this.tipo,
       valor: valor ?? this.valor,
+      troco: troco ?? this.troco,
       descricao: descricao ?? this.descricao,
+      cnpjAdminCartao: cnpjAdminCartao ?? this.cnpjAdminCartao,
+      bandeira: bandeira ?? this.bandeira,
+      operadora: operadora ?? this.operadora,
+      aut: aut ?? this.aut,
+      tpIntegra: tpIntegra ?? this.tpIntegra,
     );
   }
 

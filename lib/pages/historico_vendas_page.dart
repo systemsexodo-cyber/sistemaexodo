@@ -127,7 +127,8 @@ class ItemHistorico {
   final bool isPagamento;
   final bool isNfce;
   final String? responsavel;
-  final String? caixaNumero; // Número do caixa (ex: CAIXA-001) a que o item pertence
+  final String?
+  caixaNumero; // Número do caixa (ex: CAIXA-001) a que o item pertence
   final String? motoristaNome;
   final EstoqueHistorico? estoqueHistorico;
 
@@ -283,17 +284,16 @@ class ItemHistorico {
   factory ItemHistorico.fromEstoqueHistorico(
     EstoqueHistorico h, {
     String? produtoNome,
-  }) =>
-      ItemHistorico(
-        id: h.id,
-        numero: 'QUEBRA',
-        data: h.data,
-        clienteNome: produtoNome,
-        valorTotal: h.valorCusto ?? 0,
-        tipo: 'Quebra',
-        estoqueHistorico: h,
-        responsavel: h.usuario,
-      );
+  }) => ItemHistorico(
+    id: h.id,
+    numero: 'QUEBRA',
+    data: h.data,
+    clienteNome: produtoNome,
+    valorTotal: h.valorCusto ?? 0,
+    tipo: 'Quebra',
+    estoqueHistorico: h,
+    responsavel: h.usuario,
+  );
 
   factory ItemHistorico.fromSangria(SangriaCaixa s) {
     bool isPag = s.motivo.startsWith('[PAGAMENTO]');
@@ -372,7 +372,6 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   DateTime? _dataInicioAntesMeuCaixa;
   DateTime? _dataFimAntesMeuCaixa;
 
-
   @override
   void initState() {
     super.initState();
@@ -380,10 +379,18 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     _filtrarApenasMeuCaixa = true;
     // Salvar backup das datas do dia inteiro imediatamente
     _dataInicioAntesMeuCaixa = DateTime.now().copyWith(
-      hour: 0, minute: 0, second: 0, millisecond: 0, microsecond: 0,
+      hour: 0,
+      minute: 0,
+      second: 0,
+      millisecond: 0,
+      microsecond: 0,
     );
     _dataFimAntesMeuCaixa = DateTime.now().copyWith(
-      hour: 23, minute: 59, second: 59, millisecond: 999, microsecond: 999,
+      hour: 23,
+      minute: 59,
+      second: 59,
+      millisecond: 999,
+      microsecond: 999,
     );
     // Após o primeiro frame, ajustar as datas para a janela do caixa
     // do operador atual (assim "Meu Caixa" funciona direto ao abrir)
@@ -398,14 +405,19 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     if (!mounted) return;
     final dataService = Provider.of<DataService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
-    final operadorAtual = authService.usuarioAtual?.email ?? authService.usuarioAtual?.nome ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
+    final operadorAtual =
+        authService.usuarioAtual?.email ??
+        authService.usuarioAtual?.nome ??
+        dataService.usuarioAtualEmail ??
+        dataService.responsavelAtivo;
     if (operadorAtual == null || operadorAtual.trim().isEmpty) return;
     final aberturas = dataService.aberturasCaixa;
     if (aberturas.isEmpty) return;
-    final aberturasDoOperador = aberturas.where(
-      (ab) => _operadorBate(operadorAtual, ab.responsavel),
-    ).toList()
-      ..sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
+    final aberturasDoOperador =
+        aberturas
+            .where((ab) => _operadorBate(operadorAtual, ab.responsavel))
+            .toList()
+          ..sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
     if (aberturasDoOperador.isEmpty) return;
     final ultimaAbertura = aberturasDoOperador.first;
     final inicioCaixa = ultimaAbertura.dataAbertura;
@@ -420,7 +432,15 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     _dataFimAntesMeuCaixa = _dataFim;
     setState(() {
       _dataInicio = inicioCaixa;
-      _dataFim = fimCaixa ?? DateTime.now().copyWith(hour: 23, minute: 59, second: 59, millisecond: 999, microsecond: 999);
+      _dataFim =
+          fimCaixa ??
+          DateTime.now().copyWith(
+            hour: 23,
+            minute: 59,
+            second: 59,
+            millisecond: 999,
+            microsecond: 999,
+          );
     });
   }
 
@@ -433,10 +453,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   /// dos operandos é vazio/nulo (nunca assume que "vazio == qualquer").
   static bool _operadorBate(String? a, String? b) {
     if (a == null || b == null) return false;
-    String normalizar(String s) => s
-        .toLowerCase()
-        .trim()
-        .replaceAll(RegExp(r'[^a-z0-9@]'), '');
+    String normalizar(String s) =>
+        s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
     final na = normalizar(a);
     final nb = normalizar(b);
     if (na.isEmpty || nb.isEmpty) return false;
@@ -461,7 +479,10 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   void _saveFiltroMeuCaixa(bool value) async {
     try {
       final dataService = Provider.of<DataService>(context, listen: false);
-      await dataService.storage.salvar('filtro_apenas_meu_caixa', value.toString());
+      await dataService.storage.salvar(
+        'filtro_apenas_meu_caixa',
+        value.toString(),
+      );
     } catch (e) {
       debugPrint('>>> Erro ao salvar filtro meu caixa: $e');
     }
@@ -491,13 +512,17 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     String? operadorAtual;
     AberturaCaixa? caixaAtualOperador;
     if (apenasMeuCaixa) {
-      operadorAtual = emailUsuarioLogado ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
+      operadorAtual =
+          emailUsuarioLogado ??
+          dataService.usuarioAtualEmail ??
+          dataService.responsavelAtivo;
       if (operadorAtual != null && operadorAtual.trim().isNotEmpty) {
         // Filtrar caixas abertos do operador
         final List<AberturaCaixa> caixasAbertos = [];
         for (final ab in dataService.aberturasCaixa) {
-          final temFechamento = dataService.fechamentosCaixa
-              .any((f) => f.aberturaCaixaId == ab.id);
+          final temFechamento = dataService.fechamentosCaixa.any(
+            (f) => f.aberturaCaixaId == ab.id,
+          );
           if (temFechamento) continue;
           final resp = (ab.responsavel ?? '').trim();
           if (resp.isNotEmpty && _operadorBate(operadorAtual, resp)) {
@@ -506,7 +531,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         }
         // Pegar apenas o mais recente (último aberto)
         if (caixasAbertos.isNotEmpty) {
-          caixasAbertos.sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
+          caixasAbertos.sort(
+            (a, b) => b.dataAbertura.compareTo(a.dataAbertura),
+          );
           caixaAtualOperador = caixasAbertos.first;
         }
       }
@@ -521,7 +548,11 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         ? {caixaAtualOperador!.id}
         : <String>{};
 
-    bool pertenceAoCaixa(DateTime data, {String? operador, String? aberturaCaixaId}) {
+    bool pertenceAoCaixa(
+      DateTime data, {
+      String? operador,
+      String? aberturaCaixaId,
+    }) {
       if (!apenasMeuCaixa) return true;
 
       // 0. Se o item tem aberturaCaixaId (fechamento, sangria, suprimento),
@@ -531,10 +562,17 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       }
 
       // 1. Identificar o caixa exato do item por tempo e operador
-      final caixa = _caixaDoItem(dataService, data, operador: operador, aberturaId: aberturaCaixaId);
+      final caixa = _caixaDoItem(
+        dataService,
+        data,
+        operador: operador,
+        aberturaId: aberturaCaixaId,
+      );
       if (caixa != null) {
         final respCaixa = (caixa.responsavel ?? '').trim();
-        if (operadorAtual != null && operadorAtual.trim().isNotEmpty && respCaixa.isNotEmpty) {
+        if (operadorAtual != null &&
+            operadorAtual.trim().isNotEmpty &&
+            respCaixa.isNotEmpty) {
           return _operadorBate(operadorAtual, respCaixa);
         }
       }
@@ -557,8 +595,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       // 4. Fallback se não achou caixa: só incluir se estiver dentro da janela do caixa atual
       if (caixaAtualOperador == null) return false;
       if (data.isBefore(caixaAtualOperador!.dataAbertura)) return false;
-      final fechamento = dataService.fechamentosCaixa
-          .firstWhereOrNull((f) => f.aberturaCaixaId == caixaAtualOperador!.id);
+      final fechamento = dataService.fechamentosCaixa.firstWhereOrNull(
+        (f) => f.aberturaCaixaId == caixaAtualOperador!.id,
+      );
       final fimCaixa = fechamento?.dataFechamento;
       if (fimCaixa != null && data.isAfter(fimCaixa)) return false;
       return true;
@@ -587,19 +626,14 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           pertenceAoCaixa(v.dataVenda, operador: v.operador ?? v.vendedorNome),
     )) {
       // Verificar se a venda já foi finalizada (não é "venda salva").
-      // ATENÇÃO: não podemos depender apenas de valorRecebido > 0, pois vendas
-      // pagas com cartão/pix (ex: delivery), fiado ou crediário podem ter
-      // valorRecebido null e MESMO ASSIM foram finalizadas. Convenção usada no
-      // restante do app (trocas_devolucoes_page, ItemHistorico.valorRecebido):
-      // "venda salva" = tipoPagamento "outro" sem nenhum recebimento.
-      final temPagamentoRecebido = v.pagamentos.any((p) => p.recebido);
-      final isVendaSalva = (v.valorRecebido ?? 0) <= 0 &&
-          v.tipoPagamento == TipoPagamento.outro &&
-          !temPagamentoRecebido;
-      final isCancelada = v.isCancelada;
-
-      // Só excluir do histórico a venda salva/pendente (e não cancelada)
-      if (isVendaSalva && !isCancelada) continue;
+      // A regra mora em `VendaBalcao.ehVendaSalva` (usada também pelo Fluxo
+      // de Caixa): venda salva é a que foi guardada com `valorRecebido == 0`
+      // e nenhum pagamento recebido. Vendas pagas com cartão/pix, fiado ou
+      // crediário podem ter `valorRecebido` null e MESMO ASSIM foram
+      // finalizadas, por isso a regra não é "valorRecebido > 0".
+      // Só excluir do histórico a venda salva/pendente. Canceladas continuam
+      // aparecendo (com a tarja), para auditoria.
+      if (v.ehVendaSalva) continue;
       bool isNfce =
           mapNfces.containsKey(v.id) || mapNfces.containsKey(v.numero);
       mapItens[v.id] = ItemHistorico.fromVendaBalcao(v, isNfce: isNfce);
@@ -683,8 +717,10 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         final prodNome = dataService.produtos
             .firstWhereOrNull((p) => p.id == h.produtoId)
             ?.nome;
-        mapItens['QB-${h.id}'] =
-            ItemHistorico.fromEstoqueHistorico(h, produtoNome: prodNome);
+        mapItens['QB-${h.id}'] = ItemHistorico.fromEstoqueHistorico(
+          h,
+          produtoNome: prodNome,
+        );
       }
     } catch (_) {}
 
@@ -721,6 +757,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
     // 7. Pagamentos avulsos/posteriores de pedidos (Pagamentos recebidos hoje para pedidos antigos)
     for (var p in dataService.pedidos) {
+      // Pedido cancelado não entra no fluxo de caixa nem no histórico
+      // financeiro: cancelei o pedido e o valor tem de sumir.
+      if (p.status.trim().toLowerCase() == 'cancelado') continue;
       if (mapItens.containsKey(p.id))
         continue; // Evita lançar o pagamento avulso se o pedido principal já está na lista de hoje
       for (var pag in p.pagamentos.where(
@@ -729,7 +768,10 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             pag.dataRecebimento != null &&
             pag.dataRecebimento!.isAfter(_dataInicio) &&
             pag.dataRecebimento!.isBefore(_dataFim) &&
-            pertenceAoCaixa(pag.dataRecebimento!, operador: p.operador ?? p.vendedorNome),
+            pertenceAoCaixa(
+              pag.dataRecebimento!,
+              operador: p.operador ?? p.vendedorNome,
+            ),
       )) {
         // Adicionamos como linha separada para o fluxo de caixa de HOJE ser real
         mapItens['PAG-${pag.id}'] = ItemHistorico(
@@ -750,11 +792,16 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     final itens = mapItens.values.toList();
     for (var i = 0; i < itens.length; i++) {
       final item = itens[i];
-      final aberturaId = item.fechamentoCaixa?.aberturaCaixaId ??
+      final aberturaId =
+          item.fechamentoCaixa?.aberturaCaixaId ??
           item.sangria?.aberturaCaixaId ??
           item.suprimento?.aberturaCaixaId;
-      final ab = _caixaDoItem(dataService, item.data,
-          operador: item.responsavel, aberturaId: aberturaId);
+      final ab = _caixaDoItem(
+        dataService,
+        item.data,
+        operador: item.responsavel,
+        aberturaId: aberturaId,
+      );
       if (ab != null) {
         itens[i] = item.copyWith(
           caixaNumero: ab.numero,
@@ -764,7 +811,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     }
 
     // Filtro final rigoroso: em modo 'Meu Caixa', garantir que nenhum item de outro operador passe
-    if (apenasMeuCaixa && operadorAtual != null && operadorAtual.trim().isNotEmpty) {
+    if (apenasMeuCaixa &&
+        operadorAtual != null &&
+        operadorAtual.trim().isNotEmpty) {
       return itens.where((item) {
         final resp = (item.responsavel ?? '').trim();
         if (resp.isNotEmpty) {
@@ -781,21 +830,24 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   /// janela de tempo [dataAbertura, fechamento] e pelo operador. Quando
   /// [aberturaId] é informado (fechamentos/sangrias/suprimentos), a busca é
   /// exata. Usado para exibir o número do caixa e o operador no histórico.
-  AberturaCaixa? _caixaDoItem(DataService ds, DateTime data,
-      {String? operador, String? aberturaId}) {
+  AberturaCaixa? _caixaDoItem(
+    DataService ds,
+    DateTime data, {
+    String? operador,
+    String? aberturaId,
+  }) {
     AberturaCaixa? melhor;
     for (final ab in ds.aberturasCaixa) {
       if (aberturaId != null && ab.id != aberturaId) continue;
       if (data.isBefore(ab.dataAbertura)) continue;
-      final fechamento = ds.fechamentosCaixa
-          .firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
+      final fechamento = ds.fechamentosCaixa.firstWhereOrNull(
+        (f) => f.aberturaCaixaId == ab.id,
+      );
       final fim = fechamento?.dataFechamento;
       if (fim != null && data.isAfter(fim)) continue;
       final respAb = (ab.responsavel ?? '').trim();
       final op = (operador ?? '').trim();
-      if (op.isNotEmpty &&
-          respAb.isNotEmpty &&
-          !_operadorBate(op, respAb)) {
+      if (op.isNotEmpty && respAb.isNotEmpty && !_operadorBate(op, respAb)) {
         continue;
       }
       if (melhor == null || ab.dataAbertura.isAfter(melhor.dataAbertura)) {
@@ -809,7 +861,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
   Widget build(BuildContext context) {
     final dataService = Provider.of<DataService>(context);
     final authService = Provider.of<AuthService>(context, listen: false);
-    final emailLogado = authService.usuarioAtual?.email ?? authService.usuarioAtual?.nome;
+    final emailLogado =
+        authService.usuarioAtual?.email ?? authService.usuarioAtual?.nome;
     List<ItemHistorico> itens = _montarItensHistorico(
       dataService,
       _dataInicio,
@@ -950,7 +1003,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           if (valRecebido > 0 || i.isSuprimento) {
             // Se a venda tem múltiplas formas de pagamento (split), somar cada forma
             // individualmente para o resumo refletir o fluxo de caixa correto
-            final pagsVenda = i.vendaBalcao?.pagamentos ?? const <PagamentoPedido>[];
+            final pagsVenda =
+                i.vendaBalcao?.pagamentos ?? const <PagamentoPedido>[];
             if (pagsVenda.isNotEmpty && !i.isSuprimento) {
               for (final pag in pagsVenda.where((p) => p.recebido)) {
                 totaisPorPagamento[pag.tipo] =
@@ -978,10 +1032,15 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     // (dashboard.ver_totais) — eles operam o caixa, mas não veem quanto a
     // empresa vende. Admin/Master/Gerente sempre veem.
     final authServiceTotais = Provider.of<AuthService>(context, listen: false);
-    final podeVerTotais = PermissionHelper.podeVerTotais(authServiceTotais.usuarioAtual);
+    final podeVerTotais = PermissionHelper.podeVerTotais(
+      authServiceTotais.usuarioAtual,
+    );
     // Total por forma de pagamento: permissão própria
     // (caixa.ver_totais_formas_pagamento)
-    final podeVerFormasPagamento = PermissionHelper.podeVerTotaisFormasPagamento(authServiceTotais.usuarioAtual);
+    final podeVerFormasPagamento =
+        PermissionHelper.podeVerTotaisFormasPagamento(
+          authServiceTotais.usuarioAtual,
+        );
 
     // No celular as ações do topo descem para o menu "⋮", com o mesmo
     // padrão da tela de Produtos.
@@ -998,45 +1057,47 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         actions: [
           const SyncStatusWidget(),
           if (!ehCelular) ...[
-          IconButton(
-            icon: const Icon(Icons.point_of_sale, color: Colors.greenAccent),
-            onPressed: () => _mostrarResumoCaixas(context, itens, dataService),
-          ),
-          IconButton(
-            icon: const Icon(Icons.inventory_2, color: Colors.blueAccent),
-            tooltip: 'Produtos Vendidos',
-            onPressed: () =>
-                _mostrarVendasPorProduto(context, dataService, itens),
-          ),
-          IconButton(
-            icon: const Icon(Icons.swap_horiz, color: Colors.amberAccent),
-            tooltip: 'Trocas e Devoluções',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const TrocasDevolucoesBuscarPage(),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.receipt_long, color: Colors.cyanAccent),
-            tooltip: 'Histórico NFC-e',
-            onPressed: () {
-              final authService = Provider.of<AuthService>(
-                context,
-                listen: false,
-              );
-              final empresa = authService.empresaAtual;
-              if (empresa == null) return;
+            IconButton(
+              icon: const Icon(Icons.point_of_sale, color: Colors.greenAccent),
+              onPressed: () =>
+                  _mostrarResumoCaixas(context, itens, dataService),
+            ),
+            IconButton(
+              icon: const Icon(Icons.inventory_2, color: Colors.blueAccent),
+              tooltip: 'Produtos Vendidos',
+              onPressed: () =>
+                  _mostrarVendasPorProduto(context, dataService, itens),
+            ),
+            IconButton(
+              icon: const Icon(Icons.swap_horiz, color: Colors.amberAccent),
+              tooltip: 'Trocas e Devoluções',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TrocasDevolucoesBuscarPage(),
+                  ),
+                );
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.receipt_long, color: Colors.cyanAccent),
+              tooltip: 'Histórico NFC-e',
+              onPressed: () {
+                final authService = Provider.of<AuthService>(
+                  context,
+                  listen: false,
+                );
+                final empresa = authService.empresaAtual;
+                if (empresa == null) return;
 
-              showDialog(
-                context: context,
-                builder: (context) => HistoricoNFCePDVDialog(empresa: empresa),
-              );
-            },
-          ),
+                showDialog(
+                  context: context,
+                  builder: (context) =>
+                      HistoricoNFCePDVDialog(empresa: empresa),
+                );
+              },
+            ),
           ],
           if (ehCelular)
             PopupMenuButton<String>(
@@ -1071,36 +1132,59 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               itemBuilder: (context) => const [
                 PopupMenuItem(
                   value: 'resumo',
-                  child: Row(children: [
-                    Icon(Icons.point_of_sale,
-                        size: 18, color: Colors.greenAccent),
-                    SizedBox(width: 8),
-                    Text('Resumo dos Caixas'),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.point_of_sale,
+                        size: 18,
+                        color: Colors.greenAccent,
+                      ),
+                      SizedBox(width: 8),
+                      Text('Resumo dos Caixas'),
+                    ],
+                  ),
                 ),
                 PopupMenuItem(
                   value: 'produtos',
-                  child: Row(children: [
-                    Icon(Icons.inventory_2, size: 18, color: Colors.blueAccent),
-                    SizedBox(width: 8),
-                    Text('Produtos Vendidos'),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.inventory_2,
+                        size: 18,
+                        color: Colors.blueAccent,
+                      ),
+                      SizedBox(width: 8),
+                      Text('Produtos Vendidos'),
+                    ],
+                  ),
                 ),
                 PopupMenuItem(
                   value: 'trocas',
-                  child: Row(children: [
-                    Icon(Icons.swap_horiz, size: 18, color: Colors.amberAccent),
-                    SizedBox(width: 8),
-                    Text('Trocas e Devoluções'),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.swap_horiz,
+                        size: 18,
+                        color: Colors.amberAccent,
+                      ),
+                      SizedBox(width: 8),
+                      Text('Trocas e Devoluções'),
+                    ],
+                  ),
                 ),
                 PopupMenuItem(
                   value: 'nfce',
-                  child: Row(children: [
-                    Icon(Icons.receipt_long, size: 18, color: Colors.cyanAccent),
-                    SizedBox(width: 8),
-                    Text('Histórico NFC-e'),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.receipt_long,
+                        size: 18,
+                        color: Colors.cyanAccent,
+                      ),
+                      SizedBox(width: 8),
+                      Text('Histórico NFC-e'),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1346,13 +1430,20 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     DateTime? fimCaixa;
     // Pegar a última abertura do OPERADOR ATUAL (não global).
     // SEMPRE usar o email do usuário LOGADO do AuthService (mais confiável).
-    final operadorAtual = authService.usuarioAtual?.email ?? authService.usuarioAtual?.nome ?? dataService.usuarioAtualEmail ?? dataService.responsavelAtivo;
+    final operadorAtual =
+        authService.usuarioAtual?.email ??
+        authService.usuarioAtual?.nome ??
+        dataService.usuarioAtualEmail ??
+        dataService.responsavelAtivo;
     final aberturas = dataService.aberturasCaixa;
-    if (aberturas.isNotEmpty && operadorAtual != null && operadorAtual.trim().isNotEmpty) {
-      final aberturasDoOperador = aberturas.where(
-        (ab) => _operadorBate(operadorAtual, ab.responsavel),
-      ).toList()
-        ..sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
+    if (aberturas.isNotEmpty &&
+        operadorAtual != null &&
+        operadorAtual.trim().isNotEmpty) {
+      final aberturasDoOperador =
+          aberturas
+              .where((ab) => _operadorBate(operadorAtual, ab.responsavel))
+              .toList()
+            ..sort((a, b) => b.dataAbertura.compareTo(a.dataAbertura));
       if (aberturasDoOperador.isNotEmpty) {
         final ultimaAbertura = aberturasDoOperador.first;
         inicioCaixa = ultimaAbertura.dataAbertura;
@@ -1448,7 +1539,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               color: const Color(0xFF2D2D44),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: _filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white10,
+                color: _filtrarApenasMeuCaixa
+                    ? Colors.blueAccent
+                    : Colors.white10,
               ),
             ),
             child: Row(
@@ -1471,7 +1564,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       decoration: BoxDecoration(
-                        color: !_filtrarApenasMeuCaixa ? Colors.blueAccent.withOpacity(0.2) : Colors.transparent,
+                        color: !_filtrarApenasMeuCaixa
+                            ? Colors.blueAccent.withOpacity(0.2)
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(11),
                       ),
                       child: Row(
@@ -1480,13 +1575,17 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           Icon(
                             Icons.people,
                             size: 16,
-                            color: !_filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                            color: !_filtrarApenasMeuCaixa
+                                ? Colors.blueAccent
+                                : Colors.white54,
                           ),
                           const SizedBox(width: 6),
                           Text(
                             'Todas',
                             style: TextStyle(
-                              color: !_filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                              color: !_filtrarApenasMeuCaixa
+                                  ? Colors.blueAccent
+                                  : Colors.white54,
                               fontSize: 13,
                               fontWeight: FontWeight.bold,
                             ),
@@ -1507,7 +1606,13 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           _dataFimAntesMeuCaixa = _dataFim;
                           if (inicioCaixa != null) {
                             _dataInicio = inicioCaixa!;
-                            _dataFim = fimCaixa ?? DateTime.now().copyWith(hour: 23, minute: 59, second: 59);
+                            _dataFim =
+                                fimCaixa ??
+                                DateTime.now().copyWith(
+                                  hour: 23,
+                                  minute: 59,
+                                  second: 59,
+                                );
                           }
                         });
                         _saveFiltroMeuCaixa(true);
@@ -1516,7 +1621,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       decoration: BoxDecoration(
-                        color: _filtrarApenasMeuCaixa ? Colors.blueAccent.withOpacity(0.2) : Colors.transparent,
+                        color: _filtrarApenasMeuCaixa
+                            ? Colors.blueAccent.withOpacity(0.2)
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(11),
                       ),
                       child: Row(
@@ -1525,13 +1632,17 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           Icon(
                             Icons.person,
                             size: 16,
-                            color: _filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                            color: _filtrarApenasMeuCaixa
+                                ? Colors.blueAccent
+                                : Colors.white54,
                           ),
                           const SizedBox(width: 6),
                           Text(
                             'Meu Caixa',
                             style: TextStyle(
-                              color: _filtrarApenasMeuCaixa ? Colors.blueAccent : Colors.white54,
+                              color: _filtrarApenasMeuCaixa
+                                  ? Colors.blueAccent
+                                  : Colors.white54,
                               fontSize: 13,
                               fontWeight: FontWeight.bold,
                             ),
@@ -1890,12 +2001,13 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           if (item.isQuebra) {
                             final q = item.estoqueHistorico!;
                             final qtd = q.quantidade.abs().toStringAsFixed(
-                                q.quantidade.abs() ==
-                                        q.quantidade.abs().roundToDouble()
-                                    ? 0
-                                    : 2);
-                            final custo = (q.valorCusto != null &&
-                                    q.valorCusto! > 0)
+                              q.quantidade.abs() ==
+                                      q.quantidade.abs().roundToDouble()
+                                  ? 0
+                                  : 2,
+                            );
+                            final custo =
+                                (q.valorCusto != null && q.valorCusto! > 0)
                                 ? ' • Prejuízo: R\$ ${q.valorCusto!.toStringAsFixed(2)}'
                                 : '';
                             return 'QUEBRA DE MERCADORIA • $qtd un$custo';
@@ -1967,14 +2079,20 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                             ),
                           ),
                           // Badge do número do caixa (fechamento/sangria/suprimento)
-                          if (item.caixaNumero != null && item.caixaNumero!.isNotEmpty) ...[
+                          if (item.caixaNumero != null &&
+                              item.caixaNumero!.isNotEmpty) ...[
                             const SizedBox(width: 4),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.teal.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: Colors.teal.withOpacity(0.3)),
+                                border: Border.all(
+                                  color: Colors.teal.withOpacity(0.3),
+                                ),
                               ),
                               child: Text(
                                 'CAIXA: ${item.caixaNumero}',
@@ -1988,15 +2106,21 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                             ),
                           ],
                           // Badge do responsável (caixa)
-                          if (item.responsavel != null && item.responsavel!.isNotEmpty &&
+                          if (item.responsavel != null &&
+                              item.responsavel!.isNotEmpty &&
                               item.fechamentoCaixa != null) ...[
                             const SizedBox(width: 4),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.deepPurple.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: Colors.deepPurple.withOpacity(0.3)),
+                                border: Border.all(
+                                  color: Colors.deepPurple.withOpacity(0.3),
+                                ),
                               ),
                               child: Text(
                                 'OP: ${item.responsavel}',
@@ -2418,7 +2542,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           // Se a venda tem múltiplas formas de pagamento (split),
                           // somar cada forma individualmente no fechamento do caixa
                           if (v.pagamentos.isNotEmpty) {
-                            for (final pag in v.pagamentos.where((p) => p.recebido)) {
+                            for (final pag in v.pagamentos.where(
+                              (p) => p.recebido,
+                            )) {
                               totaisSessao[pag.tipo] =
                                   (totaisSessao[pag.tipo] ?? 0.0) + pag.valor;
                             }
@@ -2793,9 +2919,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                             style: const TextStyle(color: Colors.white),
                           ),
                           subtitle: Text(
-                            pg.recebido
-                                ? 'Recebido'
-                                : 'Pendente',
+                            pg.recebido ? 'Recebido' : 'Pendente',
                             style: TextStyle(
                               color: pg.recebido
                                   ? Colors.greenAccent
@@ -2827,55 +2951,59 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           ),
                         ),
                       ),
-                      ...item.pedido!.pagamentos.asMap().entries.map(
-                        (entry) {
-                          final pgIdx = entry.key;
-                          final pg = entry.value;
-                          return ListTile(
-                            dense: true,
-                            leading: Icon(
-                              pg.tipo.icone,
-                              color: pg.tipo.cor,
-                              size: 18,
+                      ...item.pedido!.pagamentos.asMap().entries.map((entry) {
+                        final pgIdx = entry.key;
+                        final pg = entry.value;
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            pg.tipo.icone,
+                            color: pg.tipo.cor,
+                            size: 18,
+                          ),
+                          title: Text(
+                            pg.tipo.nome,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          subtitle: Text(
+                            pg.recebido ? 'Recebido' : 'Pendente',
+                            style: TextStyle(
+                              color: pg.recebido
+                                  ? Colors.greenAccent
+                                  : Colors.orangeAccent,
+                              fontSize: 11,
                             ),
-                            title: Text(
-                              pg.tipo.nome,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            subtitle: Text(
-                              pg.recebido
-                                  ? 'Recebido'
-                                  : 'Pendente',
-                              style: TextStyle(
-                                color: pg.recebido
-                                    ? Colors.greenAccent
-                                    : Colors.orangeAccent,
-                                fontSize: 11,
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _formatoMoeda.format(pg.valor),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  _formatoMoeda.format(pg.valor),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
+                              if (pg.recebido && !item.isCancelada) ...[
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.undo,
+                                    color: Colors.redAccent,
+                                    size: 18,
+                                  ),
+                                  tooltip: 'Estornar este pagamento',
+                                  onPressed: () => _estornarPagamentoPedido(
+                                    item,
+                                    pgIdx,
+                                    context,
                                   ),
                                 ),
-                                if (pg.recebido && !item.isCancelada) ...[
-                                  const SizedBox(width: 8),
-                                  IconButton(
-                                    icon: const Icon(Icons.undo, color: Colors.redAccent, size: 18),
-                                    tooltip: 'Estornar este pagamento',
-                                    onPressed: () => _estornarPagamentoPedido(item, pgIdx, context),
-                                  ),
-                                ],
                               ],
-                            ),
-                          );
-                        },
-                      ),
+                            ],
+                          ),
+                        );
+                      }),
                     ],
                     if (item.responsavel != null &&
                         (item.vendaBalcao != null || item.pedido != null))
@@ -3023,17 +3151,28 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                                 ),
                               ),
                             ),
-                            if (nfceExistente.chaveAcesso != null && nfceExistente.chaveAcesso!.isNotEmpty)
+                            if (nfceExistente.chaveAcesso != null &&
+                                nfceExistente.chaveAcesso!.isNotEmpty)
                               IconButton(
-                                icon: const Icon(Icons.copy, size: 14, color: Colors.blueAccent),
+                                icon: const Icon(
+                                  Icons.copy,
+                                  size: 14,
+                                  color: Colors.blueAccent,
+                                ),
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
                                 tooltip: 'Copiar chave completa',
                                 onPressed: () {
-                                  Clipboard.setData(ClipboardData(text: nfceExistente.chaveAcesso!));
+                                  Clipboard.setData(
+                                    ClipboardData(
+                                      text: nfceExistente.chaveAcesso!,
+                                    ),
+                                  );
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('✓ Chave de acesso copiada para a área de transferência!'),
+                                      content: Text(
+                                        '✓ Chave de acesso copiada para a área de transferência!',
+                                      ),
                                       duration: Duration(seconds: 2),
                                       backgroundColor: Colors.green,
                                       behavior: SnackBarBehavior.floating,
@@ -3194,7 +3333,10 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () => _reimprimirProducao(item),
-                    icon: const Icon(Icons.restaurant, color: Colors.deepOrangeAccent),
+                    icon: const Icon(
+                      Icons.restaurant,
+                      color: Colors.deepOrangeAccent,
+                    ),
                     label: const Text(
                       'REIMPRIMIR PRODUÇÃO',
                       style: TextStyle(
@@ -3362,7 +3504,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       if (emp == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Nenhuma empresa selecionada para imprimir a produção'),
+            content: Text(
+              'Nenhuma empresa selecionada para imprimir a produção',
+            ),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 3),
           ),
@@ -3400,7 +3544,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         final venda = item.vendaBalcao!;
         numeroDoc = venda.numero;
         clienteNome = venda.clienteNome;
-        mesaComanda = venda.origem == 'Mesa/Comanda' ? extrairMesa(venda.clienteNome) : null;
+        mesaComanda = venda.origem == 'Mesa/Comanda'
+            ? extrairMesa(venda.clienteNome)
+            : null;
         clienteTelefone = venda.clienteTelefone;
         enderecoEntrega = venda.deliveryInfo?.enderecoCompleto;
         motorista = venda.deliveryInfo?.motoristaNome;
@@ -3415,27 +3561,31 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         pagamentoConcluido = venda.cancelado
             ? false
             : venda.pagamentos.isNotEmpty
-                ? venda.pagamentos.every((p) => p.recebido)
-                : false;
+            ? venda.pagamentos.every((p) => p.recebido)
+            : false;
         observacoesGerais = venda.observacoes;
         dataPedido = venda.dataVenda;
         usuarioCriou = venda.operador;
         for (final it in venda.itens) {
           if (it.isServico) continue;
-          inputs.add(ItemProducaoInput(
-            id: it.id,
-            nome: it.nome,
-            quantidade: it.quantidade,
-            observacao: it.observacao,
-            adicionais: it.adicionais.map((a) => a.nome).toList(),
-            opcoesCombo: it.opcoesCombo.map((o) => o.nome).toList(),
-          ));
+          inputs.add(
+            ItemProducaoInput(
+              id: it.id,
+              nome: it.nome,
+              quantidade: it.quantidade,
+              observacao: it.observacao,
+              adicionais: it.adicionais.map((a) => a.nome).toList(),
+              opcoesCombo: it.opcoesCombo.map((o) => o.nome).toList(),
+            ),
+          );
         }
       } else if (item.pedido != null) {
         final pedido = item.pedido!;
         numeroDoc = pedido.numero;
         clienteNome = pedido.clienteNome;
-        mesaComanda = pedido.origem == 'Mesa/Comanda' ? extrairMesa(pedido.clienteNome) : null;
+        mesaComanda = pedido.origem == 'Mesa/Comanda'
+            ? extrairMesa(pedido.clienteNome)
+            : null;
         clienteTelefone = pedido.clienteTelefone;
         enderecoEntrega = pedido.clienteEndereco;
         motorista = pedido.deliveryInfo?.motoristaNome;
@@ -3452,13 +3602,15 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         dataPedido = pedido.dataPedido;
         usuarioCriou = pedido.operador;
         for (final it in pedido.produtos) {
-          inputs.add(ItemProducaoInput(
-            id: it.id,
-            nome: it.nome,
-            quantidade: it.quantidade,
-            observacao: it.observacao,
-            adicionais: it.adicionais.map((a) => a.nome).toList(),
-          ));
+          inputs.add(
+            ItemProducaoInput(
+              id: it.id,
+              nome: it.nome,
+              quantidade: it.quantidade,
+              observacao: it.observacao,
+              adicionais: it.adicionais.map((a) => a.nome).toList(),
+            ),
+          );
         }
       }
 
@@ -3499,9 +3651,11 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(qtd > 0
-                ? '✓ $qtd ticket(s) de produção reimpresso(s) em suas impressoras'
-                : 'Nenhum item com impressora de produção configurada'),
+            content: Text(
+              qtd > 0
+                  ? '✓ $qtd ticket(s) de produção reimpresso(s) em suas impressoras'
+                  : 'Nenhum item com impressora de produção configurada',
+            ),
             backgroundColor: qtd > 0 ? Colors.green : Colors.orange,
             duration: const Duration(seconds: 3),
           ),
@@ -3610,7 +3764,11 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     );
   }
 
-  void _estornarPagamentoPedido(ItemHistorico item, int pgIdx, BuildContext context) {
+  void _estornarPagamentoPedido(
+    ItemHistorico item,
+    int pgIdx,
+    BuildContext context,
+  ) {
     final dataService = Provider.of<DataService>(context, listen: false);
     final pg = item.pedido!.pagamentos[pgIdx];
 
@@ -3623,10 +3781,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           children: [
             Icon(Icons.undo, color: Colors.orangeAccent),
             SizedBox(width: 12),
-            Text(
-              'Estornar Pagamento',
-              style: TextStyle(color: Colors.white),
-            ),
+            Text('Estornar Pagamento', style: TextStyle(color: Colors.white)),
           ],
         ),
         content: Column(
@@ -3651,10 +3806,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text(
-              'CANCELAR',
-              style: TextStyle(color: Colors.grey),
-            ),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -3662,8 +3814,12 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
               try {
                 final pedido = item.pedido!;
-                final novosPagamentos = List<PagamentoPedido>.from(pedido.pagamentos);
-                novosPagamentos[pgIdx] = novosPagamentos[pgIdx].copyWith(recebido: false);
+                final novosPagamentos = List<PagamentoPedido>.from(
+                  pedido.pagamentos,
+                );
+                novosPagamentos[pgIdx] = novosPagamentos[pgIdx].copyWith(
+                  recebido: false,
+                );
                 final pedidoAtualizado = pedido.copyWith(
                   pagamentos: novosPagamentos,
                   updatedAt: DateTime.now(),
@@ -3673,7 +3829,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Pagamento de ${_formatoMoeda.format(pg.valor)} estornado com sucesso!'),
+                      content: Text(
+                        'Pagamento de ${_formatoMoeda.format(pg.valor)} estornado com sucesso!',
+                      ),
                       backgroundColor: Colors.green,
                     ),
                   );
@@ -3689,7 +3847,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                 }
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent,
+            ),
             child: const Text(
               'SIM, ESTORNAR',
               style: TextStyle(
@@ -3812,7 +3972,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         // recebimento). Vendas pagas com cartão/pix, fiado ou crediário podem
         // ter valorRecebido null e ainda assim foram finalizadas.
         final temPagamentoRecebido = v.pagamentos.any((p) => p.recebido);
-        final isVendaSalva = (v.valorRecebido ?? 0) <= 0 &&
+        final isVendaSalva =
+            (v.valorRecebido ?? 0) <= 0 &&
             v.tipoPagamento == TipoPagamento.outro &&
             !temPagamentoRecebido;
         final isCancelada = v.isCancelada;
@@ -3825,7 +3986,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       final temRespCaixa = respCaixa != null && respCaixa.isNotEmpty;
       bool mesmoOperador(String? a, String? b) {
         if (a == null || b == null) return false;
-        String norm(String s) => s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
+        String norm(String s) =>
+            s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
         final na = norm(a), nb = norm(b);
         if (na.isEmpty || nb.isEmpty) return false;
         if (na == nb) return true;
@@ -3836,12 +3998,13 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
 
       final pedidosSessao = dataService.pedidos.where((p) {
         if (!(p.dataPedido.isAfter(aberturaCaixa.dataAbertura) ||
-              p.dataPedido.isAtSameMomentAs(aberturaCaixa.dataAbertura))) {
+            p.dataPedido.isAtSameMomentAs(aberturaCaixa.dataAbertura))) {
           return false;
         }
         if (temRespCaixa) {
           final operadorPedido = p.vendedorNome;
-          if (operadorPedido == null || operadorPedido.trim().isEmpty) return false;
+          if (operadorPedido == null || operadorPedido.trim().isEmpty)
+            return false;
           if (!mesmoOperador(operadorPedido, respCaixa)) return false;
         }
         return true;
@@ -3854,7 +4017,10 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           final TipoPagamento? novoTipo = p.pagamentos.isNotEmpty
               ? p.pagamentos.first.tipo
               : existing.tipoPagamento;
-          mapItensSessao[p.id] = existing.copyWith(pedido: p, tipoPagamento: novoTipo);
+          mapItensSessao[p.id] = existing.copyWith(
+            pedido: p,
+            tipoPagamento: novoTipo,
+          );
         } else if (!isPendente) {
           mapItensSessao[p.id] = ItemHistorico.fromPedido(p);
         }
@@ -3921,40 +4087,73 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         if (i.dataModificacao == null) return false;
         if (isAberto) {
           return i.dataModificacao!.isAfter(aberturaCaixa.dataAbertura) ||
-                 i.dataModificacao!.isAtSameMomentAs(aberturaCaixa.dataAbertura);
+              i.dataModificacao!.isAtSameMomentAs(aberturaCaixa.dataAbertura);
         } else {
-          return i.dataModificacao!.isAfter(_dataInicio) && i.dataModificacao!.isBefore(_dataFim);
+          return i.dataModificacao!.isAfter(_dataInicio) &&
+              i.dataModificacao!.isBefore(_dataFim);
         }
       }).toList();
-      
+
       if (cancelados.isNotEmpty) {
-        final labelOrigem = mesa.tipo == TipoControle.comanda ? '[COMANDA]' : '[MESA]';
-        final canceladosInfo = cancelados.map((i) => 
-          '${i.quantidade.toStringAsFixed(0)}x ${i.nome} por ${i.usuarioModificou ?? "Sistema"}'
-        ).join(', ');
-        itensDeletadosMesa.add('$labelOrigem ${mesa.numero} (Aberta): $canceladosInfo');
+        final labelOrigem = mesa.tipo == TipoControle.comanda
+            ? '[COMANDA]'
+            : '[MESA]';
+        final canceladosInfo = cancelados
+            .map(
+              (i) =>
+                  '${i.quantidade.toStringAsFixed(0)}x ${i.nome} por ${i.usuarioModificou ?? "Sistema"}',
+            )
+            .join(', ');
+        itensDeletadosMesa.add(
+          '$labelOrigem ${mesa.numero} (Aberta): $canceladosInfo',
+        );
       }
+    }
+
+    // Itens deletados do carrinho do PDV (comanda virtual de auditoria) na
+    // janela exibida — antes não apareciam em lugar nenhum aqui.
+    for (final i in dataService.itensDeletadosNoPDV(
+      inicio: isAberto ? aberturaCaixa.dataAbertura : _dataInicio,
+      fim: isAberto ? null : _dataFim,
+    )) {
+      final qtd = i.quantidade == i.quantidade.roundToDouble()
+          ? i.quantidade.toStringAsFixed(0)
+          : i.quantidade.toString();
+      itensDeletadosMesa.add(
+        '[PDV] ${qtd}x ${i.nome} — deletado por ${i.usuarioModificou ?? "Sistema"}',
+      );
     }
 
     // 1. Processar vendas válidas (ativas)
     for (var i in vendasValidas) {
-      if (i.vendaBalcao != null && i.vendaBalcao!.observacoes != null && i.vendaBalcao!.observacoes!.contains('CANCELADOS:')) {
+      if (i.vendaBalcao != null &&
+          i.vendaBalcao!.observacoes != null &&
+          i.vendaBalcao!.observacoes!.contains('CANCELADOS:')) {
         final parts = i.vendaBalcao!.observacoes!.split('CANCELADOS:');
         if (parts.length > 1) {
-          final orig = i.vendaBalcao!.observacoes!.split('|').first.replaceAll('[VIP-MC] originado de ', '').trim();
+          final orig = i.vendaBalcao!.observacoes!
+              .split('|')
+              .first
+              .replaceAll('[VIP-MC] originado de ', '')
+              .trim();
           itensDeletadosMesa.add('$orig: ${parts[1].trim()}');
         }
       }
 
       if (i.vendaBalcao != null) {
         for (var item in i.vendaBalcao!.itens) {
-          itemQuantities[item.nome] = (itemQuantities[item.nome] ?? 0.0) + item.quantidade;
-          itemTotals[item.nome] = (itemTotals[item.nome] ?? 0.0) + (item.precoUnitario * item.quantidade);
+          itemQuantities[item.nome] =
+              (itemQuantities[item.nome] ?? 0.0) + item.quantidade;
+          itemTotals[item.nome] =
+              (itemTotals[item.nome] ?? 0.0) +
+              (item.precoUnitario * item.quantidade);
         }
       } else if (i.pedido != null) {
         for (var item in i.pedido!.produtos) {
-          itemQuantities[item.nome] = (itemQuantities[item.nome] ?? 0.0) + item.quantidade;
-          itemTotals[item.nome] = (itemTotals[item.nome] ?? 0.0) + (item.preco * item.quantidade);
+          itemQuantities[item.nome] =
+              (itemQuantities[item.nome] ?? 0.0) + item.quantidade;
+          itemTotals[item.nome] =
+              (itemTotals[item.nome] ?? 0.0) + (item.preco * item.quantidade);
         }
       }
     }
@@ -3963,10 +4162,16 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     for (var i in itensSessao) {
       if (i.isCancelada) {
         vendasCanceladasSessao.add(i);
-        if (i.vendaBalcao != null && i.vendaBalcao!.observacoes != null && i.vendaBalcao!.observacoes!.contains('CANCELADOS:')) {
+        if (i.vendaBalcao != null &&
+            i.vendaBalcao!.observacoes != null &&
+            i.vendaBalcao!.observacoes!.contains('CANCELADOS:')) {
           final parts = i.vendaBalcao!.observacoes!.split('CANCELADOS:');
           if (parts.length > 1) {
-            final orig = i.vendaBalcao!.observacoes!.split('|').first.replaceAll('[VIP-MC] originado de ', '').trim();
+            final orig = i.vendaBalcao!.observacoes!
+                .split('|')
+                .first
+                .replaceAll('[VIP-MC] originado de ', '')
+                .trim();
             itensDeletadosMesa.add('$orig (Venda Canc.): ${parts[1].trim()}');
           }
         }
@@ -4143,36 +4348,68 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                   ),
                   const Divider(color: Colors.white10, height: 32),
                   Theme(
-                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                    data: Theme.of(
+                      context,
+                    ).copyWith(dividerColor: Colors.transparent),
                     child: Column(
                       children: [
                         ExpansionTile(
                           title: const Text(
                             'PRODUTOS VENDIDOS NO PERÍODO',
-                            style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.1,
+                            ),
                           ),
-                          leading: const Icon(Icons.shopping_bag_outlined, color: Colors.white54, size: 20),
-                          childrenPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: const Icon(
+                            Icons.shopping_bag_outlined,
+                            color: Colors.white54,
+                            size: 20,
+                          ),
+                          childrenPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           children: itemQuantities.isEmpty
-                              ? [const Text('Nenhum item vendido', style: TextStyle(color: Colors.white38, fontSize: 12))]
+                              ? [
+                                  const Text(
+                                    'Nenhum item vendido',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ]
                               : itemQuantities.entries.map((e) {
                                   final nome = e.key;
                                   final qtd = e.value;
                                   final totalVal = itemTotals[nome] ?? 0.0;
                                   return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
                                     child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
                                       children: [
                                         Expanded(
                                           child: Text(
                                             '${qtd.toStringAsFixed(0)}x $nome',
-                                            style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                            style: const TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 13,
+                                            ),
                                           ),
                                         ),
                                         Text(
                                           _formatoMoeda.format(totalVal),
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -4183,29 +4420,58 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           title: Text(
                             'VENDAS CANCELADAS (${vendasCanceladasSessao.length})',
                             style: TextStyle(
-                              color: vendasCanceladasSessao.isNotEmpty ? Colors.redAccent : Colors.white70,
+                              color: vendasCanceladasSessao.isNotEmpty
+                                  ? Colors.redAccent
+                                  : Colors.white70,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 1.1,
                             ),
                           ),
-                          leading: Icon(Icons.cancel_outlined, color: vendasCanceladasSessao.isNotEmpty ? Colors.redAccent : Colors.white54, size: 20),
-                          childrenPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: Icon(
+                            Icons.cancel_outlined,
+                            color: vendasCanceladasSessao.isNotEmpty
+                                ? Colors.redAccent
+                                : Colors.white54,
+                            size: 20,
+                          ),
+                          childrenPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           children: vendasCanceladasSessao.isEmpty
-                              ? [const Text('Nenhuma venda cancelada', style: TextStyle(color: Colors.white38, fontSize: 12))]
+                              ? [
+                                  const Text(
+                                    'Nenhuma venda cancelada',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ]
                               : vendasCanceladasSessao.map((v) {
                                   return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
                                     child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
                                       children: [
                                         Text(
                                           '${v.numero} - ${v.clienteNome ?? "Consumidor"}',
-                                          style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 13,
+                                          ),
                                         ),
                                         Text(
                                           _formatoMoeda.format(v.valorTotal),
-                                          style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13),
+                                          style: const TextStyle(
+                                            color: Colors.redAccent,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -4216,24 +4482,48 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                           title: Text(
                             'ITENS DELETADOS (CARRINHO/MESAS) (${itensDeletadosMesa.length})',
                             style: TextStyle(
-                              color: itensDeletadosMesa.isNotEmpty ? Colors.orangeAccent : Colors.white70,
+                              color: itensDeletadosMesa.isNotEmpty
+                                  ? Colors.orangeAccent
+                                  : Colors.white70,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 1.1,
                             ),
                           ),
-                          leading: Icon(Icons.delete_outline, color: itensDeletadosMesa.isNotEmpty ? Colors.orangeAccent : Colors.white54, size: 20),
-                          childrenPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: Icon(
+                            Icons.delete_outline,
+                            color: itensDeletadosMesa.isNotEmpty
+                                ? Colors.orangeAccent
+                                : Colors.white54,
+                            size: 20,
+                          ),
+                          childrenPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           children: itensDeletadosMesa.isEmpty
-                              ? [const Text('Nenhum item removido', style: TextStyle(color: Colors.white38, fontSize: 12))]
+                              ? [
+                                  const Text(
+                                    'Nenhum item removido',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ]
                               : itensDeletadosMesa.map((text) {
                                   return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
                                     child: Align(
                                       alignment: Alignment.centerLeft,
                                       child: Text(
                                         text,
-                                        style: const TextStyle(color: Colors.orangeAccent, fontSize: 13),
+                                        style: const TextStyle(
+                                          color: Colors.orangeAccent,
+                                          fontSize: 13,
+                                        ),
                                       ),
                                     ),
                                   );
@@ -4391,23 +4681,45 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
             final exibidas = queryLower.isEmpty
                 ? filtradas
                 : filtradas.where((v) {
-                    if (v.numero.toLowerCase().contains(queryLower)) return true;
-                    final numericoQuery = queryLower.replaceAll(RegExp(r'[^0-9]'), '');
+                    if (v.numero.toLowerCase().contains(queryLower))
+                      return true;
+                    final numericoQuery = queryLower.replaceAll(
+                      RegExp(r'[^0-9]'),
+                      '',
+                    );
                     if (numericoQuery.isNotEmpty) {
-                      final numericoVenda = v.numero.replaceAll(RegExp(r'[^0-9]'), '');
-                      final querySemZeros = int.tryParse(numericoQuery)?.toString() ?? numericoQuery;
-                      final vendaSemZeros = int.tryParse(numericoVenda)?.toString() ?? numericoVenda;
+                      final numericoVenda = v.numero.replaceAll(
+                        RegExp(r'[^0-9]'),
+                        '',
+                      );
+                      final querySemZeros =
+                          int.tryParse(numericoQuery)?.toString() ??
+                          numericoQuery;
+                      final vendaSemZeros =
+                          int.tryParse(numericoVenda)?.toString() ??
+                          numericoVenda;
                       if (vendaSemZeros.contains(querySemZeros)) return true;
                     }
-                    if (v.clienteNome != null && v.clienteNome!.toLowerCase().contains(queryLower)) return true;
+                    if (v.clienteNome != null &&
+                        v.clienteNome!.toLowerCase().contains(queryLower))
+                      return true;
                     if (v.vendaBalcao != null) {
-                      if (v.vendaBalcao!.itens.any((item) => item.nome.toLowerCase().contains(queryLower))) {
+                      if (v.vendaBalcao!.itens.any(
+                        (item) => item.nome.toLowerCase().contains(queryLower),
+                      )) {
                         return true;
                       }
                     }
                     if (v.pedido != null) {
-                      if (v.pedido!.produtos.any((item) => item.nome.toLowerCase().contains(queryLower)) ||
-                          v.pedido!.servicos.any((item) => item.descricao.toLowerCase().contains(queryLower))) {
+                      if (v.pedido!.produtos.any(
+                            (item) =>
+                                item.nome.toLowerCase().contains(queryLower),
+                          ) ||
+                          v.pedido!.servicos.any(
+                            (item) => item.descricao.toLowerCase().contains(
+                              queryLower,
+                            ),
+                          )) {
                         return true;
                       }
                     }
@@ -4476,13 +4788,21 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                     child: TextField(
                       style: const TextStyle(color: Colors.white, fontSize: 14),
                       decoration: InputDecoration(
-                        icon: const Icon(Icons.search, color: Colors.white38, size: 20),
+                        icon: const Icon(
+                          Icons.search,
+                          color: Colors.white38,
+                          size: 20,
+                        ),
                         hintText: 'Buscar por número ou item...',
                         hintStyle: const TextStyle(color: Colors.white38),
                         border: InputBorder.none,
                         suffixIcon: queryModal.isNotEmpty
                             ? IconButton(
-                                icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
+                                icon: const Icon(
+                                  Icons.clear,
+                                  color: Colors.white38,
+                                  size: 18,
+                                ),
                                 onPressed: () {
                                   setModalState(() {
                                     queryModal = '';
@@ -4506,84 +4826,84 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                       itemBuilder: (context, index) {
                         final v = exibidas[index];
 
-                    // Calcular o valor específico deste tipo de pagamento se for multi-pagamento
-                    double valorNesteTipo = v.valorTotal;
-                    if (v.pedido != null) {
-                      valorNesteTipo = v.pedido!.pagamentos
-                          .where((p) => p.recebido && p.tipo == tipo)
-                          .fold(0.0, (sum, p) => sum + p.valor);
-                    } else if (v.vendaBalcao != null &&
-                        v.vendaBalcao!.pagamentos.isNotEmpty) {
-                      valorNesteTipo = v.vendaBalcao!.pagamentos
-                          .where((p) => p.recebido && p.tipo == tipo)
-                          .fold(0.0, (sum, p) => sum + p.valor);
-                    } else if (v.isSangria || v.isPagamento) {
-                      valorNesteTipo = -v.valorTotal;
-                    }
+                        // Calcular o valor específico deste tipo de pagamento se for multi-pagamento
+                        double valorNesteTipo = v.valorTotal;
+                        if (v.pedido != null) {
+                          valorNesteTipo = v.pedido!.pagamentos
+                              .where((p) => p.recebido && p.tipo == tipo)
+                              .fold(0.0, (sum, p) => sum + p.valor);
+                        } else if (v.vendaBalcao != null &&
+                            v.vendaBalcao!.pagamentos.isNotEmpty) {
+                          valorNesteTipo = v.vendaBalcao!.pagamentos
+                              .where((p) => p.recebido && p.tipo == tipo)
+                              .fold(0.0, (sum, p) => sum + p.valor);
+                        } else if (v.isSangria || v.isPagamento) {
+                          valorNesteTipo = -v.valorTotal;
+                        }
 
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.03),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: ListTile(
-                        onTap: () {
-                          Navigator.pop(context);
-                          _mostrarDetalhesVenda(v);
-                        },
-                        leading: Container(
-                          padding: const EdgeInsets.all(8),
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.white.withOpacity(0.03),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Icon(
-                            v.isSangria || v.isPagamento
-                                ? Icons.remove_circle_outline
-                                : Icons.add_circle_outline,
-                            color: v.isSangria || v.isPagamento
-                                ? Colors.redAccent
-                                : Colors.greenAccent,
-                            size: 20,
+                          child: ListTile(
+                            onTap: () {
+                              Navigator.pop(context);
+                              _mostrarDetalhesVenda(v);
+                            },
+                            leading: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                v.isSangria || v.isPagamento
+                                    ? Icons.remove_circle_outline
+                                    : Icons.add_circle_outline,
+                                color: v.isSangria || v.isPagamento
+                                    ? Colors.redAccent
+                                    : Colors.greenAccent,
+                                size: 20,
+                              ),
+                            ),
+                            title: Text(
+                              v.numero,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '${DateFormat('HH:mm').format(v.data.toLocal())} • ${v.clienteNome ?? "Consumidor"}',
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: Text(
+                              _formatoMoeda.format(valorNesteTipo),
+                              style: TextStyle(
+                                color: valorNesteTipo < 0
+                                    ? Colors.redAccent
+                                    : Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
                           ),
-                        ),
-                        title: Text(
-                          v.numero,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '${DateFormat('HH:mm').format(v.data.toLocal())} • ${v.clienteNome ?? "Consumidor"}',
-                          style: const TextStyle(
-                            color: Colors.white38,
-                            fontSize: 12,
-                          ),
-                        ),
-                        trailing: Text(
-                          _formatoMoeda.format(valorNesteTipo),
-                          style: TextStyle(
-                            color: valorNesteTipo < 0
-                                ? Colors.redAccent
-                                : Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        );
-      },
-    ),
-    ),
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -4997,15 +5317,38 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           if (i.dataModificacao == null) return false;
           return (i.dataModificacao!.isAfter(abertura.dataAbertura) ||
                   i.dataModificacao!.isAtSameMomentAs(abertura.dataAbertura)) &&
-                 i.dataModificacao!.isBefore(fechamento.dataFechamento.add(const Duration(seconds: 1)));
+              i.dataModificacao!.isBefore(
+                fechamento.dataFechamento.add(const Duration(seconds: 1)),
+              );
         }).toList();
         if (cancelados.isNotEmpty) {
-          final labelOrigem = mesa.tipo == TipoControle.comanda ? '[COMANDA]' : '[MESA]';
-          final canceladosInfo = cancelados.map((i) => 
-            '${i.quantidade.toStringAsFixed(0)}x ${i.nome} por ${i.usuarioModificou ?? "Sistema"}'
-          ).join(', ');
-          canceladosExtra.add('$labelOrigem ${mesa.numero} (Aberta): $canceladosInfo');
+          final labelOrigem = mesa.tipo == TipoControle.comanda
+              ? '[COMANDA]'
+              : '[MESA]';
+          final canceladosInfo = cancelados
+              .map(
+                (i) =>
+                    '${i.quantidade.toStringAsFixed(0)}x ${i.nome} por ${i.usuarioModificou ?? "Sistema"}',
+              )
+              .join(', ');
+          canceladosExtra.add(
+            '$labelOrigem ${mesa.numero} (Aberta): $canceladosInfo',
+          );
         }
+      }
+
+      // Itens deletados do carrinho do PDV (comanda virtual de auditoria) na
+      // janela [abertura, fechamento] — antes não apareciam no PDF.
+      for (final i in ds.itensDeletadosNoPDV(
+        inicio: abertura.dataAbertura,
+        fim: fechamento.dataFechamento,
+      )) {
+        final qtd = i.quantidade == i.quantidade.roundToDouble()
+            ? i.quantidade.toStringAsFixed(0)
+            : i.quantidade.toString();
+        canceladosExtra.add(
+          '[PDV] ${qtd}x ${i.nome} — deletado por ${i.usuarioModificou ?? "Sistema"}',
+        );
       }
 
       CaixaPDFService.gerarPDFTermico(
@@ -5117,9 +5460,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     // Verifica se o item foi pago com a forma selecionada (suporta split)
     bool itemUsaFormaPagamento(ItemHistorico i, String forma) {
       if (forma == 'Todas') return true;
-      final tp = TipoPagamento.values
-          .where((t) => t.nome == forma)
-          .firstOrNull;
+      final tp = TipoPagamento.values.where((t) => t.nome == forma).firstOrNull;
       if (tp == null) return false;
       final pagamentos = <PagamentoPedido>[
         ...?i.vendaBalcao?.pagamentos,
@@ -5147,8 +5488,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               () => _ProdutoVendido(nome: iv.nome, produtoId: iv.id),
             );
             produtosMap[id]!.quantidadeTotal += iv.quantidade.toInt();
-            produtosMap[id]!.valorTotal +=
-                (iv.precoUnitario * iv.quantidade);
+            produtosMap[id]!.valorTotal += (iv.precoUnitario * iv.quantidade);
 
             final prod = dataService.produtos
                 .where((p) => p.id == iv.id || p.nome == iv.nome)
@@ -5224,16 +5564,17 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
           builder: (context, setModalState) {
             // Agrega a partir da lista já filtrada por período + forma (barato)
             final listaBase = agregarProdutos(itensAnalise);
-            final totalVendasGeral =
-                listaBase.fold(0.0, (s, p) => s + p.valorTotal);
+            final totalVendasGeral = listaBase.fold(
+              0.0,
+              (s, p) => s + p.valorTotal,
+            );
             final listaABC = List<_ProdutoVendido>.from(listaBase)
               ..sort((a, b) => b.valorTotal.compareTo(a.valorTotal));
             double acumuladoFiltro = 0;
             for (var p in listaABC) {
               if (totalVendasGeral > 0) {
                 acumuladoFiltro += p.valorTotal;
-                double percentual =
-                    (acumuladoFiltro / totalVendasGeral) * 100;
+                double percentual = (acumuladoFiltro / totalVendasGeral) * 100;
                 if (percentual <= 80.1)
                   p.abc = 'A';
                 else if (percentual <= 95.1)
@@ -5402,8 +5743,9 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               recalcularAnalise();
                             }),
                             backgroundColor: const Color(0xFF2D2D44),
-                            selectedColor:
-                                Colors.orangeAccent.withOpacity(0.25),
+                            selectedColor: Colors.orangeAccent.withOpacity(
+                              0.25,
+                            ),
                             labelStyle: TextStyle(
                               color: formaFiltro == 'Todas'
                                   ? Colors.orangeAccent
@@ -5442,14 +5784,16 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                                 recalcularAnalise();
                               }),
                               backgroundColor: const Color(0xFF2D2D44),
-                              selectedColor:
-                                  Colors.orangeAccent.withOpacity(0.25),
+                              selectedColor: Colors.orangeAccent.withOpacity(
+                                0.25,
+                              ),
                               labelStyle: TextStyle(
                                 color: sel
                                     ? Colors.orangeAccent
                                     : Colors.white60,
-                                fontWeight:
-                                    sel ? FontWeight.bold : FontWeight.normal,
+                                fontWeight: sel
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
                                 fontSize: 11,
                               ),
                               shape: RoundedRectangleBorder(
@@ -5550,8 +5894,14 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     double totalLucro,
   ) {
     produtos.sort((a, b) => b.lucroTotal.compareTo(a.lucroTotal));
-    final double totalCusto = produtos.fold(0.0, (s, p) => s + (p.custoTotal ?? 0.0));
-    final double totalFaturamento = produtos.fold(0.0, (s, p) => s + p.valorTotal);
+    final double totalCusto = produtos.fold(
+      0.0,
+      (s, p) => s + (p.custoTotal ?? 0.0),
+    );
+    final double totalFaturamento = produtos.fold(
+      0.0,
+      (s, p) => s + p.valorTotal,
+    );
     return Column(
       children: [
         Container(
@@ -5573,12 +5923,20 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                       children: [
                         const Text(
                           'FATURAMENTO',
-                          style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           _formatoMoeda.format(totalFaturamento),
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -5589,12 +5947,20 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                       children: [
                         const Text(
                           'CUSTO TOTAL',
-                          style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           _formatoMoeda.format(totalCusto),
-                          style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -5605,12 +5971,20 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                       children: [
                         const Text(
                           'LUCRO TOTAL',
-                          style: TextStyle(color: Colors.orangeAccent, fontSize: 9, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           _formatoMoeda.format(totalLucro),
-                          style: const TextStyle(color: Colors.orangeAccent, fontSize: 14, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -6226,7 +6600,13 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
               default:
                 tipoPag = '99';
             }
-            pagamentos.add(NFCePagamento(tipo: tipoPag, valor: p.valor));
+            pagamentos.add(
+              NFCePagamento(
+                tipo: tipoPag,
+                valor: p.valor,
+                troco: p.troco ?? 0.0,
+              ),
+            );
           }
         } else {
           pagamentos.add(NFCePagamento(tipo: '99', valor: ped.totalGeral));
@@ -6244,20 +6624,38 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       final ambienteHomologacao = empresa.ambienteHomologacao ?? true;
       final usuario = authService.usuarioAtual;
       final serieUsuario = usuario?.serieNfce;
+      final numeroInicialUsuario = usuario?.numeroInicialNfce ?? 1;
+
+      // 🔢 Numeração automática da reemissão: o MENOR número livre da série
+      // (buracos da sequência preenchidos, seguindo para o próximo). Sem
+      // diálogo perguntando o número a cada reemissão — um número digitado só
+      // entra no fluxo de duplicidade, onde o operador vê qual número a SEFAZ
+      // recusou e o sistema já sugere o menor livre seguinte.
 
       // Número ATÔMICO (bloco reservado na nuvem por série): reemissão não pode
       // colidir com um caixa offline (rejeição 539 da SEFAZ). Sem nuvem, cai no
       // cálculo local antigo.
-      final numeroAtomicoNfce = await dataService.reservarProximoNumeroNfce(
-        serie: serieUsuario?.toString() ?? '1',
-        numeroInicial: usuario?.numeroInicialNfce ?? 1,
-      );
-      final nextNfceNumero = (numeroAtomicoNfce ??
-              dataService.getProximoNumeroNfce(
-                serie: serieUsuario?.toString() ?? '1',
-                numeroInicial: usuario?.numeroInicialNfce ?? 1,
-              ))
-          .toString();
+      final int? numeroAtomicoNfce;
+      try {
+        numeroAtomicoNfce = await dataService.reservarProximoNumeroNfce(
+          serie: serieUsuario?.toString() ?? '1',
+          numeroInicial: numeroInicialUsuario,
+        );
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$e'), backgroundColor: Colors.red),
+          );
+        }
+        return;
+      }
+      final nextNfceNumero =
+          (numeroAtomicoNfce ??
+                  dataService.getProximoNumeroNfce(
+                    serie: serieUsuario?.toString() ?? '1',
+                    numeroInicial: numeroInicialUsuario,
+                  ))
+              .toString();
 
       // ===== AJUSTE FISCAL: Taxa de Entrega e Serviço do Garçom =====
       double ajusteFiscal = 0.0;
@@ -6266,9 +6664,11 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         if (taxaEntrega > 0.01) ajusteFiscal += taxaEntrega;
       }
       if (!empresa.incluirServicoGarcomNfce) {
-        final itemGarcom = item.vendaBalcao?.itens
-            .where((i) => i.id == 'garcom' && i.isServico)
-            .fold(0.0, (sum, i) => sum + i.subtotal) ?? 0.0;
+        final itemGarcom =
+            item.vendaBalcao?.itens
+                .where((i) => i.id == 'garcom' && i.isServico)
+                .fold(0.0, (sum, i) => sum + i.subtotal) ??
+            0.0;
         if (itemGarcom > 0.01) ajusteFiscal += itemGarcom;
       }
       final valorTotalNfce = item.valorTotal - ajusteFiscal;
@@ -6286,6 +6686,13 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         vendaNumero: nextNfceNumero,
         ambienteHomologacao: ambienteHomologacao,
         serie: serieUsuario,
+        numero: int.tryParse(nextNfceNumero),
+        numeroInicial: numeroInicialUsuario,
+        numerosOcupados: dataService.nfces
+            .where((n) => n.serie == (serieUsuario?.toString() ?? '1'))
+            .map((n) => int.tryParse(n.numero))
+            .whereType<int>()
+            .toSet(),
       );
 
       await dataService.adicionarNFCe(nfce);
@@ -6296,7 +6703,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         setState(() {});
         // Rejeição da SEFAZ devolve a nota como 'pendente' (reenvio automático);
         // contingência é o bridge offline. Só 'autorizada' é sucesso de verdade.
-        final pendente = nfce.status == 'pendente' || nfce.status == 'contingencia';
+        final pendente =
+            nfce.status == 'pendente' || nfce.status == 'contingencia';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(

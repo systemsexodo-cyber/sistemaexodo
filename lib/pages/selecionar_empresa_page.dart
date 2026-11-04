@@ -47,9 +47,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   Future<void> _verificarBackupAutomatico() async {
     final authService = Provider.of<AuthService>(context, listen: false);
     final usuario = authService.usuarioAtual;
-    
+
     // Apenas tenta backup se for admin/master
-    if (usuario != null && (usuario.email.toLowerCase() == 'user' || usuario.isMaster)) {
+    if (usuario != null &&
+        (usuario.email.toLowerCase() == 'user' || usuario.isMaster)) {
       // Pequeno delay para não sobrecarregar o início da tela
       await Future.delayed(const Duration(seconds: 3));
       await GoogleDriveService.instance.verificarERealizarBackupAutomatico();
@@ -180,10 +181,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       isExpanded: true,
                       dropdownColor: const Color(0xFF2A2A3E),
                       underline: const SizedBox.shrink(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                      ),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
                       items: authService.empresas
                           .map(
                             (e) => DropdownMenuItem<Empresa>(
@@ -345,13 +343,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     color: Colors.blueAccent.withOpacity(0.15),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.settings, color: Colors.blueAccent, size: 20),
+                  child: const Icon(
+                    Icons.settings,
+                    color: Colors.blueAccent,
+                    size: 20,
+                  ),
                 ),
                 tooltip: 'Configurações de Empresas',
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const EmpresasPage()),
+                    MaterialPageRoute(
+                      builder: (context) => const EmpresasPage(),
+                    ),
                   );
                 },
               ),
@@ -363,12 +367,22 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   color: Colors.white.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.logout, color: Colors.white70, size: 20),
+                child: const Icon(
+                  Icons.logout,
+                  color: Colors.white70,
+                  size: 20,
+                ),
               ),
               tooltip: 'Sair',
               onPressed: () async {
-                final authService = Provider.of<AuthService>(context, listen: false);
-                final dataService = Provider.of<DataService>(context, listen: false);
+                final authService = Provider.of<AuthService>(
+                  context,
+                  listen: false,
+                );
+                final dataService = Provider.of<DataService>(
+                  context,
+                  listen: false,
+                );
                 await dataService.definirEmpresaAtual(null);
                 await authService.logout();
                 if (context.mounted) {
@@ -396,9 +410,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           const SizedBox(height: 12),
-                          const Center(child: ExodoLogo(fontSize: 42, showSubtitle: true)),
+                          const Center(
+                            child: ExodoLogo(fontSize: 42, showSubtitle: true),
+                          ),
                           const SizedBox(height: 32),
-                          
+
                           // Hero section with better typography
                           Column(
                             children: [
@@ -425,7 +441,8 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           const SizedBox(height: 32),
 
                           // Essential Admin Cards
-                          if (authService.usuarioAtual?.email.toLowerCase() == 'user') ...[
+                          if (authService.usuarioAtual?.email.toLowerCase() ==
+                              'user') ...[
                             _buildCardGoogleDrive(context, authService),
                             const SizedBox(height: 16),
                             _buildCardBridgeManagement(context, authService),
@@ -465,7 +482,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       ),
                     ),
                   ),
-                  
+
                   // The company list
                   authService.getEmpresasDoUsuario().isEmpty
                       ? SliverFillRemaining(
@@ -474,7 +491,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         )
                       : SliverPadding(
                           padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-                          sliver: _buildEmpresasListSliver(context, authService),
+                          sliver: _buildEmpresasListSliver(
+                            context,
+                            authService,
+                          ),
                         ),
                 ],
               ),
@@ -487,13 +507,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.blueAccent,
+                        ),
                         strokeWidth: 3,
                       ),
                       SizedBox(height: 16),
                       Text(
                         'Carregando...',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
@@ -509,7 +534,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     final authService = Provider.of<AuthService>(context);
     final usuarioAtual = authService.usuarioAtual;
     final isUsuarioMaster = usuarioAtual?.email.toLowerCase() == 'user';
-    
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -522,17 +547,17 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           const SizedBox(height: 16),
           Text(
             'Nenhuma empresa cadastrada',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Colors.white70,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(color: Colors.white70),
           ),
           const SizedBox(height: 8),
           if (isUsuarioMaster) ...[
             Text(
               'Crie uma nova empresa para começar',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white54,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.white54),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
@@ -543,7 +568,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     builder: (context) => const AdicionarEmpresaPage(),
                   ),
                 );
-                
+
                 if (resultado == true && mounted) {
                   setState(() {});
                 }
@@ -551,15 +576,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               icon: const Icon(Icons.add_business),
               label: const Text('Criar Primeira Empresa'),
               style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
             ),
           ] else ...[
             Text(
               'Entre em contato com o administrador',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white54,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.white54),
             ),
           ],
         ],
@@ -574,7 +602,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     return StatefulBuilder(
       builder: (context, setState) {
         bool _senhaVisivel = false;
-        
+
         return Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
@@ -595,7 +623,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       color: Colors.blueAccent.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.person_outline, color: Colors.blueAccent, size: 24),
+                    child: const Icon(
+                      Icons.person_outline,
+                      color: Colors.blueAccent,
+                      size: 24,
+                    ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -614,14 +646,20 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                             ),
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.blueAccent.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                usuario.tipo == TipoUsuario.administrador ? 'ADMIN' : 
-                                usuario.tipo == TipoUsuario.gerente ? 'GERENTE' : 'OPERADOR',
+                                usuario.tipo == TipoUsuario.administrador
+                                    ? 'ADMIN'
+                                    : usuario.tipo == TipoUsuario.gerente
+                                    ? 'GERENTE'
+                                    : 'OPERADOR',
                                 style: const TextStyle(
                                   color: Colors.blueAccent,
                                   fontSize: 10,
@@ -633,7 +671,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         ),
                         Text(
                           usuario.email,
-                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 13,
+                          ),
                         ),
                       ],
                     ),
@@ -642,18 +683,28 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               ),
               const SizedBox(height: 16),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.lock_outline, color: Colors.white54, size: 16),
+                    const Icon(
+                      Icons.lock_outline,
+                      color: Colors.white54,
+                      size: 16,
+                    ),
                     const SizedBox(width: 12),
                     Text(
                       '••••••••',
-                      style: TextStyle(color: Colors.white.withOpacity(0.7), letterSpacing: 2),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.7),
+                        letterSpacing: 2,
+                      ),
                     ),
                     const Spacer(),
                     TextButton.icon(
@@ -661,9 +712,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                       ),
-                      onPressed: () => _mostrarDialogoAlterarSenha(context, authService, usuario),
+                      onPressed: () => _mostrarDialogoAlterarSenha(
+                        context,
+                        authService,
+                        usuario,
+                      ),
                       icon: const Icon(Icons.edit_outlined, size: 14),
-                      label: const Text('Alterar Senha', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      label: const Text(
+                        'Alterar Senha',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -717,11 +778,20 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       ),
       child: TextField(
         controller: _searchController,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w500,
+        ),
         decoration: InputDecoration(
           hintText: 'Buscar por nome ou CNPJ...',
-          hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontWeight: FontWeight.w400),
-          prefixIcon: Icon(Icons.search_rounded, color: Colors.blueAccent.withAlpha(180)),
+          hintStyle: TextStyle(
+            color: Colors.white.withOpacity(0.4),
+            fontWeight: FontWeight.w400,
+          ),
+          prefixIcon: Icon(
+            Icons.search_rounded,
+            color: Colors.blueAccent.withAlpha(180),
+          ),
           suffixIcon: _searchController.text.isNotEmpty
               ? IconButton(
                   icon: const Icon(Icons.clear_rounded, color: Colors.white54),
@@ -732,7 +802,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               : null,
           filled: true,
           fillColor: Colors.white.withOpacity(0.08),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 18,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(18),
             borderSide: BorderSide(color: Colors.white.withOpacity(0.15)),
@@ -751,17 +824,22 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  Widget _buildEmpresasListSliver(BuildContext context, AuthService authService) {
+  Widget _buildEmpresasListSliver(
+    BuildContext context,
+    AuthService authService,
+  ) {
     final usuarioAtual = authService.usuarioAtual;
     final isUsuarioMaster = usuarioAtual?.email.toLowerCase() == 'user';
-    
+
     List<Empresa> empresas = authService.getEmpresasDoUsuario();
     final searchText = _searchController.text.toLowerCase().trim();
     if (searchText.isNotEmpty) {
       empresas = empresas.where((empresa) {
-        final nomeMatch = empresa.nomeExibicao.toLowerCase().contains(searchText) ||
+        final nomeMatch =
+            empresa.nomeExibicao.toLowerCase().contains(searchText) ||
             empresa.razaoSocial.toLowerCase().contains(searchText);
-        final cnpjMatch = empresa.cnpj?.toLowerCase().contains(searchText) ?? false;
+        final cnpjMatch =
+            empresa.cnpj?.toLowerCase().contains(searchText) ?? false;
         return nomeMatch || cnpjMatch;
       }).toList();
     }
@@ -773,11 +851,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.search_off_rounded, size: 64, color: Colors.white.withOpacity(0.2)),
+              Icon(
+                Icons.search_off_rounded,
+                size: 64,
+                color: Colors.white.withOpacity(0.2),
+              ),
               const SizedBox(height: 16),
               Text(
                 'Nenhuma empresa encontrada',
-                style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 16),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 16,
+                ),
               ),
             ],
           ),
@@ -786,18 +871,15 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     }
 
     return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          if (isUsuarioMaster && index == empresas.length) {
-            return _buildBotaoCriarEmpresa(context);
-          }
-          return _buildEmpresaCard(context, empresas[index], authService);
-        },
-        childCount: empresas.length + (isUsuarioMaster ? 1 : 0),
-      ),
+      delegate: SliverChildBuilderDelegate((context, index) {
+        if (isUsuarioMaster && index == empresas.length) {
+          return _buildBotaoCriarEmpresa(context);
+        }
+        return _buildEmpresaCard(context, empresas[index], authService);
+      }, childCount: empresas.length + (isUsuarioMaster ? 1 : 0)),
     );
   }
-  
+
   Widget _buildBotaoCriarEmpresa(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(top: 16, bottom: 16),
@@ -810,7 +892,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 builder: (context) => const AdicionarEmpresaPage(),
               ),
             );
-            
+
             if (resultado == true && mounted) {
               // Recarrega a lista de empresas
               setState(() {});
@@ -850,10 +932,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       SizedBox(height: 4),
                       Text(
                         'Cadastrar uma nova empresa no sistema',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white70,
-                        ),
+                        style: TextStyle(fontSize: 14, color: Colors.white70),
                       ),
                     ],
                   ),
@@ -871,70 +950,88 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  Widget _buildEmpresaCard(BuildContext context, Empresa empresa, AuthService authService) {
+  Widget _buildEmpresaCard(
+    BuildContext context,
+    Empresa empresa,
+    AuthService authService,
+  ) {
     final usuarioAtual = authService.usuarioAtual;
     final isUsuarioMaster = usuarioAtual?.email.toLowerCase() == 'user';
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.06),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.08),
-          width: 1,
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-            onTap: _isLoading ? null : () async {
-            setState(() => _isLoading = true);
-            try {
-              await authService.selecionarEmpresa(empresa);
-              final dataService = Provider.of<DataService>(context, listen: false);
-              
-              final empAtualizada = authService.empresaAtual ?? empresa;
-              dataService.setEmpresaAtual(empAtualizada);
-              await dataService.definirEmpresaAtual(empAtualizada.id);
+          onTap: _isLoading
+              ? null
+              : () async {
+                  setState(() => _isLoading = true);
+                  try {
+                    await authService.selecionarEmpresa(empresa);
+                    final dataService = Provider.of<DataService>(
+                      context,
+                      listen: false,
+                    );
 
-              final motivo = empAtualizada.verificarMotivoBloqueio(
-                ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
-                ultimaDataExecucao: dataService.ultimaDataExecucao,
-              );
+                    final empAtualizada = authService.empresaAtual ?? empresa;
+                    // ORDEM IMPORTANTE (igual ao main.dart): fixar o id da empresa
+                    // nova ANTES de instalar o objeto — sem isto, gravações nesse
+                    // intervalo usavam a chave da empresa anterior.
+                    await dataService.definirEmpresaAtual(empAtualizada.id);
+                    dataService.setEmpresaAtual(empAtualizada);
 
-              final usuario = authService.usuarioAtual;
-              final isMaster = usuario?.isMaster == true || usuario?.email.toLowerCase() == 'user';
-              final podeBypassar = isMaster && dataService.liberacaoProvisoriaAtiva;
+                    final motivo = empAtualizada.verificarMotivoBloqueio(
+                      ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                      ultimaDataExecucao: dataService.ultimaDataExecucao,
+                    );
 
-              if (context.mounted) {
-                if (motivo != MotivoBloqueioEmpresa.nenhum && !podeBypassar) {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => BloqueioMensalidadePage(
-                        configs: empAtualizada.configuracoes ?? {},
-                        motivoBloqueio: motivo,
-                      ),
-                    ),
-                  );
-                } else {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => const HomePage()),
-                  );
-                }
-              }
-            } catch (e) {
-              if (context.mounted) {
-                setState(() => _isLoading = false);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
-                );
-              }
-            }
-          },
+                    final usuario = authService.usuarioAtual;
+                    final isMaster =
+                        usuario?.isMaster == true ||
+                        usuario?.email.toLowerCase() == 'user';
+                    final podeBypassar =
+                        isMaster && dataService.liberacaoProvisoriaAtiva;
+
+                    if (context.mounted) {
+                      if (motivo != MotivoBloqueioEmpresa.nenhum &&
+                          !podeBypassar) {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BloqueioMensalidadePage(
+                              configs: empAtualizada.configuracoes ?? {},
+                              motivoBloqueio: motivo,
+                            ),
+                          ),
+                        );
+                      } else {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const HomePage(),
+                          ),
+                        );
+                      }
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      setState(() => _isLoading = false);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Erro: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -945,14 +1042,23 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   height: 56,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [Colors.blueAccent.withOpacity(0.2), Colors.blueAccent.withOpacity(0.05)],
+                      colors: [
+                        Colors.blueAccent.withOpacity(0.2),
+                        Colors.blueAccent.withOpacity(0.05),
+                      ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+                    border: Border.all(
+                      color: Colors.blueAccent.withOpacity(0.2),
+                    ),
                   ),
-                  child: const Icon(Icons.business_rounded, color: Colors.blueAccent, size: 28),
+                  child: const Icon(
+                    Icons.business_rounded,
+                    color: Colors.blueAccent,
+                    size: 28,
+                  ),
                 ),
                 const SizedBox(width: 16),
                 // Details
@@ -981,7 +1087,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.fingerprint, size: 12, color: Colors.white.withOpacity(0.4)),
+                              Icon(
+                                Icons.fingerprint,
+                                size: 12,
+                                color: Colors.white.withOpacity(0.4),
+                              ),
                               const SizedBox(width: 4),
                               Text(
                                 empresa.cnpj ?? 'Sem CNPJ',
@@ -996,14 +1106,21 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           // Online indicator
                           Consumer<DataService>(
                             builder: (context, dataService, _) {
-                              final bool isBridgeOnline = dataService.isEmpresaBridgeOnline(empresa.cnpj);
-                              if (!isBridgeOnline) return const SizedBox.shrink();
+                              final bool isBridgeOnline = dataService
+                                  .isEmpresaBridgeOnline(empresa.cnpj);
+                              if (!isBridgeOnline)
+                                return const SizedBox.shrink();
                               return Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 2,
+                                ),
                                 decoration: BoxDecoration(
                                   color: Colors.green.withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                  border: Border.all(
+                                    color: Colors.green.withOpacity(0.3),
+                                  ),
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.green.withOpacity(0.1),
@@ -1018,12 +1135,20 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                                     Container(
                                       width: 6,
                                       height: 6,
-                                      decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.green,
+                                        shape: BoxShape.circle,
+                                      ),
                                     ),
                                     const SizedBox(width: 6),
                                     const Text(
                                       'ONLINE',
-                                      style: TextStyle(color: Colors.green, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                                      style: TextStyle(
+                                        color: Colors.green,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.5,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1035,51 +1160,75 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                             Consumer<DataService>(
                               builder: (context, dataService, _) {
                                 return FutureBuilder<StatusSyncEmpresa>(
-                                  future: _obterStatusSyncEmpresa(empresa.id, dataService),
+                                  future: _obterStatusSyncEmpresa(
+                                    empresa.id,
+                                    dataService,
+                                  ),
                                   builder: (context, snapshot) {
                                     if (!snapshot.hasData) {
                                       return const SizedBox.shrink();
                                     }
                                     final status = snapshot.data!;
-                                    
+
                                     Color pillColor;
                                     String statusText;
                                     IconData iconData;
                                     String tooltipText;
 
-                                    if (status.ultimoErro != null && status.ultimoErro!.isNotEmpty) {
+                                    if (status.ultimoErro != null &&
+                                        status.ultimoErro!.isNotEmpty) {
                                       pillColor = Colors.redAccent;
                                       statusText = 'ERRO SYNC';
                                       iconData = Icons.cloud_off_rounded;
-                                      tooltipText = 'Último Erro: ${status.ultimoErro}\nClique para ver logs';
-                                    } else if (status.ultimaSincronizacaoSucesso != null) {
+                                      tooltipText =
+                                          'Último Erro: ${status.ultimoErro}\nClique para ver logs';
+                                    } else if (status
+                                            .ultimaSincronizacaoSucesso !=
+                                        null) {
                                       pillColor = Colors.greenAccent;
                                       statusText = 'SYNC OK';
                                       iconData = Icons.cloud_done_rounded;
-                                      final dt = status.ultimaSincronizacaoSucesso!;
-                                      final timeStr = "${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
-                                      tooltipText = 'Última sincronização com sucesso: $timeStr\nClique para ver logs';
+                                      final dt =
+                                          status.ultimaSincronizacaoSucesso!;
+                                      final timeStr =
+                                          "${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+                                      tooltipText =
+                                          'Última sincronização com sucesso: $timeStr\nClique para ver logs';
                                     } else {
                                       pillColor = Colors.grey;
                                       statusText = 'SEM SYNC';
                                       iconData = Icons.cloud_queue_rounded;
-                                      tooltipText = 'Nenhuma sincronização realizada\nClique para ver logs';
+                                      tooltipText =
+                                          'Nenhuma sincronização realizada\nClique para ver logs';
                                     }
 
                                     return Tooltip(
                                       message: tooltipText,
                                       child: InkWell(
-                                        onTap: () => _mostrarLogsEmpresa(context, empresa, dataService),
+                                        onTap: () => _mostrarLogsEmpresa(
+                                          context,
+                                          empresa,
+                                          dataService,
+                                        ),
                                         borderRadius: BorderRadius.circular(20),
                                         child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 2,
+                                          ),
                                           decoration: BoxDecoration(
                                             color: pillColor.withOpacity(0.1),
-                                            borderRadius: BorderRadius.circular(20),
-                                            border: Border.all(color: pillColor.withOpacity(0.3)),
+                                            borderRadius: BorderRadius.circular(
+                                              20,
+                                            ),
+                                            border: Border.all(
+                                              color: pillColor.withOpacity(0.3),
+                                            ),
                                             boxShadow: [
                                               BoxShadow(
-                                                color: pillColor.withOpacity(0.05),
+                                                color: pillColor.withOpacity(
+                                                  0.05,
+                                                ),
                                                 blurRadius: 6,
                                                 spreadRadius: 1,
                                               ),
@@ -1126,21 +1275,47 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         color: Colors.white.withOpacity(0.05),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.more_vert_rounded, color: Colors.white54, size: 20),
+                      child: const Icon(
+                        Icons.more_vert_rounded,
+                        color: Colors.white54,
+                        size: 20,
+                      ),
                     ),
                     onSelected: (value) {
                       switch (value) {
                         case 'edit':
-                          Navigator.push(context, MaterialPageRoute(builder: (context) => AdicionarEmpresaPage(empresa: empresa))).then((_) => setState(() {}));
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  AdicionarEmpresaPage(empresa: empresa),
+                            ),
+                          ).then((_) => setState(() {}));
                           break;
                         case 'users':
-                          Navigator.push(context, MaterialPageRoute(builder: (context) => GerenciarUsuariosPage(empresa: empresa)));
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  GerenciarUsuariosPage(empresa: empresa),
+                            ),
+                          );
                           break;
                         case 'reiniciar':
-                          _selecionarPCEDispararComando(context, 'restart', 'Reiniciar Emissor', cnpjFilter: empresa.cnpj);
+                          _selecionarPCEDispararComando(
+                            context,
+                            'restart',
+                            'Reiniciar Emissor',
+                            cnpjFilter: empresa.cnpj,
+                          );
                           break;
                         case 'atualizar_sistema':
-                          _selecionarPCEDispararComando(context, 'update', 'Atualizar Sistema', cnpjFilter: empresa.cnpj);
+                          _selecionarPCEDispararComando(
+                            context,
+                            'update',
+                            'Atualizar Sistema',
+                            cnpjFilter: empresa.cnpj,
+                          );
                           break;
                         case 'atualizacao_direcionada':
                           _abrirDialogAtualizacaoDirecionada(context, empresa);
@@ -1149,7 +1324,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           _importarProdutosExcel(context);
                           break;
                         case 'limpar':
-                          _confirmarExcluirTodosProdutos(context, Provider.of<DataService>(context, listen: false));
+                          _confirmarExcluirTodosProdutos(
+                            context,
+                            Provider.of<DataService>(context, listen: false),
+                          );
                           break;
                         case 'mensalidade':
                           _abrirDialogMensalidade(context, empresa);
@@ -1157,19 +1335,118 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       }
                     },
                     itemBuilder: (context) => [
-                      const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 18), SizedBox(width: 12), Text('Editar')])),
-                      const PopupMenuItem(value: 'users', child: Row(children: [Icon(Icons.people_outline, size: 18), SizedBox(width: 12), Text('Usuários')])),
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit_outlined, size: 18),
+                            SizedBox(width: 12),
+                            Text('Editar'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'users',
+                        child: Row(
+                          children: [
+                            Icon(Icons.people_outline, size: 18),
+                            SizedBox(width: 12),
+                            Text('Usuários'),
+                          ],
+                        ),
+                      ),
                       const PopupMenuDivider(),
-                      const PopupMenuItem(value: 'atualizacao_direcionada', child: Row(children: [Icon(Icons.system_update_rounded, color: Colors.cyanAccent, size: 18), SizedBox(width: 12), Text('🚀 Atualização por Empresa')])),
-                      const PopupMenuItem(value: 'atualizar_sistema', child: Row(children: [Icon(Icons.system_update_rounded, color: Colors.greenAccent, size: 18), SizedBox(width: 12), Text('Disparar Update Emissor')])),
-                      const PopupMenuItem(value: 'reiniciar', child: Row(children: [Icon(Icons.restart_alt_rounded, color: Colors.blueAccent, size: 18), SizedBox(width: 12), Text('Reiniciar Emissor')])),
-                      const PopupMenuItem(value: 'importar', child: Row(children: [Icon(Icons.file_upload_outlined, color: Colors.green, size: 18), SizedBox(width: 12), Text('Importar Excel')])),
-                      const PopupMenuItem(value: 'mensalidade', child: Row(children: [Icon(Icons.monetization_on_outlined, color: Colors.amber, size: 18), SizedBox(width: 12), Text('Mensalidade / Licença')])),
-                      const PopupMenuItem(value: 'limpar', child: Row(children: [Icon(Icons.delete_sweep_outlined, color: Colors.redAccent, size: 18), SizedBox(width: 12), Text('Limpar Produtos')])),
+                      const PopupMenuItem(
+                        value: 'atualizacao_direcionada',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.system_update_rounded,
+                              color: Colors.cyanAccent,
+                              size: 18,
+                            ),
+                            SizedBox(width: 12),
+                            Text('🚀 Atualização por Empresa'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'atualizar_sistema',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.system_update_rounded,
+                              color: Colors.greenAccent,
+                              size: 18,
+                            ),
+                            SizedBox(width: 12),
+                            Text('Disparar Update Emissor'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'reiniciar',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.restart_alt_rounded,
+                              color: Colors.blueAccent,
+                              size: 18,
+                            ),
+                            SizedBox(width: 12),
+                            Text('Reiniciar Emissor'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'importar',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.file_upload_outlined,
+                              color: Colors.green,
+                              size: 18,
+                            ),
+                            SizedBox(width: 12),
+                            Text('Importar Excel'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'mensalidade',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.monetization_on_outlined,
+                              color: Colors.amber,
+                              size: 18,
+                            ),
+                            SizedBox(width: 12),
+                            Text('Mensalidade / Licença'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'limpar',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.delete_sweep_outlined,
+                              color: Colors.redAccent,
+                              size: 18,
+                            ),
+                            SizedBox(width: 12),
+                            Text('Limpar Produtos'),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 if (!isUsuarioMaster)
-                  Icon(Icons.chevron_right_rounded, color: Colors.white.withOpacity(0.2)),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white.withOpacity(0.2),
+                  ),
               ],
             ),
           ),
@@ -1178,14 +1455,20 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-
   /// Abre a modal de configuração de atualização direcionada por empresa
-  void _abrirDialogAtualizacaoDirecionada(BuildContext context, Empresa empresa) {
+  void _abrirDialogAtualizacaoDirecionada(
+    BuildContext context,
+    Empresa empresa,
+  ) {
     final authService = Provider.of<AuthService>(context, listen: false);
     final configs = empresa.configuracoes ?? {};
 
-    final versaoAlvoCtrl = TextEditingController(text: configs['versao_alvo'] ?? AppUpdateService.currentAppVersion);
-    final urlDownloadCtrl = TextEditingController(text: configs['update_download_url'] ?? '');
+    final versaoAlvoCtrl = TextEditingController(
+      text: configs['versao_alvo'] ?? AppUpdateService.currentAppVersion,
+    );
+    final urlDownloadCtrl = TextEditingController(
+      text: configs['update_download_url'] ?? '',
+    );
     bool atualizacaoAtiva = configs['atualizacao_ativa'] == true;
     bool bloquearGlobal = configs['bloquear_atualizacao_global'] == true;
     bool salvando = false;
@@ -1196,7 +1479,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: Row(
             children: [
               const Icon(Icons.system_update_rounded, color: Colors.cyanAccent),
@@ -1204,7 +1489,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               Expanded(
                 child: Text(
                   'Atualização Direcionada - ${empresa.razaoSocial}',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -1228,7 +1517,14 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text('Versão Atual Instalada: v${AppUpdateService.currentAppVersion}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white54)),
+                Text(
+                  'Versão Atual Instalada: v${AppUpdateService.currentAppVersion}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white54,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: versaoAlvoCtrl,
@@ -1239,7 +1535,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     hintText: '1.0.16',
                     hintStyle: TextStyle(color: Colors.white30),
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.numbers_rounded, color: Colors.cyanAccent),
+                    prefixIcon: Icon(
+                      Icons.numbers_rounded,
+                      color: Colors.cyanAccent,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -1252,7 +1551,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     hintText: 'Ou selecione o arquivo abaixo...',
                     hintStyle: TextStyle(color: Colors.white30),
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.link_rounded, color: Colors.cyanAccent),
+                    prefixIcon: Icon(
+                      Icons.link_rounded,
+                      color: Colors.cyanAccent,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1262,85 +1564,140 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.cyanAccent,
                       side: const BorderSide(color: Colors.cyanAccent),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    onPressed: enviandoArquivo ? null : () async {
-                      try {
-                        final result = await FilePicker.platform.pickFiles(
-                          type: FileType.custom,
-                          allowedExtensions: ['exe', 'zip', 'msi'],
-                        );
-                        if (result == null || result.files.isEmpty) return;
-                        
-                        final fileSelected = result.files.first;
-                        setModalState(() => enviandoArquivo = true);
+                    onPressed: enviandoArquivo
+                        ? null
+                        : () async {
+                            try {
+                              final result = await FilePicker.platform
+                                  .pickFiles(
+                                    type: FileType.custom,
+                                    allowedExtensions: ['exe', 'zip', 'msi'],
+                                  );
+                              if (result == null || result.files.isEmpty)
+                                return;
 
-                        final String extension = p.extension(fileSelected.name).isNotEmpty ? p.extension(fileSelected.name) : '.exe';
-                        final String versaoLimpa = versaoAlvoCtrl.text.trim().replaceAll('.', '_');
-                        final String fileName = 'updates/empresa_${empresa.id}_v${versaoLimpa}_${DateTime.now().millisecondsSinceEpoch}$extension';
+                              final fileSelected = result.files.first;
+                              setModalState(() => enviandoArquivo = true);
 
-                        String? publicUrl;
-                        if (fileSelected.path != null) {
-                          final file = File(fileSelected.path!);
-                          publicUrl = await SupabaseService.instance.uploadFile(
-                            'empresas',
-                            fileName,
-                            file,
-                          );
-                        } else if (fileSelected.bytes != null) {
-                          publicUrl = await SupabaseService.instance.uploadFile(
-                            'empresas',
-                            fileName,
-                            fileSelected.bytes!,
-                          );
-                        }
+                              final String extension =
+                                  p.extension(fileSelected.name).isNotEmpty
+                                  ? p.extension(fileSelected.name)
+                                  : '.exe';
+                              final String versaoLimpa = versaoAlvoCtrl.text
+                                  .trim()
+                                  .replaceAll('.', '_');
+                              final String fileName =
+                                  'updates/empresa_${empresa.id}_v${versaoLimpa}_${DateTime.now().millisecondsSinceEpoch}$extension';
 
-                        setModalState(() => enviandoArquivo = false);
+                              String? publicUrl;
+                              if (fileSelected.path != null) {
+                                final file = File(fileSelected.path!);
+                                publicUrl = await SupabaseService.instance
+                                    .uploadFile('empresas', fileName, file);
+                              } else if (fileSelected.bytes != null) {
+                                publicUrl = await SupabaseService.instance
+                                    .uploadFile(
+                                      'empresas',
+                                      fileName,
+                                      fileSelected.bytes!,
+                                    );
+                              }
 
-                        if (publicUrl != null && publicUrl.isNotEmpty) {
-                          setModalState(() {
-                            urlDownloadCtrl.text = publicUrl!;
-                            atualizacaoAtiva = true;
-                          });
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('✅ Executável enviado com sucesso para a nuvem!'), backgroundColor: Colors.green),
-                            );
-                          }
-                        } else {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('❌ Falha ao enviar executável. Tente novamente.'), backgroundColor: Colors.red),
-                            );
-                          }
-                        }
-                      } catch (e) {
-                        setModalState(() => enviandoArquivo = false);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Erro no upload: $e'), backgroundColor: Colors.red),
-                          );
-                        }
-                      }
-                    },
-                    icon: enviandoArquivo 
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.cyanAccent))
+                              setModalState(() => enviandoArquivo = false);
+
+                              if (publicUrl != null && publicUrl.isNotEmpty) {
+                                setModalState(() {
+                                  urlDownloadCtrl.text = publicUrl!;
+                                  atualizacaoAtiva = true;
+                                });
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        '✅ Executável enviado com sucesso para a nuvem!',
+                                      ),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                }
+                              } else {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        '❌ Falha ao enviar executável. Tente novamente.',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              }
+                            } catch (e) {
+                              setModalState(() => enviandoArquivo = false);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Erro no upload: $e'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                    icon: enviandoArquivo
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.cyanAccent,
+                            ),
+                          )
                         : const Icon(Icons.cloud_upload_rounded),
-                    label: Text(enviandoArquivo ? 'ENVIANDO EXECUTÁVEL...' : '📁 SELECIONAR ARQUIVO .EXE DO MEU COMPUTADOR'),
+                    label: Text(
+                      enviandoArquivo
+                          ? 'ENVIANDO EXECUTÁVEL...'
+                          : '📁 SELECIONAR ARQUIVO .EXE DO MEU COMPUTADOR',
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
                 SwitchListTile(
-                  title: const Text('Ativar Atualização para Esta Empresa', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
-                  subtitle: const Text('Permite que os computadores desta empresa baixem esta versão.', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  title: const Text(
+                    'Ativar Atualização para Esta Empresa',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Permite que os computadores desta empresa baixem esta versão.',
+                    style: TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
                   value: atualizacaoAtiva,
                   activeColor: Colors.cyanAccent,
-                  onChanged: (val) => setModalState(() => atualizacaoAtiva = val),
+                  onChanged: (val) =>
+                      setModalState(() => atualizacaoAtiva = val),
                 ),
                 SwitchListTile(
-                  title: const Text('Isolar da Atualização Global', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
-                  subtitle: const Text('Bloqueia atualizações gerais para não impactar este cliente.', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  title: const Text(
+                    'Isolar da Atualização Global',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Bloqueia atualizações gerais para não impactar este cliente.',
+                    style: TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
                   value: bloquearGlobal,
                   activeColor: Colors.amberAccent,
                   onChanged: (val) => setModalState(() => bloquearGlobal = val),
@@ -1351,20 +1708,32 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.white70),
+              ),
             ),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan, foregroundColor: Colors.black),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.cyan,
+                foregroundColor: Colors.black,
+              ),
               onPressed: salvando
                   ? null
                   : () async {
                       setModalState(() => salvando = true);
                       try {
-                        final novasConfigs = Map<String, dynamic>.from(empresa.configuracoes ?? {});
-                        novasConfigs['versao_alvo'] = versaoAlvoCtrl.text.trim();
-                        novasConfigs['update_download_url'] = urlDownloadCtrl.text.trim();
+                        final novasConfigs = Map<String, dynamic>.from(
+                          empresa.configuracoes ?? {},
+                        );
+                        novasConfigs['versao_alvo'] = versaoAlvoCtrl.text
+                            .trim();
+                        novasConfigs['update_download_url'] = urlDownloadCtrl
+                            .text
+                            .trim();
                         novasConfigs['atualizacao_ativa'] = atualizacaoAtiva;
-                        novasConfigs['bloquear_atualizacao_global'] = bloquearGlobal;
+                        novasConfigs['bloquear_atualizacao_global'] =
+                            bloquearGlobal;
 
                         final empAtualizada = empresa.copyWith(
                           configuracoes: novasConfigs,
@@ -1373,16 +1742,20 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
                         await authService.atualizarEmpresa(empAtualizada);
 
-                        if (atualizacaoAtiva && versaoAlvoCtrl.text.trim().isNotEmpty) {
+                        if (atualizacaoAtiva &&
+                            versaoAlvoCtrl.text.trim().isNotEmpty) {
                           try {
-                            await SupabaseService.instance.upsert('bridge_config', {
-                              'id': 'app_update_${empresa.id}',
-                              'version': versaoAlvoCtrl.text.trim(),
-                              'download_url': urlDownloadCtrl.text.trim(),
-                              'ativo': atualizacaoAtiva,
-                              'empresa_id': empresa.id,
-                              'updated_at': DateTime.now().toIso8601String(),
-                            });
+                            await SupabaseService.instance.upsert(
+                              'bridge_config',
+                              {
+                                'id': 'app_update_${empresa.id}',
+                                'version': versaoAlvoCtrl.text.trim(),
+                                'download_url': urlDownloadCtrl.text.trim(),
+                                'ativo': atualizacaoAtiva,
+                                'empresa_id': empresa.id,
+                                'updated_at': DateTime.now().toIso8601String(),
+                              },
+                            );
                           } catch (e) {
                             debugPrint('Erro ao sincronizar bridge_config: $e');
                           }
@@ -1392,7 +1765,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('Configuração de atualização direcionada salva para ${empresa.razaoSocial}!'),
+                              content: Text(
+                                'Configuração de atualização direcionada salva para ${empresa.razaoSocial}!',
+                              ),
                               backgroundColor: Colors.green,
                             ),
                           );
@@ -1402,7 +1777,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         setModalState(() => salvando = false);
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Erro ao salvar: $e'), backgroundColor: Colors.red),
+                            SnackBar(
+                              content: Text('Erro ao salvar: $e'),
+                              backgroundColor: Colors.red,
+                            ),
                           );
                         }
                       }
@@ -1417,39 +1795,135 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   }
 
   /// Abre a modal de gerenciamento de mensalidade da empresa
-  void _abrirDialogMensalidade(BuildContext context, Empresa empresa) {
+  Future<void> _abrirDialogMensalidade(
+    BuildContext context,
+    Empresa empresa,
+  ) async {
+    final pageContext = context;
     final authService = Provider.of<AuthService>(context, listen: false);
-    final configs = empresa.configuracoes ?? {};
-    
+    final configs = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+
     // Controladores
-    final dataInicioCtrl = TextEditingController(text: configs['data_inicio'] ?? configs['dataInicio'] ?? '');
-    final dataCobrancaCtrl = TextEditingController(text: configs['data_cobranca'] ?? configs['dataCobranca'] ?? '');
-    final linkPagamentoCtrl = TextEditingController(text: configs['link_pagamento'] ?? configs['linkPagamento'] ?? '');
-    String statusPagamento = configs['status_pagamento'] ?? configs['statusPagamento'] ?? 'pago';
-    bool bloqueadoManual = configs['bloqueado'] == true || configs['bloqueado'] == 'true';
+    final dataInicioCtrl = TextEditingController(
+      text: configs['data_inicio'] ?? configs['dataInicio'] ?? '',
+    );
+    // O vencimento é recorrente mensalmente. Ao abrir a tela, avança a
+    // data antiga até o vencimento vigente/próximo, preservando o dia original.
+    // Ex.: 2026-07-05 -> 2026-11-05 (se ainda não venceu em novembro).
+    String dataCobrancaInicial =
+        (configs['data_cobranca'] ?? configs['dataCobranca'] ?? '').toString();
+    final vencimentoBase = DateTime.tryParse(dataCobrancaInicial);
+    if (vencimentoBase != null) {
+      final agoraVencimento = DateTime.now();
+      final hoje = DateTime(
+        agoraVencimento.year,
+        agoraVencimento.month,
+        agoraVencimento.day,
+      );
+      var vencimento = DateTime(
+        vencimentoBase.year,
+        vencimentoBase.month,
+        vencimentoBase.day,
+      );
+      final diaOriginalVencimento = vencimentoBase.day;
+      while (vencimento.isBefore(hoje)) {
+        final proximoMes = DateTime(vencimento.year, vencimento.month + 1, 1);
+        final ultimoDiaDoMes = DateTime(
+          proximoMes.year,
+          proximoMes.month + 1,
+          0,
+        ).day;
+        final dia = diaOriginalVencimento > ultimoDiaDoMes
+            ? ultimoDiaDoMes
+            : diaOriginalVencimento;
+        vencimento = DateTime(proximoMes.year, proximoMes.month, dia);
+      }
+      dataCobrancaInicial =
+          '${vencimento.year}-${vencimento.month.toString().padLeft(2, '0')}-${vencimento.day.toString().padLeft(2, '0')}';
+    }
+    // Persiste automaticamente a virada mensal, sem depender de salvar
+    // manualmente apenas para atualizar o mês do vencimento.
+    final dataCobrancaAnterior =
+        (configs['data_cobranca'] ?? configs['dataCobranca'] ?? '').toString();
+    if (dataCobrancaInicial.isNotEmpty &&
+        dataCobrancaInicial != dataCobrancaAnterior) {
+      final novasConfigs = Map<String, dynamic>.from(configs);
+      novasConfigs['data_cobranca'] = dataCobrancaInicial;
+      final empresaComVencimentoAtualizado = empresa.copyWith(
+        configuracoes: novasConfigs,
+      );
+      try {
+        await authService.atualizarEmpresa(empresaComVencimentoAtualizado);
+        empresa = empresaComVencimentoAtualizado;
+        configs['data_cobranca'] = dataCobrancaInicial;
+        final dataService = Provider.of<DataService>(context, listen: false);
+        if (dataService.empresaAtual?.id == empresa.id) {
+          dataService.setEmpresaAtual(empresaComVencimentoAtualizado);
+        }
+        authService.notificarMudancas();
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Não foi possível atualizar o vencimento mensal: $e',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+
+    final dataCobrancaCtrl = TextEditingController(text: dataCobrancaInicial);
+    final linkPagamentoCtrl = TextEditingController(
+      text: configs['link_pagamento'] ?? configs['linkPagamento'] ?? '',
+    );
+    final valorMensalidadeCtrl = TextEditingController(
+      text:
+          (configs['valor_mensalidade'] ?? configs['valorMensalidade'])
+              ?.toString() ??
+          '',
+    );
+    String statusPagamento =
+        configs['status_pagamento'] ?? configs['statusPagamento'] ?? 'pago';
+    bool bloqueadoManual =
+        configs['bloqueado'] == true || configs['bloqueado'] == 'true';
     String? ultimoMesPago = configs['ultimo_mes_pago']?.toString();
 
     final agora = DateTime.now();
-    final mesAtualStr = '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
+    final mesAtualStr =
+        '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
 
     showDialog(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setState) {
-            final estaEmDia = ultimoMesPago != null && ultimoMesPago!.compareTo(mesAtualStr) >= 0;
+            final estaEmDia =
+                ultimoMesPago != null &&
+                ultimoMesPago!.compareTo(mesAtualStr) >= 0;
 
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               title: Row(
                 children: [
-                  const Icon(Icons.monetization_on_outlined, color: Colors.amber),
+                  const Icon(
+                    Icons.monetization_on_outlined,
+                    color: Colors.amber,
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       'Mensalidade - ${empresa.razaoSocial}',
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -1465,10 +1939,14 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       margin: const EdgeInsets.only(bottom: 16),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: estaEmDia ? Colors.green.withOpacity(0.12) : Colors.red.withOpacity(0.12),
+                        color: estaEmDia
+                            ? Colors.green.withOpacity(0.12)
+                            : Colors.red.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: estaEmDia ? Colors.greenAccent.withOpacity(0.4) : Colors.redAccent.withOpacity(0.4),
+                          color: estaEmDia
+                              ? Colors.greenAccent.withOpacity(0.4)
+                              : Colors.redAccent.withOpacity(0.4),
                         ),
                       ),
                       child: Column(
@@ -1477,8 +1955,12 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           Row(
                             children: [
                               Icon(
-                                estaEmDia ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
-                                color: estaEmDia ? Colors.greenAccent : Colors.redAccent,
+                                estaEmDia
+                                    ? Icons.check_circle_rounded
+                                    : Icons.warning_amber_rounded,
+                                color: estaEmDia
+                                    ? Colors.greenAccent
+                                    : Colors.redAccent,
                                 size: 22,
                               ),
                               const SizedBox(width: 8),
@@ -1488,7 +1970,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                                       ? 'Mês Atual ($mesAtualStr): OK CONFIRMADO ✅'
                                       : 'Mês Atual ($mesAtualStr): PENDENTE DE OK ⚠️',
                                   style: TextStyle(
-                                    color: estaEmDia ? Colors.greenAccent : Colors.redAccent,
+                                    color: estaEmDia
+                                        ? Colors.greenAccent
+                                        : Colors.redAccent,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 13,
                                   ),
@@ -1502,14 +1986,41 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               backgroundColor: Colors.green,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                             ),
                             icon: const Icon(Icons.verified_rounded, size: 18),
                             label: Text(
-                              estaEmDia ? 'RECONFIRMAR OK DESTE MÊS ($mesAtualStr)' : '✅ DAR OK - CONFIRMAR PAGAMENTO DESTE MÊS ($mesAtualStr)',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              estaEmDia
+                                  ? 'RECONFIRMAR OK DESTE MÊS ($mesAtualStr)'
+                                  : '✅ DAR OK - CONFIRMAR PAGAMENTO DESTE MÊS ($mesAtualStr)',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
                             ),
                             onPressed: () async {
+                              final valorTexto = valorMensalidadeCtrl.text
+                                  .trim();
+                              final valorMensalidade = valorTexto.isEmpty
+                                  ? null
+                                  : double.tryParse(
+                                      valorTexto.replaceAll(',', '.'),
+                                    );
+                              if (valorTexto.isNotEmpty &&
+                                  (valorMensalidade == null ||
+                                      valorMensalidade <= 0)) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Informe um valor mensal válido.',
+                                    ),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
                               setState(() {
                                 statusPagamento = 'pago';
                                 bloqueadoManual = false;
@@ -1517,25 +2028,50 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               });
                               // Salvar automaticamente no banco ao DAR OK
                               try {
-                                final novasConfigs = Map<String, dynamic>.from(configs);
-                                novasConfigs['data_inicio'] = dataInicioCtrl.text.trim().isEmpty ? null : dataInicioCtrl.text.trim();
-                                novasConfigs['data_cobranca'] = dataCobrancaCtrl.text.trim().isEmpty ? null : dataCobrancaCtrl.text.trim();
-                                novasConfigs['link_pagamento'] = linkPagamentoCtrl.text.trim().isEmpty ? null : linkPagamentoCtrl.text.trim();
+                                final novasConfigs = Map<String, dynamic>.from(
+                                  configs,
+                                );
+                                novasConfigs['data_inicio'] =
+                                    dataInicioCtrl.text.trim().isEmpty
+                                    ? null
+                                    : dataInicioCtrl.text.trim();
+                                novasConfigs['data_cobranca'] =
+                                    dataCobrancaCtrl.text.trim().isEmpty
+                                    ? null
+                                    : dataCobrancaCtrl.text.trim();
+                                novasConfigs['link_pagamento'] =
+                                    linkPagamentoCtrl.text.trim().isEmpty
+                                    ? null
+                                    : linkPagamentoCtrl.text.trim();
+                                novasConfigs['valor_mensalidade'] =
+                                    valorMensalidade;
                                 novasConfigs['status_pagamento'] = 'pago';
                                 novasConfigs['bloqueado'] = false;
                                 novasConfigs['ultimo_mes_pago'] = mesAtualStr;
 
-                                final empresaAtualizada = empresa.copyWith(configuracoes: novasConfigs);
-                                await authService.atualizarEmpresa(empresaAtualizada);
-                                final dataService = Provider.of<DataService>(context, listen: false);
-                                if (dataService.empresaAtual?.id == empresaAtualizada.id) {
-                                  dataService.setEmpresaAtual(empresaAtualizada);
+                                final empresaAtualizada = empresa.copyWith(
+                                  configuracoes: novasConfigs,
+                                );
+                                await authService.atualizarEmpresa(
+                                  empresaAtualizada,
+                                );
+                                final dataService = Provider.of<DataService>(
+                                  context,
+                                  listen: false,
+                                );
+                                if (dataService.empresaAtual?.id ==
+                                    empresaAtualizada.id) {
+                                  dataService.setEmpresaAtual(
+                                    empresaAtualizada,
+                                  );
                                 }
                                 authService.notificarMudancas();
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text('✅ OK de pagamento do mês $mesAtualStr confirmado e salvo com sucesso!'),
+                                      content: Text(
+                                        '✅ OK de pagamento do mês $mesAtualStr confirmado e salvo com sucesso!',
+                                      ),
                                       backgroundColor: Colors.green,
                                     ),
                                   );
@@ -1601,6 +2137,22 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     ),
                     const SizedBox(height: 16),
 
+                    TextFormField(
+                      controller: valorMensalidadeCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Valor mensal da licença (R\$)',
+                        labelStyle: TextStyle(color: Colors.white70),
+                        hintText: 'Ex: 99,90',
+                        hintStyle: TextStyle(color: Colors.white30),
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
                     // Status Pagamento Dropdown
                     DropdownButtonFormField<String>(
                       dropdownColor: const Color(0xFF1E1E2E),
@@ -1612,9 +2164,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         border: OutlineInputBorder(),
                       ),
                       items: const [
-                        DropdownMenuItem(value: 'pago', child: Text('Pago / Licenciado')),
-                        DropdownMenuItem(value: 'pendente', child: Text('Pendente de Pagamento')),
-                        DropdownMenuItem(value: 'inadimplente', child: Text('Bloqueado por Inadimplência')),
+                        DropdownMenuItem(
+                          value: 'pago',
+                          child: Text('Pago / Licenciado'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'pendente',
+                          child: Text('Pendente de Pagamento'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'inadimplente',
+                          child: Text('Bloqueado por Inadimplência'),
+                        ),
                       ],
                       onChanged: (val) {
                         if (val != null) {
@@ -1628,8 +2189,14 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
                     // Checkbox Bloqueado Manualmente
                     CheckboxListTile(
-                      title: const Text('Bloqueado Manualmente', style: TextStyle(color: Colors.white)),
-                      subtitle: const Text('Suspende o acesso do cliente de imediato', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                      title: const Text(
+                        'Bloqueado Manualmente',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      subtitle: const Text(
+                        'Suspende o acesso do cliente de imediato',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
                       value: bloqueadoManual,
                       onChanged: (val) {
                         setState(() {
@@ -1643,17 +2210,51 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                  child: const Text(
+                    'Cancelar',
+                    style: TextStyle(color: Colors.white54),
+                  ),
                 ),
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amber,
+                  ),
                   onPressed: () async {
                     try {
                       // Montar o novo dicionário de configurações da empresa
-                      final Map<String, dynamic> novasConfigs = Map<String, dynamic>.from(configs);
-                      novasConfigs['data_inicio'] = dataInicioCtrl.text.trim().isEmpty ? null : dataInicioCtrl.text.trim();
-                      novasConfigs['data_cobranca'] = dataCobrancaCtrl.text.trim().isEmpty ? null : dataCobrancaCtrl.text.trim();
-                      novasConfigs['link_pagamento'] = linkPagamentoCtrl.text.trim().isEmpty ? null : linkPagamentoCtrl.text.trim();
+                      final Map<String, dynamic> novasConfigs =
+                          Map<String, dynamic>.from(configs);
+                      novasConfigs['data_inicio'] =
+                          dataInicioCtrl.text.trim().isEmpty
+                          ? null
+                          : dataInicioCtrl.text.trim();
+                      novasConfigs['data_cobranca'] =
+                          dataCobrancaCtrl.text.trim().isEmpty
+                          ? null
+                          : dataCobrancaCtrl.text.trim();
+                      novasConfigs['link_pagamento'] =
+                          linkPagamentoCtrl.text.trim().isEmpty
+                          ? null
+                          : linkPagamentoCtrl.text.trim();
+                      final valorMensalidade = valorMensalidadeCtrl.text.trim();
+                      final valorMensalidadeParseado = valorMensalidade.isEmpty
+                          ? null
+                          : double.tryParse(
+                              valorMensalidade.replaceAll(',', '.'),
+                            );
+                      if (valorMensalidade.isNotEmpty &&
+                          (valorMensalidadeParseado == null ||
+                              valorMensalidadeParseado <= 0)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Informe um valor mensal válido.'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                        return;
+                      }
+                      novasConfigs['valor_mensalidade'] =
+                          valorMensalidadeParseado;
                       novasConfigs['status_pagamento'] = statusPagamento;
                       novasConfigs['bloqueado'] = bloqueadoManual;
                       novasConfigs['ultimo_mes_pago'] = ultimoMesPago;
@@ -1664,22 +2265,27 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
                       // Chamar a gravação no Supabase/PostgreSQL
                       await authService.atualizarEmpresa(empresaAtualizada);
-                      final dataService = Provider.of<DataService>(context, listen: false);
-                      if (dataService.empresaAtual?.id == empresaAtualizada.id) {
+                      final dataService = Provider.of<DataService>(
+                        context,
+                        listen: false,
+                      );
+                      if (dataService.empresaAtual?.id ==
+                          empresaAtualizada.id) {
                         dataService.setEmpresaAtual(empresaAtualizada);
                       }
                       authService.notificarMudancas();
 
                       final motivo = empresaAtualizada.verificarMotivoBloqueio(
-                        ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                        ultimaValidacaoOnline:
+                            dataService.ultimaValidacaoOnline,
                         ultimaDataExecucao: dataService.ultimaDataExecucao,
                       );
 
-                      if (context.mounted) {
+                      if (pageContext.mounted) {
                         Navigator.pop(dialogContext);
                         if (motivo != MotivoBloqueioEmpresa.nenhum) {
                           Navigator.push(
-                            context,
+                            pageContext,
                             MaterialPageRoute(
                               builder: (context) => BloqueioMensalidadePage(
                                 configs: empresaAtualizada.configuracoes ?? {},
@@ -1688,17 +2294,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                             ),
                           );
                         } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(pageContext).showSnackBar(
                             const SnackBar(
-                              content: Text('Mensalidade/Licença da empresa atualizada com sucesso!'),
+                              content: Text(
+                                'Mensalidade/Licença da empresa atualizada com sucesso!',
+                              ),
                               backgroundColor: Colors.green,
                             ),
                           );
                         }
                       }
                     } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
+                      if (pageContext.mounted) {
+                        ScaffoldMessenger.of(pageContext).showSnackBar(
                           SnackBar(
                             content: Text('Erro ao atualizar: $e'),
                             backgroundColor: Colors.red,
@@ -1707,27 +2315,41 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       }
                     }
                   },
-                  child: const Text('Salvar Alterações', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    'Salvar Alterações',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
             );
           },
         );
       },
-    );
+    ).whenComplete(() {
+      dataInicioCtrl.dispose();
+      dataCobrancaCtrl.dispose();
+      linkPagamentoCtrl.dispose();
+      valorMensalidadeCtrl.dispose();
+    });
   }
 
   /// Realiza o backup de todas as empresas para o Google Drive
   Future<void> _realizarBackupGoogleDrive(BuildContext context) async {
     final driveService = GoogleDriveService.instance;
-    
+
     // Mostrar diálogo de progresso
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Backup Google Drive', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Backup Google Drive',
+          style: TextStyle(color: Colors.white),
+        ),
         content: const Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1745,7 +2367,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
     try {
       final resultado = await driveService.realizarBackupTodasEmpresas();
-      
+
       if (mounted) {
         Navigator.pop(context); // Fechar loading
 
@@ -1759,19 +2381,37 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 children: [
                   Icon(Icons.check_circle, color: Colors.green),
                   SizedBox(width: 12),
-                  Text('Backup Concluído', style: TextStyle(color: Colors.white)),
+                  Text(
+                    'Backup Concluído',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ],
               ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                   Text('Total de empresas: ${detalhes['total']}', style: const TextStyle(color: Colors.white70)),
-                   Text('Sucesso: ${detalhes['sucesso']}', style: const TextStyle(color: Colors.white)),
-                   if (detalhes['falha'] > 0)
-                    Text('Falhas: ${detalhes['falha']}', style: const TextStyle(color: Colors.redAccent)),
-                   const SizedBox(height: 16),
-                   Text('Pasta no Drive: ${detalhes['pasta']}', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                  Text(
+                    'Total de empresas: ${detalhes['total']}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  Text(
+                    'Sucesso: ${detalhes['sucesso']}',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  if (detalhes['falha'] > 0)
+                    Text(
+                      'Falhas: ${detalhes['falha']}',
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Pasta no Drive: ${detalhes['pasta']}',
+                    style: const TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               actions: [
@@ -1795,14 +2435,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Erro inesperado: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
   }
 
   Widget _buildCardGoogleDrive(BuildContext context, AuthService authService) {
-    if (authService.usuarioAtual?.email.toLowerCase() != 'user') return const SizedBox.shrink();
+    if (authService.usuarioAtual?.email.toLowerCase() != 'user')
+      return const SizedBox.shrink();
 
     return Container(
       decoration: BoxDecoration(
@@ -1815,7 +2459,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF42A5F5).withOpacity(0.4), width: 1.5),
+        border: Border.all(
+          color: const Color(0xFF42A5F5).withOpacity(0.4),
+          width: 1.5,
+        ),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF1E88E5).withOpacity(0.15),
@@ -1847,7 +2494,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.cloud_done_rounded, color: Colors.white, size: 30),
+                    child: const Icon(
+                      Icons.cloud_done_rounded,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                   ),
                   const SizedBox(width: 20),
                   const Expanded(
@@ -1876,7 +2527,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       ],
                     ),
                   ),
-                  const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white38, size: 20),
+                  const Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: Colors.white38,
+                    size: 20,
+                  ),
                 ],
               ),
             ),
@@ -1896,7 +2551,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       if (empresasPermitidas.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Nenhuma empresa cadastrada. Adicione uma empresa primeiro.'),
+            content: Text(
+              'Nenhuma empresa cadastrada. Adicione uma empresa primeiro.',
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -1988,7 +2645,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         allowedExtensions: ['xlsx', 'xls'],
         withData: true, // IMPORTANTE: true para funcionar no web
       );
-      
+
       if (result == null || result.files.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2004,7 +2661,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       final file = result.files.single;
       final nomeArquivo = file.name;
       Uint8List? bytes;
-      
+
       // No web, usar bytes diretamente; em outras plataformas, pode usar path ou bytes
       if (file.bytes != null) {
         bytes = file.bytes;
@@ -2014,7 +2671,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           bytes = await arquivo.readAsBytes();
         }
       }
-      
+
       if (bytes == null || bytes.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2029,11 +2686,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
       // MOSTRAR DIÁLOGO DE PROGRESSO DINÂMICO
       if (!mounted) return;
-      
+
       int processados = 0;
       int total = 0;
       String etapa = 'Iniciando...';
-      
+
       // StatefulBuilder para atualizar o diálogo em tempo real
       showDialog(
         context: context,
@@ -2047,205 +2704,289 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               etapa = e;
               setDialogState(() {}); // Atualiza o diálogo
             }
-            
+
             // Iniciar importação em background apenas uma vez
             if (total == 0 && etapa == 'Iniciando...') {
               Future.microtask(() {
                 ExcelImportService.importarProdutosDeBytes(
-                  bytes!,
-                  dataService,
-                  onProgress: atualizarProgresso,
-                ).then((resultado) {
-                  if (mounted) {
-                    Navigator.of(context).pop(); // Fechar diálogo de progresso
-                    
-                  // Mostrar resultado
-                  final mensagem = resultado['mensagens'] as List<String>;
-                  final sucesso = resultado['sucesso'] as int;
-                  final atualizados = resultado['atualizados'] as int;
-                  final duplicados = resultado['duplicados'] as int;
-                  final erros = resultado['erros'] as int;
+                      bytes!,
+                      dataService,
+                      onProgress: atualizarProgresso,
+                    )
+                    .then((resultado) {
+                      if (mounted) {
+                        Navigator.of(
+                          context,
+                        ).pop(); // Fechar diálogo de progresso
 
-                  // Separar mensagens por tipo
-                  final mensagensErro = mensagem.where((m) => m.contains('❌') || m.contains('⚠️') || m.contains('Erro')).toList();
-                  final mensagensInfo = mensagem.where((m) => !m.contains('❌') && !m.contains('⚠️') && !m.contains('Erro')).toList();
+                        // Mostrar resultado
+                        final mensagem = resultado['mensagens'] as List<String>;
+                        final sucesso = resultado['sucesso'] as int;
+                        final atualizados = resultado['atualizados'] as int;
+                        final duplicados = resultado['duplicados'] as int;
+                        final erros = resultado['erros'] as int;
 
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      backgroundColor: const Color(0xFF1E1E2E),
-                      title: Row(
-                        children: [
-                          Icon(
-                            erros > 0 ? Icons.warning_amber_rounded : Icons.check_circle,
-                            color: erros > 0 ? Colors.orange : Colors.green,
-                            size: 28,
-                          ),
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Text(
-                              'Resultado da Importação',
-                              style: TextStyle(color: Colors.white, fontSize: 20),
-                            ),
-                          ),
-                        ],
-                      ),
-                      content: SizedBox(
-                        width: MediaQuery.of(context).size.width * 0.9,
-                        child: SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Resumo
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                        // Separar mensagens por tipo
+                        final mensagensErro = mensagem
+                            .where(
+                              (m) =>
+                                  m.contains('❌') ||
+                                  m.contains('⚠️') ||
+                                  m.contains('Erro'),
+                            )
+                            .toList();
+                        final mensagensInfo = mensagem
+                            .where(
+                              (m) =>
+                                  !m.contains('❌') &&
+                                  !m.contains('⚠️') &&
+                                  !m.contains('Erro'),
+                            )
+                            .toList();
+
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            backgroundColor: const Color(0xFF1E1E2E),
+                            title: Row(
+                              children: [
+                                Icon(
+                                  erros > 0
+                                      ? Icons.warning_amber_rounded
+                                      : Icons.check_circle,
+                                  color: erros > 0
+                                      ? Colors.orange
+                                      : Colors.green,
+                                  size: 28,
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildResumoItemLinha('✅', 'Novos importados', sucesso, Colors.green),
-                                    _buildResumoItemLinha('🔄', 'Atualizados', atualizados, Colors.blue),
-                                    _buildResumoItemLinha('⚠️', 'Duplicados ignorados', duplicados, Colors.orange),
-                                    _buildResumoItemLinha('❌', 'Erros', erros, Colors.red),
-                                  ],
-                                ),
-                              ),
-                              
-                              // Mensagens de erro (se houver)
-                              if (mensagensErro.isNotEmpty) ...[
-                                const SizedBox(height: 20),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.error_outline, color: Colors.red, size: 20),
-                                    const SizedBox(width: 8),
-                                    const Text(
-                                      'Erros e Avisos:',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
+                                const SizedBox(width: 12),
+                                const Expanded(
+                                  child: Text(
+                                    'Resultado da Importação',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
                                     ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                Container(
-                                  constraints: const BoxConstraints(maxHeight: 300),
-                                  decoration: BoxDecoration(
-                                    color: Colors.red.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: Colors.red.withOpacity(0.3)),
-                                  ),
-                                  child: ListView.builder(
-                                    shrinkWrap: true,
-                                    itemCount: mensagensErro.length,
-                                    itemBuilder: (context, index) {
-                                      final msg = mensagensErro[index];
-                                      return Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                        child: Row(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Icon(
-                                              msg.contains('❌') ? Icons.cancel : Icons.warning_amber,
-                                              color: msg.contains('❌') ? Colors.red : Colors.orange,
-                                              size: 16,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: Text(
-                                                msg.replaceAll('❌', '').replaceAll('⚠️', '').trim(),
-                                                style: const TextStyle(
-                                                  color: Colors.white70,
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
                                   ),
                                 ),
                               ],
-                              
-                              // Mensagens informativas
-                              if (mensagensInfo.isNotEmpty && mensagensInfo.length <= 5) ...[
-                                const SizedBox(height: 16),
-                                ...mensagensInfo.map((m) => Padding(
-                                      padding: const EdgeInsets.only(bottom: 6),
-                                      child: Row(
+                            ),
+                            content: SizedBox(
+                              width: MediaQuery.of(context).size.width * 0.9,
+                              child: SingleChildScrollView(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Resumo
+                                    Container(
+                                      padding: const EdgeInsets.all(16),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: Colors.blue.withOpacity(0.3),
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
-                                          const Icon(Icons.info_outline, color: Colors.blue, size: 16),
+                                          _buildResumoItemLinha(
+                                            '✅',
+                                            'Novos importados',
+                                            sucesso,
+                                            Colors.green,
+                                          ),
+                                          _buildResumoItemLinha(
+                                            '🔄',
+                                            'Atualizados',
+                                            atualizados,
+                                            Colors.blue,
+                                          ),
+                                          _buildResumoItemLinha(
+                                            '⚠️',
+                                            'Duplicados ignorados',
+                                            duplicados,
+                                            Colors.orange,
+                                          ),
+                                          _buildResumoItemLinha(
+                                            '❌',
+                                            'Erros',
+                                            erros,
+                                            Colors.red,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
+                                    // Mensagens de erro (se houver)
+                                    if (mensagensErro.isNotEmpty) ...[
+                                      const SizedBox(height: 20),
+                                      Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.error_outline,
+                                            color: Colors.red,
+                                            size: 20,
+                                          ),
                                           const SizedBox(width: 8),
-                                          Expanded(
-                                            child: Text(
-                                              m,
-                                              style: const TextStyle(
-                                                color: Colors.white54,
-                                                fontSize: 12,
-                                              ),
+                                          const Text(
+                                            'Erros e Avisos:',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
                                             ),
                                           ),
                                         ],
                                       ),
-                                    )),
-                              ],
+                                      const SizedBox(height: 12),
+                                      Container(
+                                        constraints: const BoxConstraints(
+                                          maxHeight: 300,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.red.withOpacity(0.3),
+                                          ),
+                                        ),
+                                        child: ListView.builder(
+                                          shrinkWrap: true,
+                                          itemCount: mensagensErro.length,
+                                          itemBuilder: (context, index) {
+                                            final msg = mensagensErro[index];
+                                            return Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8,
+                                                  ),
+                                              child: Row(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Icon(
+                                                    msg.contains('❌')
+                                                        ? Icons.cancel
+                                                        : Icons.warning_amber,
+                                                    color: msg.contains('❌')
+                                                        ? Colors.red
+                                                        : Colors.orange,
+                                                    size: 16,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Text(
+                                                      msg
+                                                          .replaceAll('❌', '')
+                                                          .replaceAll('⚠️', '')
+                                                          .trim(),
+                                                      style: const TextStyle(
+                                                        color: Colors.white70,
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+
+                                    // Mensagens informativas
+                                    if (mensagensInfo.isNotEmpty &&
+                                        mensagensInfo.length <= 5) ...[
+                                      const SizedBox(height: 16),
+                                      ...mensagensInfo.map(
+                                        (m) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 6,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              const Icon(
+                                                Icons.info_outline,
+                                                color: Colors.blue,
+                                                size: 16,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  m,
+                                                  style: const TextStyle(
+                                                    color: Colors.white54,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                            actions: [
+                              if (mensagensErro.length > 10)
+                                TextButton.icon(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _mostrarTodosErros(context, mensagensErro);
+                                  },
+                                  icon: const Icon(
+                                    Icons.list,
+                                    color: Colors.orange,
+                                  ),
+                                  label: const Text('Ver todos os erros'),
+                                ),
+                              ElevatedButton(
+                                onPressed: () => Navigator.pop(context),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                ),
+                                child: const Text('OK'),
+                              ),
                             ],
                           ),
-                        ),
-                      ),
-                      actions: [
-                        if (mensagensErro.length > 10)
-                          TextButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              _mostrarTodosErros(context, mensagensErro);
-                            },
-                            icon: const Icon(Icons.list, color: Colors.orange),
-                            label: const Text('Ver todos os erros'),
-                          ),
-                        ElevatedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                          child: const Text('OK'),
-                        ),
-                      ],
-                    ),
-                  );
+                        );
 
-                    if (sucesso > 0 || atualizados > 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            '✅ ${sucesso + atualizados} produtos processados com sucesso!',
+                        if (sucesso > 0 || atualizados > 0) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                '✅ ${sucesso + atualizados} produtos processados com sucesso!',
+                              ),
+                              backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 3),
+                            ),
+                          );
+                        }
+                      }
+                    })
+                    .catchError((e) {
+                      if (mounted) {
+                        Navigator.of(context).pop(); // Fechar loading
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Erro ao importar: $e'),
+                            backgroundColor: Colors.red,
+                            duration: const Duration(seconds: 5),
                           ),
-                          backgroundColor: Colors.green,
-                          duration: const Duration(seconds: 3),
-                        ),
-                      );
-                    }
-                  }
-                }).catchError((e) {
-                  if (mounted) {
-                    Navigator.of(context).pop(); // Fechar loading
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Erro ao importar: $e'),
-                        backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 5),
-                      ),
-                    );
-                  }
-                });
+                        );
+                      }
+                    });
               });
             }
-            
+
             return AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
               contentPadding: const EdgeInsets.all(24),
@@ -2263,7 +3004,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   Expanded(
                     child: Text(
                       '📊 Importando Produtos',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
                     ),
                   ),
                 ],
@@ -2282,7 +3027,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.insert_drive_file, color: Colors.blue, size: 24),
+                          const Icon(
+                            Icons.insert_drive_file,
+                            color: Colors.blue,
+                            size: 24,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -2290,7 +3039,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               children: [
                                 const Text(
                                   'Arquivo:',
-                                  style: TextStyle(color: Colors.white70, fontSize: 11),
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                  ),
                                 ),
                                 Text(
                                   nomeArquivo,
@@ -2314,7 +3066,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       LinearProgressIndicator(
                         value: processados / total,
                         backgroundColor: Colors.grey.withOpacity(0.3),
-                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.green,
+                        ),
                         minHeight: 8,
                         borderRadius: BorderRadius.circular(4),
                       ),
@@ -2344,7 +3098,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     ] else
                       const Center(
                         child: CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.green,
+                          ),
                           strokeWidth: 4,
                         ),
                       ),
@@ -2353,7 +3109,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       child: Text(
                         etapa,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        ),
                       ),
                     ),
                   ],
@@ -2363,7 +3122,6 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           },
         ),
       );
-      
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2377,7 +3135,12 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     }
   }
 
-  Widget _buildResumoItemLinha(String icon, String label, int valor, Color cor) {
+  Widget _buildResumoItemLinha(
+    String icon,
+    String label,
+    int valor,
+    Color cor,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -2473,7 +3236,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  Future<void> _confirmarExcluirTodosProdutos(BuildContext context, DataService dataService) async {
+  Future<void> _confirmarExcluirTodosProdutos(
+    BuildContext context,
+    DataService dataService,
+  ) async {
     final totalProdutos = dataService.produtos.length;
 
     if (totalProdutos == 0) {
@@ -2541,7 +3307,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -2558,11 +3327,13 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     if (confirmar == true && mounted) {
       try {
         await dataService.deleteAllProdutos(confirmar: true);
-        
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('✅ Todos os $totalProdutos produtos foram excluídos com sucesso!'),
+              content: Text(
+                '✅ Todos os $totalProdutos produtos foram excluídos com sucesso!',
+              ),
               backgroundColor: Colors.green,
               duration: const Duration(seconds: 3),
             ),
@@ -2581,8 +3352,12 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     }
   }
 
-  Widget _buildCardBridgeManagement(BuildContext context, AuthService authService) {
-    if (authService.usuarioAtual?.email.toLowerCase() != 'user') return const SizedBox.shrink();
+  Widget _buildCardBridgeManagement(
+    BuildContext context,
+    AuthService authService,
+  ) {
+    if (authService.usuarioAtual?.email.toLowerCase() != 'user')
+      return const SizedBox.shrink();
 
     return Container(
       decoration: BoxDecoration(
@@ -2595,7 +3370,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFFFB74D).withOpacity(0.4), width: 1.5),
+        border: Border.all(
+          color: const Color(0xFFFFB74D).withOpacity(0.4),
+          width: 1.5,
+        ),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFFFB8C00).withOpacity(0.15),
@@ -2627,7 +3405,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.terminal_rounded, color: Colors.white, size: 30),
+                    child: const Icon(
+                      Icons.terminal_rounded,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                   ),
                   const SizedBox(width: 20),
                   const Expanded(
@@ -2656,7 +3438,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       ],
                     ),
                   ),
-                  const Icon(Icons.settings_remote_rounded, color: Colors.white38, size: 20),
+                  const Icon(
+                    Icons.settings_remote_rounded,
+                    color: Colors.white38,
+                    size: 20,
+                  ),
                 ],
               ),
             ),
@@ -2667,10 +3453,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
   }
 
   Widget _buildBridgeAction_Divider() {
-    return Container(
-      height: 1,
-      color: Colors.white.withOpacity(0.05),
-    );
+    return Container(height: 1, color: Colors.white.withOpacity(0.05));
   }
 
   void _mostrarDialogoGerenciamentoBridge(BuildContext context) {
@@ -2700,8 +3483,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               icon: Icons.play_arrow,
               color: Colors.orange,
               title: 'Iniciar Forçado (Watchdog)',
-              subtitle: 'Aciona o monitor para abrir o emissor se estiver fechado.',
-              onTap: () => _selecionarPCEDispararComando(context, 'start', 'Iniciar'),
+              subtitle:
+                  'Aciona o monitor para abrir o emissor se estiver fechado.',
+              onTap: () =>
+                  _selecionarPCEDispararComando(context, 'start', 'Iniciar'),
             ),
             const SizedBox(height: 12),
             _buildBridgeAction_Divider(),
@@ -2712,7 +3497,8 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               color: Colors.green,
               title: 'Atualizar Software (Nuvem/Cloud)',
               subtitle: 'Baixa a versão oficial mais recente enviada via App.',
-              onTap: () => _selecionarPCEDispararComando(context, 'update', 'Atualizar'),
+              onTap: () =>
+                  _selecionarPCEDispararComando(context, 'update', 'Atualizar'),
             ),
             const SizedBox(height: 12),
             _buildBridgeActionTile(
@@ -2721,7 +3507,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               color: Colors.blue,
               title: 'Reiniciar Serviços',
               subtitle: 'Força o reinício do emissor.',
-              onTap: () => _selecionarPCEDispararComando(context, 'restart', 'Reiniciar'),
+              onTap: () => _selecionarPCEDispararComando(
+                context,
+                'restart',
+                'Reiniciar',
+              ),
             ),
             const SizedBox(height: 12),
             _buildBridgeActionTile(
@@ -2739,14 +3529,21 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               color: Colors.purple,
               title: 'Identificar Máquinas',
               subtitle: 'Solicita nome do PC e versão do Windows.',
-              onTap: () => _selecionarPCEDispararComando(context, 'identify', 'Identificar'),
+              onTap: () => _selecionarPCEDispararComando(
+                context,
+                'identify',
+                'Identificar',
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'FECHAR',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
         ],
       ),
@@ -2779,8 +3576,17 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
                 ],
               ),
             ),
@@ -2790,12 +3596,21 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  void _selecionarPCEDispararComando(BuildContext pageContext, String comando, String acaoTitulo, {String? cnpjFilter, Map<String, dynamic>? extraData}) {
+  void _selecionarPCEDispararComando(
+    BuildContext pageContext,
+    String comando,
+    String acaoTitulo, {
+    String? cnpjFilter,
+    Map<String, dynamic>? extraData,
+  }) {
     showDialog(
       context: pageContext,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: Text('Selecione o PC para $acaoTitulo', style: const TextStyle(color: Colors.white, fontSize: 18)),
+        title: Text(
+          'Selecione o PC para $acaoTitulo',
+          style: const TextStyle(color: Colors.white, fontSize: 18),
+        ),
         content: SizedBox(
           width: double.maxFinite,
           height: 380,
@@ -2806,41 +3621,88 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 return const Center(child: CircularProgressIndicator());
               }
               if (snapshot.hasError) {
-                return Center(child: Text('Erro: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
+                return Center(
+                  child: Text(
+                    'Erro: ${snapshot.error}',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                );
               }
-  
+
               final todosDocs = snapshot.data ?? [];
               var docsFiltrados = todosDocs;
-              
+
               if (cnpjFilter != null && cnpjFilter.isNotEmpty) {
                 final cnpjLimpo = cnpjFilter.replaceAll(RegExp(r'[^0-9]'), '');
                 docsFiltrados = todosDocs.where((b) {
-                  final bCnpj = b['ultimo_cnpj']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                  final bCnpj =
+                      b['ultimo_cnpj']?.toString().replaceAll(
+                        RegExp(r'[^0-9]'),
+                        '',
+                      ) ??
+                      '';
                   return bCnpj == cnpjLimpo;
                 }).toList();
               }
-  
+
               return ListView(
                 children: [
                   if (cnpjFilter != null && cnpjFilter.isNotEmpty) ...[
                     ListTile(
-                      leading: const Icon(Icons.domain_rounded, color: Colors.cyanAccent),
-                      title: Text('ENVIAR DIRETO PARA O CNPJ ($cnpjFilter)', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 12)),
-                      subtitle: const Text('Dispara o comando para a empresa mesmo se o PC estiver offline no momento.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      leading: const Icon(
+                        Icons.domain_rounded,
+                        color: Colors.cyanAccent,
+                      ),
+                      title: Text(
+                        'ENVIAR DIRETO PARA O CNPJ ($cnpjFilter)',
+                        style: const TextStyle(
+                          color: Colors.cyanAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Dispara o comando para a empresa mesmo se o PC estiver offline no momento.',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
                       onTap: () {
                         Navigator.pop(dialogContext);
-                        final extra = Map<String, dynamic>.from(extraData ?? {});
-                        extra['cnpj'] = cnpjFilter.replaceAll(RegExp(r'[^0-9]'), '');
-                        _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no emissor do CNPJ $cnpjFilter?', targetPc: null, extraData: extra);
+                        final extra = Map<String, dynamic>.from(
+                          extraData ?? {},
+                        );
+                        extra['cnpj'] = cnpjFilter.replaceAll(
+                          RegExp(r'[^0-9]'),
+                          '',
+                        );
+                        _confirmarComandoBridge(
+                          pageContext,
+                          comando,
+                          'Deseja $acaoTitulo no emissor do CNPJ $cnpjFilter?',
+                          targetPc: null,
+                          extraData: extra,
+                        );
                       },
                     ),
                     const Divider(color: Colors.white24),
                   ],
 
                   ListTile(
-                    leading: const Icon(Icons.computer, color: Colors.orangeAccent),
-                    title: const Text('TODOS OS COMPUTADORES REGISTRADOS', style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
-                    subtitle: const Text('Dispara o comando para todos os emissores ativos na nuvem.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                    leading: const Icon(
+                      Icons.computer,
+                      color: Colors.orangeAccent,
+                    ),
+                    title: const Text(
+                      'TODOS OS COMPUTADORES REGISTRADOS',
+                      style: TextStyle(
+                        color: Colors.orangeAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Dispara o comando para todos os emissores ativos na nuvem.',
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
                     onTap: () {
                       Navigator.pop(dialogContext);
                       // Uma ordem POR PC registrado. Antes ia um ÚNICO comando
@@ -2854,7 +3716,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       if (pcs.isEmpty) {
                         ScaffoldMessenger.of(pageContext).showSnackBar(
                           const SnackBar(
-                            content: Text('Nenhum computador registrado ainda. Use "Enviar direto pelo CNPJ".'),
+                            content: Text(
+                              'Nenhum computador registrado ainda. Use "Enviar direto pelo CNPJ".',
+                            ),
                             backgroundColor: Colors.orange,
                             duration: Duration(seconds: 4),
                           ),
@@ -2862,9 +3726,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         return;
                       }
                       _confirmarComandoBridgeParaMultiplos(
-                        pageContext, comando,
+                        pageContext,
+                        comando,
                         'Deseja $acaoTitulo nos ${pcs.length} computadores registrados?',
-                        pcs, extraData: extraData,
+                        pcs,
+                        extraData: extraData,
                       );
                     },
                   ),
@@ -2872,49 +3738,113 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
                   if (docsFiltrados.isNotEmpty) ...[
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      child: Text('EMISSORES DESTA EMPRESA (${docsFiltrados.length}):', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        'EMISSORES DESTA EMPRESA (${docsFiltrados.length}):',
+                        style: const TextStyle(
+                          color: Colors.greenAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                     ...docsFiltrados.map((data) {
                       final pcName = data['pc_name'] ?? 'PC Desconhecido';
                       final pcId = data['id'];
                       final isOnline = data['online'] ?? false;
                       return ListTile(
-                        leading: Icon(Icons.desktop_windows, color: isOnline ? Colors.green : Colors.white24),
-                        title: Text(pcName, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                        leading: Icon(
+                          Icons.desktop_windows,
+                          color: isOnline ? Colors.green : Colors.white24,
+                        ),
+                        title: Text(
+                          pcName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                        ),
                         subtitle: Text(
                           isOnline ? 'Online' : 'Offline',
-                          style: TextStyle(color: isOnline ? Colors.green : Colors.redAccent, fontSize: 11),
+                          style: TextStyle(
+                            color: isOnline ? Colors.green : Colors.redAccent,
+                            fontSize: 11,
+                          ),
                         ),
-                        trailing: const Icon(Icons.send_rounded, color: Colors.cyanAccent, size: 18),
+                        trailing: const Icon(
+                          Icons.send_rounded,
+                          color: Colors.cyanAccent,
+                          size: 18,
+                        ),
                         onTap: () {
                           Navigator.pop(dialogContext);
-                          _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC "$pcName"?', targetPc: pcId, extraData: extraData);
+                          _confirmarComandoBridge(
+                            pageContext,
+                            comando,
+                            'Deseja $acaoTitulo no PC "$pcName"?',
+                            targetPc: pcId,
+                            extraData: extraData,
+                          );
                         },
                       );
                     }),
                   ],
 
-                  if (todosDocs.isNotEmpty && (docsFiltrados.length < todosDocs.length)) ...[
+                  if (todosDocs.isNotEmpty &&
+                      (docsFiltrados.length < todosDocs.length)) ...[
                     const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      child: Text('OUTROS COMPUTADORES CADASTRADOS NA NUVEM:', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                      child: Text(
+                        'OUTROS COMPUTADORES CADASTRADOS NA NUVEM:',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                    ...todosDocs.where((d) => !docsFiltrados.contains(d)).map((data) {
+                    ...todosDocs.where((d) => !docsFiltrados.contains(d)).map((
+                      data,
+                    ) {
                       final pcName = data['pc_name'] ?? 'PC Desconhecido';
                       final pcId = data['id'];
                       final isOnline = data['online'] ?? false;
                       return ListTile(
-                        leading: Icon(Icons.desktop_windows, color: isOnline ? Colors.green : Colors.white24),
-                        title: Text(pcName, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                        leading: Icon(
+                          Icons.desktop_windows,
+                          color: isOnline ? Colors.green : Colors.white24,
+                        ),
+                        title: Text(
+                          pcName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                        ),
                         subtitle: Text(
                           isOnline ? 'Online' : 'Offline',
-                          style: TextStyle(color: isOnline ? Colors.green : Colors.redAccent, fontSize: 11),
+                          style: TextStyle(
+                            color: isOnline ? Colors.green : Colors.redAccent,
+                            fontSize: 11,
+                          ),
                         ),
-                        trailing: const Icon(Icons.send_rounded, color: Colors.cyanAccent, size: 18),
+                        trailing: const Icon(
+                          Icons.send_rounded,
+                          color: Colors.cyanAccent,
+                          size: 18,
+                        ),
                         onTap: () {
                           Navigator.pop(dialogContext);
-                          _confirmarComandoBridge(pageContext, comando, 'Deseja $acaoTitulo no PC "$pcName"?', targetPc: pcId, extraData: extraData);
+                          _confirmarComandoBridge(
+                            pageContext,
+                            comando,
+                            'Deseja $acaoTitulo no PC "$pcName"?',
+                            targetPc: pcId,
+                            extraData: extraData,
+                          );
                         },
                       );
                     }),
@@ -2923,7 +3853,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   if (todosDocs.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(16.0),
-                      child: Text('Nenhum computador enviou sinal de vida ainda. Utilize a opção de Enviar Direto pelo CNPJ acima.', style: TextStyle(color: Colors.white54, fontSize: 11), textAlign: TextAlign.center),
+                      child: Text(
+                        'Nenhum computador enviou sinal de vida ainda. Utilize a opção de Enviar Direto pelo CNPJ acima.',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                 ],
               );
@@ -2933,19 +3867,31 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
         ],
       ),
     );
   }
 
-  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta, {String? targetPc, Map<String, dynamic>? extraData}) {
+  void _confirmarComandoBridge(
+    BuildContext context,
+    String comando,
+    String pergunta, {
+    String? targetPc,
+    Map<String, dynamic>? extraData,
+  }) {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF2E2E3E),
-        title: const Text('Confirmar Comando', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Confirmar Comando',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Text(pergunta, style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
@@ -2955,10 +3901,12 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(dialogContext);
-              
+
               try {
-                debugPrint('>>> [BridgeManager] Enviando comando "$comando" para PC: ${targetPc ?? "Todos"}');
-                
+                debugPrint(
+                  '>>> [BridgeManager] Enviando comando "$comando" para PC: ${targetPc ?? "Todos"}',
+                );
+
                 if (mounted) {
                   ScaffoldMessenger.of(context).hideCurrentSnackBar();
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -2970,12 +3918,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   );
                 }
 
-                final requestId = await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc, extraData: extraData);
-                
+                final requestId = await BridgeManagementService.instance
+                    .enviarComando(
+                      comando,
+                      targetPc: targetPc,
+                      extraData: extraData,
+                    );
+
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('✅ Comando "$comando" postado! Aguardando resposta do PC...'),
+                      content: Text(
+                        '✅ Comando "$comando" postado! Aguardando resposta do PC...',
+                      ),
                       backgroundColor: Colors.indigo,
                       duration: const Duration(seconds: 4),
                     ),
@@ -2984,13 +3939,17 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
                 // Monitorar Resposta via Polling (Supabase)
                 int checkCount = 0;
-                while (checkCount < 30) { // 60 segundos
+                while (checkCount < 30) {
+                  // 60 segundos
                   await Future.delayed(const Duration(seconds: 2));
                   if (!mounted) break;
-                  
-                  final record = await SupabaseService.instance.select('bridge_commands', filters: {'id': requestId});
+
+                  final record = await SupabaseService.instance.select(
+                    'bridge_commands',
+                    filters: {'id': requestId},
+                  );
                   if (record.isEmpty) break;
-                  
+
                   final data = record.first;
                   final status = data['status'];
                   final resultado = data['resultado'] ?? '';
@@ -3001,10 +3960,14 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       ScaffoldMessenger.of(context).hideCurrentSnackBar();
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text(status == 'concluido' 
-                              ? '🏆 SUCESSO ($processorPc): $resultado' 
-                              : '❌ ERRO ($processorPc): $resultado'),
-                          backgroundColor: status == 'concluido' ? Colors.green : Colors.redAccent,
+                          content: Text(
+                            status == 'concluido'
+                                ? '🏆 SUCESSO ($processorPc): $resultado'
+                                : '❌ ERRO ($processorPc): $resultado',
+                          ),
+                          backgroundColor: status == 'concluido'
+                              ? Colors.green
+                              : Colors.redAccent,
                           duration: const Duration(seconds: 5),
                         ),
                       );
@@ -3018,7 +3981,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('❌ Erro no Envio: $e'), 
+                      content: Text('❌ Erro no Envio: $e'),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 10),
                     ),
@@ -3033,12 +3996,21 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  void _confirmarComandoBridgeParaMultiplos(BuildContext context, String comando, String pergunta, List<String> targetPcs, {Map<String, dynamic>? extraData}) {
+  void _confirmarComandoBridgeParaMultiplos(
+    BuildContext context,
+    String comando,
+    String pergunta,
+    List<String> targetPcs, {
+    Map<String, dynamic>? extraData,
+  }) {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF2E2E3E),
-        title: const Text('Confirmar Comando', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Confirmar Comando',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Text(pergunta, style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
@@ -3048,31 +4020,43 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(dialogContext);
-              
+
               try {
-                debugPrint('>>> [BridgeManager] Enviando comando "$comando" para ${targetPcs.length} computadores');
-                
+                debugPrint(
+                  '>>> [BridgeManager] Enviando comando "$comando" para ${targetPcs.length} computadores',
+                );
+
                 if (mounted) {
                   ScaffoldMessenger.of(context).hideCurrentSnackBar();
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('📤 Enviando comando "$comando" para ${targetPcs.length} PCs...'),
+                      content: Text(
+                        '📤 Enviando comando "$comando" para ${targetPcs.length} PCs...',
+                      ),
                       backgroundColor: Colors.blueAccent,
                       duration: const Duration(seconds: 2),
                     ),
                   );
                 }
 
-                final List<Future<String>> futures = targetPcs.map((pcId) => 
-                  BridgeManagementService.instance.enviarComando(comando, targetPc: pcId, extraData: extraData)
-                ).toList();
+                final List<Future<String>> futures = targetPcs
+                    .map(
+                      (pcId) => BridgeManagementService.instance.enviarComando(
+                        comando,
+                        targetPc: pcId,
+                        extraData: extraData,
+                      ),
+                    )
+                    .toList();
 
                 await Future.wait(futures);
-                
+
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('✅ Comando "$comando" enviado com sucesso para os ${targetPcs.length} PCs!'),
+                      content: Text(
+                        '✅ Comando "$comando" enviado com sucesso para os ${targetPcs.length} PCs!',
+                      ),
                       backgroundColor: Colors.indigo,
                       duration: const Duration(seconds: 4),
                     ),
@@ -3108,24 +4092,35 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
       if (result != null && result.files.single.bytes != null) {
         final file = result.files.single;
-        
+
         // Perguntar a versão e o componente
-        final versionController = TextEditingController(text: AppUpdateService.currentAppVersion);
+        final versionController = TextEditingController(
+          text: AppUpdateService.currentAppVersion,
+        );
         String selectedConfigId = 'latest'; // Default: emissor bridge
-        
+
         final bool? confirm = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => StatefulBuilder(
             builder: (context, setDialogState) => AlertDialog(
               backgroundColor: const Color(0xFF1E1E2E),
-              title: const Text('Confirmar Upload', style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'Confirmar Upload',
+                style: TextStyle(color: Colors.white),
+              ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Arquivo: ${file.name} (${(file.size / 1024 / 1024).toStringAsFixed(2)} MB)', style: const TextStyle(color: Colors.white70)),
+                  Text(
+                    'Arquivo: ${file.name} (${(file.size / 1024 / 1024).toStringAsFixed(2)} MB)',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
                   const SizedBox(height: 16),
-                  const Text('Componente a atualizar:', style: TextStyle(color: Colors.white54, fontSize: 13)),
+                  const Text(
+                    'Componente a atualizar:',
+                    style: TextStyle(color: Colors.white54, fontSize: 13),
+                  ),
                   const SizedBox(height: 8),
                   DropdownButton<String>(
                     dropdownColor: const Color(0xFF2E2E3E),
@@ -3134,9 +4129,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     isExpanded: true,
                     underline: Container(height: 1, color: Colors.white30),
                     items: const [
-                      DropdownMenuItem(value: 'latest', child: Text('Emissor NFC-e (Bridge)')),
-                      DropdownMenuItem(value: 'app_latest', child: Text('Aplicativo Desktop Principal')),
-                      DropdownMenuItem(value: 'sync_latest', child: Text('Sincronizador de Nuvem')),
+                      DropdownMenuItem(
+                        value: 'latest',
+                        child: Text('Emissor NFC-e (Bridge)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'app_latest',
+                        child: Text('Aplicativo Desktop Principal'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'sync_latest',
+                        child: Text('Sincronizador de Nuvem'),
+                      ),
                     ],
                     onChanged: (val) {
                       if (val != null) {
@@ -3153,16 +4157,24 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     decoration: const InputDecoration(
                       labelText: 'Versão a distribuir',
                       labelStyle: TextStyle(color: Colors.white54),
-                      enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white30),
+                      ),
                     ),
                   ),
                 ],
               ),
               actions: [
-                TextButton(child: const Text('Cancelar'), onPressed: () => Navigator.pop(dialogContext, false)),
+                TextButton(
+                  child: const Text('Cancelar'),
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.pink),
-                  child: const Text('Iniciar Upload', style: TextStyle(color: Colors.white)),
+                  child: const Text(
+                    'Iniciar Upload',
+                    style: TextStyle(color: Colors.white),
+                  ),
                   onPressed: () => Navigator.pop(dialogContext, true),
                 ),
               ],
@@ -3182,25 +4194,38 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 children: [
                   CircularProgressIndicator(color: Colors.pink),
                   SizedBox(height: 16),
-                  Text('Fazendo upload para a Nuvem...', style: TextStyle(color: Colors.white)),
+                  Text(
+                    'Fazendo upload para a Nuvem...',
+                    style: TextStyle(color: Colors.white),
+                  ),
                   SizedBox(height: 4),
-                  Text('Isso pode levar alguns minutos (35MB).', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text(
+                    'Isso pode levar alguns minutos (35MB).',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
                 ],
               ),
             ),
           );
 
           await BridgeManagementService.instance.subirNovaVersaoBridge(
-            file, 
+            file,
             versionController.text.trim(),
             selectedConfigId,
-            (progress) {} // Sem atualização em real time por simplicidade visual
+            (
+              progress,
+            ) {}, // Sem atualização em real time por simplicidade visual
           );
 
           if (mounted) {
             Navigator.pop(context); // Fecha dialog de progresso
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('✅ Upload concluído! A atualização já está disponível para os clientes na nuvem.'), backgroundColor: Colors.green),
+              const SnackBar(
+                content: Text(
+                  '✅ Upload concluído! A atualização já está disponível para os clientes na nuvem.',
+                ),
+                backgroundColor: Colors.green,
+              ),
             );
           }
         }
@@ -3209,13 +4234,20 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       if (mounted) {
         if (Navigator.canPop(context)) Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro no upload: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Erro no upload: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
   }
 
-  void _mostrarDialogoAlterarSenha(BuildContext context, AuthService authService, Usuario usuario) {
+  void _mostrarDialogoAlterarSenha(
+    BuildContext context,
+    AuthService authService,
+    Usuario usuario,
+  ) {
     final formKey = GlobalKey<FormState>();
     final senhaAtualController = TextEditingController();
     final novaSenhaController = TextEditingController();
@@ -3224,7 +4256,10 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Alterar Senha', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Alterar Senha',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Form(
           key: formKey,
           child: Column(
@@ -3237,11 +4272,16 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 decoration: const InputDecoration(
                   labelText: 'Senha Atual',
                   labelStyle: TextStyle(color: Colors.white70),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white30),
+                  ),
+                  focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.blueAccent),
+                  ),
                 ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Campo obrigatório';
+                  if (value == null || value.isEmpty)
+                    return 'Campo obrigatório';
                   if (value != usuario.senha) return 'Senha atual incorreta';
                   return null;
                 },
@@ -3254,11 +4294,16 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                 decoration: const InputDecoration(
                   labelText: 'Nova Senha',
                   labelStyle: TextStyle(color: Colors.white70),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.blueAccent)),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white30),
+                  ),
+                  focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.blueAccent),
+                  ),
                 ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Campo obrigatório';
+                  if (value == null || value.isEmpty)
+                    return 'Campo obrigatório';
                   if (value.length < 3) return 'Mínimo de 3 caracteres';
                   return null;
                 },
@@ -3269,24 +4314,35 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () async {
               if (formKey.currentState!.validate()) {
                 try {
-                  final usuarioAtualizado = usuario.copyWith(senha: novaSenhaController.text);
+                  final usuarioAtualizado = usuario.copyWith(
+                    senha: novaSenhaController.text,
+                  );
                   await authService.atualizarUsuario(usuarioAtualizado);
                   if (context.mounted) {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Senha alterada com sucesso!'), backgroundColor: Colors.green),
+                      const SnackBar(
+                        content: Text('Senha alterada com sucesso!'),
+                        backgroundColor: Colors.green,
+                      ),
                     );
                   }
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao alterar senha: $e'), backgroundColor: Colors.red),
+                      SnackBar(
+                        content: Text('Erro ao alterar senha: $e'),
+                        backgroundColor: Colors.red,
+                      ),
                     );
                   }
                 }
@@ -3300,11 +4356,16 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
-  Future<StatusSyncEmpresa> _obterStatusSyncEmpresa(String empresaId, DataService dataService) async {
+  Future<StatusSyncEmpresa> _obterStatusSyncEmpresa(
+    String empresaId,
+    DataService dataService,
+  ) async {
     // 1. Prioridade: status centralizado no Supabase (sync_status), alimentado pelo sincronizador
     try {
       if (SupabaseService.isAvailable) {
-        final statusCloud = await SupabaseService.instance.getSyncStatus(empresaId);
+        final statusCloud = await SupabaseService.instance.getSyncStatus(
+          empresaId,
+        );
         if (statusCloud != null) {
           final ultimaStr = statusCloud['ultima_sincronizacao']?.toString();
           DateTime? ultimaSync;
@@ -3321,12 +4382,15 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
         }
       }
     } catch (e) {
-      debugPrint('Erro ao obter status de sync do Supabase da empresa $empresaId: $e');
+      debugPrint(
+        'Erro ao obter status de sync do Supabase da empresa $empresaId: $e',
+      );
     }
 
     // 2. Fallback: status local
     try {
-      final keySucesso = 'empresa_${empresaId}_exodo_ultima_sincronizacao_sucesso';
+      final keySucesso =
+          'empresa_${empresaId}_exodo_ultima_sincronizacao_sucesso';
       final keyErro = 'empresa_${empresaId}_exodo_ultimo_erro_sync';
 
       final dataSucessoStr = await dataService.storage.carregar(keySucesso);
@@ -3349,10 +4413,16 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
 
   /// Carrega os logs de sync de uma empresa: primeiro do Supabase (sync_logs,
   /// alimentado pelo sincronizador da nuvem), com fallback para os logs locais.
-  Future<List<String>> _carregarLogsSyncEmpresa(String empresaId, DataService dataService) async {
+  Future<List<String>> _carregarLogsSyncEmpresa(
+    String empresaId,
+    DataService dataService,
+  ) async {
     try {
       if (SupabaseService.isAvailable) {
-        final logsCloud = await SupabaseService.instance.getSyncLogs(empresaId, limit: 50);
+        final logsCloud = await SupabaseService.instance.getSyncLogs(
+          empresaId,
+          limit: 50,
+        );
         if (logsCloud.isNotEmpty) {
           return logsCloud.map((log) {
             final created = log['created_at']?.toString() ?? '';
@@ -3375,7 +4445,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     }
 
     try {
-      final rawLogs = await dataService.storage.carregar('empresa_${empresaId}_sync_logs');
+      final rawLogs = await dataService.storage.carregar(
+        'empresa_${empresaId}_sync_logs',
+      );
       if (rawLogs != null && rawLogs is List) {
         return List<String>.from(rawLogs.map((e) => e.toString()));
       }
@@ -3385,14 +4457,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     return [];
   }
 
-
-  Future<void> _mostrarLogsEmpresa(BuildContext context, Empresa empresa, DataService dataService) async {
+  Future<void> _mostrarLogsEmpresa(
+    BuildContext context,
+    Empresa empresa,
+    DataService dataService,
+  ) async {
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF161622),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
           title: Row(
             children: [
               Container(
@@ -3401,7 +4478,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   color: Colors.blueAccent.withOpacity(0.15),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.cloud_sync_rounded, color: Colors.blueAccent, size: 24),
+                child: const Icon(
+                  Icons.cloud_sync_rounded,
+                  color: Colors.blueAccent,
+                  size: 24,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -3410,11 +4491,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   children: [
                     const Text(
                       'Logs de Sincronia',
-                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     Text(
                       empresa.nomeExibicao,
-                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13, fontWeight: FontWeight.normal),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 13,
+                        fontWeight: FontWeight.normal,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -3429,9 +4518,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               future: _carregarLogsSyncEmpresa(empresa.id, dataService),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator(color: Colors.blueAccent));
+                  return const Center(
+                    child: CircularProgressIndicator(color: Colors.blueAccent),
+                  );
                 }
-                
+
                 final rawLogs = snapshot.data;
                 final List<String> logs = rawLogs != null && rawLogs is List
                     ? List<String>.from(rawLogs.map((e) => e.toString()))
@@ -3442,11 +4533,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.notes_rounded, color: Colors.white.withOpacity(0.2), size: 48),
+                        Icon(
+                          Icons.notes_rounded,
+                          color: Colors.white.withOpacity(0.2),
+                          size: 48,
+                        ),
                         const SizedBox(height: 12),
                         Text(
                           'Nenhum log registrado para esta empresa.',
-                          style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 14),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.4),
+                            fontSize: 14,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                       ],
@@ -3473,7 +4571,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                         decoration: BoxDecoration(
                           color: Colors.black.withOpacity(0.3),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white.withOpacity(0.08)),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.08),
+                          ),
                         ),
                         child: ListView.builder(
                           physics: const BouncingScrollPhysics(),
@@ -3481,14 +4581,18 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           itemBuilder: (context, idx) {
                             final log = logs[logs.length - 1 - idx];
                             Color logColor = Colors.white70;
-                            if (log.contains('❌') || log.contains('⚠️') || log.contains('ERRO')) {
+                            if (log.contains('❌') ||
+                                log.contains('⚠️') ||
+                                log.contains('ERRO')) {
                               logColor = Colors.redAccent;
-                            } else if (log.contains('✅') || log.contains('✓') || log.contains('sucesso')) {
+                            } else if (log.contains('✅') ||
+                                log.contains('✓') ||
+                                log.contains('sucesso')) {
                               logColor = Colors.greenAccent;
                             } else if (log.contains('🔄')) {
                               logColor = Colors.cyanAccent;
                             }
-                            
+
                             return Padding(
                               padding: const EdgeInsets.symmetric(vertical: 4),
                               child: Text(
@@ -3526,7 +4630,9 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                           Clipboard.setData(ClipboardData(text: logText));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Logs copiados para a área de transferência!'),
+                              content: Text(
+                                'Logs copiados para a área de transferência!',
+                              ),
                               backgroundColor: Colors.green,
                               duration: Duration(seconds: 2),
                             ),
@@ -3535,14 +4641,19 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                   icon: const Icon(Icons.copy, size: 16),
                   label: const Text('Copiar Logs'),
                   style: TextButton.styleFrom(
-                    foregroundColor: logs.isEmpty ? Colors.white24 : Colors.blueAccent,
+                    foregroundColor: logs.isEmpty
+                        ? Colors.white24
+                        : Colors.blueAccent,
                   ),
                 );
               },
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Fechar', style: TextStyle(color: Colors.white70)),
+              child: const Text(
+                'Fechar',
+                style: TextStyle(color: Colors.white70),
+              ),
             ),
           ],
         );
@@ -3557,7 +4668,3 @@ class StatusSyncEmpresa {
 
   StatusSyncEmpresa({this.ultimaSincronizacaoSucesso, this.ultimoErro});
 }
-
-
-
-

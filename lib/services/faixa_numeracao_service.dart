@@ -127,10 +127,21 @@ ReservaCalculada? calcularReserva({
   required int valorNoContador,
   required int aPartirDe,
   required int tamanho,
+  int? adiantamentoMaximo,
 }) {
   if (tamanho <= 0) return null;
+  final piso = aPartirDe < 1 ? 1 : aPartirDe;
   final bruto = valorNoContador > 0 ? valorNoContador : 1;
-  final inicio = bruto >= aPartirDe ? bruto : (aPartirDe < 1 ? 1 : aPartirDe);
+  var inicio = bruto >= piso ? bruto : piso;
+
+  // Contador contaminado por um número ilha (artefato de timestamp, milhares
+  // de números acima da realidade): aceita-se no máximo [adiantamentoMaximo]
+  // à frente do piso — o que cobre a outra máquina com bloco reservado. Sem
+  // essa trava, todo bloco nasce lá em cima e a numeração nunca mais volta.
+  if (adiantamentoMaximo != null && inicio > piso + adiantamentoMaximo) {
+    inicio = piso;
+  }
+
   return ReservaCalculada(
     inicio: inicio,
     fim: inicio + tamanho - 1,
@@ -207,6 +218,10 @@ class FaixaNumeracaoService {
     required String empresaId,
     required int aPartirDe,
     int? tamanho,
+
+    /// Quanto o contador da nuvem pode estar à frente do piso real sem que
+    /// seja considerado contaminado (ver [calcularReserva]).
+    int? adiantamentoMaximo,
   }) async {
     final quantidade = tamanho ?? tamanhoPadrao;
     if (quantidade <= 0 || empresaId.trim().isEmpty) return null;
@@ -231,6 +246,7 @@ class FaixaNumeracaoService {
             valorNoContador: 0,
             aPartirDe: aPartirDe,
             tamanho: quantidade,
+            adiantamentoMaximo: adiantamentoMaximo,
           );
           if (calculada == null) return null;
           try {
@@ -258,6 +274,7 @@ class FaixaNumeracaoService {
           valorNoContador: atual,
           aPartirDe: aPartirDe,
           tamanho: quantidade,
+          adiantamentoMaximo: adiantamentoMaximo,
         );
         if (calculada == null) return null;
 

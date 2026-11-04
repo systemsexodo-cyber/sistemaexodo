@@ -15,6 +15,10 @@ class PerfilTributario {
   final double? aliquotaIbs;  // Alíquota do IBS (%)
   final String? cstCbs;       // Novo: CST da CBS
   final double? aliquotaCbs;  // Alíquota do CBS (%)
+
+  /// Classificação tributária do IBS/CBS (cClassTrib, 6 dígitos) — é ela que
+  /// define a regra aplicada no grupo `<IBSCBS>` do XML. Vazio usa 000001.
+  final String? classTrib;
   
   // Tributação avançada
   final String? ipiCst;              // CST do IPI
@@ -42,6 +46,7 @@ class PerfilTributario {
     this.aliquotaIbs,
     this.cstCbs,
     this.aliquotaCbs,
+    this.classTrib,
     this.ipiCst,
     this.aliquotaIpi,
     this.mva,
@@ -67,6 +72,7 @@ class PerfilTributario {
     double? aliquotaIbs,
     String? cstCbs,
     double? aliquotaCbs,
+    String? classTrib,
     String? ipiCst,
     double? aliquotaIpi,
     double? mva,
@@ -93,6 +99,7 @@ class PerfilTributario {
       aliquotaIbs: aliquotaIbs ?? this.aliquotaIbs,
       cstCbs: cstCbs ?? this.cstCbs,
       aliquotaCbs: aliquotaCbs ?? this.aliquotaCbs,
+      classTrib: classTrib ?? this.classTrib,
       ipiCst: ipiCst ?? this.ipiCst,
       aliquotaIpi: aliquotaIpi ?? this.aliquotaIpi,
       mva: mva ?? this.mva,
@@ -129,6 +136,7 @@ class PerfilTributario {
       aliquotaIbs: parseDouble(map['aliquota_ibs'] ?? map['aliquotaIbs']),
       cstCbs: map['cst_cbs'] ?? map['cstCbs'],
       aliquotaCbs: parseDouble(map['aliquota_cbs'] ?? map['aliquotaCbs']),
+      classTrib: map['c_class_trib'] ?? map['cClassTrib'] ?? map['class_trib'],
       
       ipiCst: map['ipi_cst'] ?? map['ipiCst'],
       aliquotaIpi: parseDouble(map['aliquota_ipi'] ?? map['aliquotaIpi']),
@@ -159,6 +167,7 @@ class PerfilTributario {
       'aliquota_ibs': aliquotaIbs,
       'cst_cbs': cstCbs,
       'aliquota_cbs': aliquotaCbs,
+      'c_class_trib': classTrib,
       
       'ipi_cst': ipiCst,
       'aliquota_ipi': aliquotaIpi,

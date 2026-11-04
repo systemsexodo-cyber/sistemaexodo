@@ -404,6 +404,7 @@ class CaixaPDFService {
       case TipoPagamento.alimentacao: return 'Ticket/Aliment.';
       case TipoPagamento.transferencia: return 'Transferência';
       case TipoPagamento.cashBack: return 'Cash Back';
+    case TipoPagamento.mercado_pago: return 'Mercado Pago';
     }
   }
 }

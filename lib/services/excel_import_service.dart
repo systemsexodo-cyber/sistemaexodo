@@ -58,7 +58,9 @@ class ExcelImportService {
       final valor = _lerCelula(cabecalho, i);
       if (valor == null) continue;
       
-      final valorLower = _normalizarTexto(valor);
+      // Tolerância a erro comum de digitação: "CTS" no lugar de "CST"
+      // (ex.: cabeçalho "CTS ICMS" deve ser lido como "CST ICMS").
+      final valorLower = _normalizarTexto(valor).replaceAll('cts', 'cst');
       debugPrint('>>> [Excel Import] Coluna $i: "$valor" (normalizado: "$valorLower")');
       
       // Detectar códigos de coluna
@@ -480,7 +482,13 @@ class ExcelImportService {
             if (v.contains('codigo') || v.contains('nome') || v.contains('produto') || 
                 v.contains('preco') || v.contains('venda') || v.contains('custo') ||
                 v.contains('valor') ||
-                v.contains('descricao') || v.contains('estoque') || v.contains('unidade')) {
+                v.contains('descricao') || v.contains('estoque') || v.contains('unidade') ||
+                // Colunas fiscais também identificam um cabeçalho — planilha só de
+                // impostos (CFOP, CST, NCM...) é cabeçalho válida.
+                v.contains('cfop') || v.contains('cst') || v.contains('cts') ||
+                v.contains('icms') || v.contains('ipi') || v.contains('pis') ||
+                v.contains('cofins') || v.contains('ncm') || v.contains('cest') ||
+                v.contains('csosn') || v.contains('imposto')) {
               palavrasChave++;
             }
           }
@@ -531,6 +539,25 @@ class ExcelImportService {
         encontrouCabecalho 
           ? '✅ Cabeçalho detectado na linha $linhaInicio' 
           : 'ℹ️ Usando mapeamento de colunas padrão'
+      );
+
+      // Resumo das colunas de impostos reconhecidas (feedback ao usuário)
+      const rotulosFiscais = <String, String>{
+        'ncm': 'NCM', 'cfop': 'CFOP', 'cest': 'CEST', 'origem': 'Origem',
+        'icmsCst': 'CST ICMS', 'csosn': 'CSOSN', 'ipiCst': 'CST IPI',
+        'pisCst': 'CST PIS', 'cofinsCst': 'CST COFINS',
+        'icmsAliquota': 'Alíq. ICMS', 'ipiAliquota': 'Alíq. IPI',
+        'pisAliquota': 'Alíq. PIS', 'cofinsAliquota': 'Alíq. COFINS',
+        'issAliquota': 'Alíq. ISS', 'simplesNacionalAliquota': 'Alíq. Simples',
+      };
+      final fiscaisDetectados = rotulosFiscais.entries
+          .where((e) => indicesColunas[e.key] != null)
+          .map((e) => e.value)
+          .toList();
+      (resultado['mensagens'] as List<String>).add(
+        fiscaisDetectados.isEmpty
+            ? 'ℹ️ Nenhuma coluna de impostos reconhecida na planilha'
+            : '🧾 Colunas de impostos detectadas: ${fiscaisDetectados.join(', ')}',
       );
 
       // Carregar produtos existentes
@@ -743,10 +770,12 @@ class ExcelImportService {
               ).toList();
               if (encontrados.isNotEmpty) {
                 produtoExistente = encontrados.first;
-                // Se tem mesmo nome mas códigos diferentes, trata como duplicado
-                if (produtoExistente.codigo != null && produtoExistente.codigo!.trim().isNotEmpty) {
+                // Só bloqueia se a linha trouxe um CÓDIGO diferente do produto
+                // de mesmo nome. Planilha sem código (ex.: só impostos) passa a
+                // ATUALIZAR o produto existente em vez de descartar como duplicada.
+                if (codigoFinal != null && codigoFinal.isNotEmpty) {
                   resultado['duplicados'] = (resultado['duplicados'] as int) + 1;
-                  (resultado['mensagens'] as List<String>).add('Linha ${i + 1} ($nomeFinal): ⚠️ Nome duplicado (produto já existe com código ${produtoExistente.codigo})');
+                  (resultado['mensagens'] as List<String>).add('Linha ${i + 1} ($nomeFinal): ⚠️ Nome duplicado (planilha código $codigoFinal × produto com código ${produtoExistente.codigo})');
                   continue;
                 } else {
                   deveAtualizar = true;
@@ -845,31 +874,31 @@ class ExcelImportService {
           // Usar descrição original preservada anteriormente
           final descricaoFinal = descricaoOriginal;
           
-          // Processar campos de impostos
-          final ncmFinal = (ncm != null && ncm.trim().isNotEmpty) ? ncm.trim() : null;
-          final cfopFinal = (cfop != null && cfop.trim().isNotEmpty) ? cfop.trim() : null;
+          // Processar campos de impostos (códigos normalizados: 5102.0 → 5102)
+          final ncmFinal = _normalizarCodigoFiscal(ncm);
+          final cfopFinal = _normalizarCodigoFiscal(cfop);
           final icmsAliquotaFinal = (icmsAliquotaStr != null && icmsAliquotaStr.trim().isNotEmpty) 
               ? _parseDoubleInteligente(icmsAliquotaStr.trim()) 
               : null;
-          final icmsCstFinal = (icmsCst != null && icmsCst.trim().isNotEmpty) ? icmsCst.trim() : null;
+          final icmsCstFinal = _normalizarCodigoFiscal(icmsCst);
           final ipiAliquotaFinal = (ipiAliquotaStr != null && ipiAliquotaStr.trim().isNotEmpty) 
               ? _parseDoubleInteligente(ipiAliquotaStr.trim()) 
               : null;
-          final ipiCstFinal = (ipiCst != null && ipiCst.trim().isNotEmpty) ? ipiCst.trim() : null;
+          final ipiCstFinal = _normalizarCodigoFiscal(ipiCst);
           final pisAliquotaFinal = (pisAliquotaStr != null && pisAliquotaStr.trim().isNotEmpty) 
               ? _parseDoubleInteligente(pisAliquotaStr.trim()) 
               : null;
-          final pisCstFinal = (pisCst != null && pisCst.trim().isNotEmpty) ? pisCst.trim() : null;
+          final pisCstFinal = _normalizarCodigoFiscal(pisCst);
           final cofinsAliquotaFinal = (cofinsAliquotaStr != null && cofinsAliquotaStr.trim().isNotEmpty) 
               ? _parseDoubleInteligente(cofinsAliquotaStr.trim()) 
               : null;
-          final cofinsCstFinal = (cofinsCst != null && cofinsCst.trim().isNotEmpty) ? cofinsCst.trim() : null;
+          final cofinsCstFinal = _normalizarCodigoFiscal(cofinsCst);
           final issAliquotaFinal = (issAliquotaStr != null && issAliquotaStr.trim().isNotEmpty) 
               ? _parseDoubleInteligente(issAliquotaStr.trim()) 
               : null;
           final origemFinal = (origem != null && origem.trim().isNotEmpty) ? origem.trim() : null;
-          final cestFinal = (cest != null && cest.trim().isNotEmpty) ? cest.trim() : null;
-          final csosnFinal = (csosn != null && csosn.trim().isNotEmpty) ? csosn.trim() : null;
+          final cestFinal = _normalizarCodigoFiscal(cest);
+          final csosnFinal = _normalizarCodigoFiscal(csosn);
           final simplesNacionalAliquotaFinal = (simplesNacionalAliquotaStr != null && simplesNacionalAliquotaStr.trim().isNotEmpty) 
               ? _parseDoubleInteligente(simplesNacionalAliquotaStr.trim()) 
               : null;
@@ -913,14 +942,23 @@ class ExcelImportService {
             final produtoAtualizado = produtoExistente.copyWith(
               nome: nomeFinal,
               descricao: descricaoFinal ?? produtoExistente.descricao,
-              unidade: unidadeFinal,
-              grupo: grupoFinal, // Sempre atualiza o grupo (se não fornecido, usa "Sem Grupo")
+              // Unidade/grupo só mudam se a planilha tiver essas colunas com valor
+              unidade: (unidadeStr != null && unidadeStr.trim().isNotEmpty)
+                  ? unidadeFinal
+                  : produtoExistente.unidade,
+              grupo: (grupoStr != null && grupoStr.trim().isNotEmpty)
+                  ? grupoFinal
+                  : produtoExistente.grupo,
               preco: preco,
               // Se preço de custo foi fornecido, usar. Caso contrário, manter o existente
               precoCusto: precoCusto ?? produtoExistente.precoCusto,
               estoque: estoqueNovo.toDouble(), // Usa o novo estoque ou mantém o atual
               codigoBarras: codigoBarrasFinal ?? produtoExistente.codigoBarras,
-              codigo: codigoGerado.isNotEmpty ? codigoGerado : produtoExistente.codigo,
+              // Código só muda se a planilha trouxer um; sem código na linha,
+              // mantém o código atual do produto (não gera código novo em atualização)
+              codigo: (codigoFinal != null && codigoFinal.isNotEmpty)
+                  ? codigoFinal
+                  : produtoExistente.codigo,
               // Campos de impostos - usar valores da planilha se fornecidos, caso contrário manter existentes
               ncm: ncmFinal ?? produtoExistente.ncm,
               cfop: cfopFinal ?? produtoExistente.cfop,
@@ -1136,6 +1174,20 @@ class ExcelImportService {
   static String? _lerValorSeguro(List<dynamic> row, int? indice) {
     if (indice == null) return null;
     return _lerCelula(row, indice);
+  }
+
+  /// Normaliza um código fiscal vindo da planilha.
+  /// "5102.0" → "5102", " 102 " → "102", "49" → "49".
+  /// Mantém o texto original quando não há dígitos (casos atípicos).
+  static String? _normalizarCodigoFiscal(String? valor) {
+    if (valor == null) return null;
+    final bruto = valor.trim();
+    if (bruto.isEmpty) return null;
+    // Número lido como texto (5102.0, 102.00) → só a parte inteira
+    final semDecimal = bruto.replaceAll(RegExp(r'\.0+$'), '');
+    final digitos = semDecimal.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digitos.isEmpty) return bruto;
+    return digitos;
   }
 
   /// Verifica se uma linha está vazia

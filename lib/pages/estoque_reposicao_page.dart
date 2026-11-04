@@ -588,7 +588,6 @@ class _EstoqueReposicaoPageState extends State<EstoqueReposicaoPage> {
                   style: TextStyle(color: Colors.white24),
                 ),
               ),
-              const Spacer(),
               ElevatedButton.icon(
                 onPressed: itensPedido.isEmpty
                     ? null

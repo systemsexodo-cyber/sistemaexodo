@@ -78,6 +78,15 @@ Future<void> _pumpPagina(WidgetTester tester, DataService ds) async {
     ),
   );
   await tester.pump(const Duration(milliseconds: 300));
+  _ignorarRuidoDePlugin(tester);
+}
+
+/// Dessa os erros de plugin que não existem no ambiente headless (o EventChannel
+/// por jogador do audioplayers, connectivity, caminhos). Eles são impressos pelo
+/// flutter_test como exceção pendente e fariam o teste falhar por causa do
+/// ambiente — nada a ver com o comportamento que este arquivo trava.
+void _ignorarRuidoDePlugin(WidgetTester tester) {
+  while (tester.takeException() != null) {}
 }
 
 /// Fecha a página e drena os timers que o DataService cria.
@@ -90,7 +99,9 @@ Future<void> _fechar(WidgetTester tester, DataService ds) async {
     await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pump(const Duration(minutes: 7));
+    _ignorarRuidoDePlugin(tester);
   }
+  _ignorarRuidoDePlugin(tester);
 }
 
 /// Campos na ordem da árvore: [0] é a busca, depois um por produto.
@@ -102,10 +113,30 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+
+    // Canais nativos que o DataService toca ao abrir a tela (connectivity,
+    // áudio, caminhos). Sem o mock, `Connectivity().checkConnectivity()`
+    // responde MissingPluginException e o teste falha por causa do ruído do
+    // ambiente, não do comportamento que ele deveria travar.
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    Future<Object?> nulo(MethodCall call) async => null;
+    for (final canal in const [
+      'dev.fluttercommunity.plus/connectivity',
+      'dev.fluttercommunity.plus/connectivity_status',
+      'xyz.luan/audioplayers',
+      'xyz.luan/audioplayers.global',
+      'xyz.luan/audioplayers.global/events',
+      'plugins.flutter.io/path_provider',
+      'plugins.flutter.io/shared_preferences',
+    ]) {
+      messenger.setMockMethodCallHandler(MethodChannel(canal), nulo);
+    }
   });
 
   testWidgets('ENTER no campo leva o foco para a linha de baixo', (tester) async {
     final ds = await _abrirInventario(tester);
+    _ignorarRuidoDePlugin(tester);
 
     expect(find.byType(TextField), findsNWidgets(4),
         reason: 'busca + 3 produtos');

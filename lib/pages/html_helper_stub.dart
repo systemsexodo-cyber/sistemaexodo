@@ -7,12 +7,12 @@ void fazerHardRefresh() {
 
 /// Retorna o host da janela (stub)
 String getWindowHost() {
-  return "sistema-exodo.web.app";
+  return "servidorsupabase.tail9b4943.ts.net";
 }
 
 /// Retorna a origem da janela (stub)
 String getWindowOrigin() {
-  return "https://sistema-exodo.web.app";
+  return "https://servidorsupabase.tail9b4943.ts.net";
 }
 
 /// Retorna o pathname da janela (stub)

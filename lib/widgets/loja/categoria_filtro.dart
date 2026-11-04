@@ -28,11 +28,13 @@ class CategoriaFiltro extends StatelessWidget {
       margin: const EdgeInsets.only(top: 12, bottom: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withOpacity(0.06)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
@@ -62,9 +64,11 @@ class CategoriaFiltro extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(
-            height: 56,
-            child: ListView(
+          ClipRRect(
+            borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+            child: SizedBox(
+              height: 56,
+              child: ListView(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -99,6 +103,7 @@ class CategoriaFiltro extends StatelessWidget {
                       ),
                     )),
               ],
+              ),
             ),
           ),
           const SizedBox(height: 8),

@@ -21,8 +21,6 @@ import 'package:sistema_exodo_novo/widgets/loja/banner_carrossel.dart';
 import 'package:sistema_exodo_novo/widgets/loja/categoria_filtro.dart';
 import 'package:sistema_exodo_novo/widgets/loja/carrinho_drawer.dart';
 import 'package:sistema_exodo_novo/pages/loja_checkout_page.dart';
-import 'package:sistema_exodo_novo/pages/cliente_login_page.dart';
-import 'package:sistema_exodo_novo/pages/cliente_cadastro_page.dart';
 import 'package:intl/intl.dart';
 
 class LojaPublicaPage extends StatefulWidget {
@@ -54,7 +52,6 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   bool _mostrarApenasPromocoes = false;
   // Filtro de preço removido
   final ScrollController _scrollController = ScrollController();
-  bool _mostrarHeader = true;
   bool _isDark = true; // Tema Premium padrão é escuro
   
   // Carrossel de banners
@@ -68,7 +65,6 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   void initState() {
     super.initState();
     _carregarLinkVendedor();
-    _scrollController.addListener(_onScroll);
     // Iniciar carrossel após o primeiro frame para garantir que o PageController está pronto
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _iniciarCarrosselBanners();
@@ -80,7 +76,6 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     _bannerTimer?.cancel();
     _bannerPageController.dispose();
     _buscaController.dispose();
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -195,23 +190,6 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     return banners;
   }
 
-  void _onScroll() {
-    final posicaoAtual = _scrollController.offset;
-    
-    // Esconde o header quando desce mais de 50px
-    if (posicaoAtual > 50 && _mostrarHeader) {
-      setState(() {
-        _mostrarHeader = false;
-      });
-    }
-    // Mostra o header quando sobe ou está no topo
-    else if (posicaoAtual <= 50 && !_mostrarHeader) {
-      setState(() {
-        _mostrarHeader = true;
-      });
-    }
-  }
-
   // Método para obter o tamanho da imagem automaticamente
   Future<Size> _obterTamanhoImagem(String imageUrl) async {
     try {
@@ -266,49 +244,18 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     }
   }
 
-  /// Verifica se cliente está logado e navega para checkout
+  /// Vai para o checkout. Cadastro/login não é obrigatório: quem não tem
+  /// conta compra como visitante e preenche os dados no próprio checkout
+  /// (a tela continua oferecendo o cadastro de forma opcional).
   Future<void> _irParaCheckout() async {
     final clienteAuthService = Provider.of<ClienteAuthService>(context, listen: false);
-    
-    // Verificar se cliente está logado
-    if (!clienteAuthService.isAuthenticated) {
-      // Mostrar diálogo para login
-      final resultado = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Login Necessário'),
-          content: const Text('Você precisa estar logado para finalizar a compra. Deseja fazer login agora?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Fazer Login'),
-            ),
-          ],
-        ),
-      );
 
-      if (resultado == true) {
-        // Navegar para login
-        final loginSucesso = await Navigator.push<bool>(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const ClienteLoginPage(),
-          ),
-        );
-
-        // Se login foi bem-sucedido, continuar para checkout
-        if (loginSucesso == true && clienteAuthService.isAuthenticated) {
-          _navegarParaCheckout();
-        }
-      }
-    } else {
-      // Cliente já está logado, ir direto para checkout
-      _navegarParaCheckout();
-    }
+    // Cliente logado continua sendo preenchido automaticamente no checkout;
+    // cliente não logado segue direto, sem bloqueio.
+    debugPrint(
+      '[Loja] Indo para checkout (cliente logado: ${clienteAuthService.isAuthenticated})',
+    );
+    _navegarParaCheckout();
   }
 
   /// Navega para a página de checkout
@@ -1071,52 +1018,63 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                   configEcommerce: configEcommerce,
                 ),
                 
-                // Lista de Produtos
+                // Conteúdo: container centralizado, largura máxima e paddings
+                // idênticos em banner, busca, filtros e grade de produtos.
                 Expanded(
                   child: SingleChildScrollView(
                     controller: _scrollController,
                     physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.only(bottom: 100),
-                    child: Column(
-                      children: [
-                        // Banners Premium (Apenas no E-commerce por padrão)
-                        if (_bannerDeveSerExibido() && modoLoja == 'ecommerce')
-                          _buildBannersPremium(configEcommerce, primaryColor),
-                        
-                        // Busca e Filtros Premium
-                        Padding(
+                    padding: const EdgeInsets.only(bottom: 48),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1200),
+                        child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: _buildBuscaEFiltrosPremium(
-                            primaryColor: primaryColor,
-                            cardColor: cardColor,
-                            textColor: textColor,
-                            textSecondaryColor: textSecondaryColor,
-                            categorias: categorias,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Banners Premium (Apenas no E-commerce por padrão)
+                              if (_bannerDeveSerExibido() && modoLoja == 'ecommerce')
+                                _buildBannersPremium(configEcommerce, primaryColor),
+
+                              const SizedBox(height: 20),
+
+                              // Busca e Filtros Premium
+                              _buildBuscaEFiltrosPremium(
+                                primaryColor: primaryColor,
+                                cardColor: cardColor,
+                                textColor: textColor,
+                                textSecondaryColor: textSecondaryColor,
+                                categorias: categorias,
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              // Grid ou Lista Dependendo do Modo
+                              if (modoLoja == 'delivery')
+                                _buildListaProdutosDelivery(
+                                  produtos: produtos,
+                                  formatoMoeda: formatoMoeda,
+                                  descontoPixAtivo: descontoPixAtivo,
+                                  percentualDescontoPix: percentualDescontoPix,
+                                  primaryColor: primaryColor,
+                                  cardColor: cardColor,
+                                  textColor: textColor,
+                                )
+                              else
+                                _buildGridProdutosPremium(
+                                  produtos: produtos,
+                                  formatoMoeda: formatoMoeda,
+                                  descontoPixAtivo: descontoPixAtivo,
+                                  percentualDescontoPix: percentualDescontoPix,
+                                  primaryColor: primaryColor,
+                                  cardColor: cardColor,
+                                  textColor: textColor,
+                                ),
+                            ],
                           ),
                         ),
-                        
-                        // Grid ou Lista Dependendo do Modo
-                        if (modoLoja == 'delivery')
-                          _buildListaProdutosDelivery(
-                            produtos: produtos,
-                            formatoMoeda: formatoMoeda,
-                            descontoPixAtivo: descontoPixAtivo,
-                            percentualDescontoPix: percentualDescontoPix,
-                            primaryColor: primaryColor,
-                            cardColor: cardColor,
-                            textColor: textColor,
-                          )
-                        else
-                          _buildGridProdutosPremium(
-                            produtos: produtos,
-                            formatoMoeda: formatoMoeda,
-                            descontoPixAtivo: descontoPixAtivo,
-                            percentualDescontoPix: percentualDescontoPix,
-                            primaryColor: primaryColor,
-                            cardColor: cardColor,
-                            textColor: textColor,
-                          ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -1191,54 +1149,60 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     required Color textColor,
     required Map<String, dynamic>? configEcommerce,
   }) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 400),
-      height: _mostrarHeader ? null : 0,
-      child: _mostrarHeader ? ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
-            decoration: BoxDecoration(
-              color: cardColor.withOpacity(0.8),
-              border: Border(
-                bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
-              ),
-            ),
-            child: Row(
-              children: [
-                if (logoUrl != null)
-                  Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      image: DecorationImage(image: NetworkImage(logoUrl), fit: BoxFit.cover),
-                    ),
-                  )
-                else
-                  Icon(Icons.store, color: primaryColor, size: 32),
-                const SizedBox(width: 15),
-                Expanded(
-                  child: Text(
-                    empresaNome,
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
-                  ),
-                ),
+    // Header fixo: mesmo alinhamento (container centralizado) do conteúdo
+    // da página, para logo, título e botões ficarem simétricos com a grade.
+    final paddingSuperior = 16.0 + MediaQuery.of(context).padding.top;
 
-                // Botão de Troca de Tema
-                IconButton(
-                  icon: Icon(_isDark ? Icons.light_mode : Icons.dark_mode, color: primaryColor),
-                  onPressed: () => setState(() => _isDark = !_isDark),
-                ),
-                
-                // Carrinho Badge
-                _buildCarrinhoBadge(primaryColor),
-              ],
+    return ClipRRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          padding: EdgeInsets.only(left: 20, right: 20, top: paddingSuperior, bottom: 16),
+          decoration: BoxDecoration(
+            color: cardColor.withOpacity(0.8),
+            border: Border(
+              bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
+            ),
+          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: Row(
+                children: [
+                  if (logoUrl != null)
+                    Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        image: DecorationImage(image: NetworkImage(logoUrl), fit: BoxFit.cover),
+                      ),
+                    )
+                  else
+                    Icon(Icons.store, color: primaryColor, size: 32),
+                  const SizedBox(width: 15),
+                  Expanded(
+                    child: Text(
+                      empresaNome,
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+
+                  // Botão de Troca de Tema
+                  IconButton(
+                    icon: Icon(_isDark ? Icons.light_mode : Icons.dark_mode, color: primaryColor),
+                    onPressed: () => setState(() => _isDark = !_isDark),
+                  ),
+
+                  // Carrinho Badge
+                  _buildCarrinhoBadge(primaryColor),
+                ],
+              ),
             ),
           ),
         ),
-      ) : const SizedBox.shrink(),
+      ),
     );
   }
 
@@ -1280,7 +1244,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   Widget _buildBannersPremium(Map<String, dynamic>? config, Color primaryColor) {
     return Container(
       height: 250,
-      margin: const EdgeInsets.symmetric(vertical: 20),
+      margin: const EdgeInsets.only(top: 20),
       child: BannerCarrossel(
         banners: _obterBanners(config),
         controller: _bannerPageController,
@@ -1368,31 +1332,38 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 0.65, // Ajustado para não cortar o botão
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-        ),
-        itemCount: produtos.length,
-        itemBuilder: (context, index) {
-          final produto = produtos[index];
-          return ProdutoCard(
-            produto: produto,
-            formatoMoeda: formatoMoeda,
-            descontoPixAtivo: descontoPixAtivo,
-            percentualDescontoPix: percentualDescontoPix,
-            corPrimaria: primaryColor,
-            onAddToCart: _adicionarProdutoAoCarrinho,
-            onShowDetails: (p) => _mostrarDetalhesProduto(context, p, formatoMoeda, primaryColor, cardColor, textColor),
-          );
-        },
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Colunas responsivas: 2 no celular/tablet estreito, mais conforme a
+        // largura disponível, para a grade ficar simétrica em qualquer tela.
+        final largura = constraints.maxWidth.isFinite ? constraints.maxWidth : 1200.0;
+        final colunas = (largura / 260).floor().clamp(2, 5);
+
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: colunas,
+            childAspectRatio: 0.62, // Ajustado para não cortar o botão
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+          ),
+          itemCount: produtos.length,
+          itemBuilder: (context, index) {
+            final produto = produtos[index];
+            return ProdutoCard(
+              produto: produto,
+              formatoMoeda: formatoMoeda,
+              descontoPixAtivo: descontoPixAtivo,
+              percentualDescontoPix: percentualDescontoPix,
+              corPrimaria: primaryColor,
+              onAddToCart: _adicionarProdutoAoCarrinho,
+              onShowDetails: (p) => _mostrarDetalhesProduto(context, p, formatoMoeda, primaryColor, cardColor, textColor),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1410,7 +1381,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.zero,
       itemCount: produtos.length,
       itemBuilder: (context, index) {
         final produto = produtos[index];

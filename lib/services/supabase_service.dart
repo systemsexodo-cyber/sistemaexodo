@@ -104,15 +104,39 @@ class SupabaseService {
   // Fallbacks conservadores usados quando o schema real não pôde ser detectado
   // (offline/indisponível). Não são cacheados — a detecção tenta de novo quando
   // o cooldown de indisponibilidade termina.
+  //
+  // IMPORTANTE: credenciais, papel e permissões TÊM de estar aqui. No Flutter Web não há
+  // conexão direta com o Postgres e a detecção depende do OpenAPI; se ela falhar
+  // (timeout/CORS), este fallback é o único filtro aplicado. Sem `senha`, o
+  // upsert gravava o usuário na nuvem SEM SENHA — o cadastro feito no site
+  // "sumia" ao abrir em outro navegador/dispositivo. A tabela `usuarios` atual
+  // possui as duas colunas (confirmado no schema real).
   static const Set<String> _colunasUsuariosFallback = {
+    // Colunas do schema legado; informações específicas do app estão nos JSONB.
     'id',
     'email',
     'nome',
+    'telefone',
     'empresa_id',
     'perfil',
     'ativo',
+    'senha',
+    'dados_usuario',
+    'dados_app',
     'created_at',
     'updated_at',
+  };
+  static const Set<String> _camposUsuariosNormalizados = {
+    'tipo',
+    'is_master',
+    'funcionario_id',
+    'garcom',
+    'permissoes_personalizadas',
+    'permissoes_negadas',
+    'telas_ocultas',
+    'serie_nfce',
+    'numero_inicial_nfce',
+    'foto_url',
   };
   static const Set<String> _colunasEmpresasFallback = {
     'id',
@@ -566,9 +590,29 @@ class SupabaseService {
           '>>> [Supabase] 📤 Enviando ${lista.length} itens para $table...',
         );
 
-        final List<Map<String, dynamic>> maps = lista.map((item) {
+        // 🛡️ ISOLAMENTO POR EMPRESA NO PUSH TOTAL.
+        //
+        // Antes o `empresa_id` era re-carimbado SEM conferir em todas as linhas
+        // (`map['empresa_id'] = empresaId`). O upsert é por id: uma linha de
+        // OUTRA empresa que estivesse em memória seria roubada da empresa dona
+        // na nuvem (ela perde o registro e o dado passa a aparecer misturado do
+        // outro lado) — era o vetor que levava depósito, contas a pagar e NF-e
+        // de uma empresa para a outra. Agora espelha a trava local
+        // (`_upsertRows` do PostgreSQL): linha com empresa DIFERENTE não é
+        // enviada; linha SEM empresa (criação local) recebe a empresa aberta.
+        final List<Map<String, dynamic>> maps = [];
+        var bloqueadas = 0;
+        for (final item in lista) {
           final map = (item as dynamic).toMap() as Map<String, dynamic>;
-          map['empresa_id'] = empresaId; // Garantir empresa_id
+          final empresaDoRegistro =
+              (map['empresa_id'] ?? map['empresaId'])?.toString().trim() ?? '';
+          if (empresaDoRegistro.isNotEmpty && empresaDoRegistro != empresaId) {
+            bloqueadas++;
+            continue;
+          }
+          if (empresaDoRegistro.isEmpty) {
+            map['empresa_id'] = empresaId; // Garantir empresa_id (só se vazio)
+          }
           _carimbarUpdatedAt(table, map);
 
           // Tratar problema PGRST204 - Coluna não existe no Supabase
@@ -582,8 +626,18 @@ class SupabaseService {
             // Campos agora são mapeados para camelCase no DataService
           }
 
-          return map;
-        }).toList();
+          maps.add(map);
+        }
+        if (bloqueadas > 0) {
+          debugPrint(
+            '>>> [Supabase] 🛡️ $table: $bloqueadas linha(s) de OUTRA empresa '
+            'NÃO enviada(s) no push (empresa aberta: $empresaId).',
+          );
+        }
+        if (maps.isEmpty) {
+          debugPrint('>>> [Supabase] ⏭️ $table: nada a enviar desta empresa.');
+          continue;
+        }
 
         // Log do primeiro item para debug
         if (maps.isNotEmpty) {
@@ -1037,26 +1091,22 @@ class SupabaseService {
       m.remove('cor_secundaria');
     }
     if (table.contains('usuarios')) {
-      // A tabela 'usuarios' do Supabase só tem 8 colunas (id, email, nome,
-      // empresa_id, perfil, ativo, created_at, updated_at). O toMap() do app
-      // envia campos adicionais (senha, tipo, is_master, serie_nfce, etc.) que
-      // NÃO existem lá — isso fazia o upsert falhar silenciosamente e o perfil
-      // nunca chegar à nuvem (usuários 'sumiam'). Aqui filtramos e mapeamos
-      // 'tipo' -> 'perfil' para a gravação funcionar de verdade.
-      final perfil = m['tipo']?.toString() ?? 'operador';
-      m.removeWhere(
-        (k, _) => !const {
-          'id',
-          'email',
-          'nome',
-          'empresa_id',
-          'perfil',
-          'ativo',
-          'created_at',
-          'updated_at',
-        }.contains(k),
-      );
-      m['perfil'] = perfil;
+      // Retirar apenas chaves que o modelo usa localmente mas que não fazem
+      // parte do contrato compartilhado da tabela de usuários. O schema legado
+      // guarda as demais informações em dados_usuario/dados_app JSONB; schemas
+      // novos podem armazenar as colunas normalizadas diretamente.
+      final perfil = m['tipo']?.toString() ?? m['perfil']?.toString();
+      m.remove('tipo');
+      m.remove('is_master');
+      m.remove('funcionario_id');
+      m.remove('garcom');
+      m.remove('permissoes_personalizadas');
+      m.remove('permissoes_negadas');
+      m.remove('telas_ocultas');
+      m.remove('serie_nfce');
+      m.remove('numero_inicial_nfce');
+      m.remove('foto_url');
+      if (perfil != null) m['perfil'] = perfil;
     }
     return m;
   }
@@ -1615,14 +1665,74 @@ class SupabaseService {
       return;
     }
 
-    // Filtra os dados para conter somente colunas que existem na tabela.
+    // Filtra os dados para conter somente colunas que existem na tabela. O
+    // endpoint OpenAPI pode falhar/estar sem schema cache: nunca enviar colunas
+    // normalizadas nesse cenário; o fallback descreve o contrato legado real.
     final colunas = await _detectarColunasUsuarios();
+    final usarColunasNormalizadas = colunas
+        .intersection(_camposUsuariosNormalizados)
+        .isNotEmpty;
     final dadosFiltrados = _toSafeMap(dados)
       ..removeWhere((k, _) => !colunas.contains(k));
+    if (colunas.contains('dados_app') && dados['dados_app'] is Map) {
+      final dadosApp = Map<String, dynamic>.from(dados['dados_app'] as Map);
+      for (final campo in const [
+        'tipo',
+        'is_master',
+        'funcionario_id',
+        'garcom',
+        'permissoes_personalizadas',
+        'permissoes_negadas',
+        'telas_ocultas',
+        'serie_nfce',
+        'numero_inicial_nfce',
+        'foto_url',
+      ]) {
+        final valor = dados[campo];
+        if (valor != null) dadosApp[campo] = valor;
+      }
+      dadosFiltrados['dados_app'] = dadosApp;
+    }
 
-    // O app usa 'tipo' (nome do enumerado); a coluna do banco é 'perfil'.
-    if (colunas.contains('perfil') && dados.containsKey('tipo')) {
-      dadosFiltrados['perfil'] = dados['tipo'].toString();
+    // O esquema legado registra papel em `perfil` e atributos do app em
+    // `dados_app`/`dados_usuario`; o esquema novo pode usar colunas próprias.
+    // Garante os campos JSONB e mapeia tipo -> perfil quando necessário.
+    final tipo = dados['tipo']?.toString() ?? dados['perfil']?.toString();
+    if (!usarColunasNormalizadas &&
+        colunas.contains('perfil') &&
+        tipo != null) {
+      dadosFiltrados['perfil'] = tipo;
+    }
+    if (usarColunasNormalizadas &&
+        colunas.contains('senha') &&
+        dados.containsKey('senha')) {
+      dadosFiltrados['senha'] = dados['senha'];
+    }
+    if (!usarColunasNormalizadas &&
+        colunas.contains('dados_usuario') &&
+        dados.containsKey('dados_usuario')) {
+      dadosFiltrados['dados_usuario'] = dados['dados_usuario'];
+    }
+    if (!usarColunasNormalizadas &&
+        colunas.contains('dados_app') &&
+        dados.containsKey('dados_app')) {
+      final dadosApp = Map<String, dynamic>.from(dados['dados_app'] as Map);
+      for (final campo in const [
+        'tipo',
+        'is_master',
+        'funcionario_id',
+        'garcom',
+        'permissoes_personalizadas',
+        'permissoes_negadas',
+        'telas_ocultas',
+        'serie_nfce',
+        'numero_inicial_nfce',
+        'foto_url',
+      ]) {
+        final valor = dados[campo];
+        if (valor != null) dadosApp[campo] = valor;
+      }
+      dadosFiltrados['dados_app'] = dadosApp;
     }
 
     try {
@@ -1669,7 +1779,8 @@ class SupabaseService {
   }
 
   Future<Set<String>> _detectarColunasEstoqueHistoricoInterno() async {
-    final colunas = (await _detectarColunasTodasTabelas())[tableEstoqueHistorico];
+    final colunas =
+        (await _detectarColunasTodasTabelas())[tableEstoqueHistorico];
     if (colunas == null || colunas.isEmpty) {
       return _colunasEstoqueHistoricoFallback;
     }
@@ -3034,14 +3145,42 @@ class SupabaseService {
         CREATE TABLE IF NOT EXISTS public.perfis_tributarios (
           id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
           nome TEXT DEFAULT '', descricao TEXT DEFAULT '',
-          icms NUMERIC(5,2) DEFAULT 0, icms_st NUMERIC(5,2) DEFAULT 0,
-          ipi NUMERIC(5,2) DEFAULT 0, pis NUMERIC(5,2) DEFAULT 0,
-          cofins NUMERIC(5,2) DEFAULT 0, cfop TEXT DEFAULT '',
-          csosn TEXT DEFAULT '', cst TEXT DEFAULT '', origem TEXT DEFAULT '',
-          mva NUMERIC(5,2) DEFAULT 0, fcp NUMERIC(5,2) DEFAULT 0,
+          cfop TEXT DEFAULT '', icms_cst TEXT DEFAULT '', csosn TEXT DEFAULT '',
+          aliquota_icms NUMERIC DEFAULT 0, pis_cst TEXT DEFAULT '',
+          aliquota_pis NUMERIC DEFAULT 0, cofins_cst TEXT DEFAULT '',
+          aliquota_cofins NUMERIC DEFAULT 0, cst_ibs TEXT DEFAULT '',
+          aliquota_ibs NUMERIC DEFAULT 0, cst_cbs TEXT DEFAULT '',
+          aliquota_cbs NUMERIC DEFAULT 0, c_class_trib TEXT DEFAULT '',
+          ipi_cst TEXT DEFAULT '', aliquota_ipi NUMERIC DEFAULT 0,
+          mva NUMERIC DEFAULT 0, reducao_base_icms NUMERIC DEFAULT 0,
+          aliquota_fcp NUMERIC DEFAULT 0,
+          aliquota_icms_interestadual NUMERIC DEFAULT 0,
+          ncm TEXT DEFAULT '', is_default BOOLEAN DEFAULT false,
           ativo BOOLEAN DEFAULT true,
           created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
+        ALTER TABLE public.perfis_tributarios
+          ADD COLUMN IF NOT EXISTS cfop TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS icms_cst TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS csosn TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS aliquota_icms NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS pis_cst TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS aliquota_pis NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS cofins_cst TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS aliquota_cofins NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS cst_ibs TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS aliquota_ibs NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS cst_cbs TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS aliquota_cbs NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS c_class_trib TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS ipi_cst TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS aliquota_ipi NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS mva NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS reducao_base_icms NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS aliquota_fcp NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS aliquota_icms_interestadual NUMERIC DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS ncm TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;
         CREATE INDEX IF NOT EXISTS idx_perfis_tributarios_empresa ON public.perfis_tributarios(empresa_id);
         ALTER TABLE public.perfis_tributarios ENABLE ROW LEVEL SECURITY;
         DROP POLICY IF EXISTS service_role_perfis ON public.perfis_tributarios;
@@ -3052,10 +3191,17 @@ class SupabaseService {
         CREATE TABLE IF NOT EXISTS public.departamentos (
           id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '',
           nome TEXT DEFAULT '', descricao TEXT DEFAULT '',
-          cor TEXT DEFAULT '', icone TEXT DEFAULT '', ordem INTEGER DEFAULT 0,
+          cor TEXT DEFAULT '', icone TEXT DEFAULT '',
+          impressora_producao TEXT DEFAULT '',
+          impressora_producao_extra JSONB DEFAULT '[]'::jsonb,
+          ordem INTEGER DEFAULT 0,
           ativo BOOLEAN DEFAULT true,
           created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
+        ALTER TABLE public.departamentos
+          ADD COLUMN IF NOT EXISTS impressora_producao TEXT DEFAULT '',
+          ADD COLUMN IF NOT EXISTS impressora_producao_extra JSONB DEFAULT '[]'::jsonb,
+          ADD COLUMN IF NOT EXISTS ordem INTEGER DEFAULT 0;
         CREATE INDEX IF NOT EXISTS idx_departamentos_empresa ON public.departamentos(empresa_id);
         ALTER TABLE public.departamentos ENABLE ROW LEVEL SECURITY;
         DROP POLICY IF EXISTS service_role_departamentos ON public.departamentos;

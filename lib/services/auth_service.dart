@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import '../models/usuario.dart';
 import '../models/empresa.dart';
+import '../utils/perfis_tributarios_merge.dart';
 import 'local_storage_service.dart';
 import 'supabase_service.dart';
 import 'database_service.dart';
@@ -92,6 +93,9 @@ class AuthService extends ChangeNotifier {
   /// (503/504) — mas as credenciais conferiram no banco LOCAL e o acesso foi
   /// liberado. A tela mostra isto no lugar de um erro.
   String? _avisoNuvemLogin;
+  bool _falhaSyncUsuarios = false;
+  String? _motivoSyncUsuariosFalhou;
+  void Function(Empresa)? _onEmpresaSelecionada;
 
   Usuario? get usuarioAtual => _usuarioAtual;
   Empresa? get empresaAtual => _empresaAtual;
@@ -99,6 +103,21 @@ class AuthService extends ChangeNotifier {
   bool get isCarregandoDados => _isCarregandoDados;
   bool get isAuthenticated => _usuarioAtual != null;
   bool get temEmpresaSelecionada => _empresaAtual != null;
+
+  /// Setter chamado quando uma empresa � selecionada na UI.
+  /// Atualiza a empresa atual e recarrega configura��es.
+  set onEmpresaSelecionada(void Function(Empresa) callback) {
+    _onEmpresaSelecionada = callback;
+  }
+
+  /// Getter chamado quando uma empresa � selecionada na UI.
+  Empresa? get onEmpresaSelecionada => _empresaAtual;
+
+  /// Motivo da ltima falha de sincroniza��o de usuu00e1rios com a nuvem.
+  String? get motivoSyncUsuariosFalhou => _motivoSyncUsuariosFalhou;
+
+  /// Indica se a ltima sincroniza��o de usuu00e1rios com a nuvem falhou.
+  bool get falhaSyncUsuarios => _falhaSyncUsuarios;
   String? get mensagemErroLogin => _mensagemErroLogin;
 
   /// Mensagem informando que o login foi liberado localmente, mas a nuvem não
@@ -134,8 +153,10 @@ class AuthService extends ChangeNotifier {
   List<Usuario> get usuarios => List.unmodifiable(_usuarios);
   List<Empresa> get empresas => List.unmodifiable(_empresas);
 
-  AuthService({LocalStorageService? storage, bool carregarAutomaticamente = true})
-      : _storage = storage ?? LocalStorageService() {
+  AuthService({
+    LocalStorageService? storage,
+    bool carregarAutomaticamente = true,
+  }) : _storage = storage ?? LocalStorageService() {
     if (!carregarAutomaticamente) return;
 
     // Iniciar carregamento
@@ -447,21 +468,25 @@ class AuthService extends ChangeNotifier {
                           configMerged[entry.key] = entry.value;
                         }
                       }
-                      // perfis_preco local sempre tem prioridade se existir
-                      if (configLocal.containsKey('perfis_preco') &&
-                          (configLocal['perfis_preco'] as List?)?.isNotEmpty ==
-                              true) {
-                        configMerged['perfis_preco'] =
-                            configLocal['perfis_preco'];
-                      }
-                      // perfis_tributarios local sempre tem prioridade se existir (mesma regra do perfis_preco)
-                      if (configLocal.containsKey('perfis_tributarios') &&
-                          (configLocal['perfis_tributarios'] as List?)
-                                  ?.isNotEmpty ==
-                              true) {
-                        configMerged['perfis_tributarios'] =
-                            configLocal['perfis_tributarios'];
-                      }
+                      // perfis_preco: mesma regra dos impostos — vence a cópia
+                      // mais nova, não o cache local fixo.
+                      aplicarPerfisPrecoMaisRecentes(
+                        configMerged,
+                        configLocal,
+                        configSupabase,
+                        updatedAtLocal: _empresaAtual!.updatedAt,
+                        updatedAtRemota: empresaSupabase.updatedAt,
+                      );
+                      // perfis_tributarios: vence a cópia MAIS NOVA (não mais o
+                      // local fixo), senão a edição feita no desktop nunca
+                      // chega ao site e o navegador reaplica a cópia antiga.
+                      aplicarPerfisTributariosMaisRecentes(
+                        configMerged,
+                        configLocal,
+                        configSupabase,
+                        updatedAtLocal: _empresaAtual!.updatedAt,
+                        updatedAtRemota: empresaSupabase.updatedAt,
+                      );
                       // Configs de UI/UX do PDV local sempre têm prioridade
                       if (configLocal.containsKey('habilitarMesasComandas')) {
                         configMerged['habilitarMesasComandas'] =
@@ -483,12 +508,16 @@ class AuthService extends ChangeNotifier {
                       if (!kIsWeb) {
                         DatabaseService()
                             .salvarEmpresaLocal(_empresaAtual!.toMap())
-                            .then((_) => debugPrint(
-                                  '>>> [AuthService] ✓ Certificado/configs replicados no PostgreSQL local',
-                                ))
-                            .catchError((e) => debugPrint(
-                                  '>>> [AuthService] ⚠️ Falha ao replicar empresa local: $e',
-                                ));
+                            .then(
+                              (_) => debugPrint(
+                                '>>> [AuthService] ✓ Certificado/configs replicados no PostgreSQL local',
+                              ),
+                            )
+                            .catchError(
+                              (e) => debugPrint(
+                                '>>> [AuthService] ⚠️ Falha ao replicar empresa local: $e',
+                              ),
+                            );
                       }
                       debugPrint(
                         '>>> [AuthService] ✓ Cache da empresa atualizado (merge local+Supabase) na inicialização.',
@@ -1078,13 +1107,11 @@ class AuthService extends ChangeNotifier {
       final supabaseEmail = emailLower.contains('@')
           ? emailLower
           : '$emailLower@sistemaexodo.com';
-      final resultadoNuvem = await _autenticarSupabaseParaSessao(
-        supabaseEmail,
-        senhaTrim,
-      ).timeout(
-        const Duration(seconds: 20),
-        onTimeout: () => _ResultadoValidacaoNuvem.indisponivel,
-      );
+      final resultadoNuvem =
+          await _autenticarSupabaseParaSessao(supabaseEmail, senhaTrim).timeout(
+            const Duration(seconds: 20),
+            onTimeout: () => _ResultadoValidacaoNuvem.indisponivel,
+          );
 
       // A nuvem respondeu e RECUSOU a senha: só aí o login é negado. As
       // credenciais já conferiram no banco LOCAL acima.
@@ -1238,8 +1265,34 @@ class AuthService extends ChangeNotifier {
     final localMensalidade = await _storage
         .carregarConfiguracoesMensalidadeLocal(empresa.id);
     if (localMensalidade != null && localMensalidade.isNotEmpty) {
-      final merged = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+      final configNuvem = Map<String, dynamic>.from(
+        empresa.configuracoes ?? {},
+      );
+      final merged = Map<String, dynamic>.from(configNuvem);
       merged.addAll(localMensalidade);
+      // Pagamentos confirmados pelo webhook são a fonte autoritativa. O
+      // backup local pode ter sido salvo antes do Pix e não deve voltar a
+      // bloquear a licença ao selecionar a empresa novamente.
+      final pagamentoNuvemId = configNuvem['mercado_pago_payment_id']
+          ?.toString();
+      final pagamentoLocalId = localMensalidade['mercado_pago_payment_id']
+          ?.toString();
+      if (pagamentoNuvemId != null &&
+          pagamentoNuvemId.isNotEmpty &&
+          pagamentoNuvemId != pagamentoLocalId) {
+        for (final chave in [
+          'status_pagamento',
+          'bloqueado',
+          'ultimo_mes_pago',
+          'mercado_pago_payment_id',
+          'mercado_pago_pago_em',
+        ]) {
+          if (configNuvem.containsKey(chave)) {
+            merged[chave] = configNuvem[chave];
+          }
+        }
+        await _storage.salvarConfiguracoesMensalidadeLocal(empresa.id, merged);
+      }
       empresa = empresa.copyWith(configuracoes: merged);
     }
 
@@ -1344,14 +1397,20 @@ class AuthService extends ChangeNotifier {
               }
             }
             // ══ Perfis tributários e de preço ══
-            if ((configLocal['perfis_tributarios'] as List?)?.isNotEmpty ==
-                true) {
-              configMerged['perfis_tributarios'] =
-                  configLocal['perfis_tributarios'];
-            }
-            if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
-              configMerged['perfis_preco'] = configLocal['perfis_preco'];
-            }
+            aplicarPerfisTributariosMaisRecentes(
+              configMerged,
+              configLocal,
+              configSupabase,
+              updatedAtLocal: empresa.updatedAt,
+              updatedAtRemota: empresaSupabase.updatedAt,
+            );
+            aplicarPerfisPrecoMaisRecentes(
+              configMerged,
+              configLocal,
+              configSupabase,
+              updatedAtLocal: empresa.updatedAt,
+              updatedAtRemota: empresaSupabase.updatedAt,
+            );
             // ══ Configs de UI/UX do PDV ══
             for (final chave in [
               'habilitarMesasComandas',
@@ -1825,9 +1884,11 @@ class AuthService extends ChangeNotifier {
           if (!kIsWeb) {
             DatabaseService()
                 .salvarEmpresaLocal(mesclada.toMap())
-                .catchError((e) => debugPrint(
-                      '>>> [AuthService] ⚠️ Falha ao replicar empresa local: $e',
-                    ));
+                .catchError(
+                  (e) => debugPrint(
+                    '>>> [AuthService] ⚠️ Falha ao replicar empresa local: $e',
+                  ),
+                );
           }
           return mesclada;
         } else {
@@ -1990,24 +2051,26 @@ class AuthService extends ChangeNotifier {
         '>>> [AuthService] ☁️⛔ Nuvem desativada para a empresa — não enviada ao Supabase',
       );
     } else
-    try {
-      await _supabaseService
-          .upsert(SupabaseService.tableEmpresas, empresaAtualizada.toMap())
-          .timeout(
-            const Duration(seconds: 10),
-            onTimeout: () {
-              debugPrint(
-                '>>> [AuthService] ⚠️ Timeout ao salvar empresa no Supabase',
-              );
-            },
-          );
-      debugPrint(
-        '>>> [AuthService] ✓ Empresa salva no Supabase (incluindo configuracoes)',
-      );
-    } catch (e) {
-      debugPrint('>>> [AuthService] ⚠️ Erro ao salvar empresa no Supabase: $e');
-      // Não bloquear o fluxo se Supabase falhar
-    }
+      try {
+        await _supabaseService
+            .upsert(SupabaseService.tableEmpresas, empresaAtualizada.toMap())
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                debugPrint(
+                  '>>> [AuthService] ⚠️ Timeout ao salvar empresa no Supabase',
+                );
+              },
+            );
+        debugPrint(
+          '>>> [AuthService] ✓ Empresa salva no Supabase (incluindo configuracoes)',
+        );
+      } catch (e) {
+        debugPrint(
+          '>>> [AuthService] ⚠️ Erro ao salvar empresa no Supabase: $e',
+        );
+        // Não bloquear o fluxo se Supabase falhar
+      }
   }
 
   /// Remove uma empresa
@@ -2109,12 +2172,6 @@ class AuthService extends ChangeNotifier {
       final errosAgora = <Map<String, dynamic>>[];
 
       for (final usuario in usuariosComSenha) {
-        if (usuario.empresaId == null || usuario.empresaId!.isEmpty) {
-          debugPrint(
-            '>>> Usuário ${usuario.id} sem empresa_id — mantido apenas local.',
-          );
-          continue;
-        }
         try {
           await _supabaseService.upsertUsuario(usuario.toMap());
         } catch (e) {
@@ -2191,12 +2248,20 @@ class AuthService extends ChangeNotifier {
       }
     }
     // ══ Perfis tributários e de preço ══
-    if ((configLocal['perfis_tributarios'] as List?)?.isNotEmpty == true) {
-      configMerged['perfis_tributarios'] = configLocal['perfis_tributarios'];
-    }
-    if ((configLocal['perfis_preco'] as List?)?.isNotEmpty == true) {
-      configMerged['perfis_preco'] = configLocal['perfis_preco'];
-    }
+    aplicarPerfisTributariosMaisRecentes(
+      configMerged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
+    aplicarPerfisPrecoMaisRecentes(
+      configMerged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
     return remota.copyWith(configuracoes: configMerged);
   }
 
@@ -2380,10 +2445,41 @@ class AuthService extends ChangeNotifier {
         );
       }
 
-      // Se localStorage não tiver dados, NÃO usar Supabase como fonte de
-      // login local. O Supabase não tem coluna 'senha' — carregar de lá
-      // e salvar no banco local criaria usuários sem senha e o login
-      // quebraria. Mantemos apenas os usuários padrão (user/admin).
+      // localStorage vazio (navegador novo / guia anônima): importar da nuvem
+      // APENAS os usuários que TÊM senha preenchida. A tabela `usuarios` da
+      // nuvem local possui a coluna `senha`, então contas criadas em outro PC
+      // ficam utilizáveis aqui; quem chegar sem senha é ignorado (não quebraria
+      // o login e sobrescrever a lista local com eles apagaria senhas).
+      try {
+        if (SupabaseService.isAvailable) {
+          final usuariosSupabase = await _supabaseService
+              .carregarUsuarios()
+              .timeout(
+                const Duration(seconds: 8),
+                onTimeout: () => <Usuario>[],
+              );
+          final comSenha = usuariosSupabase
+              .where((u) => u.senha.isNotEmpty)
+              .toList();
+          if (comSenha.isNotEmpty) {
+            _usuarios.addAll(comSenha);
+            debugPrint(
+              '>>> [AuthService] 📥 ${comSenha.length} usuário(s) importado(s) '
+              'da nuvem para este navegador novo (somente os com senha).',
+            );
+            try {
+              await _salvarUsuarios();
+            } catch (_) {}
+            notifyListeners();
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint(
+          '>>> [AuthService] ⚠️ Falha ao importar usuários da nuvem: $e',
+        );
+      }
+
       debugPrint(
         '>>> [AuthService] Nenhum usuário local encontrado. Mantendo apenas usuários padrão (login local requer senhas locais).',
       );
@@ -2455,25 +2551,43 @@ class AuthService extends ChangeNotifier {
                   }
                   final local = fiscaisLocais[emp.id];
                   if (local != null) {
-                    final ieVazio = (emp.inscricaoEstadual ?? '').trim().isEmpty;
-                    final imVazio = (emp.inscricaoMunicipal ?? '').trim().isEmpty;
+                    final ieVazio = (emp.inscricaoEstadual ?? '')
+                        .trim()
+                        .isEmpty;
+                    final imVazio = (emp.inscricaoMunicipal ?? '')
+                        .trim()
+                        .isEmpty;
                     final ibgeVazio = (emp.codigoIBGE ?? '').trim().isEmpty;
                     if (ieVazio || imVazio || ibgeVazio) {
                       emp = emp.copyWith(
-                        inscricaoEstadual: ieVazio &&
-                                (local.inscricaoEstadual ?? '').trim().isNotEmpty
+                        inscricaoEstadual:
+                            ieVazio &&
+                                (local.inscricaoEstadual ?? '')
+                                    .trim()
+                                    .isNotEmpty
                             ? local.inscricaoEstadual
                             : emp.inscricaoEstadual,
-                        inscricaoMunicipal: imVazio &&
-                                (local.inscricaoMunicipal ?? '').trim().isNotEmpty
+                        inscricaoMunicipal:
+                            imVazio &&
+                                (local.inscricaoMunicipal ?? '')
+                                    .trim()
+                                    .isNotEmpty
                             ? local.inscricaoMunicipal
                             : emp.inscricaoMunicipal,
-                        codigoIBGE: ibgeVazio &&
+                        codigoIBGE:
+                            ibgeVazio &&
                                 (local.codigoIBGE ?? '').trim().isNotEmpty
                             ? local.codigoIBGE
                             : emp.codigoIBGE,
                       );
                     }
+                    // Não é só "substituir pela nuvem": a empresa local pode
+                    // ter chaves que ainda não subiram (certificado, bridge,
+                    // senha do admin...). O merge mantém essas chaves e, nas
+                    // listas versionadas (perfis tributários/preço), deixa
+                    // vencer a cópia mais nova — sem devolver a versão antiga
+                    // ao site.
+                    emp = _mesclarEmpresaComConfigsLocal(local, emp);
                   }
                   _empresas.add(emp);
                 }

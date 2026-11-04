@@ -25,35 +25,46 @@ NFCe _nota(
   String serie = '1',
   String status = 'autorizada',
   String empresaId = 'E1',
-}) =>
-    NFCe(
-      id: 'id-$serie-$numero',
-      numero: numero,
-      serie: serie,
-      dataEmissao: DateTime(2026, 10, 11),
-      empresaId: empresaId,
-      itens: const [],
-      valorTotal: 22,
-      pagamentos: const [],
-      status: status,
-      createdAt: DateTime(2026, 10, 11),
-      updatedAt: DateTime(2026, 10, 11),
-    );
+}) => NFCe(
+  id: 'id-$serie-$numero',
+  numero: numero,
+  serie: serie,
+  dataEmissao: DateTime(2026, 10, 11),
+  empresaId: empresaId,
+  itens: const [],
+  valorTotal: 22,
+  pagamentos: const [],
+  status: status,
+  createdAt: DateTime(2026, 10, 11),
+  updatedAt: DateTime(2026, 10, 11),
+);
 
-Empresa _empresa({String? ultimoNumeroNfce}) => Empresa(
+Empresa _empresa({String? ultimoNumeroNfce, int? proximoNumeroNfceSerie1}) =>
+    Empresa(
       id: 'E1',
       razaoSocial: 'Loja Teste NFCe',
       slug: 'loja-teste-nfce',
       createdAt: DateTime(2026, 10, 11),
       updatedAt: DateTime(2026, 10, 11),
-      configuracoes: ultimoNumeroNfce == null
-          ? const {}
-          : {'ultimo_numero_nfce': ultimoNumeroNfce},
+      configuracoes: {
+        if (ultimoNumeroNfce != null) 'ultimo_numero_nfce': ultimoNumeroNfce,
+        if (proximoNumeroNfceSerie1 != null)
+          'proximo_numero_nfce_s1': proximoNumeroNfceSerie1,
+      },
     );
 
-DataService _dataService({String? ultimoNumeroNfce, List<NFCe> notas = const []}) {
+DataService _dataService({
+  String? ultimoNumeroNfce,
+  int? proximoNumeroNfceSerie1,
+  List<NFCe> notas = const [],
+}) {
   final ds = DataService();
-  ds.setEmpresaAtual(_empresa(ultimoNumeroNfce: ultimoNumeroNfce));
+  ds.setEmpresaAtual(
+    _empresa(
+      ultimoNumeroNfce: ultimoNumeroNfce,
+      proximoNumeroNfceSerie1: proximoNumeroNfceSerie1,
+    ),
+  );
   ds.nfces.addAll(notas);
   return ds;
 }
@@ -93,22 +104,23 @@ void main() {
       );
 
       expect(numero, 4, reason: 'a numeração volta para logo depois do 3');
-      expect(numero, isNot(791252835),
-          reason: 'o número transmitido nunca pode sair de novo (rejeição 539)');
+      expect(
+        numero,
+        isNot(791252835),
+        reason: 'o número transmitido nunca pode sair de novo (rejeição 539)',
+      );
     });
 
     test('buraco na sequência é preenchido (é o menor disponível)', () {
-      expect(
-        DataService.menorNumeroLivreNfce(numerosUsados: const [1, 3]),
-        2,
-      );
+      expect(DataService.menorNumeroLivreNfce(numerosUsados: const [1, 3]), 2);
     });
 
     test('começa a procurar no primeiro número registrado, não no 1', () {
       expect(
         DataService.menorNumeroLivreNfce(numerosUsados: const [10, 791252835]),
         11,
-        reason: 'abaixo do primeiro registro não há evidência: não dá para '
+        reason:
+            'abaixo do primeiro registro não há evidência: não dá para '
             'voltar ao 1 e arriscar repetir número antigo',
       );
     });
@@ -140,7 +152,10 @@ void main() {
 
     test('número inicial inválido vira 1', () {
       expect(
-        DataService.menorNumeroLivreNfce(numerosUsados: const [], numeroInicial: 0),
+        DataService.menorNumeroLivreNfce(
+          numerosUsados: const [],
+          numeroInicial: 0,
+        ),
         1,
       );
     });
@@ -152,7 +167,8 @@ void main() {
           ultimoNumeroDaEmpresa: 242,
         ),
         243,
-        reason: 'a empresa veio de outro sistema já no 242 — não pode voltar ao 1',
+        reason:
+            'a empresa veio de outro sistema já no 242 — não pode voltar ao 1',
       );
     });
 
@@ -181,7 +197,11 @@ void main() {
 
     test('nota cancelada continua contando como usada', () {
       final ds = _dataService(
-        notas: [_nota('1'), _nota('2', status: 'cancelada'), _nota('3')],
+        notas: [
+          _nota('1'),
+          _nota('2', status: 'cancelada'),
+          _nota('3'),
+        ],
       );
 
       expect(ds.getProximoNumeroNfce(), 4);
@@ -190,12 +210,18 @@ void main() {
 
     test('cada série tem a própria sequência', () {
       final ds = _dataService(
-        notas: [_nota('5', serie: '2'), _nota('6', serie: '2')],
+        notas: [
+          _nota('5', serie: '2'),
+          _nota('6', serie: '2'),
+        ],
       );
 
       expect(ds.getProximoNumeroNfce(serie: '2'), 7);
-      expect(ds.getProximoNumeroNfce(serie: '1'), 1,
-          reason: 'a série 1 ainda não emitiu nada');
+      expect(
+        ds.getProximoNumeroNfce(serie: '1'),
+        1,
+        reason: 'a série 1 ainda não emitiu nada',
+      );
       ds.dispose();
     });
 
@@ -206,11 +232,83 @@ void main() {
       ds.dispose();
     });
 
+    test('cursor avança após um número manual escolhido', () {
+      final ds = _dataService(
+        proximoNumeroNfceSerie1: 334,
+        notas: [_nota('1'), _nota('2'), _nota('3'), _nota('333')],
+      );
+
+      expect(ds.getProximoNumeroNfce(), 334);
+      ds.dispose();
+    });
+
+    test('nota antiga abaixo do cursor não faz a sequência retroceder', () {
+      final ds = _dataService(
+        proximoNumeroNfceSerie1: 334,
+        notas: [_nota('1'), _nota('2'), _nota('140')],
+      );
+
+      expect(ds.getProximoNumeroNfce(), 334);
+      ds.dispose();
+    });
+
     test('empresa nova começa no 1', () {
       final ds = _dataService();
 
       expect(ds.getProximoNumeroNfce(), 1);
       ds.dispose();
+    });
+  });
+
+  group('pisos envenenados não puxam a numeração para cima', () {
+    test('cursor gigante (número ilha) é ignorado', () {
+      final ds = _dataService(
+        proximoNumeroNfceSerie1: 791252837,
+        notas: [_nota('1'), _nota('2'), _nota('3')],
+      );
+
+      expect(ds.getProximoNumeroNfce(), 4);
+      ds.dispose();
+    });
+
+    test('cursor gigante junto de uma nota ilha não volta a aparecer', () {
+      final ds = _dataService(
+        proximoNumeroNfceSerie1: 791252837,
+        notas: [_nota('10'), _nota('791252835')],
+      );
+
+      expect(ds.getProximoNumeroNfce(), 11);
+      ds.dispose();
+    });
+
+    test('cursor dentro da janela ainda vale (número manual escolhido)', () {
+      final ds = _dataService(
+        proximoNumeroNfceSerie1: 900,
+        notas: [_nota('1'), _nota('2'), _nota('10')],
+      );
+
+      expect(ds.getProximoNumeroNfce(), 900);
+      ds.dispose();
+    });
+
+    test('sem nota nenhuma não há evidência: os pisos valem como estão', () {
+      expect(DataService.tetoPisoNfce(numerosUsados: const []), isNull);
+    });
+
+    test('teto do piso segue a cabeça da sequência + janela', () {
+      expect(DataService.tetoPisoNfce(numerosUsados: const [1, 2, 3]), 1003);
+      expect(
+        DataService.cabecaSequenciaNfce(
+          numerosUsados: const [1, 2, 3, 791252835],
+        ),
+        3,
+        reason: 'o número ilha fica fora da janela da sequência',
+      );
+      expect(
+        DataService.tetoPisoNfce(numerosUsados: const [791252835]),
+        1001,
+        reason: 'só ilha: a série continua em 1 e não há piso para cima',
+      );
     });
   });
 }

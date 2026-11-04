@@ -18,6 +18,7 @@ import 'package:sistema_exodo_novo/services/faixa_numeracao_service.dart';
 import 'package:sistema_exodo_novo/services/fila_producao_service.dart';
 import 'package:sistema_exodo_novo/utils/numeracao_venda.dart';
 import 'package:sistema_exodo_novo/utils/identidade_caixa.dart';
+import 'package:sistema_exodo_novo/utils/perfis_tributarios_merge.dart';
 // Só os tipos usados na resolução de conflitos (as consultas nomeadas): os
 // nomes do pacote não entram no arquivo inteiro para não colidir com os do app.
 import 'package:postgres/postgres.dart' show Session, Sql;
@@ -237,6 +238,12 @@ class DataService extends ChangeNotifier {
   bool _persistindoDepartamentos =
       false; // Guard contra recursão na persistência
   final List<Estoque> _estoques = [];
+
+  /// Empresa de origem da lista [_estoques] em memória. Trava de isolamento:
+  /// os escritores (salvar/definir principal/excluir) recusam gravação quando
+  /// a lista foi carregada de outra empresa — sem isto, numa janela de troca
+  /// de empresa a lista de uma era gravada no cache da outra.
+  String? _estoquesDaEmpresaId;
   bool _persistindoEstoques = false; // Guard contra recursão na persistência
 
   // Licenciamento
@@ -288,6 +295,14 @@ class DataService extends ChangeNotifier {
 
   // Getters públicos
   List<AgendamentoServico> get agendamentos => agendamentosServico;
+
+  /// Hook de teste: fixa `_currentEmpresaId` direto (como o `definirEmpresaAtual`
+  /// faz) sem tocar em rede/banco — o teste troca a empresa em memória e depois
+  /// usa isto para simular a janela mista de troca e para repará-la.
+  @visibleForTesting
+  void setEmpresaIdParaTeste(String? empresaId) {
+    _currentEmpresaId = empresaId;
+  }
 
   // Getter que filtra apenas o que está "ATIVO" (Aberta).
   // Isso resolve definitivamente o problema de mesas que não somem após o recebimento.
@@ -352,6 +367,27 @@ class DataService extends ChangeNotifier {
     try {
       final colecoes = backup['colecoes'] as Map<String, dynamic>?;
       if (colecoes == null) return false;
+
+      // 🛡️ ISOLAMENTO NO RESTORE: o backup declara a empresa dona no
+      // cabeçalho (`exportarBackupCompleto` grava `empresa_id`). Com a empresa
+      // ERRADA aberta, as linhas carimbadas ficariam de fora (trava por
+      // registro), mas as linhas SEM carimbo (dado legado) seriam adotadas
+      // pela empresa aberta — era assim que restaurar um backup levava
+      // depósito, contas a pagar e NF-e para a empresa errada. Mesma trava do
+      // restore de SQL (backup_restore_service: "empresa do arquivo ≠ empresa
+      // aberta → bloqueado").
+      final empresaDoArquivo = backup['empresa_id']?.toString().trim() ?? '';
+      final empresaAberta = (_currentEmpresaId ?? '').trim();
+      if (empresaDoArquivo.isNotEmpty &&
+          empresaAberta.isNotEmpty &&
+          empresaDoArquivo != empresaAberta) {
+        debugPrint(
+          '>>> [Restore] 🛡️ Backup RECUSADO: arquivo da empresa '
+          '$empresaDoArquivo, empresa aberta $empresaAberta. Troque de '
+          'empresa para restaurar este backup.',
+        );
+        return false;
+      }
 
       debugPrint('>>> [Restore] 🔄 Importando backup...');
 
@@ -882,12 +918,53 @@ class DataService extends ChangeNotifier {
   Timer? _lanRefreshTimer;
   bool _recarregandoPelaRedeLocal = false;
 
+  // ── Emissão fiscal em andamento ─────────────────────────────────────────
+  // A recarga da rede local é PESADA: além de reler as tabelas, ela primeiro
+  // descarrega o que está sujo (numa loja com milhares de produtos são
+  // segundos de escrita em banco) e só então devolve o controle — e tudo isso
+  // acontece no mesmo event loop da emissão. Medi isso na prática: em 01/11 a
+  // NFC-e da E O BICHO saiu autorizada pela SEFAZ em 0,1 s pelo bridge e a
+  // tela só ficou livre 6,5 s depois, quando a recarga disparada pela rede
+  // local terminou. Aqui a recarga é adiada durante a emissão e roda depois,
+  // com o dado já gravado — nada se perde, ela só não compete com a nota.
+  int _emissoesFiscaisEmCurso = 0;
+  bool _recargaRedeLocalAdiada = false;
+
+  /// Marca o início de uma emissão fiscal (chamado pela tela de emissão).
+  void iniciarEmissaoFiscal() {
+    _emissoesFiscaisEmCurso++;
+    if (_emissoesFiscaisEmCurso > 1) return;
+    _lanRefreshTimer?.cancel();
+    debugPrint(
+      '>>> [DataService] ⏸️ Recarga da rede local adiada: emissão fiscal em andamento.',
+    );
+  }
+
+  /// Fim da emissão fiscal: se um aviso da LAN chegou durante ela, recarrega.
+  void encerrarEmissaoFiscal() {
+    if (_emissoesFiscaisEmCurso > 0) _emissoesFiscaisEmCurso--;
+    if (_emissoesFiscaisEmCurso > 0 || !_recargaRedeLocalAdiada) return;
+    _recargaRedeLocalAdiada = false;
+    _lanRefreshTimer?.cancel();
+    debugPrint('>>> [DataService] ▶️ Emissão concluída: recarregando a tela.');
+    _lanRefreshTimer = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_recarregarPelaRedeLocal());
+    });
+  }
+
   /// Um lote do sincronizador da LAN chegou no banco local: recarrega as telas.
   ///
   /// Passa por um debounce curto porque uma puxada do par vem em várias
   /// tabelas/linhas quase juntas — sem o debounce, seriam dezenas de recargas.
   void _aoMudarPelaRedeLocal(String tabela) {
     if (_descartado || _currentEmpresaId == null) return;
+    // Emissão em andamento: não interrompe a nota. O aviso é guardado e a
+    // recarga acontece no encerrarEmissaoFiscal().
+    if (_emissoesFiscaisEmCurso > 0) {
+      _recargaRedeLocalAdiada = true;
+      _lanRefreshTimer?.cancel();
+      return;
+    }
     _lanRefreshTimer?.cancel();
     _lanRefreshTimer = Timer(const Duration(milliseconds: 500), () {
       unawaited(_recarregarPelaRedeLocal());
@@ -913,6 +990,20 @@ class DataService extends ChangeNotifier {
 
   void _aoMudarPelaNuvem(String tabela) {
     if (_descartado || _currentEmpresaId == null || _isOffline) return;
+
+    // ECO DO PRÓPRIO ENVIO: a nuvem avisa a mudança que este PC acabou de
+    // gravar. Puxar a tabela de novo só gera I/O, merge e rebuild da tela —
+    // no PDV isso acontecia a cada edição de item e travava a navegação.
+    final ultimoEnvio = _ultimoEnvioLocalPorTabela[tabela];
+    if (ultimoEnvio != null &&
+        DateTime.now().difference(ultimoEnvio) < _janelaEcoRealtime) {
+      debugPrint(
+        '>>> [Neon-Realtime] 🔇 Eco local de $tabela ignorado '
+        '(envio há ${DateTime.now().difference(ultimoEnvio).inSeconds}s).',
+      );
+      return;
+    }
+
     debugPrint('>>> [Neon-Realtime] 🔔 A nuvem avisou mudança em $tabela.');
     _tabelasAvisadasPelaNuvem.add(tabela);
     _nuvemRefreshTimer?.cancel();
@@ -1001,7 +1092,11 @@ class DataService extends ChangeNotifier {
     String table,
     Map<String, dynamic> data, {
     String? empresaId,
+    bool enfileirarSeFalhar = true,
   }) async {
+    // Marca o envio local desta tabela para o Realtime ignorar o eco.
+    _ultimoEnvioLocalPorTabela[table] = DateTime.now();
+
     // Ordem de prioridade: (1) a empresa da operação; (2) a que já vem no
     // registro; (3) a empresa aberta agora.
     final empresaDoRegistro = data['empresa_id']?.toString();
@@ -1022,18 +1117,31 @@ class DataService extends ChangeNotifier {
       debugPrint(
         '>>> [Supabase] ⏸️ Operação $table/${data['id']} mantida na fila da empresa $empresaEfetiva.',
       );
-      _adicionarSincronizacaoPendente(
-        table: table,
-        data: data,
-        empresaId: empresaEfetiva,
-      );
+      if (enfileirarSeFalhar) {
+        _adicionarSincronizacaoPendente(
+          table: table,
+          data: data,
+          empresaId: empresaEfetiva,
+        );
+      } else {
+        throw StateError('Nuvem indisponível para a empresa $empresaEfetiva');
+      }
       return;
     }
 
     if (!SupabaseService.isAvailable) {
       debugPrint(
-        '>>> [Supabase] ⏭️ Pulando upsert em $table: Supabase não disponível',
+        '>>> [Supabase] ⏸️ Supabase indisponível para $table/${data['id']}.',
       );
+      if (enfileirarSeFalhar) {
+        _adicionarSincronizacaoPendente(
+          table: table,
+          data: data,
+          empresaId: empresaEfetiva,
+        );
+      } else {
+        throw StateError('Supabase indisponível');
+      }
       return;
     }
 
@@ -1180,7 +1288,11 @@ class DataService extends ChangeNotifier {
           errorStr.contains('violates row-level security');
 
       if (!isIrrecuperavel) {
-        _adicionarSincronizacaoPendente(table: table, data: data);
+        if (enfileirarSeFalhar) {
+          _adicionarSincronizacaoPendente(table: table, data: data);
+        } else {
+          rethrow;
+        }
       } else {
         debugPrint(
           '>>> [Supabase] ⚠️ Erro crítico/esquema detectado em $table. Operação descartada para evitar loop.',
@@ -1262,6 +1374,11 @@ class DataService extends ChangeNotifier {
     Map<String, dynamic> dados, {
     String? evento = 'UPSERT',
   }) async {
+    // Toda mudança enviada por este PC marca a tabela: o aviso que voltar do
+    // Neon Realtime pouco depois é eco do nosso próprio envio (ver
+    // `_aoMudarPelaNuvem`).
+    _ultimoEnvioLocalPorTabela[tabela] = DateTime.now();
+
     // Marca o registro como "alteração local em curso": enquanto o envio não se
     // confirma, o valor da nuvem para ele é mais antigo e não pode sobrescrever
     // o local (fecha a janela entre gravar aqui e o upsert terminar lá).
@@ -1483,6 +1600,7 @@ class DataService extends ChangeNotifier {
 
         case 'pedidos':
           _aplicarEmLista<Pedido>(_pedidos, evento, dados, Pedido.fromMap);
+          if (evento == 'INSERT') _avisarPedidoEcommerceRecebido(id, dados);
           break;
 
         case 'pedidos_compra':
@@ -1608,6 +1726,28 @@ class DataService extends ChangeNotifier {
         '>>> [Realtime] ❌ Erro ao aplicar mudança Realtime em $tabela: $e',
       );
     }
+  }
+
+  /// Um pedido novo chegou da nuvem/outra máquina. Se veio do e-commerce,
+  /// avisa o lojista na hora: toca o som e deixa o aviso pronto para a tela de
+  /// Pedidos (que é quem exibe). Eco do próprio PC fica em silêncio.
+  void _avisarPedidoEcommerceRecebido(String? id, Map<String, dynamic> dados) {
+    final criadoEm = id == null ? null : _pedidosCriadosLocalmente[id];
+    if (criadoEm != null) {
+      if (DateTime.now().difference(criadoEm).inSeconds < 5) return;
+      _pedidosCriadosLocalmente.remove(id);
+    }
+    if (dados['origem_ecommerce'] != true) return;
+
+    avisoPedidoEcommerce = (
+      numero: (dados['numero'] ?? '').toString(),
+      cliente: (dados['cliente_nome'] ?? '').toString(),
+      total: (dados['total'] as num?)?.toDouble() ?? 0,
+    );
+    debugPrint(
+      '>>> [Realtime] 🛒 Novo pedido do e-commerce ${avisoPedidoEcommerce!.numero}',
+    );
+    _tocarSomNotificacao();
   }
 
   /// Helper genérico para aplicar INSERT/UPDATE/DELETE em qualquer lista em memória
@@ -1866,6 +2006,21 @@ class DataService extends ChangeNotifier {
   // O REALTIME do Supabase dispara um INSERT de volta ao mesmo PC;
   // ignoramos esses eventos para não sobrescrever a versão local correta.
   final Map<String, DateTime> _agendamentosCriadosLocalmente = {};
+
+  // ⚠️ IDs de pedidos criados ESTE PC há poucos segundos. O Realtime devolve o
+  // INSERT para o próprio emissor; guardamos isso para não "anunciar" aqui um
+  // pedido que acabou de ser lançado nesta mesma máquina.
+  final Map<String, DateTime> _pedidosCriadosLocalmente = {};
+
+  /// Último pedido do e-commerce recebido da nuvem/outra máquina.
+  /// A tela de Pedidos exibe o aviso e o limpa com [limparAvisoPedidoEcommerce].
+  ({String numero, String cliente, double total})? avisoPedidoEcommerce;
+
+  /// Descarta o aviso de novo pedido e redesenha a tela.
+  void limparAvisoPedidoEcommerce() {
+    avisoPedidoEcommerce = null;
+    notifyListeners();
+  }
 
   /// Piso entre cargas de download da nuvem no pulso automático.
   ///
@@ -2936,12 +3091,7 @@ class DataService extends ChangeNotifier {
       await _storage.salvar('empresa_atual', empresaComTimestamp.toMap());
     }
 
-    unawaited(
-      _upsertNoSupabase(
-        SupabaseService.tableEmpresas,
-        empresaComTimestamp.toMap(),
-      ),
-    );
+    unawaited(_subirEmpresaMesclandoListasVivas(empresaComTimestamp));
 
     // Mantém a cópia do AuthService em sincronia (mesma empresa, mesmas
     // configurações). Sem isso, o AuthService continuava com a config antiga
@@ -2949,6 +3099,184 @@ class DataService extends ChangeNotifier {
     onEmpresaAtualizada?.call(empresaComTimestamp);
 
     notifyListeners();
+  }
+
+  /// Mescla, pela regra do carimbo (`perfis_tributarios_atualizado_em` /
+  /// `perfis_preco_atualizado_em`), as listas-vivas de `empresa.configuracoes`
+  /// entre a copia LOCAL e a copia da NUVEM.
+  ///
+  /// Antes as duas direcoes gravavam "o blob inteiro; vence quem gravou por
+  /// ultimo": o up local apagava alteracoes feitas em outra maquina e o pull
+  /// nunca recolhia a linha `empresas` (nenhum ciclo de sincronizacao baixa
+  /// essa tabela). Com o carimbo, cada lista escolhe o proprio vencedor -- a
+  /// mesma regra aplicada no login (`aplicarPerfisTributariosMaisRecentes`),
+  /// agora rodando a cada push e a cada pulso de sincronizacao.
+  ///
+  /// Retorna `(mapa mesclado, a copia da NUVEM venceu alguma lista)`.
+  (Map<String, dynamic>, bool) _mesclarListasVivasComNuvem({
+    required Map<String, dynamic> configLocal,
+    required Map<String, dynamic> configRemota,
+    required DateTime updatedAtLocal,
+    required DateTime updatedAtRemota,
+  }) {
+    final mesclado = Map<String, dynamic>.from(configLocal);
+    var remotaVenceu = false;
+    void mesclar(String chave, String chaveCarimbo) {
+      final deAntes = configLocal[chave];
+      aplicarConfigListaMaisRecente(
+        mesclado,
+        configLocal,
+        configRemota,
+        chave: chave,
+        chaveCarimbo: chaveCarimbo,
+        updatedAtLocal: updatedAtLocal,
+        updatedAtRemota: updatedAtRemota,
+      );
+      final deDepois = mesclado[chave];
+      if (deDepois != null && !identical(deDepois, deAntes)) {
+        remotaVenceu = true;
+      }
+    }
+
+    mesclar('perfis_tributarios', chavePerfisTributariosAtualizadoEm);
+    mesclar('perfis_preco', chavePerfisPrecoAtualizadoEm);
+    mesclar('departamentos', chaveDepartamentosAtualizadoEm);
+    mesclar('estoques', chaveEstoquesAtualizadoEm);
+    return (mesclado, remotaVenceu);
+  }
+
+  /// Le a copia atual de `empresas.configuracoes` na nuvem (uma consulta por
+  /// push/pulso, apenas da empresa aberta no PC). Retorna `(null, null)` quando
+  /// a nuvem nao esta disponivel ou falhou -- o chamador segue o comportamento
+  /// antigo (subir/pedir a copia local).
+  Future<(Map<String, dynamic>?, DateTime?)> _lerConfigEmpresaNuvem(
+    String empresaId,
+  ) async {
+    if (!SupabaseService.isAvailable || !nuvemHabilitada) return (null, null);
+    try {
+      final remota = await _supabaseService.client
+          .from(SupabaseService.tableEmpresas)
+          .select('configuracoes, updated_at')
+          .eq('id', empresaId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 10));
+      if (remota == null) return (null, null);
+      final brute0 = remota['configuracoes'] as Map?;
+      final configRemota = brute0 is Map<String, dynamic>
+          ? brute0
+          : (brute0 is Map ? Map<String, dynamic>.from(brute0) : null);
+      final rawRemota = remota['updated_at'];
+      final updatedAtRemota = rawRemota == null
+          ? null
+          : DateTime.tryParse(rawRemota.toString())?.toUtc();
+      return (configRemota, updatedAtRemota);
+    } catch (e) {
+      debugPrint(
+        '>>> [Perfis] Falha ao ler configuracoes da nuvem para a mescla: $e',
+      );
+      return (null, null);
+    }
+  }
+
+  /// Sob a linha `empresas` para a nuvem DEPOIS de mesclar as listas-vivas
+  /// (perfis tributarios / perfis de preco) com a copia que ja esta na nuvem,
+  /// pela regra do carimbo. Quando a copia da nuvem e a mais nova, ELA e
+  /// adotada aqui e o up local e cancelado -- assim a alteracao feita em outra
+  /// maquina ou no portal nao e apagada pela copia (mais velha) desta maquina.
+  Future<void> _subirEmpresaMesclandoListasVivas(Empresa empresa) async {
+    if (empresa.id != _currentEmpresaId) return;
+    final configLocal = empresa.configuracoes ?? <String, dynamic>{};
+    final resultadoRemota = await _lerConfigEmpresaNuvem(empresa.id);
+    final configRemota = resultadoRemota.$1;
+    final updatedAtRemota = resultadoRemota.$2;
+    Map<String, dynamic> configASubir = configLocal;
+    try {
+      if (configRemota != null && updatedAtRemota != null) {
+        final resultadoMescla = _mesclarListasVivasComNuvem(
+          configLocal: configLocal,
+          configRemota: configRemota,
+          updatedAtLocal: empresa.updatedAt,
+          updatedAtRemota: updatedAtRemota,
+        );
+        final mesclado = resultadoMescla.$1;
+        final remotaVenceu = resultadoMescla.$2;
+        if (remotaVenceu) {
+          // A nuvem tinha a lista mais nova: adota e NAO sobrescreve.
+          debugPrint(
+            '>>> [Perfis] Copia da nuvem era a mais nova: adotada no lugar '
+            'do push (empresa ${empresa.id}).',
+          );
+          await _adotarListasVivasDaNuvem(empresa, mesclado);
+          return;
+        }
+        configASubir = mesclado;
+      }
+    } catch (e) {
+      debugPrint(
+        '>>> [Perfis] Mescla com a nuvem falhou; subindo copia local: $e',
+      );
+    }
+    unawaited(
+      _upsertNoSupabase(
+        SupabaseService.tableEmpresas,
+        empresa.copyWith(configuracoes: configASubir).toMap(),
+      ),
+    );
+  }
+
+  /// A copia da NUVEM tinha uma lista-viva mais nova: adota no estado em
+  /// execucao (memoria + banco local + copia do AuthService). NAO re-carimba
+  /// os perfis (o carimbo da nuvem continua valendo) e NAO reenvia a nuvem,
+  /// senao a adotacao viraria eco infinito de gravacoes.
+  Future<void> _adotarListasVivasDaNuvem(
+    Empresa empresa,
+    Map<String, dynamic> configMesclado,
+  ) async {
+    if (_descartado || empresa.id != _currentEmpresaId) return;
+    final adotada = empresa.copyWith(configuracoes: configMesclado);
+    _empresaAtual = adotada;
+    if (!kIsWeb) {
+      try {
+        await DatabaseService().salvarEmpresaLocal(adotada.toMap());
+      } catch (e) {
+        debugPrint(
+          '>>> [Perfis] Falha ao persistir listas adotadas da nuvem no banco local: $e',
+        );
+      }
+    }
+    _carregarPerfisTributariosDaEmpresa();
+    _carregarDepartamentosDaEmpresa();
+    _carregarEstoquesDaEmpresa();
+    // Mantem AuthService (e demais ouvintes) em sincronia -- a mesma tecnica
+    // que a atualizarDadosEmpresa usa para a copia do login nao ficar velha.
+    onEmpresaAtualizada?.call(adotada);
+    addSyncLog(
+      'Perfis da empresa atualizados pela NUVEM (carimbo mais novo que o local).',
+    );
+    notifyListeners();
+  }
+
+  /// `true` quando alguma lista-viva LOCAL tem carimbo mais novo que a copia
+  /// da nuvem -- a copia desta maquina ficou na frente (ex.: perfil editado
+  /// com a nuvem momentaneamente fora do ar) e precisa ser enviada agora.
+  bool _listasVivasLocaisMaisNovas(
+    Map<String, dynamic> configLocal,
+    Map<String, dynamic> configRemota,
+  ) {
+    bool localMaisNovo(String chave, String chaveCarimbo) {
+      final bruta = configLocal[chave];
+      if (bruta is! List || bruta.isEmpty) return false;
+      final carimboLocal = configAtualizadaEm(configLocal, chaveCarimbo);
+      final carimboRemoto = configAtualizadaEm(configRemota, chaveCarimbo);
+      if (carimboLocal == null) return false;
+      if (carimboRemoto == null) return true;
+      return carimboLocal.isAfter(carimboRemoto);
+    }
+
+    return localMaisNovo('perfis_tributarios', chavePerfisTributariosAtualizadoEm) ||
+        localMaisNovo('perfis_preco', chavePerfisPrecoAtualizadoEm) ||
+        localMaisNovo('departamentos', chaveDepartamentosAtualizadoEm) ||
+        localMaisNovo('estoques', chaveEstoquesAtualizadoEm);
   }
 
   // Estado de carregamento
@@ -3495,6 +3823,13 @@ class DataService extends ChangeNotifier {
 
     // DEFINIR NOVA EMPRESA
     _currentEmpresaId = empresaId;
+    // Recarrega as listas que vivem dentro de empresa.configuracoes (perfis
+    // tributários, departamentos e estoques). O `setEmpresaAtual` já as carrega,
+    // mas o clear acima apagava tudo e nada recarregava depois — a tela de
+    // Perfis abria vazia e o próximo save gravava só o perfil recém-criado.
+    if (empresaId != null && empresaId.isNotEmpty) {
+      await _recarregarConfiguracoesDaEmpresa(empresaId);
+    }
     _syncQueue.setPaused(empresaId == null || !nuvemHabilitada);
     _ultimaSincronizacao =
         null; // Resetar para que a nova empresa tenha sua própria sincronização
@@ -3666,6 +4001,43 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Recarrega as listas que moram dentro de `empresa.configuracoes`.
+  ///
+  /// `definirEmpresaAtual` limpa `_perfisTributarios`, `_departamentos` e
+  /// `_estoques` ao trocar de empresa. Antes, só `setEmpresaAtual` recarregava
+  /// essas listas — e ele roda ANTES da troca do `_currentEmpresaId`, então o
+  /// clear posterior deixava a empresa nova sem perfis/departamentos/estoques.
+  Future<void> _recarregarConfiguracoesDaEmpresa(String empresaId) async {
+    if (_empresaAtual?.id != empresaId) {
+      // Alguns fluxos chamam `definirEmpresaAtual` sem passar por
+      // `setEmpresaAtual`. Nesses casos, recupera a empresa que o AuthService
+      // acabou de gravar em `empresa_atual`.
+      try {
+        final raw = await _storage.carregar('empresa_atual');
+        if (raw is Map) {
+          final emp = Empresa.fromMap(Map<String, dynamic>.from(raw));
+          if (emp.id == empresaId) {
+            _empresaAtual = emp;
+          }
+        }
+      } catch (e) {
+        debugPrint('>>> [DataService] Aviso ao recuperar empresa_atual: $e');
+      }
+    }
+
+    if (_empresaAtual?.id != empresaId) {
+      debugPrint(
+        '>>> [DataService] Configurações da empresa $empresaId não recarregadas: '
+        'empresa em memória ausente/diferente (${_empresaAtual?.id}).',
+      );
+      return;
+    }
+
+    _carregarPerfisTributariosDaEmpresa();
+    _carregarDepartamentosDaEmpresa();
+    _carregarEstoquesDaEmpresa();
+  }
+
   Future<void> _sincronizarSilenciosamente({Set<String>? tabelas}) async {
     if (_currentEmpresaId == null) return;
 
@@ -3695,7 +4067,9 @@ class DataService extends ChangeNotifier {
       );
       if (SupabaseService.isAvailable && !_isOffline) {
         await _carregarDadosDoSupabase(tabelas: tabelas);
-        notifyListeners();
+        // `_carregarDadosDoSupabase` já chama notifyListeners() no final quando
+        // algum dado mudou. Notificar aqui de novo reconstruía a árvore inteira
+        // à toa (era o que travava a tela a cada aviso do Realtime).
         debugPrint('>>> [Sync] ✅ Sincronização silenciosa concluída');
       } else {
         debugPrint('>>> [Sync] 🖥️ Sem nuvem — pulso só relê o banco local.');
@@ -4747,6 +5121,12 @@ class DataService extends ChangeNotifier {
     return _vendasBalcao.where((v) {
       if (v.isCancelada) return false;
 
+      // VENDAS SALVAS (guardadas para receber depois) NÃO entram no caixa:
+      // nada foi recebido, então elas não podem pesar no saldo, no card de
+      // entradas por forma nem no Fluxo de Caixa. Elas continuam visíveis no
+      // PDV (aba Receber) até serem pagas.
+      if (v.ehVendaSalva) return false;
+
       // Janela inferior: venda deve ser depois da abertura do caixa.
       if (v.dataVenda.isBefore(abertura.dataAbertura)) return false;
       // Janela superior: venda deve ser antes do fechamento (se encerrado).
@@ -4835,6 +5215,11 @@ class DataService extends ChangeNotifier {
   /// (`recebido` + `dataRecebimento`) depois da abertura do caixa e, quando
   /// [limite] é informado (caixa já encerrado), até o horário do fechamento.
   /// Pagamentos em [TipoPagamento.outro] são ignorados, como no fluxo de caixa.
+  ///
+  /// PEDIDOS CANCELADOS são ignorados por inteiro: cancelar um pedido tira o
+  /// valor do caixa, mesmo que ele já tivesse pagamento marcado como recebido.
+  /// Pedidos em aberto (sem pagamento recebido) também não entram, pela regra
+  /// de cima.
   Map<TipoPagamento, double> calcularRecebimentosDePedidosDoCaixa(
     AberturaCaixa abertura, {
     DateTime? limite,
@@ -4845,6 +5230,8 @@ class DataService extends ChangeNotifier {
     final ate = limite?.add(const Duration(seconds: 1));
 
     for (final pedido in _pedidos) {
+      // Pedido cancelado não entra no caixa (nem no fechamento nem na impressão).
+      if (pedido.status.trim().toLowerCase() == 'cancelado') continue;
       if (temRespCaixa) {
         final operadorPedido = pedido.vendedorNome;
         if (operadorPedido == null || operadorPedido.trim().isEmpty) continue;
@@ -7658,12 +8045,11 @@ class DataService extends ChangeNotifier {
           : 'Consumo interno: $motivoTexto',
       usuario: usuario,
       fornecedorNome: produto.fornecedorNome,
-      custoUnitarioOverride:
-          (produto.precoCusto ?? 0) > 0 ? produto.precoCusto : null,
+      custoUnitarioOverride: (produto.precoCusto ?? 0) > 0
+          ? produto.precoCusto
+          : null,
     );
-    debugPrint(
-      '>>> [ConsumoInterno] ✓ ${produto.nome}: ${quantidade}un',
-    );
+    debugPrint('>>> [ConsumoInterno] ✓ ${produto.nome}: ${quantidade}un');
   }
 
   /// Totais de consumo interno da loja (para o dashboard): quantidade de
@@ -10224,6 +10610,12 @@ class DataService extends ChangeNotifier {
 
   Future<void> addPedido(Pedido pedido) async {
     _pedidos.add(pedido);
+    // Marca o eco do Realtime: o INSERT deste pedido voltando em segundos não
+    // pode gerar o aviso de "novo pedido da loja" nesta mesma máquina.
+    _pedidosCriadosLocalmente[pedido.id] = DateTime.now();
+    _pedidosCriadosLocalmente.removeWhere(
+      (_, criadoEm) => DateTime.now().difference(criadoEm).inSeconds > 30,
+    );
     // Trava o contador da empresa no número já emitido (ver o método).
     await _elevarMinimoNumeracaoPeloNumero(pedido.numero);
     notifyListeners();
@@ -10424,6 +10816,35 @@ class DataService extends ChangeNotifier {
         }
       } catch (e) {
         print('>>> ⚠ Erro ao cancelar NFC-e vinculada: $e');
+      }
+
+      // Cancelar a VENDA VINCULADA (mesmo id/número) ao pedido.
+      //
+      // Quando um pedido é pago/finalizado nasce uma VendaBalcao com o mesmo
+      // id (e um pedido "venda salva" também tem a sua venda gêmea). Se ela
+      // continuasse ativa, o valor do pedido cancelado seguia aparecendo no
+      // Fluxo de Caixa e no saldo do caixa — cancelei o pedido e o dinheiro
+      // continuava lá.
+      try {
+        final vendasVinculadas = _vendasBalcao
+            .where(
+              (v) =>
+                  !v.isCancelada &&
+                  (v.id == pedido.id || v.numero == pedido.numero),
+            )
+            .toList();
+        for (final venda in vendasVinculadas) {
+          // Marca como cancelada SEM devolver estoque: o cancelamento do pedido
+          // acima já devolveu os itens (senão o estoque voltaria duas vezes).
+          await updateVendaBalcao(
+            venda.copyWith(cancelado: true, updatedAt: DateTime.now()),
+          );
+          print(
+            '✓ Venda ${venda.numero} vinculada ao pedido ${pedido.numero} também cancelada',
+          );
+        }
+      } catch (e) {
+        print('>>> ⚠ Erro ao cancelar venda vinculada ao pedido: $e');
       }
     }
   }
@@ -10799,8 +11220,10 @@ class DataService extends ChangeNotifier {
     double valorUsado,
   ) {
     final originais = {for (final m in movimentos) m.id: m};
-    final atualizados =
-        CashBackService.consumirDosCreditos(movimentos, valorUsado);
+    final atualizados = CashBackService.consumirDosCreditos(
+      movimentos,
+      valorUsado,
+    );
     return atualizados
         .where((m) => (originais[m.id]?.consumido ?? 0) != m.consumido)
         .toList();
@@ -10818,7 +11241,9 @@ class DataService extends ChangeNotifier {
 
       final index = _clientes.indexWhere((c) => c.id == clienteId);
       if (index == -1) {
-        debugPrint('>>> [CashBack] ⚠️ Cliente $clienteId não encontrado — saldo não creditado');
+        debugPrint(
+          '>>> [CashBack] ⚠️ Cliente $clienteId não encontrado — saldo não creditado',
+        );
         return;
       }
 
@@ -10826,7 +11251,9 @@ class DataService extends ChangeNotifier {
 
       // Gate por cliente: cash back desativado não acumula nem usa.
       if (!cliente.cashbackAtivo) {
-        debugPrint('>>> [CashBack] ⏭️ ${cliente.nome} com cash back desativado');
+        debugPrint(
+          '>>> [CashBack] ⏭️ ${cliente.nome} com cash back desativado',
+        );
         return;
       }
 
@@ -10874,12 +11301,14 @@ class DataService extends ChangeNotifier {
         );
         // Os créditos vencidos passam a contar como totalmente consumidos
         movimentos = movimentos
-            .map((m) =>
-                (m.tipo == CashBackMovimentoTipo.credito &&
-                        m.expiraEm != null &&
-                        !m.expiraEm!.isAfter(agora))
-                    ? m.copyWith(consumido: m.valor)
-                    : m)
+            .map(
+              (m) =>
+                  (m.tipo == CashBackMovimentoTipo.credito &&
+                      m.expiraEm != null &&
+                      !m.expiraEm!.isAfter(agora))
+                  ? m.copyWith(consumido: m.valor)
+                  : m,
+            )
             .toList();
       }
 
@@ -10927,8 +11356,9 @@ class DataService extends ChangeNotifier {
             data: agora,
             expiraEm: CashBackService.dataExpiracao(
               agora,
-              validadeDias:
-                  CashBackService.validadeDiasParaEmpresa(_empresaAtual),
+              validadeDias: CashBackService.validadeDiasParaEmpresa(
+                _empresaAtual,
+              ),
             ),
             observacao: 'Cash back $pct% da venda ${venda.numero}',
           ),
@@ -10946,14 +11376,18 @@ class DataService extends ChangeNotifier {
         ...novosMovimentos,
       ]);
       await updateCliente(
-        cliente.copyWith(saldoCashback: saldoCorrente < 0 ? 0.0 : saldoCorrente),
+        cliente.copyWith(
+          saldoCashback: saldoCorrente < 0 ? 0.0 : saldoCorrente,
+        ),
       );
       debugPrint(
         '>>> [CashBack] ✓ ${cliente.nome}: -R\$$usado (uso) +R\$$ganho (ganho) → saldo R\$$saldoCorrente (venda ${venda.numero})',
       );
     } catch (e) {
       // Cash back nunca pode derrubar a venda — erro fica só no log.
-      debugPrint('>>> [CashBack] ❌ Erro ao processar venda ${venda.numero}: $e');
+      debugPrint(
+        '>>> [CashBack] ❌ Erro ao processar venda ${venda.numero}: $e',
+      );
     }
   }
 
@@ -11006,10 +11440,13 @@ class DataService extends ChangeNotifier {
       expiraEm: tipo == CashBackMovimentoTipo.credito
           ? CashBackService.dataExpiracao(
               agora,
-              validadeDias: CashBackService.validadeDiasParaEmpresa(_empresaAtual),
+              validadeDias: CashBackService.validadeDiasParaEmpresa(
+                _empresaAtual,
+              ),
             )
           : null,
-      observacao: observacao ??
+      observacao:
+          observacao ??
           (tipo == CashBackMovimentoTipo.credito
               ? 'Crédito manual'
               : 'Débito manual'),
@@ -12070,82 +12507,421 @@ class DataService extends ChangeNotifier {
   /// compartilhar um bloco entre séries entregaria número repetido.
   final Map<String, FaixaNumeracao> _faixasNfceAtual = {};
 
-  /// Reserva atomicamente o próximo NÚMERO FISCAL da série (bloco via CAS na
-  /// nuvem, mesma mecânica já usada em VND-/PED-).
+  /// Bloco seguinte já reservado na nuvem enquanto o atual ainda tem números.
   ///
-  /// Por quê: o cálculo de NFC-e era "maior número que eu tenho + 1" — dois
-  /// PCs emitindo offline chegavam ao MESMO número e o segundo levava
-  /// rejeição 539 de duplicidade na SEFAZ (o fiscal é único, diferente de um
-  /// simples número interno).
+  /// A cada 100 notas o bloco atual estoura e a emissão esperava a nuvem para
+  /// pegar o seguinte (um round-trip no meio do "Emitindo sua NFC-e...").
+  /// Com a pré-reserva em segundo plano o bloco novo já está na mão quando o
+  /// atual acaba.
+  final Map<String, FaixaNumeracao> _faixasNfceProxima = {};
+  final Set<String> _preReservandoFaixaNfce = {};
+
+  /// Gravações do bloco NFC-e em fila (uma por série), FORA do caminho da
+  /// emissão. Antes o `await` nessa gravação segurava a nota atrás da fila do
+  /// banco: numa loja com 5 mil produtos, quando uma gravação grande estava em
+  /// curso, a emissão esperava o banco terminar (medido: 17,9s antes do envio,
+  /// com só 0,47s de SEFAZ). A fila preserva a ordem — a última gravação é
+  /// sempre o bloco mais avançado.
+  final Map<String, Future<void>> _filaGravacaoFaixaNfce = {};
+
+  void _gravarFaixaNfceEmFila(
+    String serie,
+    FaixaNumeracao faixa,
+    String empresaId,
+  ) {
+    final anterior = _filaGravacaoFaixaNfce[serie] ?? Future<void>.value();
+    _filaGravacaoFaixaNfce[serie] = anterior
+        .then((_) => _faixas.salvarLocal(faixa, empresaId))
+        .catchError((_) {});
+  }
+
+  /// Pré-carrega o bloco de numeração da série para a memória.
   ///
-  /// Devolve null quando não dá para reservar (offline / nuvem indisponível /
-  /// sem permissão): o chamador então cai no cálculo local antigo — emitir com
-  /// risco de 539 é melhor do que não emitir.
+  /// A leitura vive no PostgreSQL (exodo_config). Na primeira nota de uma
+  /// sessão ela caía no caminho da emissão e, com o banco ocupado gravando a
+  /// base inteira, a nota esperava a fila. Chamado quando o PDV abre, o bloco
+  /// já está em memória na hora de emitir.
+  Future<void> preCarregarFaixaNfce({String serie = '1'}) async {
+    final serieNorm = serie.trim().isEmpty ? '1' : serie.trim();
+    final empresaId = (_currentEmpresaId ?? '').trim();
+    if (empresaId.isEmpty) return;
+    if (_faixasNfceAtual.containsKey(serieNorm)) return;
+    try {
+      final faixa = await _faixas.lerLocal('nfce_s$serieNorm', empresaId);
+      if (faixa != null && !_faixasNfceAtual.containsKey(serieNorm)) {
+        _faixasNfceAtual[serieNorm] = faixa;
+        debugPrint(
+          '>>> [DataService] 📦 Bloco NFC-e s$serieNorm pré-carregado '
+          '(${faixa.inicio}..${faixa.fim}, próximo ${faixa.proximo})',
+        );
+      }
+    } catch (e) {
+      debugPrint(
+        '>>> [DataService] ⚠️ Pré-carga do bloco NFC-e falhou (s$serieNorm): $e',
+      );
+    }
+  }
+
+  /// Tamanho do bloco de numeração NFC-e reservado na nuvem por vez.
+  static const int _tamanhoBlocoNfce = 100;
+
+  /// Quantos números restantes disparam a pré-reserva do bloco seguinte.
+  static const int _limitePreReservaNfce = 10;
+
+  /// Reserva um número fiscal da série.
+  ///
+  /// A emissão AUTOMÁTICA segue a SEQUÊNCIA (cursor da série / bloco já
+  /// reservado) e pronto: não sai procurando "o menor número livre" nem varre
+  /// os buracos da numeração a cada venda. Essa busca deixava a emissão mais
+  /// lenta e, quando a SEFAZ recusava um número, empurrava a nota para outro
+  /// lugar da sequência sem o operador saber. Se a SEFAZ recusar por
+  /// duplicidade (539), a nota fica pendente com o MESMO número e o reenvio
+  /// resolve — é lá que o número livre faz sentido.
+  ///
+  /// Um número MANUAL continua sendo validado: precisa estar livre e à frente
+  /// do próximo número já reservado neste caixa, exceto quando já foi
+  /// reservado globalmente por esta emissão (p.ex. correção 539).
   Future<int?> reservarProximoNumeroNfce({
     String serie = '1',
     int numeroInicial = 1,
+    int? numeroForcado,
   }) async {
     final serieNorm = serie.trim().isEmpty ? '1' : serie.trim();
     final empresaId = (_currentEmpresaId ?? '').trim();
-    if (empresaId.isEmpty) return null;
+    final numeroInicialNorm = numeroInicial > 0 ? numeroInicial : 1;
+    // O cálculo do menor livre só é necessário para validar um número MANUAL
+    // (o automático usa a sequência logo abaixo).
+    final base = numeroForcado != null && numeroForcado > 0
+        ? getProximoNumeroNfce(
+            serie: serieNorm,
+            numeroInicial: numeroInicial,
+          )
+        : numeroInicialNorm;
+    final piso = base < 1 ? 1 : base;
+
+    if (numeroForcado != null && numeroForcado > 0) {
+      if (getProximoNumeroNfce(
+            serie: serieNorm,
+            numeroInicial: numeroInicial,
+            numeroForcado: numeroForcado,
+          ) <
+          0) {
+        throw StateError('O número $numeroForcado já está em uso nesta série.');
+      }
+      if (numeroForcado < piso &&
+          !await _numeroTemReservaCompartilhada(
+            tipo: 'nfce_s$serieNorm',
+            empresaId: empresaId,
+            numero: numeroForcado,
+          )) {
+        throw StateError(
+          'O número $numeroForcado está abaixo da sequência livre ($piso).',
+        );
+      }
+    }
+    if (empresaId.isEmpty) return numeroForcado ?? piso;
+
     final tipo = 'nfce_s$serieNorm';
     try {
-      // Piso: maior número desta série já registrado (lista local de notas).
-      final base = getProximoNumeroNfce(
-        serie: serieNorm,
+      // Números já usados na série — a mesma lista que decide o menor livre,
+      // levantada ANTES dos pisos para poder julgar se um piso é real ou um
+      // número ilha envenenado.
+      final numerosOcupados = _numerosNfceOcupados(serieNorm);
+      final tetoPiso = tetoPisoNfce(
+        numerosUsados: numerosOcupados,
         numeroInicial: numeroInicial,
       );
-      final piso = base < 1 ? 1 : base;
-
+      final cursorSerie = pisoCredivelNfce(
+        int.tryParse(
+          empresaAtual?.configuracoes?['proximo_numero_nfce_s$serieNorm']
+                  ?.toString() ??
+              '',
+        ),
+        tetoPiso,
+      );
+      final proximoFaixa = pisoCredivelNfce(
+        _faixasNfceAtual[serieNorm]?.proximo,
+        tetoPiso,
+      );
+      // Piso da sequência: número inicial da série, cursor já gravado e o
+      // bloco em uso. Sem o "menor livre" no meio — é só a ordem natural.
+      final pisoSequencia = [
+        numeroInicialNorm,
+        if (numeroForcado != null && piso > numeroInicialNorm) piso,
+        if (cursorSerie != null && cursorSerie > 0) cursorSerie,
+        if (proximoFaixa != null && proximoFaixa > 0) proximoFaixa,
+      ].reduce((a, b) => a > b ? a : b);
       var faixa =
           _faixasNfceAtual[serieNorm] ??
           await _faixas.lerLocal(tipo, empresaId);
-
-      // Faixa atrasada em relação à realidade (ex.: reemissão/contingência
-      // queimou números FORA do bloco): não dá para entregar número já usado,
-      // então descarta e reserva um bloco novo a partir do piso.
-      if (faixa != null && !faixa.esgotada && faixa.proximo < piso) {
+      // Bloco reservado lá em cima por um número ilha é descartado: a venda
+      // seguinte reserva um bloco novo, ancorado na sequência real da série.
+      if (faixa != null && tetoPiso != null && faixa.inicio > tetoPiso) {
         debugPrint(
-          '>>> [DataService] 🔢 Faixa NFC-e série $serieNorm atrasada '
-          '(${faixa.proximo} < $piso) — reservando bloco novo.',
+          '>>> [DataService] 🧹 Bloco NFC-e fora da sequência '
+          '(${faixa.inicio}..${faixa.fim}) descartado (teto $tetoPiso)',
         );
+        _faixasNfceAtual.remove(serieNorm);
         faixa = null;
       }
+      if (faixa != null && faixa.proximo < pisoSequencia) {
+        faixa = FaixaNumeracao(
+          tipo: faixa.tipo,
+          inicio: faixa.inicio,
+          fim: faixa.fim,
+          proximo: pisoSequencia,
+          origem: faixa.origem,
+        );
+      }
 
-      if (faixa == null || faixa.esgotada) {
-        // Nuvem indisponível: não tenta reservar (evita timeouts no caixa).
-        if (SupabaseService.instance.servidorIndisponivel) {
-          debugPrint(
-            '>>> [DataService] ⏸️ Faixa NFC-e série $serieNorm: nuvem '
-            'indisponível — usando sequência local.',
-          );
-          return null;
-        }
+      if (faixa == null ||
+          faixa.esgotada ||
+          (numeroForcado != null && numeroForcado > faixa.fim)) {
+        if (SupabaseService.instance.servidorIndisponivel) return null;
+        final inicioFaixa = numeroForcado != null && numeroForcado > pisoSequencia
+            ? numeroForcado
+            : numeroForcado != null &&
+                  await _numeroTemReservaCompartilhada(
+                    tipo: tipo,
+                    empresaId: empresaId,
+                    numero: numeroForcado,
+                  )
+            ? numeroForcado
+            : pisoSequencia;
         final nova = await _faixas.reservar(
           tipo: tipo,
           empresaId: empresaId,
-          aPartirDe: piso,
-          tamanho: 100,
+          aPartirDe: inicioFaixa,
+          tamanho: _tamanhoBlocoNfce,
+          // Contador da nuvem contaminado por um número ilha volta para a
+          // sequência real em vez de entregar bloco lá em cima.
+          adiantamentoMaximo: janelaSaltoNfce,
         );
-        if (nova == null) return null;
+        if (nova == null) {
+          // Sem nuvem não dá para reservar bloco — mas a emissão NÃO para por
+          // isso: segue a sequência local (cursor da série) e o cursor avança,
+          // então a próxima nota usa o número seguinte. Se outro caixa estiver
+          // no mesmo número, a SEFAZ responde 539 e o reenvio resolve.
+          final numeroLocal = pisoSequencia;
+          unawaited(
+            _salvarCursorProximoNumeroNfce(serieNorm, numeroLocal + 1),
+          );
+          debugPrint(
+            '>>> [DataService] ⚠️ Bloco NFC-e sem nuvem: emitindo com a '
+            'sequência local (número $numeroLocal)',
+          );
+          return numeroLocal;
+        }
+        if (numeroForcado != null && numeroForcado < nova.inicio) {
+          throw StateError(
+            'O número $numeroForcado está fora da faixa reservada para este caixa. '
+            'A sequência segura começa em ${nova.inicio}.',
+          );
+        }
         faixa = nova;
-        await _faixas.salvarLocal(nova, empresaId);
-        debugPrint(
-          '>>> [DataService] 🔢 Faixa NFC-e reservada (série $serieNorm): '
-          '${nova.inicio}..${nova.fim} — ${nova.restantes} números para emitir offline',
-        );
       }
 
-      final numero = faixa.proximo;
-      final avancada = faixa.avancar();
+      var numero = faixa.proximo < pisoSequencia ? pisoSequencia : faixa.proximo;
+      if (numeroForcado != null && numeroForcado > 0) {
+        if (numeroForcado < numero &&
+            !await _numeroTemReservaCompartilhada(
+              tipo: tipo,
+              empresaId: empresaId,
+              numero: numeroForcado,
+            )) {
+          throw StateError(
+            'O número $numeroForcado está abaixo da sequência já reservada '
+            'neste caixa ($numero); use um número maior ou o sugerido.',
+          );
+        }
+        if (numerosOcupados.contains(numeroForcado)) {
+          throw StateError(
+            'O número $numeroForcado já está em uso nesta série.',
+          );
+        }
+        numero = numeroForcado;
+      }
+      if (numero > faixa.fim) {
+        // Bloco pré-reservado em segundo plano: assume o lugar do atual sem
+        // nenhuma ida à nuvem no meio da emissão.
+        final proxima = _faixasNfceProxima.remove(serieNorm);
+        if (proxima != null && !proxima.esgotada) {
+          _faixasNfceAtual[serieNorm] = proxima;
+          await _faixas.salvarLocal(proxima, empresaId);
+          debugPrint(
+            '>>> [DataService] ⏭️ Bloco NFC-e s$serieNorm '
+            '${proxima.inicio}..${proxima.fim} assumido (pré-reservado)',
+          );
+          return reservarProximoNumeroNfce(
+            serie: serieNorm,
+            numeroInicial: numeroInicial,
+            numeroForcado: numeroForcado,
+          );
+        }
+        _faixasNfceAtual.remove(serieNorm);
+        final reservaSeguinte = await reservarProximoNumeroNfce(
+          serie: serieNorm,
+          numeroInicial: numeroInicial,
+          numeroForcado: numeroForcado,
+        );
+        return reservaSeguinte;
+      }
+
+      final avancada = FaixaNumeracao(
+        tipo: faixa.tipo,
+        inicio: faixa.inicio,
+        fim: faixa.fim,
+        proximo: numero >= faixa.proximo ? numero + 1 : faixa.proximo,
+        origem: faixa.origem,
+      );
       _faixasNfceAtual[serieNorm] = avancada;
-      await _faixas.salvarLocal(avancada, empresaId);
+      _gravarFaixaNfceEmFila(serieNorm, avancada, empresaId);
+      // Bloco acabando: o próximo é reservado AGORA, em segundo plano, para a
+      // emissão que estourar o bloco não pagar a ida à nuvem.
+      if (avancada.restantes <= _limitePreReservaNfce &&
+          !_faixasNfceProxima.containsKey(serieNorm)) {
+        unawaited(
+          _preReservarFaixaNfce(
+            serie: serieNorm,
+            empresaId: empresaId,
+            aPartirDe: avancada.fim + 1,
+          ),
+        );
+      }
+      if (numeroForcado != null &&
+          numeroForcado >= pisoSequencia &&
+          (tetoPiso == null || numeroForcado <= tetoPiso)) {
+        await _elevarPisoNfce(tipo, empresaId, numeroForcado);
+        await _salvarCursorProximoNumeroNfce(
+          serieNorm,
+          numeroForcado + 1,
+        );
+      }
       return numero;
+    } on StateError {
+      rethrow;
     } catch (e) {
       debugPrint(
         '>>> [DataService] ⚠️ Faixa NFC-e indisponível (série $serieNorm): $e',
       );
       return null;
+    }
+  }
+
+  /// Reserva o bloco SEGUINTE da série em segundo plano.
+  ///
+  /// Se o contador da nuvem está logo depois do bloco atual, o bloco novo é
+  /// emendado no atual (100 -> 200 números) — a sequência não ganha buraco. Se
+  /// outra máquina reservou no meio, o bloco fica guardado em
+  /// [_faixasNfceProxima] e é assumido quando o atual estourar.
+  Future<void> _preReservarFaixaNfce({
+    required String serie,
+    required String empresaId,
+    required int aPartirDe,
+  }) async {
+    if (empresaId.trim().isEmpty) return;
+    if (_preReservandoFaixaNfce.contains(serie)) return;
+    _preReservandoFaixaNfce.add(serie);
+    try {
+      final nova = await _faixas.reservar(
+        tipo: 'nfce_s$serie',
+        empresaId: empresaId,
+        aPartirDe: aPartirDe,
+        tamanho: _tamanhoBlocoNfce,
+        adiantamentoMaximo: janelaSaltoNfce,
+      );
+      if (nova == null) return;
+      final atual = _faixasNfceAtual[serie];
+      if (atual != null && nova.inicio == atual.fim + 1) {
+        final emendada = FaixaNumeracao(
+          tipo: atual.tipo,
+          inicio: atual.inicio,
+          fim: nova.fim,
+          proximo: atual.proximo,
+          origem: atual.origem,
+        );
+        _faixasNfceAtual[serie] = emendada;
+        await _faixas.salvarLocal(emendada, empresaId);
+        debugPrint(
+          '>>> [DataService] 🔁 Bloco NFC-e s$serie emendado até '
+          '${nova.fim} (pré-reserva em segundo plano)',
+        );
+      } else {
+        _faixasNfceProxima[serie] = nova;
+        debugPrint(
+          '>>> [DataService] 🔁 Bloco NFC-e s$serie ${nova.inicio}..'
+          '${nova.fim} pré-reservado para quando o atual acabar',
+        );
+      }
+    } catch (e) {
+      debugPrint('>>> [DataService] ⚠️ Pré-reserva NFC-e s$serie falhou: $e');
+    } finally {
+      _preReservandoFaixaNfce.remove(serie);
+    }
+  }
+
+  Future<bool> _numeroTemReservaCompartilhada({
+    required String tipo,
+    required String empresaId,
+    required int numero,
+  }) async {
+    final serie = tipo.startsWith('nfce_s') ? tipo.substring('nfce_s'.length) : '1';
+    try {
+      final faixa =
+          _faixasNfceAtual[serie] ?? await _faixas.lerLocal(tipo, empresaId);
+      return faixa != null && numero >= faixa.inicio && numero <= faixa.fim;
+    } catch (e) {
+      debugPrint('>>> [DataService] Falha ao validar reserva NFC-e: $e');
+      return false;
+    }
+  }
+
+  Future<void> _salvarCursorProximoNumeroNfce(
+    String serie,
+    int proximoNumero,
+  ) async {
+    final empresa = empresaAtual;
+    if (empresa == null || proximoNumero <= 0) return;
+    final chave = 'proximo_numero_nfce_s$serie';
+    final configuracoes = Map<String, dynamic>.from(
+      empresa.configuracoes ?? {},
+    );
+    final atual = int.tryParse(configuracoes[chave]?.toString() ?? '') ?? 0;
+    if (proximoNumero <= atual) return;
+    configuracoes[chave] = proximoNumero;
+    await atualizarDadosEmpresa(
+      empresa.copyWith(
+        configuracoes: configuracoes,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> _elevarPisoNfce(
+    String tipo,
+    String empresaId,
+    int numero,
+  ) async {
+    final chave = _faixas.chaveContador(tipo, empresaId);
+    try {
+      final client = SupabaseService.instance.client;
+      final linhas = await client
+          .from(FaixaNumeracaoService.tabelaContador)
+          .select('valor')
+          .eq('chave', chave)
+          .limit(1)
+          .timeout(const Duration(seconds: 4));
+      if (linhas.isEmpty) return;
+      final atual = int.tryParse('${linhas.first['valor']}') ?? 0;
+      if (numero < atual) return;
+      await client
+          .from(FaixaNumeracaoService.tabelaContador)
+          .update({'valor': '${numero + 1}'})
+          .eq('chave', chave)
+          .eq('valor', '$atual')
+          .timeout(const Duration(seconds: 4));
+    } catch (e) {
+      debugPrint('>>> [DataService] Falha ao avançar sequência NFC-e: $e');
     }
   }
 
@@ -12170,6 +12946,8 @@ class DataService extends ChangeNotifier {
     _faixaPedidoAtual = null;
     // Bloco de NFC-e também é por empresa/série: não pode vazar entre empresas.
     _faixasNfceAtual.clear();
+    _faixasNfceProxima.clear();
+    _preReservandoFaixaNfce.clear();
     // Nome do caixa é por empresa: trocar de empresa pode trocar o prefixo.
     await carregarIdentidadeDoCaixa();
 
@@ -12440,6 +13218,58 @@ class DataService extends ChangeNotifier {
     return 'SRV-${proximoNumero.toString().padLeft(4, '0')}';
   }
 
+  /// Registra um número que a SEFAZ confirmou ocupado por duplicidade 539.
+  /// A nota duplicada pode existir em outro caixa/sistema e não estar na lista
+  /// local; guardar uma pendente para o documento fiscal de terceiro seria
+  /// incorreto, então mantém apenas uma reserva de numeração usada nesta série.
+  Future<void> marcarNumeroNfceComoOcupado({
+    required int numero,
+    String serie = '1',
+  }) async {
+    if (numero <= 0) return;
+    final serieNorm = serie.trim().isEmpty ? '1' : serie.trim();
+    final existente = _nfces.any((nfce) {
+      final serieNfce = (nfce.serie ?? '').trim().isEmpty
+          ? '1'
+          : nfce.serie!.trim();
+      return serieNfce == serieNorm &&
+          int.tryParse(nfce.numero ?? '') == numero &&
+          (nfce.status == 'autorizada' ||
+              nfce.status == 'sucesso' ||
+              nfce.status == 'cancelada' ||
+              nfce.status == 'pendente' ||
+              nfce.status == 'contingencia' ||
+              nfce.status == 'inutilizada' ||
+              nfce.status == 'substituida' ||
+              nfce.status == 'rejeitada' ||
+              nfce.status == 'erro');
+    });
+    if (existente) return;
+
+    final idReserva = 'sefaz-ocupado-$serieNorm-$numero';
+    final reservaExistente = _nfces.any((nfce) => nfce.id == idReserva);
+    if (reservaExistente) return;
+
+    final agora = DateTime.now();
+    await adicionarNFCe(
+      NFCe(
+        id: 'sefaz-ocupado-$serieNorm-$numero',
+        numero: numero.toString(),
+        serie: serieNorm,
+        dataEmissao: agora,
+        empresaId: _currentEmpresaId ?? '',
+        itens: const [],
+        valorTotal: 0,
+        pagamentos: const [],
+        status: 'rejeitada',
+        xmlRetorno:
+            'Número reconhecido como ocupado pela SEFAZ (rejeição 539).',
+        createdAt: agora,
+        updatedAt: agora,
+      ),
+    );
+  }
+
   /// Próximo número da série de ORÇAMENTOS (ORC-0001, ORC-0002, ...).
   String getProximoNumeroOrcamento() {
     final Set<int> numerosExistentes = {};
@@ -12498,6 +13328,35 @@ class DataService extends ChangeNotifier {
     return 'AGD-${proximoNumero.toString().padLeft(4, '0')}';
   }
 
+  /// Números já usados de uma série: autorizadas, pendentes, canceladas e as
+  /// queimadas (inutilizada/substituída). É a lista que decide o menor livre
+  /// e, agora, também até onde um piso do caixa é confiável.
+  Set<int> _numerosNfceOcupados(String serieNorm) {
+    final ocupados = <int>{};
+    for (final nfce in _nfces) {
+      final serieNfce = (nfce.serie ?? '').trim().isEmpty
+          ? '1'
+          : nfce.serie!.trim();
+      if (serieNfce != serieNorm ||
+          !{
+            'autorizada',
+            'sucesso',
+            'cancelada',
+            'pendente',
+            'contingencia',
+            'inutilizada',
+            'substituida',
+            'rejeitada',
+            'erro',
+          }.contains(nfce.status)) {
+        continue;
+      }
+      final usado = int.tryParse(nfce.numero ?? '');
+      if (usado != null && usado > 0) ocupados.add(usado);
+    }
+    return ocupados;
+  }
+
   /// MENOR número DISPONÍVEL de NFC-e para a série informada.
   ///
   /// A numeração é POR SÉRIE: cada série da empresa tem sua própria sequência,
@@ -12512,7 +13371,11 @@ class DataService extends ChangeNotifier {
   /// Com o menor livre, a numeração volta para a sequência normal; o número
   /// pulado fica queimado (nunca é reusado, porque segue contando como usado —
   /// reusar um número já transmitido é rejeição 539 de duplicidade na SEFAZ).
-  int getProximoNumeroNfce({String serie = '1', int numeroInicial = 1}) {
+  int getProximoNumeroNfce({
+    String serie = '1',
+    int numeroInicial = 1,
+    int? numeroForcado,
+  }) {
     final serieNorm = serie.trim().isEmpty ? '1' : serie.trim();
     final Set<int> numerosExistentes = {};
 
@@ -12530,8 +13393,11 @@ class DataService extends ChangeNotifier {
               nfce.status == 'sucesso' ||
               nfce.status == 'cancelada' ||
               nfce.status == 'pendente' ||
+              nfce.status == 'contingencia' ||
               nfce.status == 'inutilizada' ||
-              nfce.status == 'substituida')) {
+              nfce.status == 'substituida' ||
+              nfce.status == 'rejeitada' ||
+              nfce.status == 'erro')) {
         // Série da nota: NFC-e antigas podem não ter série — trata como '1'
         final serieNfce = (nfce.serie ?? '').trim().isEmpty
             ? '1'
@@ -12544,11 +13410,42 @@ class DataService extends ChangeNotifier {
       }
     }
 
-    // 2. Contador da empresa ('ultimo_numero_nfce', só série 1).
-    //    Ele existe para a empresa que veio de outro sistema com a numeração já
-    //    avançada. Só vale como piso quando NÃO há nenhuma nota guardada: com
-    //    notas na mão, quem manda é a própria lista — é isso que impede um
-    //    contador inflado (791252835) de puxar a próxima venda para lá.
+    // Se o usuário informou um número manualmente, só aceitar se for livre.
+    // A verificação usa a mesma lista completa usada para calcular a sequência.
+    if (numeroForcado != null && numeroForcado > 0) {
+      return numerosExistentes.contains(numeroForcado) ? -1 : numeroForcado;
+    }
+
+    // O cursor por série registra a próxima sequência depois de uma emissão
+    // manual. Sem ele, por exemplo, emitir manualmente o 333 fazia a sugestão
+    // voltar para 142 só porque havia notas antigas com números menores.
+    // Pisos do caixa (cursor manual e bloco reservado) só valem enquanto não
+    // estiverem muito acima da sequência REAL da série. Um número ilha aceito
+    // como piso (artefato de timestamp, ex.: 791252836) arrastava a sugestão
+    // — e a nota seguinte — para cima e nunca mais voltava.
+    final tetoPiso = tetoPisoNfce(
+      numerosUsados: numerosExistentes,
+      numeroInicial: numeroInicial,
+    );
+    final cursorSerie = pisoCredivelNfce(
+      int.tryParse(
+        empresaAtual?.configuracoes?['proximo_numero_nfce_s$serieNorm']
+                ?.toString() ??
+            '',
+      ),
+      tetoPiso,
+    );
+    final proximoFaixa = pisoCredivelNfce(
+      _faixasNfceAtual[serieNorm]?.proximo,
+      tetoPiso,
+    );
+    final pisoSequencia = [
+      numeroInicial > 0 ? numeroInicial : 1,
+      if (cursorSerie != null && cursorSerie > 0) cursorSerie,
+      if (proximoFaixa != null && proximoFaixa > 0) proximoFaixa,
+    ].reduce((a, b) => a > b ? a : b);
+
+    // Contador da empresa é uma pista apenas para empresas migradas sem notas.
     int? contadorEmpresa;
     if (serieNorm == '1' && empresaAtual?.configuracoes != null) {
       contadorEmpresa = int.tryParse(
@@ -12556,10 +13453,9 @@ class DataService extends ChangeNotifier {
       );
     }
 
-    // 3. Menor livre a partir do piso.
     return menorNumeroLivreNfce(
       numerosUsados: numerosExistentes,
-      numeroInicial: numeroInicial,
+      numeroInicial: pisoSequencia,
       ultimoNumeroDaEmpresa: contadorEmpresa,
     );
   }
@@ -12601,6 +13497,88 @@ class DataService extends ChangeNotifier {
       numero++;
     }
     return numero;
+  }
+
+  /// Janela que separa a sequência real da loja de um número ILHA.
+  ///
+  /// Um valor fora da ordem (ex.: 791252835 — artefato do fallback de
+  /// timestamp do bridge) vira nota, vira cursor, vira contador da nuvem… e,
+  /// sem esta régua, TODA venda seguinte passa a sair dali para cima. Número
+  /// ilha continua contando como usado (reusar é rejeição 539), só não manda
+  /// na sequência.
+  static const int janelaSaltoNfce = 1000;
+
+  /// Primeiro número da sequência da série — a mesma régua usada por
+  /// [menorNumeroLivreNfce]: começa no [numeroInicial] e só sobe para o menor
+  /// número registrado se ele estiver dentro da janela.
+  static int inicioSequenciaNfce({
+    required Iterable<int> numerosUsados,
+    int numeroInicial = 1,
+  }) {
+    final inicio = numeroInicial > 0 ? numeroInicial : 1;
+    if (numerosUsados.isEmpty) return inicio;
+    final menorUsado = numerosUsados.reduce((a, b) => a < b ? a : b);
+    if (menorUsado > inicio && menorUsado <= inicio + janelaSaltoNfce) {
+      return menorUsado;
+    }
+    return inicio;
+  }
+
+  /// Cabeça real da série: o maior número registrado DENTRO da janela que
+  /// começa na sequência. Números acima disso são ilhas e ficam de fora.
+  ///
+  /// Devolve null quando não há nenhuma nota na janela (lista vazia ou só
+  /// ilhas) — nesses casos não dá para saber onde a série está.
+  static int? cabecaSequenciaNfce({
+    required Iterable<int> numerosUsados,
+    int numeroInicial = 1,
+  }) {
+    if (numerosUsados.isEmpty) return null;
+    final inicio = inicioSequenciaNfce(
+      numerosUsados: numerosUsados,
+      numeroInicial: numeroInicial,
+    );
+    int? cabeca;
+    for (final n in numerosUsados) {
+      if (n < inicio || n > inicio + janelaSaltoNfce) continue;
+      if (cabeca == null || n > cabeca) cabeca = n;
+    }
+    return cabeca;
+  }
+
+  /// Até onde um piso do caixa (cursor manual, bloco reservado) ainda é
+  /// confiável nesta série: a cabeça da sequência mais a janela.
+  ///
+  /// Devolve null quando não há evidência nenhuma (sem notas): aí os pisos
+  /// valem como estão — é o caso da empresa migrada, que já chega numerando
+  /// em outro lugar.
+  static int? tetoPisoNfce({
+    required Iterable<int> numerosUsados,
+    int numeroInicial = 1,
+  }) {
+    if (numerosUsados.isEmpty) return null;
+    final inicio = inicioSequenciaNfce(
+      numerosUsados: numerosUsados,
+      numeroInicial: numeroInicial,
+    );
+    final cabeca = cabecaSequenciaNfce(
+      numerosUsados: numerosUsados,
+      numeroInicial: numeroInicial,
+    );
+    return (cabeca ?? inicio) + janelaSaltoNfce;
+  }
+
+  /// Mantém o piso do caixa só se ele não estiver além do teto da série.
+  static int? pisoCredivelNfce(int? piso, int? tetoPiso) {
+    if (piso == null) return null;
+    if (tetoPiso != null && piso > tetoPiso) {
+      debugPrint(
+        '>>> [DataService] 🧹 Piso NFC-e $piso descartado '
+        '(fora da sequência, teto $tetoPiso)',
+      );
+      return null;
+    }
+    return piso;
   }
 
   // Migra agendamentos antigos que não têm número válido
@@ -15515,7 +16493,7 @@ class DataService extends ChangeNotifier {
       // Buscar sync_version remoto
       final result = await _supabaseService.client
           .from(SupabaseService.tableEmpresas)
-          .select('configuracoes')
+          .select('configuracoes, updated_at')
           .eq('id', _currentEmpresaId!)
           .maybeSingle()
           .timeout(const Duration(seconds: 5));
@@ -15524,6 +16502,40 @@ class DataService extends ChangeNotifier {
 
       final config = result['configuracoes'] as Map<String, dynamic>?;
       if (config == null) return;
+
+      // SYNC DAS LISTAS-VIVAS (perfis tributarios / perfis de preco):
+      // este pulso JA trouxe a copia da nuvem da linha `empresas` -- a tabela
+      // que nenhuma recarga aplica (o `carregarTudoDoSupabase` nao a baixa).
+      // Comparamos os carimbos das listas para: 1. adotar a copia da nuvem
+      // quando ela for a mais nova (direcao nuvem -> local que nao existia);
+      // 2. enviar a local quando ela ficar na frente (ex.: perfil editado com
+      // a nuvem fora do ar -- o push da epoca falhou e ninguem repete).
+      try {
+        final configLocal = _empresaAtual?.configuracoes;
+        final rawRemota = result['updated_at'];
+        final updatedAtRemota = rawRemota == null
+            ? null
+            : DateTime.tryParse(rawRemota.toString())?.toUtc();
+        if (configLocal != null &&
+            config.isNotEmpty &&
+            updatedAtRemota != null) {
+          final resultadoMescla = _mesclarListasVivasComNuvem(
+            configLocal: configLocal,
+            configRemota: Map<String, dynamic>.from(config),
+            updatedAtLocal: _empresaAtual!.updatedAt,
+            updatedAtRemota: updatedAtRemota,
+          );
+          final mesclado = resultadoMescla.$1;
+          final remotaVenceu = resultadoMescla.$2;
+          if (remotaVenceu) {
+            await _adotarListasVivasDaNuvem(_empresaAtual!, mesclado);
+          } else if (_listasVivasLocaisMaisNovas(configLocal, config)) {
+            unawaited(_subirEmpresaMesclandoListasVivas(_empresaAtual!));
+          }
+        }
+      } catch (e) {
+        debugPrint('>>> [Sync] Erro ao mesclar listas-vivas (perfis) no pulso: $e');
+      }
 
       // sync_version pode vir como int OU String do Supabase
       final rawRemote = config['sync_version'];
@@ -16062,6 +17074,7 @@ class DataService extends ChangeNotifier {
                 table,
                 data,
                 empresaId: empresaDaOperacao,
+                enfileirarSeFalhar: false,
               );
             }
           },
@@ -16126,6 +17139,14 @@ class DataService extends ChangeNotifier {
   /// que o upsert ainda está no ar e o valor da nuvem é mais antigo.
   final Map<String, DateTime> _enviosLocaisEmCurso = {};
   static const Duration _janelaProtecaoEnvioLocal = Duration(seconds: 120);
+
+  /// Última vez que ESTE PC enviou algo para cada tabela.
+  ///
+  /// Serve para ignorar o ECO do próprio envio no Realtime: sem isso, cada
+  /// gravação local voltava como "mudança na nuvem" e disparava uma puxada +
+  /// rebuild da tela inteira — no PDV isso travava as setas/quantidades.
+  final Map<String, DateTime> _ultimoEnvioLocalPorTabela = {};
+  static const Duration _janelaEcoRealtime = Duration(seconds: 6);
 
   /// IDs apagados LOCALMENTE há pouco (id -> quando). Serve de "túmulo" em
   /// memória: impede que um snapshot/pull MAIS ANTIGO da nuvem ressuscite o
@@ -16378,6 +17399,46 @@ class DataService extends ChangeNotifier {
     final serieNota = (nfce.serie ?? '').trim().isEmpty
         ? '1'
         : nfce.serie!.trim();
+    final statusNota = nfce.status?.toLowerCase() ?? '';
+    if (!isNfe &&
+        nfce.numero.isNotEmpty &&
+        empresaAtual != null &&
+        {
+          'autorizada',
+          'sucesso',
+          'cancelada',
+          'pendente',
+          'contingencia',
+          'inutilizada',
+          'substituida',
+          'rejeitada',
+          'erro',
+        }.contains(statusNota)) {
+      final numeroSequencia = int.tryParse(nfce.numero);
+      if (numeroSequencia != null && numeroSequencia > 0) {
+        final chaveSequencia = 'proximo_numero_nfce_s$serieNota';
+        final proximoConfigurado =
+            int.tryParse(
+              empresaAtual!.configuracoes?[chaveSequencia]?.toString() ?? '0',
+            ) ??
+            0;
+        if (numeroSequencia >= proximoConfigurado) {
+          final novasConfigs = Map<String, dynamic>.from(
+            empresaAtual!.configuracoes ?? {},
+          )..[chaveSequencia] = numeroSequencia + 1;
+          final empresaAtualizada = empresaAtual!.copyWith(
+            configuracoes: novasConfigs,
+            updatedAt: DateTime.now(),
+          );
+          // Cursor da série fora do caminho da emissão: o número novo já vale
+          // em memória (o setEmpresaAtual no início de atualizarDadosEmpresa é
+          // síncrono), então a próxima nota segue a sequência mesmo que a gravação
+          // na nuvem ainda esteja em andamento. Antes este `await` segurava a
+          // tela "Emitindo sua NFC-e..." pela latência da internet.
+          unawaited(atualizarDadosEmpresa(empresaAtualizada));
+        }
+      }
+    }
     if (asSucesso &&
         serieNota == '1' &&
         nfce.numero.isNotEmpty &&
@@ -16401,24 +17462,25 @@ class DataService extends ChangeNotifier {
           updatedAt: DateTime.now(),
         );
 
-        // Atualiza localmente
-        setEmpresaAtual(empresaAtualizada);
-
-        // Salvar no Supabase também
-        await _upsertNoSupabase(
-          SupabaseService.tableEmpresas,
-          empresaAtualizada.toMap(),
-        );
+        // Numeração também fora do caminho da emissão: o que as próximas notas
+        // precisam é do número novo em memória, e isso o setEmpresaAtual (no
+        // início de atualizarDadosEmpresa) já resolve de forma síncrona. Antes
+        // este ponto esperava o upsert da empresa na nuvem, segurando a tela
+        // "Emitindo sua NFC-e..." pela latência da internet.
+        unawaited(atualizarDadosEmpresa(empresaAtualizada));
       }
     }
 
     notifyListeners();
+    // Nuvem fora do caminho da emissão: a nota já está em memória e marcada
+    // como suja (o flush local persiste e a fila de sync leva para o Supabase).
+    // Com o `await`, a tela de emissão ficava esperando a rede responder.
     if (isNfe) {
       _marcarSujo(LocalStorageService.keyNFEs);
-      await _upsertNoSupabase(SupabaseService.tableNFEs, nfce.toMap());
+      unawaited(_upsertNoSupabase(SupabaseService.tableNFEs, nfce.toMap()));
     } else {
       _marcarSujo(LocalStorageService.keyNFCes);
-      await _upsertNoSupabase(SupabaseService.tableNFCes, nfce.toMap());
+      unawaited(_upsertNoSupabase(SupabaseService.tableNFCes, nfce.toMap()));
     }
     _sincronizarNotasComDrive();
   }
@@ -16453,6 +17515,46 @@ class DataService extends ChangeNotifier {
     final serieNota = (nfce.serie ?? '').trim().isEmpty
         ? '1'
         : nfce.serie!.trim();
+    final statusNota = nfce.status?.toLowerCase() ?? '';
+    if (!isNfe &&
+        nfce.numero.isNotEmpty &&
+        empresaAtual != null &&
+        {
+          'autorizada',
+          'sucesso',
+          'cancelada',
+          'pendente',
+          'contingencia',
+          'inutilizada',
+          'substituida',
+          'rejeitada',
+          'erro',
+        }.contains(statusNota)) {
+      final numeroSequencia = int.tryParse(nfce.numero);
+      if (numeroSequencia != null && numeroSequencia > 0) {
+        final chaveSequencia = 'proximo_numero_nfce_s$serieNota';
+        final proximoConfigurado =
+            int.tryParse(
+              empresaAtual!.configuracoes?[chaveSequencia]?.toString() ?? '0',
+            ) ??
+            0;
+        if (numeroSequencia >= proximoConfigurado) {
+          final novasConfigs = Map<String, dynamic>.from(
+            empresaAtual!.configuracoes ?? {},
+          )..[chaveSequencia] = numeroSequencia + 1;
+          final empresaAtualizada = empresaAtual!.copyWith(
+            configuracoes: novasConfigs,
+            updatedAt: DateTime.now(),
+          );
+          // Cursor da série fora do caminho da emissão: o número novo já vale
+          // em memória (o setEmpresaAtual no início de atualizarDadosEmpresa é
+          // síncrono), então a próxima nota segue a sequência mesmo que a gravação
+          // na nuvem ainda esteja em andamento. Antes este `await` segurava a
+          // tela "Emitindo sua NFC-e..." pela latência da internet.
+          unawaited(atualizarDadosEmpresa(empresaAtualizada));
+        }
+      }
+    }
     if (asSucesso &&
         serieNota == '1' &&
         nfce.numero.isNotEmpty &&
@@ -16862,6 +17964,107 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Id da comanda VIRTUAL que guarda os itens deletados do carrinho do PDV.
+  /// Ela nunca aparece nas telas de mesas/comandas (as telas já excluem este
+  /// id) e o status fica fora de 'Aberta' para não entrar nas listas de mesas
+  /// abertas — existe só para o fechamento e o fluxo de caixa auditarem o que
+  /// saiu do carrinho sem virar venda.
+  static const String carrinhoDeletadosId = 'carrinho-deletados';
+
+  /// Comanda virtual de auditoria dos itens deletados no PDV (null se ainda
+  /// não houve nenhuma deleção).
+  MesaComanda? get comandaDeletadosPDV {
+    for (final m in _mesasComandas) {
+      if (m.id == carrinhoDeletadosId) return m;
+    }
+    return null;
+  }
+
+  /// Itens deletados do carrinho do PDV dentro da janela [inicio, fim].
+  List<ItemMesaComanda> itensDeletadosNoPDV({DateTime? inicio, DateTime? fim}) {
+    final mc = comandaDeletadosPDV;
+    if (mc == null) return const [];
+    return mc.itens.where((i) {
+      final data = i.dataModificacao ?? i.dataHora;
+      if (inicio != null && data.isBefore(inicio)) return false;
+      if (fim != null && data.isAfter(fim)) return false;
+      return true;
+    }).toList();
+  }
+
+  /// Registra um item que saiu do carrinho do PDV sem virar venda (deleção
+  /// avulsa, limpeza do carrinho, remoção de item de pedido aberto). Fica
+  /// gravado na comanda virtual [carrinhoDeletadosId] — fonte do bloco
+  /// "Itens Deletados" do fechamento e das linhas deletadas do Fluxo de Caixa.
+  Future<void> registrarItemDeletadoNoPDV({
+    required String produtoId,
+    required String nome,
+    required double quantidade,
+    required double preco,
+    String? usuario,
+    String? origem,
+  }) async {
+    try {
+      final agora = DateTime.now();
+      final item = ItemMesaComanda(
+        id: uuid.v4(),
+        itemId: produtoId,
+        nome: nome,
+        quantidade: quantidade,
+        preco: preco,
+        status: StatusItem.cancelado,
+        dataHora: agora,
+        dataModificacao: agora,
+        usuarioCriou: usuario,
+        usuarioModificou: usuario,
+        acaoRealizada: origem == null || origem.isEmpty
+            ? 'Removido do PDV'
+            : 'Removido do PDV ($origem)',
+      );
+
+      final index = _mesasComandas.indexWhere(
+        (m) => m.id == carrinhoDeletadosId,
+      );
+      if (index == -1) {
+        final nova = MesaComanda(
+          id: carrinhoDeletadosId,
+          tipo: TipoControle.comanda,
+          numero: 'DELETADOS',
+          status: 'Auditoria',
+          observacao: 'Itens removidos do carrinho do PDV (auditoria)',
+          itens: [item],
+          dataAbertura: agora,
+          usuarioCriou: usuario,
+          usuarioModificou: usuario,
+        );
+        await addMesaComanda(nova);
+      } else {
+        final atual = _mesasComandas[index];
+        // Poda: guarda só os últimos 90 dias (máx. 2000 itens) para a
+        // comanda de auditoria não crescer sem limite.
+        final limite = agora.subtract(const Duration(days: 90));
+        final mantidos = atual.itens
+            .where((i) => (i.dataModificacao ?? i.dataHora).isAfter(limite))
+            .toList();
+        mantidos.add(item);
+        final itens = mantidos.length > 2000
+            ? mantidos.sublist(mantidos.length - 2000)
+            : mantidos;
+        await updateMesaComanda(
+          atual.copyWith(
+            itens: itens,
+            usuarioModificou: usuario,
+            updatedAt: agora,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint(
+        '>>> [DataService] ❌ Erro ao registrar item deletado do PDV: $e',
+      );
+    }
+  }
+
   /// Remove uma mesa ou comanda
   Future<void> deleteMesaComanda(String id) async {
     debugPrint('>>> [DataService] 🗑️ Iniciando deleção da Mesa/Comanda: $id');
@@ -17202,19 +18405,31 @@ class DataService extends ChangeNotifier {
     String? usuarioModificou,
     String? acaoRealizada,
   }) async {
-    debugPrint('>>> [DataService] atualizarStatusItemMesaComanda: mesa=$mesaComandaId item=$itemId novoStatus=$novoStatus');
+    debugPrint(
+      '>>> [DataService] atualizarStatusItemMesaComanda: mesa=$mesaComandaId item=$itemId novoStatus=$novoStatus',
+    );
     final mesaComanda = _mesasComandas.firstWhere(
       (m) => m.id == mesaComandaId,
-      orElse: () => throw Exception('Mesa/Comanda não encontrada: $mesaComandaId (total: ${_mesasComandas.length})'),
+      orElse: () => throw Exception(
+        'Mesa/Comanda não encontrada: $mesaComandaId (total: ${_mesasComandas.length})',
+      ),
     );
-    debugPrint('>>> [DataService] Mesa encontrada: ${mesaComanda.numero}, itens: ${mesaComanda.itens.length}');
+    debugPrint(
+      '>>> [DataService] Mesa encontrada: ${mesaComanda.numero}, itens: ${mesaComanda.itens.length}',
+    );
 
     final itemIndex = mesaComanda.itens.indexWhere((i) => i.id == itemId);
     if (itemIndex == -1) {
-      debugPrint('>>> [DataService] Itens na mesa: ${mesaComanda.itens.map((i) => '${i.nome}(${i.id})').join(', ')}');
-      throw Exception('Item não encontrado: $itemId na mesa ${mesaComanda.numero} (${mesaComanda.itens.length} itens)');
+      debugPrint(
+        '>>> [DataService] Itens na mesa: ${mesaComanda.itens.map((i) => '${i.nome}(${i.id})').join(', ')}',
+      );
+      throw Exception(
+        'Item não encontrado: $itemId na mesa ${mesaComanda.numero} (${mesaComanda.itens.length} itens)',
+      );
     }
-    debugPrint('>>> [DataService] Item encontrado no índice $itemIndex: ${mesaComanda.itens[itemIndex].nome}');
+    debugPrint(
+      '>>> [DataService] Item encontrado no índice $itemIndex: ${mesaComanda.itens[itemIndex].nome}',
+    );
 
     final acao = acaoRealizada ?? _getAcaoPorStatus(novoStatus);
     final itemAtualizado = mesaComanda.itens[itemIndex].copyWith(
@@ -17232,9 +18447,7 @@ class DataService extends ChangeNotifier {
 
     // Usar copyWith para preservar TODOS os campos, incluindo couvert, garçom, pagamentos, etc.
     // Recalcular total com base nos itens atualizados
-    final mesaComTemp = mesaComanda.copyWith(
-      itens: itensAtualizados,
-    );
+    final mesaComTemp = mesaComanda.copyWith(itens: itensAtualizados);
     final mesaComandaAtualizada = mesaComanda.copyWith(
       itens: itensAtualizados,
       total: mesaComTemp.totalCalculado,
@@ -17242,7 +18455,9 @@ class DataService extends ChangeNotifier {
       usuarioModificou: usuarioModificou,
     );
 
-    debugPrint('>>> [DataService] Atualizando mesa ${mesaComanda.numero} com item ${mesaComanda.itens[itemIndex].nome} -> status $novoStatus');
+    debugPrint(
+      '>>> [DataService] Atualizando mesa ${mesaComanda.numero} com item ${mesaComanda.itens[itemIndex].nome} -> status $novoStatus',
+    );
     await updateMesaComanda(mesaComandaAtualizada);
     debugPrint('>>> [DataService] Mesa atualizada com sucesso');
   }
@@ -19231,6 +20446,59 @@ class DataService extends ChangeNotifier {
         icmsCst: '60',
       ),
     );
+    // ── IBS/CBS: TRANSIÇÃO 2026 (NT 2025.002) ────────────────────────────
+    // Perfis criados antes do leiaute novo traziam CST de 2 dígitos (herança
+    // do ICMS: '01', '00') e alíquotas soltas. O emissor não consegue montar o
+    // grupo <IBSCBS> com um CST de 2 dígitos, então a nota saía SEM IBS/CBS.
+    // Converte uma única vez para o leiaute novo (CST 000 / cClassTrib 000001
+    // / IBS 0,10% / CBS 0,90%, alíquotas da transição de 2026). Depois disso o
+    // perfil fica com CST de 3 dígitos e a conversão não roda mais, preservando
+    // qualquer ajuste que o usuário fizer na tela.
+    // CST de 2 dígitos que a tela oferecia antes (herança do ICMS) → CST de
+    // 3 dígitos do IBS/CBS. Sem este mapa o perfil caía sempre em '000'.
+    const mapaCstLegado = <String, String>{
+      '01': '000', // tributada integralmente
+      '02': '200', // regime diferenciado / redução
+      '03': '400', // isenta ou não tributada
+      '04': '200', // alíquota zero = redução de 100%
+      '05': '410', // imune
+      '06': '550', // suspensa
+      '07': '620', // monofásica
+      '08': '820', // regimes específicos
+    };
+    String normalizarCstIbsCbs(String? atual) {
+      final valor = (atual ?? '').trim();
+      if (valor.length == 3) return valor;
+      return mapaCstLegado[valor] ?? '000';
+    }
+
+    for (int i = 0; i < _perfisTributarios.length; i++) {
+      final p = _perfisTributarios[i];
+      final cstIbsNovo = normalizarCstIbsCbs(p.cstIbs);
+      final cstCbsNovo = normalizarCstIbsCbs(p.cstCbs);
+      final classTribNovo = (p.classTrib ?? '').length == 6
+          ? p.classTrib
+          : '000001';
+      if (cstIbsNovo == p.cstIbs &&
+          cstCbsNovo == p.cstCbs &&
+          classTribNovo == p.classTrib) {
+        continue;
+      }
+      _perfisTributarios[i] = p.copyWith(
+        cstIbs: cstIbsNovo,
+        cstCbs: cstCbsNovo,
+        classTrib: classTribNovo,
+        // As alíquotas da transição só PREENCHEM um perfil que nunca teve
+        // valor. Antes elas substituíam o que o usuário digitou sempre que o
+        // CST não tinha 3 dígitos — e, como `atualizarDadosEmpresa` recarrega
+        // os perfis logo depois de salvar, a alíquota voltava para 0,10/0,90
+        // na mesma hora ("alíquota do IBS/CBS não persiste").
+        aliquotaIbs: p.aliquotaIbs ?? 0.10,
+        aliquotaCbs: p.aliquotaCbs ?? 0.90,
+      );
+      mudou = true;
+    }
+
     // Invariante: UM perfil PADRÃO por regime (ver padroesUnicosPorRegime).
     final padroesAntes = _perfisTributarios.where((p) => p.isDefault).length;
     final normalizados = padroesUnicosPorRegime(_perfisTributarios);
@@ -19272,6 +20540,13 @@ class DataService extends ChangeNotifier {
       novasConfigs['perfis_tributarios'] = _perfisTributarios
           .map((p) => p.toMap())
           .toList();
+      // Carimbo PRÓPRIO da lista: é ele que decide, no merge com outra máquina
+      // (ou com o site), qual cópia dos impostos é a mais nova. Sem ele o
+      // merge dava vitória fixa ao cache local e a edição feita aqui nunca
+      // aparecia no portal.
+      novasConfigs[chavePerfisTributariosAtualizadoEm] = DateTime.now()
+          .toUtc()
+          .toIso8601String();
       await atualizarDadosEmpresa(
         empresa.copyWith(configuracoes: novasConfigs),
       );
@@ -19319,6 +20594,17 @@ class DataService extends ChangeNotifier {
 
     // PERSISTÊNCIA NO BANCO: gravar na configuração da empresa (PostgreSQL local + Supabase)
     await _persistirPerfisTributariosNaEmpresa();
+    // A tabela dedicada é usada pelos fluxos de sincronização e relatórios.
+    // Atualiza todos os perfis porque salvar um padrão também desmarca os
+    // demais perfis do mesmo regime.
+    for (final perfilAtual in List<PerfilTributario>.from(
+      _perfisTributarios,
+    )) {
+      await _upsertNoSupabase(
+        'perfis_tributarios',
+        perfilAtual.toMap(),
+      );
+    }
     notifyListeners();
   }
 
@@ -19331,6 +20617,7 @@ class DataService extends ChangeNotifier {
       _perfisTributarios.map((p) => p.toMap()).toList(),
     );
     await _persistirPerfisTributariosNaEmpresa();
+    await _deleteNoSupabase('perfis_tributarios', perfilId);
     notifyListeners();
   }
 
@@ -19527,6 +20814,9 @@ class DataService extends ChangeNotifier {
       novasConfigs['departamentos'] = _departamentos
           .map((d) => d.toMap())
           .toList();
+      novasConfigs[chaveDepartamentosAtualizadoEm] = DateTime.now()
+          .toUtc()
+          .toIso8601String();
       await atualizarDadosEmpresa(
         empresa.copyWith(configuracoes: novasConfigs),
       );
@@ -19556,6 +20846,10 @@ class DataService extends ChangeNotifier {
       _departamentos.map((d) => d.toMap()).toList(),
     );
     await _persistirDepartamentosNaEmpresa();
+    await _upsertNoSupabase(
+      'departamentos',
+      departamento.toMap(),
+    );
     notifyListeners();
   }
 
@@ -19584,6 +20878,7 @@ class DataService extends ChangeNotifier {
       _departamentos.map((d) => d.toMap()).toList(),
     );
     await _persistirDepartamentosNaEmpresa();
+    await _deleteNoSupabase('departamentos', departamentoId);
     notifyListeners();
   }
 
@@ -19796,6 +21091,9 @@ class DataService extends ChangeNotifier {
   /// (principal) e Depósito para o recurso já funcionar.
   void _carregarEstoquesDaEmpresa() {
     if (_empresaAtual == null) return;
+    // Marca de origem ANTES de qualquer leitura: é ela que os escritores
+    // conferem antes de gravar (ver _estoquesPertencemAEmpresaAberta).
+    _estoquesDaEmpresaId = _empresaAtual!.id;
     _estoques.clear();
     final raw = _empresaAtual?.configuracoes?['estoques'];
     if (raw is List && raw.isNotEmpty) {
@@ -19903,6 +21201,9 @@ class DataService extends ChangeNotifier {
         empresa.configuracoes ?? {},
       );
       novasConfigs['estoques'] = _estoques.map((e) => e.toMap()).toList();
+      novasConfigs[chaveEstoquesAtualizadoEm] = DateTime.now()
+          .toUtc()
+          .toIso8601String();
       await atualizarDadosEmpresa(
         empresa.copyWith(configuracoes: novasConfigs),
       );
@@ -19915,8 +21216,27 @@ class DataService extends ChangeNotifier {
     }
   }
 
+  /// Trava de isolamento: a lista em memória precisa ser da empresa aberta
+  /// (mesma origem do carregamento e mesmo id fixado no DataService). Se não
+  /// for, gravá-la sob a chave da empresa aberta misturaria estoques entre
+  /// empresas — recusamos e avisamos.
+  bool _estoquesPertencemAEmpresaAberta() {
+    final atual = _currentEmpresaId;
+    if (atual == null || atual.isEmpty) return false;
+    if (_estoquesDaEmpresaId != atual) return false;
+    if (_empresaAtual?.id != atual) return false;
+    return true;
+  }
+
   /// Salva (cria ou atualiza) um estoque. Só UM fica como principal.
   Future<void> salvarEstoque(Estoque estoque) async {
+    if (!_estoquesPertencemAEmpresaAberta()) {
+      debugPrint(
+        '>>> [Estoques] salvarEstoque recusado: lista em memória é de '
+        '$_estoquesDaEmpresaId, empresa aberta é $_currentEmpresaId.',
+      );
+      return;
+    }
     final index = _estoques.indexWhere((e) => e.id == estoque.id);
     if (index >= 0) {
       _estoques[index] = estoque;
@@ -19943,6 +21263,13 @@ class DataService extends ChangeNotifier {
 
   /// Define qual estoque é o principal ("o meu").
   Future<void> definirEstoquePrincipal(String estoqueId) async {
+    if (!_estoquesPertencemAEmpresaAberta()) {
+      debugPrint(
+        '>>> [Estoques] definirEstoquePrincipal recusado: lista em memória é de '
+        '$_estoquesDaEmpresaId, empresa aberta é $_currentEmpresaId.',
+      );
+      return;
+    }
     for (int i = 0; i < _estoques.length; i++) {
       _estoques[i] = _estoques[i].copyWith(
         principal: _estoques[i].id == estoqueId,
@@ -19958,6 +21285,13 @@ class DataService extends ChangeNotifier {
   /// o saldo do produto desapareceria) e os produtos que o tinham como padrão
   /// passam a usar o principal.
   Future<void> excluirEstoque(String estoqueId) async {
+    if (!_estoquesPertencemAEmpresaAberta()) {
+      debugPrint(
+        '>>> [Estoques] excluirEstoque recusado: lista em memória é de '
+        '$_estoquesDaEmpresaId, empresa aberta é $_currentEmpresaId.',
+      );
+      return;
+    }
     final principal = estoquePrincipalAtual?.id;
     if (principal == null || principal == estoqueId) {
       debugPrint(
@@ -20406,9 +21740,7 @@ class DataService extends ChangeNotifier {
 
     return produto.copyWith(
       perfilTributarioId: perfil.id,
-      cfop: _codigoOuNulo(produto.cfop) ??
-          _codigoOuNulo(perfil.cfop) ??
-          '5102',
+      cfop: _codigoOuNulo(produto.cfop) ?? _codigoOuNulo(perfil.cfop) ?? '5102',
       csosn: paraSimples
           ? (_codigoOuNulo(perfil.csosn) ?? '102')
           : produto.csosn,

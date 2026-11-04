@@ -18,13 +18,17 @@ import '../services/pacote_contabil_service.dart';
 import 'dart:io';
 import '../services/nfce_xml_local_service.dart';
 import '../services/nfce_contingencia_service.dart';
+import '../services/nfce_duplicidade_helper.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../pages/html_helper_stub.dart' if (dart.library.html) '../pages/html_helper_web.dart' as html_helper;
+import '../pages/html_helper_stub.dart'
+    if (dart.library.html) '../pages/html_helper_web.dart'
+    as html_helper;
 
 class HistoricoNFCePDVDialog extends StatefulWidget {
   final Empresa empresa;
 
-  const HistoricoNFCePDVDialog({Key? key, required this.empresa}) : super(key: key);
+  const HistoricoNFCePDVDialog({Key? key, required this.empresa})
+    : super(key: key);
 
   @override
   _HistoricoNFCePDVDialogState createState() => _HistoricoNFCePDVDialogState();
@@ -41,7 +45,8 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
 
   final TextEditingController _buscaController = TextEditingController();
   DateTimeRange? _periodoFiltro;
-  String? _filtroStatus; // null = todas; 'total', 'autorizada', 'pendente', 'erro', 'cancelada'
+  String?
+  _filtroStatus; // null = todas; 'total', 'autorizada', 'pendente', 'erro', 'cancelada'
 
   @override
   void initState() {
@@ -60,13 +65,17 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     setState(() => _isLoading = true);
     try {
       final dataService = Provider.of<DataService>(context, listen: false);
-      
+
       // 1. Carrega instantaneamente as NFC-es locais da memória/PostgreSQL.
       //    Só NFC-e: NF-e (DANFE, modelo 55) tem a sua própria tela.
       final localTodas = List<NFCe>.from(dataService.nfces);
       final localNfces = localTodas.where((n) => n.ehNFCe).toList();
-      localNfces.sort((a, b) => (b.createdAt ?? DateTime.now()).compareTo(a.createdAt ?? DateTime.now()));
-      
+      localNfces.sort(
+        (a, b) => (b.createdAt ?? DateTime.now()).compareTo(
+          a.createdAt ?? DateTime.now(),
+        ),
+      );
+
       setState(() {
         _todasNfces = localNfces;
         _nfesOcultas = localTodas.where((n) => n.ehNFe).length;
@@ -83,9 +92,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           descending: true,
           limit: 200,
         );
-            
+
         final serverTodas = results.map((map) => NFCe.fromMap(map)).toList();
-        
+
         // Merge das notas locais com as do servidor (4. todas, 5. depois separa)
         final Map<String, NFCe> mergeMap = {};
         for (final n in localTodas) {
@@ -94,11 +103,15 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         for (final n in serverTodas) {
           mergeMap[n.id] = n;
         }
-        
+
         final todasMerged = mergeMap.values.toList();
         final mergedList = todasMerged.where((n) => n.ehNFCe).toList();
-        mergedList.sort((a, b) => (b.createdAt ?? DateTime.now()).compareTo(a.createdAt ?? DateTime.now()));
-        
+        mergedList.sort(
+          (a, b) => (b.createdAt ?? DateTime.now()).compareTo(
+            a.createdAt ?? DateTime.now(),
+          ),
+        );
+
         if (mounted) {
           setState(() {
             _todasNfces = mergedList;
@@ -126,25 +139,42 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           final n = nfce.numero?.toLowerCase() ?? '';
           final idVenda = nfce.vendaId?.toLowerCase() ?? nfce.id.toLowerCase();
           final numVenda = nfce.vendaNumero?.toLowerCase() ?? '';
-          matchTermo = n.contains(termo) || idVenda.contains(termo) || numVenda.contains(termo);
+          matchTermo =
+              n.contains(termo) ||
+              idVenda.contains(termo) ||
+              numVenda.contains(termo);
         }
 
         bool matchData = true;
         if (_periodoFiltro != null && nfce.createdAt != null) {
           final data = nfce.createdAt!;
           // Normalizar para comparação de datas apenas (sem horas)
-          final inicio = DateTime(_periodoFiltro!.start.year, _periodoFiltro!.start.month, _periodoFiltro!.start.day);
-          final fim = DateTime(_periodoFiltro!.end.year, _periodoFiltro!.end.month, _periodoFiltro!.end.day, 23, 59, 59);
-          matchData = data.isAfter(inicio.subtract(const Duration(seconds: 1))) && 
-                      data.isBefore(fim.add(const Duration(seconds: 1)));
+          final inicio = DateTime(
+            _periodoFiltro!.start.year,
+            _periodoFiltro!.start.month,
+            _periodoFiltro!.start.day,
+          );
+          final fim = DateTime(
+            _periodoFiltro!.end.year,
+            _periodoFiltro!.end.month,
+            _periodoFiltro!.end.day,
+            23,
+            59,
+            59,
+          );
+          matchData =
+              data.isAfter(inicio.subtract(const Duration(seconds: 1))) &&
+              data.isBefore(fim.add(const Duration(seconds: 1)));
         }
 
         bool matchStatus = true;
         if (_filtroStatus != null && _filtroStatus!.isNotEmpty) {
           if (_filtroStatus == 'pendente') {
-            matchStatus = nfce.status == 'pendente' || nfce.status == 'contingencia';
+            matchStatus =
+                nfce.status == 'pendente' || nfce.status == 'contingencia';
           } else if (_filtroStatus == 'autorizada') {
-            matchStatus = nfce.status == 'autorizada' || nfce.status == 'sucesso';
+            matchStatus =
+                nfce.status == 'autorizada' || nfce.status == 'sucesso';
           } else if (_filtroStatus == 'erro') {
             matchStatus = nfce.status == 'erro' || nfce.status == 'rejeitada';
           } else {
@@ -166,11 +196,17 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          title: const Text('Selecionar Período', style: TextStyle(color: Colors.white)),
+          title: const Text(
+            'Selecionar Período',
+            style: TextStyle(color: Colors.white),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Escolha o intervalo de datas para o filtro:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const Text(
+                'Escolha o intervalo de datas para o filtro:',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -178,7 +214,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Início', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                        const Text(
+                          'Início',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
                         const SizedBox(height: 4),
                         InkWell(
                           onTap: () async {
@@ -193,7 +232,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                             }
                           },
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.05),
                               borderRadius: BorderRadius.circular(8),
@@ -201,9 +243,18 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.calendar_today, size: 16, color: Colors.orange),
+                                const Icon(
+                                  Icons.calendar_today,
+                                  size: 16,
+                                  color: Colors.orange,
+                                ),
                                 const SizedBox(width: 8),
-                                Text(DateFormat('dd/MM/yyyy').format(novaDataInicio!), style: const TextStyle(color: Colors.white)),
+                                Text(
+                                  DateFormat(
+                                    'dd/MM/yyyy',
+                                  ).format(novaDataInicio!),
+                                  style: const TextStyle(color: Colors.white),
+                                ),
                               ],
                             ),
                           ),
@@ -216,7 +267,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Fim', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                        const Text(
+                          'Fim',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
                         const SizedBox(height: 4),
                         InkWell(
                           onTap: () async {
@@ -231,7 +285,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                             }
                           },
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.05),
                               borderRadius: BorderRadius.circular(8),
@@ -239,9 +296,16 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.calendar_today, size: 16, color: Colors.orange),
+                                const Icon(
+                                  Icons.calendar_today,
+                                  size: 16,
+                                  color: Colors.orange,
+                                ),
                                 const SizedBox(width: 8),
-                                Text(DateFormat('dd/MM/yyyy').format(novaDataFim!), style: const TextStyle(color: Colors.white)),
+                                Text(
+                                  DateFormat('dd/MM/yyyy').format(novaDataFim!),
+                                  style: const TextStyle(color: Colors.white),
+                                ),
                               ],
                             ),
                           ),
@@ -256,15 +320,27 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'CANCELAR',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton(
               onPressed: () {
                 if (novaDataFim!.isBefore(novaDataInicio!)) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('A data final não pode ser anterior à inicial.')));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'A data final não pode ser anterior à inicial.',
+                      ),
+                    ),
+                  );
                   return;
                 }
-                Navigator.pop(context, DateTimeRange(start: novaDataInicio!, end: novaDataFim!));
+                Navigator.pop(
+                  context,
+                  DateTimeRange(start: novaDataInicio!, end: novaDataFim!),
+                );
               },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
               child: const Text('APLICAR FILTRO'),
@@ -318,11 +394,14 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       final inicio = periodo.start;
       final fim = periodo.end;
 
-      final nfcesNoPeriodo =
-          _todasNfces.where((n) => _dentroDoPeriodo(n.createdAt, inicio, fim)).toList();
+      final nfcesNoPeriodo = _todasNfces
+          .where((n) => _dentroDoPeriodo(n.createdAt, inicio, fim))
+          .toList();
 
       final todasVendasNoPeriodo = dataService.vendasBalcao
-          .where((v) => !v.cancelado && _dentroDoPeriodo(v.dataVenda, inicio, fim))
+          .where(
+            (v) => !v.cancelado && _dentroDoPeriodo(v.dataVenda, inicio, fim),
+          )
           .toList();
 
       // Os relatórios (PDF fiscal + Excel detalhado) e os XMLs vêm do
@@ -346,26 +425,32 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       } else {
         // ── Desktop: pasta descompactada + ZIP em C:\ExodoNFCe\Pacotes
         final pastaPacotes = Directory(r'C:\ExodoNFCe\Pacotes');
-        if (!pastaPacotes.existsSync()) pastaPacotes.createSync(recursive: true);
+        if (!pastaPacotes.existsSync())
+          pastaPacotes.createSync(recursive: true);
 
-        final pastaDestino =
-            Directory('${pastaPacotes.path}\\pacote_contabil_nfce_$periodoTag');
-        if (!pastaDestino.existsSync()) pastaDestino.createSync(recursive: true);
+        final pastaDestino = Directory(
+          '${pastaPacotes.path}\\pacote_contabil_nfce_$periodoTag',
+        );
+        if (!pastaDestino.existsSync())
+          pastaDestino.createSync(recursive: true);
 
         // Relatório fiscal agrupado (PDF)
-        File('${pastaDestino.path}\\relatorio_fiscal_agrupado_$periodoTag.pdf')
-            .writeAsBytesSync(resultado.pdfFiscal);
+        File(
+          '${pastaDestino.path}\\relatorio_fiscal_agrupado_$periodoTag.pdf',
+        ).writeAsBytesSync(resultado.pdfFiscal);
 
         // Planilha detalhada (Excel)
         final excelBytes = resultado.excel;
         if (excelBytes != null) {
-          File('${pastaDestino.path}\\detalhado_dados_nfce_$periodoTag.xlsx')
-              .writeAsBytesSync(excelBytes);
+          File(
+            '${pastaDestino.path}\\detalhado_dados_nfce_$periodoTag.xlsx',
+          ).writeAsBytesSync(excelBytes);
         }
 
         // LEIA-ME com o resumo do pacote
-        File('${pastaDestino.path}\\LEIA-ME.txt')
-            .writeAsStringSync(resultado.leiaMe);
+        File(
+          '${pastaDestino.path}\\LEIA-ME.txt',
+        ).writeAsStringSync(resultado.leiaMe);
 
         // ZIP completo na pasta de Pacotes
         File('${pastaPacotes.path}\\$fileName').writeAsBytesSync(resultado.zip);
@@ -374,7 +459,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         final pastaXmls = Directory('${pastaDestino.path}\\xml');
         if (!pastaXmls.existsSync()) pastaXmls.createSync(recursive: true);
 
-        final cnpj = (widget.empresa.cnpj ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+        final cnpj = (widget.empresa.cnpj ?? '').replaceAll(
+          RegExp(r'[^0-9]'),
+          '',
+        );
         for (final n in nfcesNoPeriodo) {
           final chave = (n.chaveAcesso ?? '').trim();
           final xml = resultado.xmls[chave];
@@ -399,7 +487,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         context: context,
         builder: (ctx) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Row(
             children: [
               Icon(Icons.check_circle, color: Colors.greenAccent),
@@ -411,11 +501,17 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Arquivos salvos em:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const Text(
+                'Arquivos salvos em:',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
               const SizedBox(height: 4),
               SelectableText(
                 r'C:\ExodoNFCe',
-                style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.cyanAccent,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 12),
               Text(
@@ -429,7 +525,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
               ),
               if (emailContador != null && emailContador.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text('Contador: $emailContador', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                Text(
+                  'Contador: $emailContador',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
               ],
             ],
           ),
@@ -441,15 +540,24 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 Process.run('explorer.exe', [r'C:\ExodoNFCe']);
               },
               icon: const Icon(Icons.folder_open, color: Colors.amber),
-              label: const Text('ABRIR PASTA', style: TextStyle(color: Colors.amber)),
+              label: const Text(
+                'ABRIR PASTA',
+                style: TextStyle(color: Colors.amber),
+              ),
             ),
             if (emailContador != null && emailContador.isNotEmpty)
               ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(ctx);
-                  final subject = Uri.encodeComponent('ARQUIVOS FISCAIS - ${widget.empresa.razaoSocial} - $periodoTag');
-                  final body = Uri.encodeComponent('Olá,\n\nSegue em anexo o pacote fiscal das NFC-e emitidas entre ${DateFormat('dd/MM/yyyy').format(inicio)} e ${DateFormat('dd/MM/yyyy').format(fim)}.\n\nEmpresa: ${widget.empresa.razaoSocial}\nCNPJ: ${widget.empresa.cnpj ?? "N/D"}\n\nArquivo salvo em: C:\\ExodoNFCe\\Pacotes\\$fileName\n\nGerado pelo Sistema Êxodo.');
-                  final url = Uri.parse('mailto:$emailContador?subject=$subject&body=$body');
+                  final subject = Uri.encodeComponent(
+                    'ARQUIVOS FISCAIS - ${widget.empresa.razaoSocial} - $periodoTag',
+                  );
+                  final body = Uri.encodeComponent(
+                    'Olá,\n\nSegue em anexo o pacote fiscal das NFC-e emitidas entre ${DateFormat('dd/MM/yyyy').format(inicio)} e ${DateFormat('dd/MM/yyyy').format(fim)}.\n\nEmpresa: ${widget.empresa.razaoSocial}\nCNPJ: ${widget.empresa.cnpj ?? "N/D"}\n\nArquivo salvo em: C:\\ExodoNFCe\\Pacotes\\$fileName\n\nGerado pelo Sistema Êxodo.',
+                  );
+                  final url = Uri.parse(
+                    'mailto:$emailContador?subject=$subject&body=$body',
+                  );
                   if (await canLaunchUrl(url)) {
                     await launchUrl(url);
                   } else {
@@ -466,7 +574,12 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     } catch (e) {
       debugPrint('Erro na exportação: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao exportar: $e'), backgroundColor: Colors.redAccent));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao exportar: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -495,7 +608,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     final cnpj = (widget.empresa.cnpj ?? '').replaceAll(RegExp(r'[^0-9]'), '');
     final pastaNota = 'NFCe_${nfce.numero}_${nfce.serie}';
 
-    var localFile = File('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$pastaNota\\$chave-nfe.xml');
+    var localFile = File(
+      'C:\\ExodoNFCe\\$cnpj\\$mesDir\\$pastaNota\\$chave-nfe.xml',
+    );
     if (!localFile.existsSync()) {
       localFile = File('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$chave-nfe.xml');
     }
@@ -504,6 +619,7 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     }
     return xml;
   }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -519,28 +635,56 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Histórico de NFC-e', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                const Text(
+                  'Histórico de NFC-e',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 Row(
                   children: [
-                    if (_todasNfces.any((n) => n.status == 'contingencia' || n.status == 'pendente'))
+                    if (_todasNfces.any(
+                      (n) =>
+                          n.status == 'contingencia' || n.status == 'pendente',
+                    ))
                       TextButton.icon(
                         onPressed: _reenviarTodasPendentes,
-                        icon: const Icon(Icons.send_rounded, color: Colors.amber, size: 18),
-                        label: Text('REENVIAR PENDENTES (${_todasNfces.where((n) => n.status == "contingencia" || n.status == "pendente").length})',
-                          style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
+                        icon: const Icon(
+                          Icons.send_rounded,
+                          color: Colors.amber,
+                          size: 18,
+                        ),
+                        label: Text(
+                          'REENVIAR PENDENTES (${_todasNfces.where((n) => n.status == "contingencia" || n.status == "pendente").length})',
+                          style: const TextStyle(
+                            color: Colors.amber,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         style: TextButton.styleFrom(
                           backgroundColor: Colors.amber.withOpacity(0.15),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
-                    IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.pop(context)),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () => Navigator.pop(context),
+                    ),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 20),
-            
+
             // Área de Filtros
             Container(
               padding: const EdgeInsets.all(16),
@@ -551,15 +695,19 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
               ),
               child: Column(
                 children: [
-                   Row(
+                  Row(
                     children: [
                       Expanded(
                         child: TextField(
                           controller: _buscaController,
                           decoration: InputDecoration(
-                            hintText: 'Buscar por Nº da NFC-e ou ID da Venda...',
+                            hintText:
+                                'Buscar por Nº da NFC-e ou ID da Venda...',
                             hintStyle: const TextStyle(color: Colors.grey),
-                            prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                            prefixIcon: const Icon(
+                              Icons.search,
+                              color: Colors.grey,
+                            ),
                             filled: true,
                             fillColor: Colors.white.withOpacity(0.05),
                             border: OutlineInputBorder(
@@ -572,14 +720,21 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                       ),
                       const SizedBox(width: 16),
                       ElevatedButton.icon(
-                        onPressed: _isLoading ? null : _exportarPacoteMensalContador,
+                        onPressed: _isLoading
+                            ? null
+                            : _exportarPacoteMensalContador,
                         icon: const Icon(Icons.send_rounded, size: 18),
                         label: const Text('Exportar / Enviar'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green.withOpacity(0.85),
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 20,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
                     ],
@@ -587,30 +742,50 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      const Text('Período:', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'Período:',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                       const SizedBox(width: 12),
                       _buildQuickFilterChip('Hoje', () {
-                         final agora = DateTime.now();
-                         setState(() {
-                           _periodoFiltro = DateTimeRange(start: DateTime(agora.year, agora.month, agora.day), end: agora);
-                           _filtrar();
-                         });
+                        final agora = DateTime.now();
+                        setState(() {
+                          _periodoFiltro = DateTimeRange(
+                            start: DateTime(agora.year, agora.month, agora.day),
+                            end: agora,
+                          );
+                          _filtrar();
+                        });
                       }),
                       _buildQuickFilterChip('7 Dias', () {
-                         final agora = DateTime.now();
-                         setState(() {
-                           _periodoFiltro = DateTimeRange(start: agora.subtract(const Duration(days: 7)), end: agora);
-                           _filtrar();
-                         });
+                        final agora = DateTime.now();
+                        setState(() {
+                          _periodoFiltro = DateTimeRange(
+                            start: agora.subtract(const Duration(days: 7)),
+                            end: agora,
+                          );
+                          _filtrar();
+                        });
                       }),
                       _buildQuickFilterChip('Este Mês', () {
-                         final agora = DateTime.now();
-                         setState(() {
-                           _periodoFiltro = DateTimeRange(start: DateTime(agora.year, agora.month, 1), end: agora);
-                           _filtrar();
-                         });
+                        final agora = DateTime.now();
+                        setState(() {
+                          _periodoFiltro = DateTimeRange(
+                            start: DateTime(agora.year, agora.month, 1),
+                            end: agora,
+                          );
+                          _filtrar();
+                        });
                       }),
-                      _buildQuickFilterChip('Personalizado', _selecionarPeriodo, isCustom: true),
+                      _buildQuickFilterChip(
+                        'Personalizado',
+                        _selecionarPeriodo,
+                        isCustom: true,
+                      ),
                       const Spacer(),
                       if (_periodoFiltro != null)
                         TextButton.icon(
@@ -620,16 +795,26 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                               _filtrar();
                             });
                           },
-                          icon: const Icon(Icons.close, size: 14, color: Colors.redAccent),
-                          label: const Text('LIMPAR', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
-                        )
+                          icon: const Icon(
+                            Icons.close,
+                            size: 14,
+                            color: Colors.redAccent,
+                          ),
+                          label: const Text(
+                            'LIMPAR',
+                            style: TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
                     ],
-                  )
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 16),
-            
+
             if (!_isLoading && _nfcesFiltradas.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -640,34 +825,54 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                     _buildSummaryBadge(
                       'TOTAL: ${_nfcesFiltradas.length}',
                       Colors.blue,
-                      onTap: () { setState(() => _filtroStatus = null); _filtrar(); },
+                      onTap: () {
+                        setState(() => _filtroStatus = null);
+                        _filtrar();
+                      },
                       selected: _filtroStatus == null,
                     ),
                     _buildSummaryBadge(
                       'FISCAL: R\$ ${NumberFormat.currency(locale: "pt_BR", symbol: "").format(_nfcesFiltradas.where((n) => n.status == "autorizada" || n.status == "sucesso").fold(0.0, (sum, n) => sum + n.valorTotal))}',
                       Colors.green,
-                      onTap: () { setState(() => _filtroStatus = 'autorizada'); _filtrar(); },
+                      onTap: () {
+                        setState(() => _filtroStatus = 'autorizada');
+                        _filtrar();
+                      },
                       selected: _filtroStatus == 'autorizada',
                     ),
-                    if (_nfcesFiltradas.any((n) => n.status == 'contingencia' || n.status == 'pendente'))
+                    if (_nfcesFiltradas.any(
+                      (n) =>
+                          n.status == 'contingencia' || n.status == 'pendente',
+                    ))
                       _buildSummaryBadge(
                         'PENDENTES: ${_nfcesFiltradas.where((n) => n.status == "contingencia" || n.status == "pendente").length}',
                         Colors.orange,
-                        onTap: () { setState(() => _filtroStatus = 'pendente'); _filtrar(); },
+                        onTap: () {
+                          setState(() => _filtroStatus = 'pendente');
+                          _filtrar();
+                        },
                         selected: _filtroStatus == 'pendente',
                       ),
-                    if (_nfcesFiltradas.any((n) => n.status == 'erro' || n.status == 'rejeitada'))
+                    if (_nfcesFiltradas.any(
+                      (n) => n.status == 'erro' || n.status == 'rejeitada',
+                    ))
                       _buildSummaryBadge(
                         'ERRO: ${_nfcesFiltradas.where((n) => n.status == "erro" || n.status == "rejeitada").length}',
                         Colors.redAccent,
-                        onTap: () { setState(() => _filtroStatus = 'erro'); _filtrar(); },
+                        onTap: () {
+                          setState(() => _filtroStatus = 'erro');
+                          _filtrar();
+                        },
                         selected: _filtroStatus == 'erro',
                       ),
                     if (_nfcesFiltradas.any((n) => n.status == 'cancelada'))
                       _buildSummaryBadge(
                         'CANCELADAS: ${_nfcesFiltradas.where((n) => n.status == "cancelada").length}',
                         Colors.grey,
-                        onTap: () { setState(() => _filtroStatus = 'cancelada'); _filtrar(); },
+                        onTap: () {
+                          setState(() => _filtroStatus = 'cancelada');
+                          _filtrar();
+                        },
                         selected: _filtroStatus == 'cancelada',
                       ),
                   ],
@@ -679,12 +884,19 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline, size: 14, color: Colors.white38),
+                    const Icon(
+                      Icons.info_outline,
+                      size: 14,
+                      color: Colors.white38,
+                    ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         '$_nfesOcultas NF-e (DANFE, modelo 55) desta empresa não entram neste histórico — veja em "Emissor NF-e".',
-                        style: const TextStyle(color: Colors.white38, fontSize: 11),
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
                       ),
                     ),
                   ],
@@ -692,18 +904,28 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
               ),
 
             Expanded(
-              child: _isLoading 
-                ? const Center(child: CircularProgressIndicator()) 
-                : _nfcesFiltradas.isEmpty 
-                  ? const Center(child: Text('Nenhuma NFC-e encontrada com os filtros atuais.', style: TextStyle(color: Colors.white54)))
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _nfcesFiltradas.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Nenhuma NFC-e encontrada com os filtros atuais.',
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    )
                   : ListView.builder(
                       itemCount: _nfcesFiltradas.length,
                       itemBuilder: (itemCtx, index) {
                         final nfce = _nfcesFiltradas[index];
-                        final isAutorizada = nfce.status == 'autorizada' || nfce.status == 'sucesso';
-                        final isErro = nfce.status == 'erro' || nfce.status == 'rejeitada';
-                        final dt = nfce.createdAt != null ? DateFormat('dd/MM HH:mm').format(nfce.createdAt!) : '-';
-                        
+                        final isAutorizada =
+                            nfce.status == 'autorizada' ||
+                            nfce.status == 'sucesso';
+                        final isErro =
+                            nfce.status == 'erro' || nfce.status == 'rejeitada';
+                        final dt = nfce.createdAt != null
+                            ? DateFormat('dd/MM HH:mm').format(nfce.createdAt!)
+                            : '-';
+
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.all(16),
@@ -714,41 +936,75 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                           ),
                           child: Row(
                             children: [
-                               Icon(
-                                 nfce.status == 'contingencia'
-                                     ? Icons.warning_amber_rounded
-                                     : (isAutorizada ? Icons.check_circle : (isErro ? Icons.error : Icons.hourglass_empty)),
-                                 color: nfce.status == 'contingencia'
-                                     ? Colors.amber
-                                     : (isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange)),
-                                 size: 36,
-                               ),
+                              Icon(
+                                nfce.status == 'contingencia'
+                                    ? Icons.warning_amber_rounded
+                                    : (isAutorizada
+                                          ? Icons.check_circle
+                                          : (isErro
+                                                ? Icons.error
+                                                : Icons.hourglass_empty)),
+                                color: nfce.status == 'contingencia'
+                                    ? Colors.amber
+                                    : (isAutorizada
+                                          ? Colors.green
+                                          : (isErro
+                                                ? Colors.redAccent
+                                                : Colors.orange)),
+                                size: 36,
+                              ),
                               const SizedBox(width: 16),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text('Data: $dt  |  Série ${nfce.serie ?? "-"} / Nº ${nfce.numero ?? "-"}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    Text(
+                                      'Data: $dt  |  Série ${nfce.serie ?? "-"} / Nº ${nfce.numero ?? "-"}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                     const SizedBox(height: 4),
                                     () {
-                                      final dataService = Provider.of<DataService>(context, listen: false);
+                                      final dataService =
+                                          Provider.of<DataService>(
+                                            context,
+                                            listen: false,
+                                          );
                                       VendaBalcao? venda;
                                       try {
-                                        venda = dataService.vendasBalcao.firstWhere(
-                                          (v) => v.id == nfce.vendaId || v.numero == nfce.vendaNumero,
-                                        );
+                                        venda = dataService.vendasBalcao
+                                            .firstWhere(
+                                              (v) =>
+                                                  v.id == nfce.vendaId ||
+                                                  v.numero == nfce.vendaNumero,
+                                            );
                                       } catch (_) {}
-                                      final vendaLabel = venda != null ? venda.numero : (nfce.vendaNumero ?? nfce.vendaId ?? nfce.id);
-                                      
+                                      final vendaLabel = venda != null
+                                          ? venda.numero
+                                          : (nfce.vendaNumero ??
+                                                nfce.vendaId ??
+                                                nfce.id);
+
                                       return InkWell(
-                                        onTap: () => _mostrarDetalhesVenda(nfce, dataService),
+                                        onTap: () => _mostrarDetalhesVenda(
+                                          nfce,
+                                          dataService,
+                                        ),
                                         borderRadius: BorderRadius.circular(4),
                                         child: Padding(
-                                          padding: const EdgeInsets.symmetric(vertical: 2.0),
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 2.0,
+                                          ),
                                           child: Row(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 14),
+                                              const Icon(
+                                                Icons.receipt_long,
+                                                color: Colors.cyanAccent,
+                                                size: 14,
+                                              ),
                                               const SizedBox(width: 6),
                                               Text(
                                                 'Venda: $vendaLabel',
@@ -756,7 +1012,8 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                                   color: Colors.cyanAccent,
                                                   fontSize: 12,
                                                   fontWeight: FontWeight.bold,
-                                                  decoration: TextDecoration.underline,
+                                                  decoration:
+                                                      TextDecoration.underline,
                                                 ),
                                               ),
                                             ],
@@ -764,105 +1021,270 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                         ),
                                       );
                                     }(),
-                                    if (nfce.chaveAcesso != null && nfce.chaveAcesso!.isNotEmpty)
-                                      SelectableText('Chave: ${nfce.chaveAcesso}', style: const TextStyle(color: Colors.white54, fontSize: 10, fontStyle: FontStyle.italic)),
-                                    if (nfce.nomeConsumidor != null && nfce.nomeConsumidor!.isNotEmpty)
-                                      Text('Cliente: ${nfce.nomeConsumidor}', style: const TextStyle(color: Colors.white70)),
+                                    if (nfce.chaveAcesso != null &&
+                                        nfce.chaveAcesso!.isNotEmpty)
+                                      SelectableText(
+                                        'Chave: ${nfce.chaveAcesso}',
+                                        style: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    if (nfce.nomeConsumidor != null &&
+                                        nfce.nomeConsumidor!.isNotEmpty)
+                                      Text(
+                                        'Cliente: ${nfce.nomeConsumidor}',
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                      ),
                                     if (nfce.pagamentos.isNotEmpty)
-                                      Text('Pagamento: ${nfce.pagamentos.map((p) => p.tipoDescricao).join(", ")}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                      Text(
+                                        'Pagamento: ${nfce.pagamentos.map((p) => p.tipoDescricao).join(", ")}',
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
+                                      ),
                                     Text(
-                                       'Status: ${nfce.status?.toUpperCase()}',
-                                       style: TextStyle(
-                                         color: nfce.status == 'contingencia'
-                                             ? Colors.amber
-                                             : (nfce.status == 'inutilizada'
-                                                 ? Colors.purpleAccent
-                                                 : (nfce.status == 'substituida'
-                                                     ? Colors.blueGrey
-                                                     : (isAutorizada ? Colors.green : (isErro ? Colors.redAccent : Colors.orange)))),
-                                         fontWeight: FontWeight.bold,
-                                       ),
-                                     ),
-                                     if (nfce.xmlRetorno != null &&
-                                         nfce.xmlRetorno!.isNotEmpty &&
-                                         (nfce.status?.toUpperCase() == 'ERRO' ||
-                                             nfce.status == 'pendente' ||
-                                             nfce.status == 'contingencia'))
-                                       Text('${nfce.xmlRetorno}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                                     
-                                     if (isAutorizada || nfce.status == 'cancelada' || nfce.status == 'sucesso' || isErro || nfce.status == 'contingencia' || nfce.status == 'pendente')
-                                       Padding(
-                                         padding: const EdgeInsets.only(top: 8),
-                                         child: Row(
-                                           children: [
-                                             if (isAutorizada)
-                                               TextButton.icon(
-                                                 onPressed: () => _confirmarCancelamento(nfce),
-                                                 icon: const Icon(Icons.cancel, color: Colors.redAccent, size: 18),
-                                                 label: const Text('CANCELAR', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                             if (nfce.status == 'contingencia' || nfce.status == 'pendente') ...[
-                                               TextButton.icon(
-                                                 onPressed: () => _transmitirContingenciaIndividual(nfce),
-                                                 icon: const Icon(Icons.send_rounded, color: Colors.amber, size: 18),
-                                                 label: const Text('TRANSMITIR AGORA', style: TextStyle(color: Colors.amber, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                               const SizedBox(width: 8),
-                                               TextButton.icon(
-                                                 onPressed: () => _reemitirNFCe(nfce),
-                                                 icon: const Icon(Icons.edit_note, color: Colors.orange, size: 18),
-                                                 label: const Text('CORRIGIR E REEMITIR', style: TextStyle(color: Colors.orange, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                               const SizedBox(width: 8),
-                                               TextButton.icon(
-                                                 onPressed: () => _confirmarInutilizacao(nfce),
-                                                 icon: const Icon(Icons.block, color: Colors.purpleAccent, size: 18),
-                                                 label: const Text('INUTILIZAR Nº', style: TextStyle(color: Colors.purpleAccent, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                               const SizedBox(width: 8),
-                                               TextButton.icon(
-                                                 onPressed: () => _descartarPendente(nfce),
-                                                 icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                                                 label: const Text('DESCARTE', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                             ],
-                                             const SizedBox(width: 8),
-                                             if (isAutorizada || nfce.status == 'sucesso')
-                                               TextButton.icon(
-                                                 onPressed: () => _reimprimir(nfce),
-                                                 icon: const Icon(Icons.print, color: Colors.blueAccent, size: 18),
-                                                 label: const Text('REIMPRIMIR', style: TextStyle(color: Colors.blueAccent, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                             if (isErro)
-                                               TextButton.icon(
-                                                 onPressed: () => _reemitirNFCe(nfce),
-                                                 icon: const Icon(Icons.refresh, color: Colors.orange, size: 18),
-                                                 label: const Text('REEMITIR AGORA', style: TextStyle(color: Colors.orange, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                             const SizedBox(width: 8),
-                                             if (isAutorizada || nfce.status == 'sucesso')
-                                               TextButton.icon(
-                                                 onPressed: () => _baixarNFCeIndividual(nfce),
-                                                 icon: const Icon(Icons.download_rounded, color: Colors.greenAccent, size: 18),
-                                                 label: const Text('BAIXAR', style: TextStyle(color: Colors.greenAccent, fontSize: 11)),
-                                                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
-                                               ),
-                                           ],
-                                         ),
-                                       ),
+                                      'Status: ${nfce.status?.toUpperCase()}',
+                                      style: TextStyle(
+                                        color: nfce.status == 'contingencia'
+                                            ? Colors.amber
+                                            : (nfce.status == 'inutilizada'
+                                                  ? Colors.purpleAccent
+                                                  : (nfce.status ==
+                                                            'substituida'
+                                                        ? Colors.blueGrey
+                                                        : (isAutorizada
+                                                              ? Colors.green
+                                                              : (isErro
+                                                                    ? Colors
+                                                                          .redAccent
+                                                                    : Colors
+                                                                          .orange)))),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    if (nfce.xmlRetorno != null &&
+                                        nfce.xmlRetorno!.isNotEmpty &&
+                                        (nfce.status?.toUpperCase() == 'ERRO' ||
+                                            nfce.status == 'pendente' ||
+                                            nfce.status == 'contingencia'))
+                                      Text(
+                                        '${nfce.xmlRetorno}',
+                                        style: const TextStyle(
+                                          color: Colors.redAccent,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+
+                                    if (isAutorizada ||
+                                        nfce.status == 'cancelada' ||
+                                        nfce.status == 'sucesso' ||
+                                        isErro ||
+                                        nfce.status == 'contingencia' ||
+                                        nfce.status == 'pendente')
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: Row(
+                                          children: [
+                                            if (isAutorizada)
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _confirmarCancelamento(
+                                                      nfce,
+                                                    ),
+                                                icon: const Icon(
+                                                  Icons.cancel,
+                                                  color: Colors.redAccent,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'CANCELAR',
+                                                  style: TextStyle(
+                                                    color: Colors.redAccent,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),
+                                            if (nfce.status == 'contingencia' ||
+                                                nfce.status == 'pendente') ...[
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _reemitirNFCe(nfce),
+                                                icon: const Icon(
+                                                  Icons.edit_note,
+                                                  color: Colors.orange,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'CORRIGIR E REEMITIR',
+                                                  style: TextStyle(
+                                                    color: Colors.orange,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _confirmarCancelamento(
+                                                      nfce,
+                                                    ),
+                                                icon: const Icon(
+                                                  Icons.cancel,
+                                                  color: Colors.redAccent,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'CANCELAR',
+                                                  style: TextStyle(
+                                                    color: Colors.redAccent,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _confirmarInutilizacao(
+                                                      nfce,
+                                                    ),
+                                                icon: const Icon(
+                                                  Icons.block,
+                                                  color: Colors.purpleAccent,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'INUTILIZAR Nº',
+                                                  style: TextStyle(
+                                                    color: Colors.purpleAccent,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _descartarPendente(nfce),
+                                                icon: const Icon(
+                                                  Icons.delete_outline,
+                                                  color: Colors.redAccent,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'DESCARTE',
+                                                  style: TextStyle(
+                                                    color: Colors.redAccent,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),
+                                            ],
+                                            const SizedBox(width: 8),
+                                            if (isAutorizada ||
+                                                nfce.status == 'sucesso')
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _reimprimir(nfce),
+                                                icon: const Icon(
+                                                  Icons.print,
+                                                  color: Colors.blueAccent,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'REIMPRIMIR',
+                                                  style: TextStyle(
+                                                    color: Colors.blueAccent,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),
+                                            if (isErro)
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _reemitirNFCe(nfce),
+                                                icon: const Icon(
+                                                  Icons.refresh,
+                                                  color: Colors.orange,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'REEMITIR AGORA',
+                                                  style: TextStyle(
+                                                    color: Colors.orange,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),                                              const SizedBox(width: 8),
+                                              if (isAutorizada ||
+                                                  nfce.status == 'sucesso')
+                                                TextButton.icon(
+                                                  onPressed: () =>
+                                                      _baixarNFCeIndividual(nfce),
+                                                  icon: const Icon(
+                                                    Icons.download_rounded,
+                                                    color: Colors.greenAccent,
+                                                    size: 18,
+                                                  ),
+                                                  label: const Text(
+                                                    'BAIXAR',
+
+                                                  style: TextStyle(
+                                                    color: Colors.greenAccent,
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: const Size(0, 0),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),
                               Text(
-                                NumberFormat.currency(locale: "pt_BR", symbol: "R\$").format(nfce.valorTotal),
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                                NumberFormat.currency(
+                                  locale: "pt_BR",
+                                  symbol: "R\$",
+                                ).format(nfce.valorTotal),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                ),
                               ),
                             ],
                           ),
@@ -877,18 +1299,26 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
   }
 
   void _confirmarCancelamento(NFCe nfce) async {
-    final justificativaController = TextEditingController(text: 'Cancelamento por erro de emissao ou devolucao de mercadoria');
-    
+    final justificativaController = TextEditingController(
+      text: 'Cancelamento por erro de emissao ou devolucao de mercadoria',
+    );
+
     final bool? confirmar = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text('Confirmar Cancelamento', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Confirmar Cancelamento',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Deseja realmente cancelar esta NFC-e na SEFAZ?', style: TextStyle(color: Colors.white70)),
+            const Text(
+              'Deseja realmente cancelar esta NFC-e na SEFAZ?',
+              style: TextStyle(color: Colors.white70),
+            ),
             const SizedBox(height: 16),
             TextField(
               controller: justificativaController,
@@ -897,7 +1327,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
               decoration: const InputDecoration(
                 labelText: 'Justificativa (mín. 15 caracteres)',
                 labelStyle: TextStyle(color: Colors.white54),
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Colors.white24),
+                ),
               ),
             ),
           ],
@@ -905,13 +1337,22 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx, false),
-            child: const Text('VOLTAR', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'VOLTAR',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () {
               if (justificativaController.text.length < 15) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('A justificativa deve ter pelo menos 15 caracteres.')));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'A justificativa deve ter pelo menos 15 caracteres.',
+                      ),
+                    ),
+                  );
                 }
                 return;
               }
@@ -935,9 +1376,11 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     setState(() => _isLoading = true);
     try {
       final nfceService = NFCeServiceFactory.criar();
-      
+
       if (nfceService is! NFCeBackendService) {
-         throw Exception('O cancelamento só está disponível no modo Bridge (Python).');
+        throw Exception(
+          'O cancelamento só está disponível no modo Bridge (Python).',
+        );
       }
 
       final resultado = await nfceService.cancelarNFCe(
@@ -953,7 +1396,7 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           updatedAt: DateTime.now(),
         );
         await dataService.atualizarNFCe(nfceCancelada);
-        
+
         if (!mounted) return;
         ExodoCancelSuccessDialog.mostrar(context, nfceCancelada);
         _loadData(); // Recarregar lista
@@ -976,9 +1419,11 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     setState(() => _isLoading = true);
     try {
       final nfceService = NFCeServiceFactory.criar();
-      
+
       if (nfceService is! NFCeBackendService) {
-         throw Exception('A consulta só está disponível no modo Bridge (Python).');
+        throw Exception(
+          'A consulta só está disponível no modo Bridge (Python).',
+        );
       }
 
       final resultado = await nfceService.consultar(
@@ -994,36 +1439,51 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         if (!mounted) return;
 
         // Se o status na SEFAZ for diferente do local, perguntar se quer atualizar
-        if (novoStatus != nfce.status && (novoStatus == 'cancelada' || novoStatus == 'autorizada')) {
-           final bool? atualizar = await showDialog<bool>(
-             context: context,
-             builder: (dialogCtx) => AlertDialog(
-               backgroundColor: const Color(0xFF1E1E1E),
-               title: const Text('Divergência de Status', style: TextStyle(color: Colors.white)),
-               content: Text('Na SEFAZ esta nota consta como: $novoStatus.\nNo sistema local ela está como: ${nfce.status}.\n\nDeseja atualizar o sistema local?', style: const TextStyle(color: Colors.white70)),
-               actions: [
-                 TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('NÃO')),
-                 ElevatedButton(onPressed: () => Navigator.pop(dialogCtx, true), child: const Text('SIM, ATUALIZAR')),
-               ],
-             ),
-           );
+        if (novoStatus != nfce.status &&
+            (novoStatus == 'cancelada' || novoStatus == 'autorizada')) {
+          final bool? atualizar = await showDialog<bool>(
+            context: context,
+            builder: (dialogCtx) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              title: const Text(
+                'Divergência de Status',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: Text(
+                'Na SEFAZ esta nota consta como: $novoStatus.\nNo sistema local ela está como: ${nfce.status}.\n\nDeseja atualizar o sistema local?',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogCtx, false),
+                  child: const Text('NÃO'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogCtx, true),
+                  child: const Text('SIM, ATUALIZAR'),
+                ),
+              ],
+            ),
+          );
 
-           if (atualizar == true) {
-              final nfceAtualizada = nfce.copyWith(
-                status: novoStatus,
-                updatedAt: DateTime.now(),
-              );
-              await dataService.atualizarNFCe(nfceAtualizada);
-              _loadData();
-           }
+          if (atualizar == true) {
+            final nfceAtualizada = nfce.copyWith(
+              status: novoStatus,
+              updatedAt: DateTime.now(),
+            );
+            await dataService.atualizarNFCe(nfceAtualizada);
+            _loadData();
+          }
         }
 
         if (mounted) {
-          messenger.showSnackBar(SnackBar(
-            content: Text('Consulta SEFAZ: [$cStat] $xMotivo'),
-            duration: const Duration(seconds: 5),
-            backgroundColor: Colors.teal,
-          ));
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text('Consulta SEFAZ: [$cStat] $xMotivo'),
+              duration: const Duration(seconds: 5),
+              backgroundColor: Colors.teal,
+            ),
+          );
         }
       } else {
         if (!mounted) return;
@@ -1039,13 +1499,12 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
 
   void _reimprimir(NFCe nfce) async {
     try {
-      await DANFEService.imprimir(
-        nfce: nfce,
-        empresa: widget.empresa,
-      );
+      await DANFEService.imprimir(nfce: nfce, empresa: widget.empresa);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao imprimir: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro ao imprimir: $e')));
     }
   }
 
@@ -1061,7 +1520,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       context: context,
       builder: (dialogCtx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text('Descartar NFC-e pendente?', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Descartar NFC-e pendente?',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Text(
           'NFC-e Nº ${nfce.numero} (série ${nfce.serie}) — ${formatoMoeda.format(nfce.valorTotal)}\n\n'
           'A nota sai da fila de reenvio e não será mais transmitida.\n'
@@ -1071,7 +1533,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx, false),
-            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'CANCELAR',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogCtx, true),
@@ -1092,21 +1557,25 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     try {
       // O `id` do registro NÃO é o `id` da fila: a remoção por número encontra
       // a entrada do reenvio automático (antes a nota reaparecia).
-      final removidas = await NfceContingenciaService.instance.removerDaFilaPorNumero(nfce.numero);
+      final removidas = await NfceContingenciaService.instance
+          .removerDaFilaPorNumero(nfce.numero);
 
       // Sai da lista de pendentes (mantém o registro para auditoria).
-      await dataService.atualizarNFCe(nfce.copyWith(
-        status: 'descartada',
-        updatedAt: DateTime.now(),
-      ));
+      await dataService.atualizarNFCe(
+        nfce.copyWith(status: 'descartada', updatedAt: DateTime.now()),
+      );
 
       if (!mounted) return;
-      messenger.showSnackBar(SnackBar(
-        content: Text(removidas > 0
-            ? 'NFC-e ${nfce.numero} descartada (removida da fila de reenvio).'
-            : 'NFC-e ${nfce.numero} descartada (não estava mais na fila de reenvio).'),
-        backgroundColor: Colors.orange,
-      ));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            removidas > 0
+                ? 'NFC-e ${nfce.numero} descartada (removida da fila de reenvio).'
+                : 'NFC-e ${nfce.numero} descartada (não estava mais na fila de reenvio).',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
       _loadData();
     } catch (e) {
       if (mounted) _mostrarErro('Erro ao descartar: $e');
@@ -1124,7 +1593,8 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     }
 
     final justificativaController = TextEditingController(
-      text: 'Quebra de sequencia de numeracao por falha na emissao da NFC-e ${nfce.numero}',
+      text:
+          'Quebra de sequencia de numeracao por falha na emissao da NFC-e ${nfce.numero}',
     );
 
     final bool? confirmar = await showDialog<bool>(
@@ -1136,13 +1606,18 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
 
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E1E),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             title: Row(
               children: [
                 const Icon(Icons.block, color: Colors.purpleAccent, size: 26),
                 const SizedBox(width: 10),
                 const Expanded(
-                  child: Text('Inutilizar numeração', style: TextStyle(color: Colors.white, fontSize: 18)),
+                  child: Text(
+                    'Inutilizar numeração',
+                    style: TextStyle(color: Colors.white, fontSize: 18),
+                  ),
                 ),
               ],
             ),
@@ -1154,7 +1629,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 children: [
                   Text(
                     'NFC-e (modelo ${nfce.modelo ?? 65}) | Série ${nfce.serie} | Nº ${nfce.numero}',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   const Text(
@@ -1171,10 +1649,16 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                     onChanged: (_) => setDialogState(() {}),
                     decoration: InputDecoration(
                       labelText: 'Justificativa (mínimo 15 caracteres)',
-                      labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                      labelStyle: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
                       filled: true,
                       fillColor: Colors.white.withOpacity(0.05),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
                     ),
                   ),
                   const Text(
@@ -1187,16 +1671,24 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogCtx, false),
-                child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+                child: const Text(
+                  'CANCELAR',
+                  style: TextStyle(color: Colors.white54),
+                ),
               ),
               ElevatedButton.icon(
-                onPressed: justificativaValida ? () => Navigator.pop(dialogCtx, true) : null,
+                onPressed: justificativaValida
+                    ? () => Navigator.pop(dialogCtx, true)
+                    : null,
                 icon: const Icon(Icons.block, size: 18),
                 label: Text('INUTILIZAR Nº ${nfce.numero}'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.purpleAccent,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                 ),
               ),
             ],
@@ -1221,7 +1713,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       final nfceService = NFCeServiceFactory.criar();
 
       if (nfceService is! NFCeBackendService) {
-        throw Exception('A inutilização só está disponível no modo Bridge (Python).');
+        throw Exception(
+          'A inutilização só está disponível no modo Bridge (Python).',
+        );
       }
 
       final resultado = await nfceService.inutilizarNFCe(
@@ -1232,28 +1726,38 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
 
       if (resultado['success'] == true) {
         // O número foi queimado na SEFAZ: sai da fila de reenvio automático.
-        await NfceContingenciaService.instance.removerDaFilaPorNumero(nfce.numero);
+        await NfceContingenciaService.instance.removerDaFilaPorNumero(
+          nfce.numero,
+        );
 
         final protocolo = resultado['protocolo']?.toString();
-        await dataService.atualizarNFCe(nfce.copyWith(
-          status: 'inutilizada',
-          protocolo: protocolo,
-          xmlRetorno: 'Inutilização homologada (cStat ${resultado['cStat']}): ${resultado['message']}',
-          updatedAt: DateTime.now(),
-        ));
+        await dataService.atualizarNFCe(
+          nfce.copyWith(
+            status: 'inutilizada',
+            protocolo: protocolo,
+            xmlRetorno:
+                'Inutilização homologada (cStat ${resultado['cStat']}): ${resultado['message']}',
+            updatedAt: DateTime.now(),
+          ),
+        );
 
         if (!mounted) return;
-        messenger.showSnackBar(SnackBar(
-          content: Text(
-            resultado['ja_inutilizada'] == true
-                ? 'O número ${nfce.numero} já estava inutilizado na SEFAZ.'
-                : 'Número ${nfce.numero} inutilizado na SEFAZ${protocolo != null && protocolo.isNotEmpty ? ' (protocolo $protocolo)' : ''}.',
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              resultado['ja_inutilizada'] == true
+                  ? 'O número ${nfce.numero} já estava inutilizado na SEFAZ.'
+                  : 'Número ${nfce.numero} inutilizado na SEFAZ${protocolo != null && protocolo.isNotEmpty ? ' (protocolo $protocolo)' : ''}.',
+            ),
+            backgroundColor: Colors.purple,
           ),
-          backgroundColor: Colors.purple,
-        ));
+        );
         _loadData();
       } else {
-        if (mounted) _mostrarErro('A SEFAZ recusou a inutilização:\n\n${resultado['message']}');
+        if (mounted)
+          _mostrarErro(
+            'A SEFAZ recusou a inutilização:\n\n${resultado['message']}',
+          );
       }
     } catch (e) {
       if (mounted) _mostrarErro('Erro ao inutilizar numeração: $e');
@@ -1269,20 +1773,33 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
 
     setState(() => _isLoading = true);
     try {
-      final sucessos = await NfceContingenciaService.instance.tentarRetransmitirTudo(
-        onSucesso: (novaNfce) async {
-          await dataService.adicionarNFCe(novaNfce);
-        },
-        onErro: (numNota, err) {
-          if (mounted) _mostrarErro('Erro ao transmitir nota $numNota: $err');
-        },
-      );
+      final sucessos = await NfceContingenciaService.instance
+          .tentarRetransmitirTudo(
+            onSucesso: (novaNfce) async {
+              await dataService.adicionarNFCe(novaNfce);
+            },
+            onErro: (numNota, err) {
+              if (mounted)
+                _mostrarErro('Erro ao transmitir nota $numNota: $err');
+            },
+          );
       if (!mounted) return;
       if (sucessos > 0) {
-        messenger.showSnackBar(const SnackBar(content: Text('Nota em contingência transmitida com sucesso!')));
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Nota em contingência transmitida com sucesso!'),
+          ),
+        );
         _loadData();
       } else {
-        messenger.showSnackBar(const SnackBar(content: Text('Não foi possível transmitir a nota. Verifique se o Bridge está online.'), backgroundColor: Colors.orange));
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Não foi possível transmitir a nota. Verifique se o Bridge está online.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) _mostrarErro('Erro ao retransmitir: $e');
@@ -1292,7 +1809,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
   }
 
   Future<void> _reenviarTodasPendentes() async {
-    final pendentes = _todasNfces.where((n) => n.status == 'contingencia' || n.status == 'pendente').toList();
+    final pendentes = _todasNfces
+        .where((n) => n.status == 'contingencia' || n.status == 'pendente')
+        .toList();
     if (pendentes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Nenhuma NFC-e pendente para reenviar.')),
@@ -1301,47 +1820,28 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     }
 
     final dataService = Provider.of<DataService>(context, listen: false);
-    final serieDefault = '1';
-    final numeroSugerido = dataService.getProximoNumeroNfce(serie: serieDefault);
-    final numeroBaseCtrl = TextEditingController(text: numeroSugerido.toString());
 
     final bool? confirmar = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Reenviar Pendentes', style: TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Deseja reenviar ${pendentes.length} NFC-e pendente(s)?\n\nTotal: R\$ ${NumberFormat.currency(locale: "pt_BR", symbol: "").format(pendentes.fold(0.0, (sum, n) => sum + n.valorTotal))}',
-              style: const TextStyle(color: Colors.white70),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Número INICIAL para este reenvio (as notas recebem sequência a partir dele):',
-              style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: numeroBaseCtrl,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.08),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                labelText: 'Número inicial',
-                labelStyle: const TextStyle(color: Colors.white54),
-              ),
-            ),
-          ],
+        title: const Text(
+          'Reenviar Pendentes',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'Deseja reenviar ${pendentes.length} NFC-e pendente(s)?\n\n'
+          'Cada nota sai com o MESMO número. Só avança se a SEFAZ devolver duplicidade (539).\n\n'
+          'Total: R\$ ${NumberFormat.currency(locale: "pt_BR", symbol: "").format(pendentes.fold(0.0, (sum, n) => sum + n.valorTotal))}',
+          style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx, false),
-            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'CANCELAR',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogCtx, true),
@@ -1355,14 +1855,6 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     if (confirmar != true) return;
     if (!mounted) return;
 
-    final int? numeroBase = int.tryParse(numeroBaseCtrl.text.trim());
-    if (numeroBase == null || numeroBase <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Número inicial inválido.'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
     final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _isLoading = true);
@@ -1370,16 +1862,8 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       int sucessos = 0;
       int falhas = 0;
       final List<String> mensagensDuplicidade = [];
-      
-      // Ao reenviar pendentes, RENUMERAR cada nota com o próximo número
-      // disponível da série (evita colisão 539 e sequência de notas travadas
-      // com número 0). Contador por série, começando do último disponível.
-      final Map<String, int> ultimosNumeros = {};
 
-      // Apenas status 'contingencia' continua passando pela fila: o payload
-      // traz o número original da nota. Para 'pendente' sempre reemitir via
-      // service com o número digitado no diálogo (evita puxar numeração alta
-      // da sequência envenenada 791252xxx).
+      // Reenvio usa o número original de cada nota. Só avança depois da 539.
       for (final nfce in pendentes) {
         try {
           if (nfce.status == 'contingencia') {
@@ -1402,72 +1886,52 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           if (nfce.status != 'pendente') continue;
           try {
             final nfceService = NFCeServiceFactory.criar();
-            final List<Produto> produtos = nfce.itens.map((item) => Produto(
-              id: item.produtoId,
-              codigo: item.codigo,
-              nome: item.descricao,
-              preco: item.valorUnitario,
-              unidade: item.unidade,
-              ncm: item.ncm,
-              cfop: item.cfop,
-              estoque: 0,
-              grupo: 'Geral',
-              createdAt: DateTime.now(),
-              updatedAt: DateTime.now(),
-            )).toList();
+            final List<Produto> produtos = nfce.itens
+                .map(
+                  (item) => Produto(
+                    id: item.produtoId,
+                    codigo: item.codigo,
+                    nome: item.descricao,
+                    preco: item.valorUnitario,
+                    unidade: item.unidade,
+                    ncm: item.ncm,
+                    cfop: item.cfop,
+                    estoque: 0,
+                    grupo: 'Geral',
+                    createdAt: DateTime.now(),
+                    updatedAt: DateTime.now(),
+                  ),
+                )
+                .toList();
 
             final Map<String, double> quantidades = {};
             for (final item in nfce.itens) {
               quantidades[item.produtoId] = item.quantidade;
             }
 
-            // Por padrão, reenviar com o número digitado pelo usuário
-            // (sequencial a partir do número inicial informado no diálogo).
-            // Só em caso de duplicidade na SEFAZ jogamos o último número válido.
-            final serieNota = nfce.serie.trim().isEmpty ? '1' : nfce.serie.trim();
-            ultimosNumeros.putIfAbsent(serieNota, () => numeroBase - 1);
-            ultimosNumeros[serieNota] = ultimosNumeros[serieNota]! + 1;
-            final numeroReenvio = ultimosNumeros[serieNota]!;
-
-            var novaNfce = await nfceService.emitir(
-              empresa: widget.empresa,
-              produtos: produtos,
-              quantidades: quantidades,
-              pagamentos: nfce.pagamentos,
-              valorTotal: nfce.valorTotal,
-              cpfCnpjConsumidor: nfce.cpfCnpjConsumidor,
-              nomeConsumidor: nfce.nomeConsumidor,
-              vendaId: nfce.vendaId,
-              vendaNumero: nfce.vendaNumero,
-              ambienteHomologacao: widget.empresa.configuracoes?['ambiente_nfe'] == 'Produção' ? false : true,
-              // Reenvio com o número ORIGINAL da nota (se válido)
-              serie: int.tryParse(serieNota),
-              modelo: nfce.modelo,
-              numero: numeroReenvio,
-            );
-
-            // Se a SEFAZ rejeitar por DUPLICIDADE, reemitir com o último
-            // número válido disponível na série e avisar o usuário.
-            String? erroAtual = novaNfce.xmlRetorno ?? novaNfce.qrCode;
-            bool ehDuplicidade(String? s) =>
-                s != null &&
-                (s.contains('539') ||
-                    s.toLowerCase().contains('duplicidade') ||
-                    s.toLowerCase().contains('duplicada'));
-            if (novaNfce.status != 'autorizada' &&
-                (ehDuplicidade(erroAtual) ||
-                    ehDuplicidade(novaNfce.chaveAcesso) ||
-                    ehDuplicidade(nfce.vendaNumero))) {
-              // Reemissão por duplicidade: usa o caminho ATÔMICO (bloco na
-              // nuvem) — foi justamente a numeração compartilhada que causou a
-              // duplicidade. Sem nuvem, cai no cálculo local.
-              final numeroAtomicoReemissao =
-                  await dataService.reservarProximoNumeroNfce(serie: serieNota);
-              final proximoValido = numeroAtomicoReemissao ??
-                  dataService.getProximoNumeroNfce(serie: serieNota);
-              mensagensDuplicidade.add(
-                'Nota ${nfce.vendaNumero ?? nfce.numero}: duplicidade na SEFAZ → reemitindo com nº $proximoValido',
-              );
+            final serieNota = nfce.serie.trim().isEmpty
+                ? '1'
+                : nfce.serie.trim();
+            final ocupados = dataService.nfces
+                .where((n) => n.serie == serieNota && n.id != nfce.id)
+                .map((n) => int.tryParse(n.numero))
+                .whereType<int>()
+                .toSet();
+            var numeroTentativa =
+                NfceDuplicidadeHelper.numeroOriginalReenvio(nfce.numero) ??
+                int.tryParse(nfce.numero) ??
+                0;
+            // Só avança para outro número se a SEFAZ confirmar duplicidade
+            // (539) no reenvio. Número original inválido não justifica pular
+            // a numeração — mantém o número e deixa o bridge rejeitar, ou o
+            // usuário corrige manualmente pelo diálogo de edição.
+            late NFCe novaNfce;
+            const maxTentativasDuplicidade = 3;
+            for (
+              var tentativa = 0;
+              tentativa < maxTentativasDuplicidade;
+              tentativa++
+            ) {
               novaNfce = await nfceService.emitir(
                 empresa: widget.empresa,
                 produtos: produtos,
@@ -1477,32 +1941,65 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 cpfCnpjConsumidor: nfce.cpfCnpjConsumidor,
                 nomeConsumidor: nfce.nomeConsumidor,
                 vendaId: nfce.vendaId,
-                vendaNumero: nfce.vendaNumero,
-                ambienteHomologacao: widget.empresa.configuracoes?['ambiente_nfe'] == 'Produção' ? false : true,
+                vendaNumero: numeroTentativa.toString(),
+                ambienteHomologacao:
+                    widget.empresa.configuracoes?['ambiente_nfe'] == 'Produção'
+                    ? false
+                    : true,
                 serie: int.tryParse(serieNota),
                 modelo: nfce.modelo,
-                numero: proximoValido,
+                numero: numeroTentativa,
+                numerosOcupados: ocupados,
               );
-              ultimosNumeros[serieNota] = proximoValido;
+
+              final retorno = novaNfce.xmlRetorno ?? novaNfce.qrCode;
+              final duplicidade =
+                  novaNfce.status != 'autorizada' &&
+                  (NfceDuplicidadeHelper.ehDuplicidade(retorno) ||
+                      NfceDuplicidadeHelper.ehDuplicidade(novaNfce.chaveAcesso));
+              if (!duplicidade) break;
+
+              final duplicado =
+                  NfceDuplicidadeHelper.numeroDaChaveDuplicada(retorno) ??
+                  numeroTentativa;
+              await dataService.marcarNumeroNfceComoOcupado(
+                numero: duplicado,
+                serie: serieNota.isEmpty ? '1' : serieNota,
+              );
+              ocupados.add(duplicado);
+              ocupados.add(numeroTentativa);
+              final proximoLivre = NfceDuplicidadeHelper.proximoAposDuplicidade(
+                numeroTentado: numeroTentativa,
+                ocupados: ocupados,
+                duplicados: NfceDuplicidadeHelper.numerosDuplicados(retorno),
+              );
+              mensagensDuplicidade.add(
+                'Nota ${nfce.vendaNumero ?? nfce.numero}: nº $duplicado duplicado; tentando nº $proximoLivre.',
+              );
+              if (tentativa + 1 == maxTentativasDuplicidade) break;
+              numeroTentativa = proximoLivre;
             }
 
             if (novaNfce.status == 'autorizada') {
               // ATUALIZAR o registro pendente existente (não criar novo!)
-              await dataService.atualizarNFCe(novaNfce.copyWith(id: nfce.id));
+              await dataService.atualizarNFCe(
+                novaNfce.copyWith(
+                  id: nfce.id,
+                  numero: novaNfce.numero,
+                  vendaNumero: novaNfce.numero,
+                ),
+              );
               sucessos++;
             } else {
-              // Continua pendente (rejeitada de novo): atualiza o registro
-              // existente em vez de criar um duplicado a cada tentativa.
-              // Mantemos o número NOVO atribuído ao reenvio (não o '0').
-              await dataService.atualizarNFCe(novaNfce.copyWith(
-                id: nfce.id,
-                numero: (int.tryParse(novaNfce.numero) ?? 0) > 0
-                    ? novaNfce.numero
-                    : (ehDuplicidade(novaNfce.xmlRetorno)
-                        ? (ultimosNumeros[serieNota]?.toString() ?? numeroReenvio.toString())
-                        : numeroReenvio.toString()),
-                serie: serieNota,
-              ));
+              // Duplicidade encerrou o laço apenas ao atingir o limite; nesse
+              // caso, preservar o retorno SEFAZ, mas não anexar número errado.
+              await dataService.atualizarNFCe(
+                novaNfce.copyWith(
+                  id: nfce.id,
+                  numero: numeroTentativa.toString(),
+                  serie: serieNota.isEmpty ? '1' : serieNota,
+                ),
+              );
               falhas++;
             }
           } catch (e) {
@@ -1513,11 +2010,15 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       }
 
       if (mounted) {
-        messenger.showSnackBar(SnackBar(
-          content: Text('Reenvio concluído: $sucessos sucesso(s), $falhas falha(s)'
-              '${mensagensDuplicidade.isNotEmpty ? ' | ${mensagensDuplicidade.length} duplicidade(s) corrigida(s) com novo número' : ''}'),
-          backgroundColor: sucessos > 0 ? Colors.green : Colors.orange,
-        ));
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Reenvio concluído: $sucessos sucesso(s), $falhas falha(s)'
+              '${mensagensDuplicidade.isNotEmpty ? ' | ${mensagensDuplicidade.length} duplicidade(s) corrigida(s) com novo número' : ''}',
+            ),
+            backgroundColor: sucessos > 0 ? Colors.green : Colors.orange,
+          ),
+        );
         if (mensagensDuplicidade.isNotEmpty && mounted) {
           showDialog(
             context: context,
@@ -1548,7 +2049,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     try {
       final dt = nfce.createdAt ?? nfce.dataEmissao;
       final mesDir = '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
-      final cnpj = (widget.empresa.cnpj ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+      final cnpj = (widget.empresa.cnpj ?? '').replaceAll(
+        RegExp(r'[^0-9]'),
+        '',
+      );
       final nomePasta = 'NFCe_${nfce.numero}_${nfce.serie}';
       final dir = Directory('C:\\ExodoNFCe\\$cnpj\\$mesDir\\$nomePasta');
       if (!dir.existsSync()) dir.createSync(recursive: true);
@@ -1556,14 +2060,20 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       // Salvar XML
       final xml = (nfce.xmlEnviado ?? '').trim();
       if (xml.isNotEmpty) {
-        final nomeXml = nfce.chaveAcesso != null ? '${nfce.chaveAcesso}-nfe.xml' : 'NFCe_${nfce.numero}-nfe.xml';
+        final nomeXml = nfce.chaveAcesso != null
+            ? '${nfce.chaveAcesso}-nfe.xml'
+            : 'NFCe_${nfce.numero}-nfe.xml';
         File('${dir.path}\\$nomeXml').writeAsStringSync(xml);
       }
 
       // Gerar e salvar PDF
       try {
-        final pdfBytes = await DANFEService.gerarPDF(nfce: nfce, empresa: widget.empresa);
-        final nomePdf = 'NFCe_${nfce.numero}_${nfce.serie}_${DateFormat('yyyyMMdd').format(dt)}.pdf';
+        final pdfBytes = await DANFEService.gerarPDF(
+          nfce: nfce,
+          empresa: widget.empresa,
+        );
+        final nomePdf =
+            'NFCe_${nfce.numero}_${nfce.serie}_${DateFormat('yyyyMMdd').format(dt)}.pdf';
         File('${dir.path}\\$nomePdf').writeAsBytesSync(pdfBytes);
       } catch (pdfErr) {
         debugPrint('[PDF] Erro ao gerar PDF: $pdfErr');
@@ -1575,21 +2085,32 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         context: context,
         builder: (ctx) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(children: [
-            Icon(Icons.check_circle, color: Colors.greenAccent),
-            SizedBox(width: 10),
-            Text('Nota Baixada!', style: TextStyle(color: Colors.white)),
-          ]),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.greenAccent),
+              SizedBox(width: 10),
+              Text('Nota Baixada!', style: TextStyle(color: Colors.white)),
+            ],
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('XML e PDF salvos em:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const Text(
+                'XML e PDF salvos em:',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
               const SizedBox(height: 6),
               SelectableText(
                 dir.path,
-                style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 12),
+                style: const TextStyle(
+                  color: Colors.cyanAccent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
               ),
             ],
           ),
@@ -1600,11 +2121,17 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 Process.run('explorer.exe', [dir.path]);
               },
               icon: const Icon(Icons.folder_open, color: Colors.amber),
-              label: const Text('ABRIR PASTA', style: TextStyle(color: Colors.amber)),
+              label: const Text(
+                'ABRIR PASTA',
+                style: TextStyle(color: Colors.amber),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'FECHAR',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
           ],
         ),
@@ -1612,7 +2139,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao baixar: $e'), backgroundColor: Colors.redAccent),
+        SnackBar(
+          content: Text('Erro ao baixar: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
       );
     }
   }
@@ -1629,7 +2159,9 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Venda correspondente não encontrada no banco de dados local.'),
+            content: Text(
+              'Venda correspondente não encontrada no banco de dados local.',
+            ),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
           ),
@@ -1672,7 +2204,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                       const SizedBox(height: 4),
                       Text(
                         'Data: $dt',
-                        style: const TextStyle(color: Colors.white38, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -1727,7 +2262,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                             ),
                             Text(
                               '${item.quantidade.toStringAsFixed(0)}x ${formatoMoeda.format(item.precoUnitario)}',
-                              style: const TextStyle(color: Colors.white70, fontSize: 13),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                              ),
                             ),
                           ],
                         ),
@@ -1748,9 +2286,11 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                       'Forma de Pagamento',
                       venda.pagamentos.isNotEmpty
                           ? venda.pagamentos
-                              .map((p) =>
-                                  '${p.tipo.nome} (${formatoMoeda.format(p.valor)})')
-                              .join(' + ')
+                                .map(
+                                  (p) =>
+                                      '${p.tipo.nome} (${formatoMoeda.format(p.valor)})',
+                                )
+                                .join(' + ')
                           : venda.tipoPagamento.nome,
                     ),
                     if (venda.clienteNome != null)
@@ -1797,8 +2337,18 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ],
       ),
     );
@@ -1817,35 +2367,59 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     final messenger = ScaffoldMessenger.of(context);
     final usuarioAtual = authService.usuarioAtual;
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    
+
     // Controladores editáveis
+    final numeroOriginal =
+        NfceDuplicidadeHelper.numeroOriginalReenvio(nfce.numero);
+    // No reenvio, o número deve ser SEMPRE o original da nota pendente.
+    // Só muda para outro número se a SEFAZ devolver duplicidade (539) no
+    // reenvio — nunca antecipa um número livre da série aqui.
     final numController = TextEditingController(
-      text: dataService.getProximoNumeroNfce(
-        serie: usuarioAtual?.serieNfce.toString() ?? '1',
-        numeroInicial: usuarioAtual?.numeroInicialNfce ?? 1,
-      ).toString(),
+      text: numeroOriginal != null
+          ? numeroOriginal.toString()
+          : (nfce.numero ?? '').toString(),
     );
-    final cpfController = TextEditingController(text: nfce.cpfCnpjConsumidor ?? '');
-    final nomeController = TextEditingController(text: nfce.nomeConsumidor ?? '');
-    
+    final cpfController = TextEditingController(
+      text: nfce.cpfCnpjConsumidor ?? '',
+    );
+    final nomeController = TextEditingController(
+      text: nfce.nomeConsumidor ?? '',
+    );
+
     // Itens editáveis
-    final itensEditados = nfce.itens.map((item) => _ItemEditavel(
-      produtoId: item.produtoId,
-      codigo: item.codigo,
-      descricao: item.descricao,
-      ncm: item.ncm,
-      cfop: item.cfop,
-      unidade: item.unidade,
-      quantidadeController: TextEditingController(text: item.quantidade.toStringAsFixed(item.quantidade == item.quantidade.roundToDouble() ? 0 : 2)),
-      valorUnitarioController: TextEditingController(text: item.valorUnitario.toStringAsFixed(2)),
-    )).toList();
-    
+    final itensEditados = nfce.itens
+        .map(
+          (item) => _ItemEditavel(
+            produtoId: item.produtoId,
+            codigo: item.codigo,
+            descricao: item.descricao,
+            ncm: item.ncm,
+            cfop: item.cfop,
+            unidade: item.unidade,
+            quantidadeController: TextEditingController(
+              text: item.quantidade.toStringAsFixed(
+                item.quantidade == item.quantidade.roundToDouble() ? 0 : 2,
+              ),
+            ),
+            valorUnitarioController: TextEditingController(
+              text: item.valorUnitario.toStringAsFixed(2),
+            ),
+          ),
+        )
+        .toList();
+
     // Pagamentos editáveis
-    final pagamentosEditaveis = nfce.pagamentos.map((p) => _PagamentoEditavel(
-      tipo: p.tipo,
-      valorController: TextEditingController(text: p.valor.toStringAsFixed(2)),
-    )).toList();
-    
+    final pagamentosEditaveis = nfce.pagamentos
+        .map(
+          (p) => _PagamentoEditavel(
+            tipo: p.tipo,
+            valorController: TextEditingController(
+              text: p.valor.toStringAsFixed(2),
+            ),
+          ),
+        )
+        .toList();
+
     // Calcular total
     double calcularTotal() {
       double total = 0;
@@ -1856,21 +2430,26 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       }
       return total;
     }
-    
+
     final totalAtual = ValueNotifier<double>(calcularTotal());
-    
+
     final bool? confirmar = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => StatefulBuilder(
         builder: (stfCtx, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E1E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: Row(
             children: [
               const Icon(Icons.edit_note, color: Colors.orange, size: 28),
               const SizedBox(width: 10),
               const Expanded(
-                child: Text('Corrigir e Reenviar NFC-e', style: TextStyle(color: Colors.white, fontSize: 18)),
+                child: Text(
+                  'Corrigir e Reenviar NFC-e',
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
               ),
             ],
           ),
@@ -1884,7 +2463,15 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // ═══ DADOS DO CONSUMIDOR ═══
-                  const Text('DADOS DO CONSUMIDOR', style: TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                  const Text(
+                    'DADOS DO CONSUMIDOR',
+                    style: TextStyle(
+                      color: Colors.cyanAccent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -1892,16 +2479,31 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                         flex: 2,
                         child: TextField(
                           controller: cpfController,
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
                           decoration: InputDecoration(
                             labelText: 'CPF/CNPJ',
-                            labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                            labelStyle: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                            ),
                             hintText: 'Somente números',
-                            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 12),
+                            hintStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.3),
+                              fontSize: 12,
+                            ),
                             filled: true,
                             fillColor: Colors.white.withOpacity(0.05),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
                           ),
                           onChanged: (_) => setDialogState(() {}),
                         ),
@@ -1911,52 +2513,100 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                         flex: 3,
                         child: TextField(
                           controller: nomeController,
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
                           decoration: InputDecoration(
                             labelText: 'Nome do Consumidor',
-                            labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                            labelStyle: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                            ),
                             filled: true,
                             fillColor: Colors.white.withOpacity(0.05),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 16),
-                  
+
                   // ═══ NÚMERO DA NOTA ═══
                   Row(
                     children: [
-                      const Text('Nº ', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      const Text(
+                        'Nº ',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
                       SizedBox(
                         width: 80,
                         child: TextField(
                           controller: numController,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.orange, fontSize: 14, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.orange,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                           decoration: InputDecoration(
                             filled: true,
                             fillColor: Colors.orange.withOpacity(0.1),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(6),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
                           ),
                         ),
                       ),
                       const SizedBox(width: 16),
-                      const Text('Série ', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      const Text(
+                        'Série ',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
-                        child: Text(nfce.serie, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          nfce.serie,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 16),
-                  
+
                   // ═══ ITENS ═══
-                  const Text('ITENS DA NOTA', style: TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                  const Text(
+                    'ITENS DA NOTA',
+                    style: TextStyle(
+                      color: Colors.cyanAccent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Container(
                     constraints: const BoxConstraints(maxHeight: 280),
@@ -1975,7 +2625,14 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(item.descricao, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                              Text(
+                                item.descricao,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               const SizedBox(height: 6),
                               Row(
                                 children: [
@@ -1983,15 +2640,35 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                   Expanded(
                                     child: TextField(
                                       controller: item.quantidadeController,
-                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                            decimal: true,
+                                          ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                      ),
                                       decoration: InputDecoration(
                                         labelText: 'Qtd',
-                                        labelStyle: const TextStyle(color: Colors.white54, fontSize: 10),
+                                        labelStyle: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
                                         filled: true,
-                                        fillColor: Colors.white.withOpacity(0.05),
-                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
-                                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                        fillColor: Colors.white.withOpacity(
+                                          0.05,
+                                        ),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 6,
+                                            ),
                                       ),
                                       onChanged: (_) {
                                         totalAtual.value = calcularTotal();
@@ -2004,17 +2681,40 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                   Expanded(
                                     child: TextField(
                                       controller: item.valorUnitarioController,
-                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                      style: const TextStyle(color: Colors.greenAccent, fontSize: 12),
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                            decimal: true,
+                                          ),
+                                      style: const TextStyle(
+                                        color: Colors.greenAccent,
+                                        fontSize: 12,
+                                      ),
                                       decoration: InputDecoration(
                                         labelText: 'V. Unitário',
-                                        labelStyle: const TextStyle(color: Colors.white54, fontSize: 10),
+                                        labelStyle: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
                                         prefixText: 'R\$ ',
-                                        prefixStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+                                        prefixStyle: TextStyle(
+                                          color: Colors.white.withOpacity(0.4),
+                                          fontSize: 11,
+                                        ),
                                         filled: true,
-                                        fillColor: Colors.white.withOpacity(0.05),
-                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
-                                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                        fillColor: Colors.white.withOpacity(
+                                          0.05,
+                                        ),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 6,
+                                            ),
                                       ),
                                       onChanged: (_) {
                                         totalAtual.value = calcularTotal();
@@ -2029,12 +2729,24 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                                     child: ValueListenableBuilder<double>(
                                       valueListenable: totalAtual,
                                       builder: (_, total, __) {
-                                        final qty = double.tryParse(item.quantidadeController.text) ?? 0;
-                                        final preco = double.tryParse(item.valorUnitarioController.text) ?? 0;
+                                        final qty =
+                                            double.tryParse(
+                                              item.quantidadeController.text,
+                                            ) ??
+                                            0;
+                                        final preco =
+                                            double.tryParse(
+                                              item.valorUnitarioController.text,
+                                            ) ??
+                                            0;
                                         final subtotal = qty * preco;
                                         return Text(
                                           formatoMoeda.format(subtotal),
-                                          style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                                          style: const TextStyle(
+                                            color: Colors.orangeAccent,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                           textAlign: TextAlign.right,
                                         );
                                       },
@@ -2049,9 +2761,17 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  
+
                   // ═══ PAGAMENTOS ═══
-                  const Text('FORMAS DE PAGAMENTO', style: TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                  const Text(
+                    'FORMAS DE PAGAMENTO',
+                    style: TextStyle(
+                      color: Colors.cyanAccent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   ...List.generate(pagamentosEditaveis.length, (index) {
                     final pgto = pagamentosEditaveis[index];
@@ -2066,14 +2786,20 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                         children: [
                           // Tipo (somente leitura)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.blue.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               pgto.tipoDescricao,
-                              style: const TextStyle(color: Colors.blueAccent, fontSize: 11),
+                              style: const TextStyle(
+                                color: Colors.blueAccent,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -2081,15 +2807,31 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                           Expanded(
                             child: TextField(
                               controller: pgto.valorController,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
                               decoration: InputDecoration(
                                 prefixText: 'R\$ ',
-                                prefixStyle: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+                                prefixStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 12,
+                                ),
                                 filled: true,
                                 fillColor: Colors.white.withOpacity(0.05),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
                               ),
                               onChanged: (_) {
                                 totalAtual.value = calcularTotal();
@@ -2102,25 +2844,39 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
                     );
                   }),
                   const SizedBox(height: 16),
-                  
+
                   // ═══ TOTAL ═══
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
-                        colors: [Colors.green.withOpacity(0.2), Colors.teal.withOpacity(0.15)],
+                        colors: [
+                          Colors.green.withOpacity(0.2),
+                          Colors.teal.withOpacity(0.15),
+                        ],
                       ),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('TOTAL DA NOTA', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                        const Text(
+                          'TOTAL DA NOTA',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         ValueListenableBuilder<double>(
                           valueListenable: totalAtual,
                           builder: (_, total, __) => Text(
                             formatoMoeda.format(total),
-                            style: const TextStyle(color: Colors.greenAccent, fontSize: 20, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ],
@@ -2133,7 +2889,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogCtx, false),
-              child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'CANCELAR',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
             ElevatedButton.icon(
               onPressed: () => Navigator.pop(dialogCtx, true),
@@ -2142,7 +2901,10 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
               ),
             ),
           ],
@@ -2154,76 +2916,109 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       setState(() => _isLoading = true);
       try {
         final nfceService = NFCeServiceFactory.criar();
-        
+
         // Reconstruir produtos a partir dos dados editados
-        final List<Produto> produtos = itensEditados.map((item) => Produto(
-          id: item.produtoId,
-          codigo: item.codigo,
-          nome: item.descricao,
-          preco: double.tryParse(item.valorUnitarioController.text) ?? 0,
-          unidade: item.unidade,
-          ncm: item.ncm,
-          cfop: item.cfop,
-          estoque: 0,
-          grupo: 'Geral',
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        )).toList();
+        final List<Produto> produtos = itensEditados
+            .map(
+              (item) => Produto(
+                id: item.produtoId,
+                codigo: item.codigo,
+                nome: item.descricao,
+                preco: double.tryParse(item.valorUnitarioController.text) ?? 0,
+                unidade: item.unidade,
+                ncm: item.ncm,
+                cfop: item.cfop,
+                estoque: 0,
+                grupo: 'Geral',
+                createdAt: DateTime.now(),
+                updatedAt: DateTime.now(),
+              ),
+            )
+            .toList();
 
         final Map<String, double> quantidades = {};
         for (int i = 0; i < itensEditados.length; i++) {
-          quantidades[itensEditados[i].produtoId] = double.tryParse(itensEditados[i].quantidadeController.text) ?? 0;
+          quantidades[itensEditados[i].produtoId] =
+              double.tryParse(itensEditados[i].quantidadeController.text) ?? 0;
         }
-        
+
         // Pagamentos editados
-        final pagamentos = pagamentosEditaveis.map((p) => NFCePagamento(
-          tipo: p.tipo,
-          valor: double.tryParse(p.valorController.text) ?? 0,
-        )).toList();
-        
+        final pagamentos = pagamentosEditaveis
+            .map(
+              (p) => NFCePagamento(
+                tipo: p.tipo,
+                valor: double.tryParse(p.valorController.text) ?? 0,
+              ),
+            )
+            .toList();
+
         final totalNota = calcularTotal();
 
+        final numeroReenvio =
+            NfceDuplicidadeHelper.numeroOriginalReenvio(numController.text) ??
+            int.tryParse(numController.text.trim());
+        final serieNota = nfce.serie.trim().isEmpty ? '1' : nfce.serie.trim();
         final novaNfce = await nfceService.emitir(
           empresa: widget.empresa,
           produtos: produtos,
           quantidades: quantidades,
           pagamentos: pagamentos,
           valorTotal: totalNota,
-          cpfCnpjConsumidor: cpfController.text.isNotEmpty ? cpfController.text : null,
-          nomeConsumidor: nomeController.text.isNotEmpty ? nomeController.text : null,
+          cpfCnpjConsumidor: cpfController.text.isNotEmpty
+              ? cpfController.text
+              : null,
+          nomeConsumidor: nomeController.text.isNotEmpty
+              ? nomeController.text
+              : null,
           vendaId: nfce.vendaId,
-          vendaNumero: numController.text,
-          ambienteHomologacao: widget.empresa.configuracoes?['ambiente_nfe'] == 'Produção' ? false : true,
+          vendaNumero: (numeroReenvio ?? nfce.numero).toString(),
+          ambienteHomologacao:
+              widget.empresa.configuracoes?['ambiente_nfe'] == 'Produção'
+              ? false
+              : true,
+          serie: int.tryParse(serieNota),
+          modelo: nfce.modelo,
+          numero: numeroReenvio,
         );
 
-        final eraPendente = nfce.status == 'pendente' || nfce.status == 'contingencia';
+        final eraPendente =
+            nfce.status == 'pendente' || nfce.status == 'contingencia';
 
-        await dataService.adicionarNFCe(novaNfce);
-
-        // A nota ANTIGA foi reemitida com outro número: precisa sair da fila de
-        // reenvio automático, senão o timer continuaria transmitindo o número
-        // velho em paralelo com a reemissão (e ela nunca sairia dos pendentes).
         if (eraPendente) {
-          await NfceContingenciaService.instance.removerDaFilaPorNumero(nfce.numero);
-          if (novaNfce.status == 'autorizada') {
-            await dataService.atualizarNFCe(nfce.copyWith(
-              status: 'substituida',
-              updatedAt: DateTime.now(),
-            ));
-          }
+          await NfceContingenciaService.instance.removerDaFilaPorNumero(
+            nfce.numero,
+          );
+          await dataService.atualizarNFCe(
+            novaNfce.copyWith(
+              id: nfce.id,
+              numero: novaNfce.numero,
+              vendaNumero: novaNfce.numero,
+              serie: serieNota.isEmpty ? '1' : serieNota,
+            ),
+          );
+        } else {
+          await dataService.adicionarNFCe(novaNfce);
         }
 
         // Salvar XML automaticamente em C:\ExodoNFCe\
-        NfceXmlLocalService.salvarXmlAposEmissao(nfce: novaNfce, empresa: widget.empresa);
-        
+        NfceXmlLocalService.salvarXmlAposEmissao(
+          nfce: novaNfce,
+          empresa: widget.empresa,
+        );
+
         if (novaNfce.status == 'autorizada') {
           if (!mounted) return;
           messenger.showSnackBar(
-            const SnackBar(content: Text('NFC-e corrigida e emitida com sucesso!'), backgroundColor: Colors.green),
+            const SnackBar(
+              content: Text('NFC-e corrigida e emitida com sucesso!'),
+              backgroundColor: Colors.green,
+            ),
           );
           _loadData();
         } else {
-          _mostrarErro('Status da emissão: ${novaNfce.status?.toUpperCase()}\n\nRetorno: ${novaNfce.xmlRetorno ?? "Falha na emissão"}');
+          _mostrarErro(
+            'Status da emissão: ${novaNfce.status?.toUpperCase()}\n\nRetorno: ${novaNfce.xmlRetorno ?? "Falha na emissão"}',
+          );
         }
       } catch (e) {
         if (mounted) _mostrarErro('Erro ao reemitir: $e');
@@ -2250,16 +3045,26 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     );
   }
 
-  Widget _buildQuickFilterChip(String label, VoidCallback onTap, {bool isCustom = false}) {
+  Widget _buildQuickFilterChip(
+    String label,
+    VoidCallback onTap, {
+    bool isCustom = false,
+  }) {
     bool selected = false;
     final start = _periodoFiltro?.start;
     final end = _periodoFiltro?.end;
     final agora = DateTime.now();
 
     if (label == 'Hoje' && start != null && end != null) {
-      selected = start.day == agora.day && start.month == agora.month && start.year == agora.year;
+      selected =
+          start.day == agora.day &&
+          start.month == agora.month &&
+          start.year == agora.year;
     } else if (label == 'Este Mês' && start != null) {
-      selected = start.day == 1 && start.month == agora.month && start.year == agora.year;
+      selected =
+          start.day == 1 &&
+          start.month == agora.month &&
+          start.year == agora.year;
     } else if (isCustom && _periodoFiltro != null) {
       // Verificamos se não cai nas outras categorias
       final isHoje = start?.day == agora.day && start?.month == agora.month;
@@ -2271,10 +3076,13 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
       padding: const EdgeInsets.only(right: 8),
       child: ChoiceChip(
         label: Text(
-          isCustom && selected 
-            ? '${DateFormat('dd/MM').format(start!)} - ${DateFormat('dd/MM').format(end!)}' 
-            : label, 
-          style: TextStyle(color: selected ? Colors.white : Colors.white60, fontSize: 12)
+          isCustom && selected
+              ? '${DateFormat('dd/MM').format(start!)} - ${DateFormat('dd/MM').format(end!)}'
+              : label,
+          style: TextStyle(
+            color: selected ? Colors.white : Colors.white60,
+            fontSize: 12,
+          ),
         ),
         selected: selected,
         onSelected: (_) => onTap(),
@@ -2286,7 +3094,12 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
     );
   }
 
-  Widget _buildSummaryBadge(String label, Color color, {VoidCallback? onTap, bool selected = false}) {
+  Widget _buildSummaryBadge(
+    String label,
+    Color color, {
+    VoidCallback? onTap,
+    bool selected = false,
+  }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -2299,7 +3112,11 @@ class _HistoricoNFCePDVDialogState extends State<HistoricoNFCePDVDialog> {
         ),
         child: Text(
           label,
-          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13),
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.bold,
+            fontSize: 13,
+          ),
         ),
       ),
     );
@@ -2334,24 +3151,32 @@ class _PagamentoEditavel {
   final String tipo;
   final TextEditingController valorController;
 
-  _PagamentoEditavel({
-    required this.tipo,
-    required this.valorController,
-  });
+  _PagamentoEditavel({required this.tipo, required this.valorController});
 
   String get tipoDescricao {
     switch (tipo) {
-      case '01': return 'Dinheiro';
-      case '02': return 'Cheque';
-      case '03': return 'Cartão Crédito';
-      case '04': return 'Cartão Débito';
-      case '05': return 'Crédito Loja';
-      case '10': return 'Vale Alimentação';
-      case '11': return 'Vale Refeição';
-      case '15': return 'Boleto Bancário';
-      case '90': return 'Sem pagamento';
-      case '99': return 'Outros';
-      default: return 'Desconhecido';
+      case '01':
+        return 'Dinheiro';
+      case '02':
+        return 'Cheque';
+      case '03':
+        return 'Cartão Crédito';
+      case '04':
+        return 'Cartão Débito';
+      case '05':
+        return 'Crédito Loja';
+      case '10':
+        return 'Vale Alimentação';
+      case '11':
+        return 'Vale Refeição';
+      case '15':
+        return 'Boleto Bancário';
+      case '90':
+        return 'Sem pagamento';
+      case '99':
+        return 'Outros';
+      default:
+        return 'Desconhecido';
     }
   }
 }

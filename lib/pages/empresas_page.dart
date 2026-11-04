@@ -88,7 +88,8 @@ class _DialogoDestinoAtualizacaoState
                 icone: Icons.public,
                 cor: Colors.teal,
                 titulo: 'TODOS os clientes (global)',
-                descricao: 'app_latest — todo cliente sem versão direcionada '
+                descricao:
+                    'app_latest — todo cliente sem versão direcionada '
                     'baixa esta.',
                 onTap: () => setState(() => _global = true),
               ),
@@ -98,7 +99,8 @@ class _DialogoDestinoAtualizacaoState
                 icone: Icons.business,
                 cor: Colors.cyan,
                 titulo: 'Uma ou mais empresas',
-                descricao: 'app_update_<id> — só os computadores das empresas '
+                descricao:
+                    'app_update_<id> — só os computadores das empresas '
                     'marcadas; as outras continuam como estão.',
                 onTap: () => setState(() => _global = false),
               ),
@@ -130,8 +132,10 @@ class _DialogoDestinoAtualizacaoState
                       const Spacer(),
                       Text(
                         '${_marcadas.length} marcada(s)',
-                        style:
-                            const TextStyle(color: Colors.cyan, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.cyan,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -144,28 +148,34 @@ class _DialogoDestinoAtualizacaoState
                     child: ListView(
                       shrinkWrap: true,
                       children: widget.empresas
-                          .map((empresa) => CheckboxListTile(
-                                dense: true,
-                                value: _marcadas.contains(empresa.id),
-                                activeColor: Colors.cyan,
-                                title: Text(
-                                  empresa.nomeExibicao,
-                                  style: const TextStyle(
-                                      color: Colors.white, fontSize: 13),
+                          .map(
+                            (empresa) => CheckboxListTile(
+                              dense: true,
+                              value: _marcadas.contains(empresa.id),
+                              activeColor: Colors.cyan,
+                              title: Text(
+                                empresa.nomeExibicao,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
                                 ),
-                                subtitle: Text(
-                                  _idCurto(empresa.id),
-                                  style: const TextStyle(
-                                      color: Colors.white38, fontSize: 11),
+                              ),
+                              subtitle: Text(
+                                _idCurto(empresa.id),
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 11,
                                 ),
-                                onChanged: (marcado) => setState(() {
-                                  if (marcado == true) {
-                                    _marcadas.add(empresa.id);
-                                  } else {
-                                    _marcadas.remove(empresa.id);
-                                  }
-                                }),
-                              ))
+                              ),
+                              onChanged: (marcado) => setState(() {
+                                if (marcado == true) {
+                                  _marcadas.add(empresa.id);
+                                } else {
+                                  _marcadas.remove(empresa.id);
+                                }
+                              }),
+                            ),
+                          )
                           .toList(),
                     ),
                   ),
@@ -183,8 +193,10 @@ class _DialogoDestinoAtualizacaoState
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child:
-              const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          child: const Text(
+            'Cancelar',
+            style: TextStyle(color: Colors.white54),
+          ),
         ),
         ElevatedButton.icon(
           onPressed: () {
@@ -197,7 +209,9 @@ class _DialogoDestinoAtualizacaoState
                 .toList();
             if (escolhidas.isEmpty) return; // nenhuma empresa marcada
             Navigator.pop(
-                context, _DestinoAtualizacao.paraEmpresas(escolhidas));
+              context,
+              _DestinoAtualizacao.paraEmpresas(escolhidas),
+            );
           },
           icon: const Icon(Icons.cloud_upload, size: 18),
           label: const Text('Continuar'),
@@ -249,8 +263,7 @@ class _DialogoDestinoAtualizacaoState
                   const SizedBox(height: 2),
                   Text(
                     descricao,
-                    style:
-                        const TextStyle(color: Colors.white54, fontSize: 11),
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
                   ),
                 ],
               ),
@@ -291,13 +304,17 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
   TipoIncrementoVersao _tipo = TipoIncrementoVersao.correcao;
   bool _carregando = true;
   bool _compilando = false;
+
   /// Etapa atual da barra de progresso (o texto na tela é o rótulo dela).
   EtapaGeracaoVersao _etapa = EtapaGeracaoVersao.gravandoCodigo;
+
   /// Quanto tempo já passou na etapa atual — é o que faz a barra andar nos
   /// minutos em que o compilador não imprime nada.
   final Stopwatch _tempoNaEtapa = Stopwatch();
+
   /// Tempo total desta geração, mostrado ao lado da barra.
   final Stopwatch _tempoTotal = Stopwatch();
+
   /// Redesenha a barra enquanto a versão está sendo gerada (o tique só serve
   /// para o tempo andar; o trabalho de verdade é assíncrono).
   Timer? _tiqueDaBarra;
@@ -324,8 +341,9 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
       _erro = null;
     });
     final pasta = AppUpdateService.pastaDoProjeto();
-    final versao =
-        pasta == null ? null : await AppUpdateService.lerVersaoDoCodigo(pasta);
+    final versao = pasta == null
+        ? null
+        : await AppUpdateService.lerVersaoDoCodigo(pasta);
     if (!mounted) return;
     setState(() {
       _pasta = pasta;
@@ -333,23 +351,24 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
       _carregando = false;
       _erro = pasta == null
           ? 'Não achei o código do projeto nesta máquina. Escolha a pasta onde '
-              'está o pubspec.yaml para eu conseguir compilar.'
+                'está o pubspec.yaml para eu conseguir compilar.'
           : null;
     });
   }
 
-  String get _novaVersao => AppUpdateService.proximaVersao(
-      _versaoNoCodigo ?? '0.0.0', _tipo);
+  String get _novaVersao =>
+      AppUpdateService.proximaVersao(_versaoNoCodigo ?? '0.0.0', _tipo);
 
   String _rotulo(TipoIncrementoVersao tipo) => switch (tipo) {
-        TipoIncrementoVersao.correcao => 'Correção',
-        TipoIncrementoVersao.versaoNova => 'Versão nova',
-        TipoIncrementoVersao.versaoGrande => 'Versão grande',
-      };
+    TipoIncrementoVersao.correcao => 'Correção',
+    TipoIncrementoVersao.versaoNova => 'Versão nova',
+    TipoIncrementoVersao.versaoGrande => 'Versão grande',
+  };
 
   Future<void> _escolherPasta() async {
     final escolhida = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Pasta do projeto (onde está o pubspec.yaml)');
+      dialogTitle: 'Pasta do projeto (onde está o pubspec.yaml)',
+    );
     if (escolhida == null) return;
     final versao = await AppUpdateService.lerVersaoDoCodigo(escolhida);
     if (!mounted) return;
@@ -461,8 +480,9 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
               value: percentual,
               minHeight: 10,
               backgroundColor: Colors.white12,
-              valueColor:
-                  const AlwaysStoppedAnimation<Color>(Colors.indigoAccent),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                Colors.indigoAccent,
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -534,8 +554,8 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
 
     setState(() => _entrarNaEtapa(EtapaGeracaoVersao.empacotando));
     final pacote = await AppUpdateService.empacotarAtualizacao(
-        pasta: p.join(
-            pasta, 'build', 'windows', 'x64', 'runner', 'Release'));
+      pasta: p.join(pasta, 'build', 'windows', 'x64', 'runner', 'Release'),
+    );
     if (!mounted) return;
     setState(() {
       _compilando = false;
@@ -554,8 +574,10 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
     final pacote = _pacote;
     if (versao == null || pacote == null) return;
 
-    final empresas = Provider.of<AuthService>(context, listen: false)
-        .getEmpresasDoUsuario();
+    final empresas = Provider.of<AuthService>(
+      context,
+      listen: false,
+    ).getEmpresasDoUsuario();
     final destino = await showDialog<_DestinoAtualizacao>(
       context: context,
       builder: (context) => _DialogoDestinoAtualizacao(empresas: empresas),
@@ -595,8 +617,10 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                      child: CircularProgressIndicator(
-                          color: Colors.indigoAccent)),
+                    child: CircularProgressIndicator(
+                      color: Colors.indigoAccent,
+                    ),
+                  ),
                 )
               else ...[
                 _buildPasta(),
@@ -615,11 +639,13 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                         'Aparece para o cliente na tela de atualização.',
                     helperStyle: const TextStyle(color: Colors.white38),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          BorderSide(color: Colors.white.withOpacity(0.2)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.2),
+                      ),
                     ),
                   ),
                 ),
@@ -642,11 +668,15 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                       reverse: true,
                       children: _log.reversed
                           .take(60)
-                          .map((linha) => Text(
-                                linha,
-                                style: const TextStyle(
-                                    color: Colors.white54, fontSize: 11),
-                              ))
+                          .map(
+                            (linha) => Text(
+                              linha,
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            ),
+                          )
                           .toList(),
                     ),
                   ),
@@ -661,9 +691,10 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.red.withOpacity(0.4)),
                     ),
-                    child: Text(_erro!,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 12)),
+                    child: Text(
+                      _erro!,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
                   ),
                 ],
                 if (_pacote != null) ...[
@@ -682,21 +713,23 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                         Text(
                           'Versão $_versaoGerada compilada e pacote pronto.',
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13),
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           '${_pacote!.tamanhoLegivel}  •  ${_pacote!.conteudo.join(", ")}',
                           style: const TextStyle(
-                              color: Colors.white70, fontSize: 11),
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         const Text(
                           'A versão só chega nos clientes quando você publicar.',
-                          style: TextStyle(
-                              color: Colors.white38, fontSize: 11),
+                          style: TextStyle(color: Colors.white38, fontSize: 11),
                         ),
                       ],
                     ),
@@ -710,12 +743,15 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
       actions: [
         TextButton(
           onPressed: _compilando ? null : () => Navigator.pop(context),
-          child: Text(_pacote == null ? 'Cancelar' : 'Publicar depois',
-              style: const TextStyle(color: Colors.white54)),
+          child: Text(
+            _pacote == null ? 'Cancelar' : 'Publicar depois',
+            style: const TextStyle(color: Colors.white54),
+          ),
         ),
         if (_pacote == null)
           ElevatedButton.icon(
-            onPressed: (_compilando || _pasta == null || _versaoNoCodigo == null)
+            onPressed:
+                (_compilando || _pasta == null || _versaoNoCodigo == null)
                 ? null
                 : _gerarECompilar,
             icon: _compilando
@@ -723,11 +759,15 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
                   )
                 : const Icon(Icons.build, size: 18),
             label: Text(_compilando ? 'Gerando...' : 'Gerar e compilar'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigoAccent),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.indigoAccent,
+            ),
           )
         else
           ElevatedButton.icon(
@@ -753,17 +793,21 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Código do projeto',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13)),
+          const Text(
+            'Código do projeto',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
           const SizedBox(height: 4),
           Text(
             pasta ?? 'não encontrado nesta máquina',
             style: TextStyle(
-                color: pasta == null ? Colors.orangeAccent : Colors.white54,
-                fontSize: 11),
+              color: pasta == null ? Colors.orangeAccent : Colors.white54,
+              fontSize: 11,
+            ),
           ),
           if (_versaoNoCodigo != null)
             Text(
@@ -787,13 +831,17 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Que tipo de versão é esta?',
-            style: TextStyle(color: Colors.white70, fontSize: 13)),
+        const Text(
+          'Que tipo de versão é esta?',
+          style: TextStyle(color: Colors.white70, fontSize: 13),
+        ),
         const SizedBox(height: 8),
         ...TipoIncrementoVersao.values.map((tipo) {
           final escolhido = _tipo == tipo;
           final previa = AppUpdateService.proximaVersao(
-              _versaoNoCodigo ?? '0.0.0', tipo);
+            _versaoNoCodigo ?? '0.0.0',
+            tipo,
+          );
           return InkWell(
             onTap: _compilando ? null : () => setState(() => _tipo = tipo),
             borderRadius: BorderRadius.circular(10),
@@ -805,8 +853,9 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                     .withOpacity(escolhido ? 0.14 : 0.03),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                    color: escolhido ? Colors.indigoAccent : Colors.white12,
-                    width: escolhido ? 2 : 1),
+                  color: escolhido ? Colors.indigoAccent : Colors.white12,
+                  width: escolhido ? 2 : 1,
+                ),
               ),
               child: Row(
                 children: [
@@ -814,16 +863,14 @@ class _DialogoGerarVersaoState extends State<_DialogoGerarVersao> {
                     escolhido
                         ? Icons.radio_button_checked
                         : Icons.radio_button_unchecked,
-                    color:
-                        escolhido ? Colors.indigoAccent : Colors.white24,
+                    color: escolhido ? Colors.indigoAccent : Colors.white24,
                     size: 18,
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       _rotulo(tipo),
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 13),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ),
                   Text(
@@ -891,6 +938,7 @@ class _DialogoPublicarAtualizacao extends StatefulWidget {
   /// Versão escolhida no painel "Versões publicadas" (reaproveitar o pacote
   /// que já está na nuvem, sem compilar e sem enviar nada).
   final String? versaoNaNuvemInicial;
+  final bool forcarInicial;
 
   const _DialogoPublicarAtualizacao({
     required this.destino,
@@ -898,6 +946,7 @@ class _DialogoPublicarAtualizacao extends StatefulWidget {
     this.notasIniciais,
     this.pacoteInicial,
     this.versaoNaNuvemInicial,
+    this.forcarInicial = false,
   });
 
   @override
@@ -908,10 +957,12 @@ class _DialogoPublicarAtualizacao extends StatefulWidget {
 class _DialogoPublicarAtualizacaoState
     extends State<_DialogoPublicarAtualizacao> {
   late final TextEditingController _versao = TextEditingController(
-      text: widget.versaoInicial ?? AppUpdateService.currentAppVersion);
-  late final TextEditingController _notas =
-      TextEditingController(text: widget.notasIniciais ?? '');
-  bool _forcar = false;
+    text: widget.versaoInicial ?? AppUpdateService.currentAppVersion,
+  );
+  late final TextEditingController _notas = TextEditingController(
+    text: widget.notasIniciais ?? '',
+  );
+  late bool _forcar = widget.forcarInicial;
   bool _montandoPacote = true;
   PacoteAtualizacao? _pacote;
   String? _erroPacote;
@@ -962,8 +1013,9 @@ class _DialogoPublicarAtualizacaoState
   /// (para a numeração automática). Roda em paralelo com o pacote local.
   Future<void> _carregarContexto() async {
     final pasta = AppUpdateService.pastaDoProjeto();
-    final versaoDoCodigo =
-        pasta == null ? null : await AppUpdateService.lerVersaoDoCodigo(pasta);
+    final versaoDoCodigo = pasta == null
+        ? null
+        : await AppUpdateService.lerVersaoDoCodigo(pasta);
     final versoes = await AppUpdateService.listarVersoesNaNuvem();
     if (!mounted) return;
     setState(() {
@@ -1064,7 +1116,7 @@ class _DialogoPublicarAtualizacaoState
       _montandoPacote = false;
       _erroPacote = pacote == null
           ? 'Não encontrei o programa compilado (data/app.so + sistema_exodo_novo.exe).\n'
-              'Rode "flutter build windows --release" antes de publicar.'
+                'Rode "flutter build windows --release" antes de publicar.'
           : null;
     });
   }
@@ -1150,9 +1202,11 @@ class _DialogoPublicarAtualizacaoState
     }
 
     if (pasta == null) {
-      erro('Não achei o código do projeto nesta máquina para gerar a versão '
-          '$versao. Publique pelo pacote compilado aqui ou destrave a pasta do '
-          'projeto no assistente "Gerar versão".');
+      erro(
+        'Não achei o código do projeto nesta máquina para gerar a versão '
+        '$versao. Publique pelo pacote compilado aqui ou destrave a pasta do '
+        'projeto no assistente "Gerar versão".',
+      );
       return null;
     }
 
@@ -1191,8 +1245,10 @@ class _DialogoPublicarAtualizacaoState
     );
     if (!mounted) return null;
     if (pacote == null) {
-      erro('Compilou, mas não achei o programa em '
-          'build/windows/x64/runner/Release para montar o pacote.');
+      erro(
+        'Compilou, mas não achei o programa em '
+        'build/windows/x64/runner/Release para montar o pacote.',
+      );
       return null;
     }
     setState(() => _log.add('>>> Pacote pronto: ${pacote.tamanhoLegivel}'));
@@ -1206,8 +1262,10 @@ class _DialogoPublicarAtualizacaoState
       backgroundColor: const Color(0xFF1E1E2E),
       title: Row(
         children: [
-          Icon(destino.global ? Icons.public : Icons.business,
-              color: destino.global ? Colors.teal : Colors.cyan),
+          Icon(
+            destino.global ? Icons.public : Icons.business,
+            color: destino.global ? Colors.teal : Colors.cyan,
+          ),
           const SizedBox(width: 12),
           Text(
             destino.global ? 'Publicar para TODOS' : 'Publicar para empresas',
@@ -1234,14 +1292,16 @@ class _DialogoPublicarAtualizacaoState
                 decoration: InputDecoration(
                   labelText: 'Detalhes desta atualização ("o que mudou")',
                   labelStyle: const TextStyle(color: Colors.white70),
-                  helperText:
-                      'Aparece para o cliente na tela de atualização.',
+                  helperText: 'Aparece para o cliente na tela de atualização.',
                   helperStyle: const TextStyle(color: Colors.white38),
-                  border:
-                      OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                    borderSide: BorderSide(
+                      color: Colors.white.withOpacity(0.2),
+                    ),
                   ),
                 ),
               ),
@@ -1278,8 +1338,10 @@ class _DialogoPublicarAtualizacaoState
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: Text(_etapa,
-                          style: const TextStyle(color: Colors.white70)),
+                      child: Text(
+                        _etapa,
+                        style: const TextStyle(color: Colors.white70),
+                      ),
                     ),
                   ],
                 ),
@@ -1290,11 +1352,15 @@ class _DialogoPublicarAtualizacaoState
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: (_sucesso ? Colors.green : Colors.red).withOpacity(0.12),
+                    color: (_sucesso ? Colors.green : Colors.red).withOpacity(
+                      0.12,
+                    ),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                        color: (_sucesso ? Colors.green : Colors.red)
-                            .withOpacity(0.4)),
+                      color: (_sucesso ? Colors.green : Colors.red).withOpacity(
+                        0.4,
+                      ),
+                    ),
                   ),
                   child: Text(
                     _resultado!,
@@ -1309,8 +1375,10 @@ class _DialogoPublicarAtualizacaoState
       actions: [
         TextButton(
           onPressed: _publicando ? null : () => Navigator.pop(context),
-          child: Text(_resultado == null ? 'Cancelar' : 'Fechar',
-              style: const TextStyle(color: Colors.white54)),
+          child: Text(
+            _resultado == null ? 'Cancelar' : 'Fechar',
+            style: const TextStyle(color: Colors.white54),
+          ),
         ),
         if (_resultado == null)
           ElevatedButton.icon(
@@ -1327,7 +1395,9 @@ class _DialogoPublicarAtualizacaoState
                   : 'Publicar',
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: widget.destino.global ? Colors.teal : Colors.cyan,
+              backgroundColor: widget.destino.global
+                  ? Colors.teal
+                  : Colors.cyan,
             ),
           ),
       ],
@@ -1358,14 +1428,15 @@ class _DialogoPublicarAtualizacaoState
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 const SizedBox(height: 6),
-                ...destino.empresas.map((e) => Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Text(
-                        '• ${e.nomeExibicao}',
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 12),
-                      ),
-                    )),
+                ...destino.empresas.map(
+                  (e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text(
+                      '• ${e.nomeExibicao}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 6),
                 const Text(
                   'As outras empresas não são afetadas.',
@@ -1386,7 +1457,10 @@ class _DialogoPublicarAtualizacaoState
         const Text(
           'Qual versão vai para o cliente?',
           style: TextStyle(
-              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
         ),
         const SizedBox(height: 4),
         const Text(
@@ -1401,7 +1475,8 @@ class _DialogoPublicarAtualizacaoState
             icone: Icons.rocket_launch,
             cor: Colors.teal,
             titulo: 'A que acabei de gerar — ${widget.versaoInicial}',
-            descricao: 'Pacote compilado nesta máquina agora '
+            descricao:
+                'Pacote compilado nesta máquina agora '
                 '(${widget.pacoteInicial!.tamanhoLegivel}) — é ele que sobe.',
           ),
         _opcaoVersao(
@@ -1411,13 +1486,14 @@ class _DialogoPublicarAtualizacaoState
           titulo: 'Numeração automática — $_versaoAutomatica',
           descricao: _podeAutomatica
               ? 'Grava o número no código e compila antes de publicar, então o '
-                  'cliente recebe exatamente a $_versaoAutomatica.'
+                    'cliente recebe exatamente a $_versaoAutomatica.'
               : 'Não achei o código do projeto nesta máquina para numerar '
-                  'sozinho (use o assistente "Gerar versão" ou a pasta do '
-                  'projeto).',
+                    'sozinho (use o assistente "Gerar versão" ou a pasta do '
+                    'projeto).',
           habilitado: _podeAutomatica,
-          extra:
-              _fonte == _FonteVersao.automatica ? _buildTipoAutomatico() : null,
+          extra: _fonte == _FonteVersao.automatica
+              ? _buildTipoAutomatico()
+              : null,
         ),
         _opcaoVersao(
           fonte: _FonteVersao.naNuvem,
@@ -1427,10 +1503,10 @@ class _DialogoPublicarAtualizacaoState
           descricao: _carregandoNuvem
               ? 'Lendo as versões publicadas...'
               : _versoesNaNuvem.isEmpty
-                  ? 'Nenhum pacote publicado ainda.'
-                  : 'Não compila e não envia arquivo: só direciona uma versão '
-                      'que já subiu para quem você escolher (é assim que se '
-                      'volta atrás).',
+              ? 'Nenhum pacote publicado ainda.'
+              : 'Não compila e não envia arquivo: só direciona uma versão '
+                    'que já subiu para quem você escolher (é assim que se '
+                    'volta atrás).',
           habilitado: _versoesNaNuvem.isNotEmpty,
           extra: _fonte == _FonteVersao.naNuvem ? _buildListaNaNuvem() : null,
         ),
@@ -1440,7 +1516,8 @@ class _DialogoPublicarAtualizacaoState
           cor: Colors.blueGrey,
           titulo:
               'Pacote pronto nesta máquina — ${_versao.text.trim().isEmpty ? AppUpdateService.currentAppVersion : _versao.text.trim()}',
-          descricao: 'Usa o programa já compilado aqui e envia o número que '
+          descricao:
+              'Usa o programa já compilado aqui e envia o número que '
               'estiver no campo.',
           extra: _fonte == _FonteVersao.local ? _buildCampoVersao() : null,
         ),
@@ -1470,8 +1547,9 @@ class _DialogoPublicarAtualizacaoState
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color:
-                  cor.withOpacity(selecionado ? 0.14 : (habilitado ? 0.04 : 0.02)),
+              color: cor.withOpacity(
+                selecionado ? 0.14 : (habilitado ? 0.04 : 0.02),
+              ),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: selecionado ? cor : Colors.white12,
@@ -1500,7 +1578,9 @@ class _DialogoPublicarAtualizacaoState
                       Text(
                         descricao,
                         style: const TextStyle(
-                            color: Colors.white54, fontSize: 11),
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
                       ),
                     ],
                   ),
@@ -1518,7 +1598,12 @@ class _DialogoPublicarAtualizacaoState
         ),
         if (selecionado && extra != null)
           Padding(
-            padding: const EdgeInsets.only(left: 12, top: 8, right: 12, bottom: 2),
+            padding: const EdgeInsets.only(
+              left: 12,
+              top: 8,
+              right: 12,
+              bottom: 2,
+            ),
             child: extra,
           ),
         const SizedBox(height: 8),
@@ -1535,7 +1620,8 @@ class _DialogoPublicarAtualizacaoState
       decoration: InputDecoration(
         labelText: 'Número da versão',
         labelStyle: const TextStyle(color: Colors.white70),
-        helperText: 'A compilada nesta máquina é a '
+        helperText:
+            'A compilada nesta máquina é a '
             '${AppUpdateService.currentAppVersion}.',
         helperStyle: const TextStyle(color: Colors.white38),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -1575,8 +1661,10 @@ class _DialogoPublicarAtualizacaoState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Que tipo de número novo?',
-            style: TextStyle(color: Colors.white70, fontSize: 12)),
+        const Text(
+          'Que tipo de número novo?',
+          style: TextStyle(color: Colors.white70, fontSize: 12),
+        ),
         const SizedBox(height: 6),
         Wrap(
           spacing: 8,
@@ -1589,16 +1677,18 @@ class _DialogoPublicarAtualizacaoState
                   : () => setState(() => _tipoAutomatico = tipo),
               borderRadius: BorderRadius.circular(20),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: escolhido
                       ? Colors.indigoAccent.withOpacity(0.2)
                       : Colors.white.withOpacity(0.04),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                      color:
-                          escolhido ? Colors.indigoAccent : Colors.white12),
+                    color: escolhido ? Colors.indigoAccent : Colors.white12,
+                  ),
                 ),
                 child: Text(
                   '${_rotuloTipo(tipo)} → '
@@ -1606,8 +1696,7 @@ class _DialogoPublicarAtualizacaoState
                   style: TextStyle(
                     color: escolhido ? Colors.indigoAccent : Colors.white54,
                     fontSize: 12,
-                    fontWeight:
-                        escolhido ? FontWeight.bold : FontWeight.normal,
+                    fontWeight: escolhido ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
               ),
@@ -1626,10 +1715,10 @@ class _DialogoPublicarAtualizacaoState
   }
 
   String _rotuloTipo(TipoIncrementoVersao tipo) => switch (tipo) {
-        TipoIncrementoVersao.correcao => 'Correção',
-        TipoIncrementoVersao.versaoNova => 'Versão nova',
-        TipoIncrementoVersao.versaoGrande => 'Versão grande',
-      };
+    TipoIncrementoVersao.correcao => 'Correção',
+    TipoIncrementoVersao.versaoNova => 'Versão nova',
+    TipoIncrementoVersao.versaoGrande => 'Versão grande',
+  };
 
   /// A lista das versões que já têm pacote na nuvem (reaproveitar sem enviar).
   Widget _buildListaNaNuvem() {
@@ -1637,12 +1726,15 @@ class _DialogoPublicarAtualizacaoState
       return const Row(
         children: [
           SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2)),
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
           SizedBox(width: 12),
-          Text('Lendo as versões publicadas...',
-              style: TextStyle(color: Colors.white70, fontSize: 12)),
+          Text(
+            'Lendo as versões publicadas...',
+            style: TextStyle(color: Colors.white70, fontSize: 12),
+          ),
         ],
       );
     }
@@ -1655,8 +1747,8 @@ class _DialogoPublicarAtualizacaoState
     }
     // O valor do DropdownButton tem que existir na lista (senão o Flutter
     // recusa montar o widget): se a escolha não estiver aqui, cai na primeira.
-    final selecionada = _versoesNaNuvem
-            .any((v) => v.versao == _versaoNaNuvemEscolhida)
+    final selecionada =
+        _versoesNaNuvem.any((v) => v.versao == _versaoNaNuvemEscolhida)
         ? _versaoNaNuvemEscolhida
         : _versoesNaNuvem.first.versao;
     return Column(
@@ -1669,15 +1761,16 @@ class _DialogoPublicarAtualizacaoState
           underline: const SizedBox.shrink(),
           style: const TextStyle(color: Colors.white, fontSize: 13),
           items: _versoesNaNuvem
-              .map((v) => DropdownMenuItem<String>(
-                    value: v.versao,
-                    child: Text(
-                      '${v.versao}  •  ${v.tamanhoLegivel}  •  enviado em '
-                      '${v.quandoLegivel}',
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                  ))
+              .map(
+                (v) => DropdownMenuItem<String>(
+                  value: v.versao,
+                  child: Text(
+                    '${v.versao}  •  ${v.tamanhoLegivel}  •  enviado em '
+                    '${v.quandoLegivel}',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              )
               .toList(),
           onChanged: _publicando
               ? null
@@ -1695,8 +1788,9 @@ class _DialogoPublicarAtualizacaoState
 
   /// Cartão do que vai acontecer quando o pacote vem da nuvem.
   Widget _buildPacoteDaNuvem() {
-    final escolhidas =
-        _versoesNaNuvem.where((v) => v.versao == _versaoNaNuvemEscolhida);
+    final escolhidas = _versoesNaNuvem.where(
+      (v) => v.versao == _versaoNaNuvemEscolhida,
+    );
     final escolhida = escolhidas.isEmpty ? null : escolhidas.first;
     return Container(
       width: double.infinity,
@@ -1713,13 +1807,14 @@ class _DialogoPublicarAtualizacaoState
             escolhida == null
                 ? 'Nenhum pacote escolhido'
                 : '♻️ Nada será enviado — o pacote da versão '
-                    '${escolhida.versao} já está na nuvem '
-                    '(${escolhida.tamanhoLegivel}, enviado em '
-                    '${escolhida.quandoLegivel}).',
+                      '${escolhida.versao} já está na nuvem '
+                      '(${escolhida.tamanhoLegivel}, enviado em '
+                      '${escolhida.quandoLegivel}).',
             style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 13),
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
           ),
           const SizedBox(height: 4),
           const Text(
@@ -1767,11 +1862,15 @@ class _DialogoPublicarAtualizacaoState
               reverse: true,
               children: _log.reversed
                   .take(60)
-                  .map((linha) => Text(
-                        linha,
-                        style: const TextStyle(
-                            color: Colors.white54, fontSize: 11),
-                      ))
+                  .map(
+                    (linha) => Text(
+                      linha,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                      ),
+                    ),
+                  )
                   .toList(),
             ),
           ),
@@ -1785,12 +1884,15 @@ class _DialogoPublicarAtualizacaoState
       return const Row(
         children: [
           SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2)),
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
           SizedBox(width: 12),
-          Text('Montando o pacote do programa...',
-              style: TextStyle(color: Colors.white70, fontSize: 12)),
+          Text(
+            'Montando o pacote do programa...',
+            style: TextStyle(color: Colors.white70, fontSize: 12),
+          ),
         ],
       );
     }
@@ -1822,9 +1924,14 @@ class _DialogoPublicarAtualizacaoState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Pacote que vai subir',
-              style: TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          const Text(
+            'Pacote que vai subir',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
           const SizedBox(height: 6),
           Text(
             '${pacote.tamanhoLegivel}  •  ${pacote.conteudo.join(", ")}',
@@ -1898,12 +2005,11 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
 
   /// Manda uma versão que JÁ está na nuvem para um destino (sem enviar arquivo).
   /// É o caminho para voltar uma empresa a uma versão anterior.
-  Future<void> _direcionar(VersaoNaNuvem versao) async {
+  Future<void> _direcionar(VersaoNaNuvem versao, {bool forcar = false}) async {
     final destino = await showDialog<_DestinoAtualizacao>(
       context: context,
-      builder: (context) => _DialogoDestinoAtualizacao(
-        empresas: widget.empresas,
-      ),
+      builder: (context) =>
+          _DialogoDestinoAtualizacao(empresas: widget.empresas),
     );
     if (destino == null || !mounted) return;
     await showDialog<void>(
@@ -1911,6 +2017,7 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
       builder: (context) => _DialogoPublicarAtualizacao(
         destino: destino,
         versaoNaNuvemInicial: versao.versao,
+        forcarInicial: forcar,
       ),
     );
     if (!mounted) return;
@@ -1919,8 +2026,7 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
 
   String _nomeDoDestino(PublicacaoVersao p) {
     if (p.global) return 'TODOS os clientes';
-    final achadas =
-        widget.empresas.where((e) => e.id == p.empresaId).toList();
+    final achadas = widget.empresas.where((e) => e.id == p.empresaId).toList();
     return achadas.isEmpty
         ? 'Empresa ${p.empresaId}'
         : achadas.first.nomeExibicao;
@@ -1931,14 +2037,16 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Remover esta publicação?',
-            style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Remover esta publicação?',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Text(
           p.global
               ? 'Nenhum cliente vai receber atualização automática até você '
-                  'publicar de novo.'
+                    'publicar de novo.'
               : '${_nomeDoDestino(p)} volta a seguir a versão de TODOS os '
-                  'clientes. Os computadores dela não são alterados agora.',
+                    'clientes. Os computadores dela não são alterados agora.',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -1956,18 +2064,21 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
     );
     if (confirmar != true) return;
     setState(() => _mexendo = true);
-    final (ok, mensagem) =
-        await AppUpdateService.removerPublicacao(p.empresaId);
+    final (ok, mensagem) = await AppUpdateService.removerPublicacao(
+      p.empresaId,
+    );
     if (!mounted) return;
     setState(() => _mexendo = false);
     if (ok) {
       await _carregar();
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(mensagem),
-      backgroundColor: ok ? Colors.green : Colors.red,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
   }
 
   /// As versões que já têm pacote na nuvem, com o botão de direcionar: escolher
@@ -1982,12 +2093,16 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
         const Text(
           '📦 Pacotes na nuvem (dá para direcionar sem enviar de novo)',
           style: TextStyle(
-              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 13,
+          ),
         ),
         const SizedBox(height: 4),
         const Text(
-          'Use para voltar uma empresa a uma versão anterior ou repetir a mesma '
-          'versão em outra empresa.',
+          'Ativar libera a versão na nuvem; os computadores baixam na próxima '
+          'abertura. Forçar também permite voltar versões, mesmo em máquinas '
+          'com uma versão mais nova.',
           style: TextStyle(color: Colors.white38, fontSize: 11),
         ),
         const SizedBox(height: 8),
@@ -1998,36 +2113,49 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
             style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
           )
         else
-          ..._versoesNaNuvem.map((v) => Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.04),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.white12),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.archive_outlined,
-                        size: 18, color: Colors.cyan),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '${v.versao}  •  ${v.tamanhoLegivel}  •  enviado em '
-                        '${v.quandoLegivel}',
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 12),
-                      ),
+          ..._versoesNaNuvem.map(
+            (v) => Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.04),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.archive_outlined,
+                    size: 18,
+                    color: Colors.cyan,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${v.versao}  •  ${v.tamanhoLegivel}  •  enviado em '
+                      '${v.quandoLegivel}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
-                    TextButton.icon(
-                      onPressed: _mexendo ? null : () => _direcionar(v),
-                      icon: const Icon(Icons.send, size: 16),
-                      label: const Text('Direcionar'),
+                  ),
+                  TextButton.icon(
+                    onPressed: _mexendo ? null : () => _direcionar(v),
+                    icon: const Icon(Icons.send, size: 16),
+                    label: const Text('Ativar'),
+                  ),
+                  TextButton.icon(
+                    onPressed: _mexendo
+                        ? null
+                        : () => _direcionar(v, forcar: true),
+                    icon: const Icon(Icons.history, size: 16),
+                    label: const Text('Forçar'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.orangeAccent,
                     ),
-                  ],
-                ),
-              )),
+                  ),
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -2060,7 +2188,8 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                      child: CircularProgressIndicator(color: Colors.cyan)),
+                    child: CircularProgressIndicator(color: Colors.cyan),
+                  ),
                 )
               else if (_publicacoes.isEmpty)
                 const Text(
@@ -2068,63 +2197,77 @@ class _DialogoPublicacoesState extends State<_DialogoPublicacoes> {
                   style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
                 )
               else
-                ..._publicacoes.map((p) => Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
+                ..._publicacoes.map(
+                  (p) => Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: (p.global ? Colors.teal : Colors.cyan).withOpacity(
+                        0.08,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
                         color: (p.global ? Colors.teal : Colors.cyan)
-                            .withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: (p.global ? Colors.teal : Colors.cyan)
-                              .withOpacity(0.3),
+                            .withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          p.global ? Icons.public : Icons.business,
+                          color: p.global ? Colors.teal : Colors.cyan,
+                          size: 20,
                         ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(p.global ? Icons.public : Icons.business,
-                              color: p.global ? Colors.teal : Colors.cyan,
-                              size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _nomeDoDestino(p),
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _nomeDoDestino(p),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
                                 ),
-                                Text(
-                                  'versão ${p.versao}'
-                                  '${p.forcada ? " (forçada)" : ""}'
-                                  '${p.url.isEmpty ? "  •  sem link (não atualiza)" : ""}'
-                                  '${_pacoteNaNuvem(p.versao) != null ? "  •  📦 pacote na nuvem" : (p.url.isEmpty ? "" : "  •  ⚠️ pacote não encontrado na nuvem")}',
-                                  style: const TextStyle(
-                                      color: Colors.white70, fontSize: 11),
+                              ),
+                              Text(
+                                'versão ${p.versao}'
+                                '${p.forcada ? " (forçada)" : ""}'
+                                '${p.url.isEmpty ? "  •  sem link (não atualiza)" : ""}'
+                                '${_pacoteNaNuvem(p.versao) != null ? "  •  📦 pacote na nuvem" : (p.url.isEmpty ? "" : "  •  ⚠️ pacote não encontrado na nuvem")}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
                                 ),
-                                if (p.atualizadoEm != null)
-                                  Text(
-                                    'publicada em ${p.atualizadoEm}',
-                                    style: const TextStyle(
-                                        color: Colors.white38, fontSize: 10),
+                              ),
+                              if (p.atualizadoEm != null)
+                                Text(
+                                  'publicada em ${p.atualizadoEm}',
+                                  style: const TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 10,
                                   ),
-                              ],
-                            ),
+                                ),
+                            ],
                           ),
-                          TextButton.icon(
-                            onPressed:
-                                _mexendo ? null : () => _remover(p),
-                            icon: const Icon(Icons.delete_outline,
-                                size: 16, color: Colors.red),
-                            label: const Text('Remover',
-                                style: TextStyle(color: Colors.red)),
+                        ),
+                        TextButton.icon(
+                          onPressed: _mexendo ? null : () => _remover(p),
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            size: 16,
+                            color: Colors.red,
                           ),
-                        ],
-                      ),
-                    )),
+                          label: const Text(
+                            'Remover',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               _buildPacotesNaNuvem(),
             ],
           ),
@@ -2173,17 +2316,15 @@ class _EmpresasPageState extends State<EmpresasPage> {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final usuarioAtual = authService.usuarioAtual;
-    
+
     // Verificar se o usuário é "user" (único que pode acessar configuração da empresa)
     final podeAcessar = usuarioAtual?.email.toLowerCase() == 'user';
-    
+
     if (!podeAcessar) {
       return AppTheme.appBackground(
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            title: const Text('Gerenciar Empresas'),
-          ),
+          appBar: AppBar(title: const Text('Gerenciar Empresas')),
           body: Center(
             child: Padding(
               padding: const EdgeInsets.all(24.0),
@@ -2208,10 +2349,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   Text(
                     'Apenas o usuário "user" pode acessar a configuração de empresas.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white70,
-                    ),
+                    style: TextStyle(fontSize: 16, color: Colors.white70),
                   ),
                 ],
               ),
@@ -2238,7 +2376,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.green, width: 2),
                   ),
-                  child: const Icon(Icons.file_upload, color: Colors.green, size: 24),
+                  child: const Icon(
+                    Icons.file_upload,
+                    color: Colors.green,
+                    size: 24,
+                  ),
                 ),
                 tooltip: 'Importar Produtos do Excel',
                 onPressed: () => _importarProdutosExcel(context),
@@ -2304,12 +2446,18 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 );
 
                 if (confirmar == true && mounted) {
-                  final authService = Provider.of<AuthService>(context, listen: false);
-                  final dataService = Provider.of<DataService>(context, listen: false);
-                  
+                  final authService = Provider.of<AuthService>(
+                    context,
+                    listen: false,
+                  );
+                  final dataService = Provider.of<DataService>(
+                    context,
+                    listen: false,
+                  );
+
                   await authService.logout();
                   await dataService.definirEmpresaAtual(null);
-                  
+
                   if (mounted) {
                     Navigator.pushAndRemoveUntil(
                       context,
@@ -2335,42 +2483,40 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   // Cards das empresas (apenas empresas permitidas)
                   final empresasPermitidas = authService.getEmpresasDoUsuario();
                   return ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // Card de importação SEMPRE no topo (sempre visível)
-                  _buildCardImportacao(context),
-                  // Card de importação de CLIENTES (com saldo devedor/fiado)
-                  _buildCardImportacaoClientes(context),
-                  // NOVO: Card de Sincronização Supabase (Roxo)
-                  if (podeAcessar)
-                    _buildCardSupabaseSync(context),
-                  // NOVO: Card de Diagnóstico Supabase (Laranja)
-                  if (podeAcessar)
-                    _buildCardSupabaseDiagnostico(context),
-                  // Card do Google Drive - BACKUP (Azul)
-                  _buildCardGoogleDriveBackup(context),
-                  // NOVO: Card do Google Drive - RESTAURAR (Verde)
-                  _buildCardGoogleDriveRestore(context),
-                  // NOVO: Card de Backup e Restauracao Local (Vermelho)
-                  _buildCardBackupRestore(context),
-                  // NOVO: Card de Gerar Versão (numera, compila e publica)
-                  if (podeAcessar)
-                    _buildCardGerarVersao(context),
-                  // NOVO: Card de Publicar Atualização Global
-                  if (podeAcessar)
-                    _buildCardPublicarAtualizacaoGlobal(context),
-                  // NOVO: Card de Gerenciamento do Emissor NFC-e
-                  if (podeAcessar)
-                    _buildCardBridgeManagement(context),
-                  // Card de Monitor de Sincronizacao (Ciano)
-                  if (podeAcessar)
-                    _buildCardMonitorSync(context),
-                  // Cards das empresas
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      // Card de importação SEMPRE no topo (sempre visível)
+                      _buildCardImportacao(context),
+                      // Card de importação de CLIENTES (com saldo devedor/fiado)
+                      _buildCardImportacaoClientes(context),
+                      // NOVO: Card de Sincronização Supabase (Roxo)
+                      if (podeAcessar) _buildCardSupabaseSync(context),
+                      // NOVO: Card de Diagnóstico Supabase (Laranja)
+                      if (podeAcessar) _buildCardSupabaseDiagnostico(context),
+                      // Card do Google Drive - BACKUP (Azul)
+                      _buildCardGoogleDriveBackup(context),
+                      // NOVO: Card do Google Drive - RESTAURAR (Verde)
+                      _buildCardGoogleDriveRestore(context),
+                      // NOVO: Card de Backup e Restauracao Local (Vermelho)
+                      _buildCardBackupRestore(context),
+                      // NOVO: Card de Gerar Versão (numera, compila e publica)
+                      if (podeAcessar) _buildCardGerarVersao(context),
+                      // NOVO: Card de Publicar Atualização Global
+                      if (podeAcessar)
+                        _buildCardPublicarAtualizacaoGlobal(context),
+                      // NOVO: Card de Gerenciamento do Emissor NFC-e
+                      if (podeAcessar) _buildCardBridgeManagement(context),
+                      // Card de Monitor de Sincronizacao (Ciano)
+                      if (podeAcessar) _buildCardMonitorSync(context),
+                      // Cards das empresas
                       if (empresasPermitidas.isEmpty)
-                    _buildEmptyState()
-                  else
-                        ...empresasPermitidas.map((empresa) => _buildEmpresaCard(context, empresa, authService)),
-                ],
+                        _buildEmptyState()
+                      else
+                        ...empresasPermitidas.map(
+                          (empresa) =>
+                              _buildEmpresaCard(context, empresa, authService),
+                        ),
+                    ],
                   );
                 },
               ),
@@ -2383,7 +2529,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
           icon: const Icon(Icons.file_upload, color: Colors.white, size: 28),
           label: const Text(
             'IMPORTAR EXCEL',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
           ),
         ),
       ),
@@ -2468,11 +2618,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     ],
                   ),
                 ),
-                const Icon(
-                  Icons.chevron_right,
-                  color: Colors.white,
-                  size: 24,
-                ),
+                const Icon(Icons.chevron_right, color: Colors.white, size: 24),
               ],
             ),
           ),
@@ -2484,14 +2630,17 @@ class _EmpresasPageState extends State<EmpresasPage> {
   /// Realiza o backup de todas as empresas para o Google Drive
   Future<void> _realizarBackupGoogleDrive(BuildContext context) async {
     final driveService = GoogleDriveService.instance;
-    
+
     // Mostrar diálogo de progresso
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('Backup Google Drive', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Backup Google Drive',
+          style: TextStyle(color: Colors.white),
+        ),
         content: const Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2509,7 +2658,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
     try {
       final resultado = await driveService.realizarBackupTodasEmpresas();
-      
+
       if (mounted) {
         Navigator.pop(context); // Fechar loading
 
@@ -2523,19 +2672,37 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 children: [
                   Icon(Icons.check_circle, color: Colors.green),
                   SizedBox(width: 12),
-                  Text('Backup Concluído', style: TextStyle(color: Colors.white)),
+                  Text(
+                    'Backup Concluído',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ],
               ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                   Text('Total de empresas: ${detalhes['total']}', style: const TextStyle(color: Colors.white70)),
-                   Text('Sucesso: ${detalhes['sucesso']}', style: const TextStyle(color: Colors.white)),
-                   if (detalhes['falha'] > 0)
-                    Text('Falhas: ${detalhes['falha']}', style: const TextStyle(color: Colors.redAccent)),
-                   const SizedBox(height: 16),
-                   Text('Pasta no Drive: ${detalhes['pasta']}', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                  Text(
+                    'Total de empresas: ${detalhes['total']}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  Text(
+                    'Sucesso: ${detalhes['sucesso']}',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  if (detalhes['falha'] > 0)
+                    Text(
+                      'Falhas: ${detalhes['falha']}',
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Pasta no Drive: ${detalhes['pasta']}',
+                    style: const TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               actions: [
@@ -2559,7 +2726,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Erro inesperado: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -2596,69 +2766,70 @@ class _EmpresasPageState extends State<EmpresasPage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.teal,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.teal.withOpacity(0.5),
-                        blurRadius: 8,
-                        spreadRadius: 1,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.teal,
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.teal.withOpacity(0.5),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.cloud_upload,
-                    color: Colors.white,
-                    size: 36,
-                  ),
-                ),
-                const SizedBox(width: 20),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '📤 PUBLICAR ATUALIZAÇÃO',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
+                      child: const Icon(
+                        Icons.cloud_upload,
+                        color: Colors.white,
+                        size: 36,
                       ),
-                      SizedBox(height: 6),
-                      Text(
-                        'Escolher a versão (a que você acabou de gerar, o próximo '
-                        'número automático ou uma que já está na nuvem) e para '
-                        'quem vai: TODOS os clientes ou só as empresas marcadas.',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white70,
-                          height: 1.4,
-                        ),
+                    ),
+                    const SizedBox(width: 20),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '📤 PUBLICAR ATUALIZAÇÃO',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            'Escolher a versão (a que você acabou de gerar, o próximo '
+                            'número automático ou uma que já está na nuvem) e para '
+                            'quem vai: TODOS os clientes ou só as empresas marcadas.',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.white70,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-                const Icon(
-                  Icons.public,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ],
+                    ),
+                    const Icon(Icons.public, color: Colors.white, size: 24),
+                  ],
                 ),
                 const Divider(color: Colors.white12, height: 20),
                 Row(
                   children: [
                     TextButton.icon(
                       onPressed: _verPublicacoes,
-                      icon: const Icon(Icons.cloud_done,
-                          size: 18, color: Colors.cyan),
-                      label: const Text('Ver versões publicadas',
-                          style: TextStyle(color: Colors.cyan)),
+                      icon: const Icon(
+                        Icons.cloud_done,
+                        size: 18,
+                        color: Colors.cyan,
+                      ),
+                      label: const Text(
+                        'Ver versões publicadas',
+                        style: TextStyle(color: Colors.cyan),
+                      ),
                     ),
                     const Spacer(),
                     Text(
@@ -2684,10 +2855,13 @@ class _EmpresasPageState extends State<EmpresasPage> {
   Future<void> _publicarAtualizacao() async {
     // Mesma fonte de empresas da lista desta tela: respeita a permissão de
     // quem está publicando.
-    final empresas = Provider.of<AuthService>(context, listen: false)
-        .getEmpresasDoUsuario()
-      ..sort((a, b) =>
-          a.nomeExibicao.toLowerCase().compareTo(b.nomeExibicao.toLowerCase()));
+    final empresas =
+        Provider.of<AuthService>(context, listen: false).getEmpresasDoUsuario()
+          ..sort(
+            (a, b) => a.nomeExibicao.toLowerCase().compareTo(
+              b.nomeExibicao.toLowerCase(),
+            ),
+          );
 
     final destino = await showDialog<_DestinoAtualizacao>(
       context: context,
@@ -2702,7 +2876,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
   /// Abre a confirmação (versão + pacote que vai subir) para o destino escolhido.
   Future<void> _abrirConfirmacaoDePublicacao(
-      _DestinoAtualizacao destino) async {
+    _DestinoAtualizacao destino,
+  ) async {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -2727,7 +2902,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
         gradient: LinearGradient(
           colors: [
             Colors.indigoAccent.withOpacity(0.3),
-            Colors.indigoAccent.withOpacity(0.1)
+            Colors.indigoAccent.withOpacity(0.1),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -2796,11 +2971,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     ],
                   ),
                 ),
-                const Icon(
-                  Icons.auto_awesome,
-                  color: Colors.white,
-                  size: 24,
-                ),
+                const Icon(Icons.auto_awesome, color: Colors.white, size: 24),
               ],
             ),
           ),
@@ -2811,8 +2982,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
   /// Painel do que está publicado na nuvem (global e por empresa).
   Future<void> _verPublicacoes() async {
-    final empresas = Provider.of<AuthService>(context, listen: false)
-        .getEmpresasDoUsuario();
+    final empresas = Provider.of<AuthService>(
+      context,
+      listen: false,
+    ).getEmpresasDoUsuario();
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -2825,15 +2998,15 @@ class _EmpresasPageState extends State<EmpresasPage> {
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.orange.withOpacity(0.3), Colors.orange.withOpacity(0.1)],
+          colors: [
+            Colors.orange.withOpacity(0.3),
+            Colors.orange.withOpacity(0.1),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.orange,
-          width: 2,
-        ),
+        border: Border.all(color: Colors.orange, width: 2),
         boxShadow: [
           BoxShadow(
             color: Colors.orange.withOpacity(0.3),
@@ -2908,13 +3081,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
-
-
   Widget _buildBridgeAction_Divider() {
-    return Container(
-      height: 1,
-      color: Colors.white.withOpacity(0.05),
-    );
+    return Container(height: 1, color: Colors.white.withOpacity(0.05));
   }
 
   void _mostrarDialogoGerenciamentoBridge(BuildContext context) {
@@ -2944,8 +3112,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
               icon: Icons.play_arrow,
               color: Colors.orange,
               title: 'Iniciar Forçado (Watchdog)',
-              subtitle: 'Aciona o monitor para abrir o emissor se estiver fechado.',
-              onTap: () => _selecionarPCEDispararComando(context, 'start', 'Iniciar'),
+              subtitle:
+                  'Aciona o monitor para abrir o emissor se estiver fechado.',
+              onTap: () =>
+                  _selecionarPCEDispararComando(context, 'start', 'Iniciar'),
             ),
             const SizedBox(height: 12),
             _buildBridgeAction_Divider(),
@@ -2956,7 +3126,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
               color: Colors.green,
               title: 'Atualizar Software (Git Pull)',
               subtitle: 'Baixa as correções de código mais recentes.',
-              onTap: () => _selecionarPCEDispararComando(context, 'update', 'Atualizar'),
+              onTap: () =>
+                  _selecionarPCEDispararComando(context, 'update', 'Atualizar'),
             ),
             const SizedBox(height: 12),
             _buildBridgeActionTile(
@@ -2965,7 +3136,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
               color: Colors.blue,
               title: 'Reiniciar Serviços',
               subtitle: 'Força o reinício do emissor.',
-              onTap: () => _selecionarPCEDispararComando(context, 'restart', 'Reiniciar'),
+              onTap: () => _selecionarPCEDispararComando(
+                context,
+                'restart',
+                'Reiniciar',
+              ),
             ),
             const SizedBox(height: 12),
             _buildBridgeActionTile(
@@ -2974,14 +3149,21 @@ class _EmpresasPageState extends State<EmpresasPage> {
               color: Colors.purple,
               title: 'Identificar Máquinas',
               subtitle: 'Solicita nome do PC e versão do Windows.',
-              onTap: () => _selecionarPCEDispararComando(context, 'identify', 'Identificar'),
+              onTap: () => _selecionarPCEDispararComando(
+                context,
+                'identify',
+                'Identificar',
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('FECHAR', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'FECHAR',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
         ],
       ),
@@ -3014,8 +3196,17 @@ class _EmpresasPageState extends State<EmpresasPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
                 ],
               ),
             ),
@@ -3026,13 +3217,21 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
   }
 
-  void _selecionarPCEDispararComando(BuildContext context, String comando, String acaoTitulo, {Map<String, dynamic>? extraData}) {
+  void _selecionarPCEDispararComando(
+    BuildContext context,
+    String comando,
+    String acaoTitulo, {
+    Map<String, dynamic>? extraData,
+  }) {
     // Primeiro traz a UI com a lista de computadores
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: Text('Selecione o PC para $acaoTitulo', style: const TextStyle(color: Colors.white, fontSize: 18)),
+        title: Text(
+          'Selecione o PC para $acaoTitulo',
+          style: const TextStyle(color: Colors.white, fontSize: 18),
+        ),
         content: SizedBox(
           width: double.maxFinite,
           height: 300,
@@ -3043,14 +3242,22 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 return const Center(child: CircularProgressIndicator());
               }
               if (snapshot.hasError) {
-                return Center(child: Text('Erro: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
+                return Center(
+                  child: Text(
+                    'Erro: ${snapshot.error}',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                );
               }
 
               final docs = snapshot.data ?? [];
-              
+
               if (docs.isEmpty) {
                 return const Center(
-                  child: Text('Nenhum emissor online encontrado.', style: TextStyle(color: Colors.white54)),
+                  child: Text(
+                    'Nenhum emissor online encontrado.',
+                    style: TextStyle(color: Colors.white54),
+                  ),
                 );
               }
 
@@ -3059,83 +3266,155 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   // Opção de enviar para todos
                   ListTile(
                     leading: const Icon(Icons.computer, color: Colors.white),
-                    title: const Text('TODOS OS COMPUTADORES', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                    title: const Text(
+                      'TODOS OS COMPUTADORES',
+                      style: TextStyle(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     onTap: () {
                       Navigator.pop(context); // Fecha popup
-                      _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo em TODOS os emissores simultaneamente?', targetPc: null, extraData: extraData);
+                      _confirmarComandoBridge(
+                        context,
+                        comando,
+                        'Deseja $acaoTitulo em TODOS os emissores simultaneamente?',
+                        targetPc: null,
+                        extraData: extraData,
+                      );
                     },
                   ),
                   const Divider(color: Colors.white24),
                   // Lista de Pcs Específicos
-                  ...docs.where((data) => !(data['id']?.toString() ?? '').startsWith('watchdog_')).map((data) {
-                    final String pcName = (data['pc_name'] ?? data['id'] ?? 'Desconhecido').toString();
-                    final bool isOnline = data['online'] == true;
-                    
-                    // Busca o watchdog de forma manual
-                    bool watchdogOnline = false;
-                    for (var d in docs) {
-                      if (d['id'] == 'watchdog_$pcName') {
-                        if (d['online'] == true) {
-                          watchdogOnline = true;
-                        }
-                        break;
-                      }
-                    }
+                  ...docs
+                      .where(
+                        (data) => !(data['id']?.toString() ?? '').startsWith(
+                          'watchdog_',
+                        ),
+                      )
+                      .map((data) {
+                        final String pcName =
+                            (data['pc_name'] ?? data['id'] ?? 'Desconhecido')
+                                .toString();
+                        final bool isOnline = data['online'] == true;
 
-                    return ListTile(
-                      leading: Icon(
-                        Icons.desktop_windows, 
-                        color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white12)
-                      ),
-                      title: Text(pcName, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isOnline ? 'Bridge Online' : (watchdogOnline ? 'Proteção Ativa' : 'Offline total'),
-                            style: TextStyle(color: isOnline ? Colors.green : (watchdogOnline ? Colors.orange : Colors.white24), fontSize: 11),
+                        // Busca o watchdog de forma manual
+                        bool watchdogOnline = false;
+                        for (var d in docs) {
+                          if (d['id'] == 'watchdog_$pcName') {
+                            if (d['online'] == true) {
+                              watchdogOnline = true;
+                            }
+                            break;
+                          }
+                        }
+
+                        return ListTile(
+                          leading: Icon(
+                            Icons.desktop_windows,
+                            color: isOnline
+                                ? Colors.green
+                                : (watchdogOnline
+                                      ? Colors.orange
+                                      : Colors.white12),
                           ),
-                          if (data['versao_software'] != null || data['versao_windows'] != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2, bottom: 2),
-                              child: Text(
-                                'Versão: ${data['versao_software'] ?? "Desconhecida"} (${data['versao_windows'] ?? "Windows"})',
-                                style: const TextStyle(color: Colors.white38, fontSize: 10),
+                          title: Text(
+                            pcName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isOnline
+                                    ? 'Bridge Online'
+                                    : (watchdogOnline
+                                          ? 'Proteção Ativa'
+                                          : 'Offline total'),
+                                style: TextStyle(
+                                  color: isOnline
+                                      ? Colors.green
+                                      : (watchdogOnline
+                                            ? Colors.orange
+                                            : Colors.white24),
+                                  fontSize: 11,
+                                ),
                               ),
-                            ),
-                          if (data['ultima_empresa'] != null)
-                            Text(
-                              '🏢 ${data['ultima_empresa']}',
-                              style: const TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                        ],
-                      ),
-                      trailing: Icon(Icons.send, color: (isOnline || watchdogOnline) ? Colors.blue : Colors.white10, size: 16),
-                      onTap: () {
-                        if (!watchdogOnline && comando == 'start') {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('❌ Comando "Iniciar" impossível: A Proteção (Watchdog) não está ativa neste PC. Inicie manualmente uma vez para instalar.'),
-                              backgroundColor: Colors.red,
-                              duration: Duration(seconds: 4),
-                            ),
-                          );
-                          return;
-                        }
-                        
-                        if (!isOnline && !watchdogOnline) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('⚠️ Este PC está totalmente offline.')),
-                          );
-                          return;
-                        }
-                        Navigator.pop(context); // Fecha popup
-                        _confirmarComandoBridge(context, comando, 'Deseja $acaoTitulo no PC: $pcName?', targetPc: pcName, extraData: extraData);
-                      },
-                    );
-                  }).toList(),
+                              if (data['versao_software'] != null ||
+                                  data['versao_windows'] != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 2,
+                                    bottom: 2,
+                                  ),
+                                  child: Text(
+                                    'Versão: ${data['versao_software'] ?? "Desconhecida"} (${data['versao_windows'] ?? "Windows"})',
+                                    style: const TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ),
+                              if (data['ultima_empresa'] != null)
+                                Text(
+                                  '🏢 ${data['ultima_empresa']}',
+                                  style: const TextStyle(
+                                    color: Colors.blueAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
+                          ),
+                          trailing: Icon(
+                            Icons.send,
+                            color: (isOnline || watchdogOnline)
+                                ? Colors.blue
+                                : Colors.white10,
+                            size: 16,
+                          ),
+                          onTap: () {
+                            if (!watchdogOnline && comando == 'start') {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    '❌ Comando "Iniciar" impossível: A Proteção (Watchdog) não está ativa neste PC. Inicie manualmente uma vez para instalar.',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                  duration: Duration(seconds: 4),
+                                ),
+                              );
+                              return;
+                            }
+
+                            if (!isOnline && !watchdogOnline) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    '⚠️ Este PC está totalmente offline.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            Navigator.pop(context); // Fecha popup
+                            _confirmarComandoBridge(
+                              context,
+                              comando,
+                              'Deseja $acaoTitulo no PC: $pcName?',
+                              targetPc: pcName,
+                              extraData: extraData,
+                            );
+                          },
+                        );
+                      })
+                      .toList(),
                 ],
               );
             },
@@ -3144,19 +3423,31 @@ class _EmpresasPageState extends State<EmpresasPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
         ],
       ),
     );
   }
 
-  void _confirmarComandoBridge(BuildContext context, String comando, String pergunta, {String? targetPc, Map<String, dynamic>? extraData}) {
+  void _confirmarComandoBridge(
+    BuildContext context,
+    String comando,
+    String pergunta, {
+    String? targetPc,
+    Map<String, dynamic>? extraData,
+  }) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF2E2E3E),
-        title: const Text('Confirmar Comando', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Confirmar Comando',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Text(pergunta, style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
@@ -3167,12 +3458,20 @@ class _EmpresasPageState extends State<EmpresasPage> {
             onPressed: () async {
               Navigator.pop(context); // Fecha confirmação
               try {
-                debugPrint('>>> [BridgeManager] Enviando comando "$comando" para PC: ${targetPc ?? "Todos"}');
-                await BridgeManagementService.instance.enviarComando(comando, targetPc: targetPc, extraData: extraData);
+                debugPrint(
+                  '>>> [BridgeManager] Enviando comando "$comando" para PC: ${targetPc ?? "Todos"}',
+                );
+                await BridgeManagementService.instance.enviarComando(
+                  comando,
+                  targetPc: targetPc,
+                  extraData: extraData,
+                );
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('✅ Comando "$comando" enviado com sucesso!'),
+                      content: Text(
+                        '✅ Comando "$comando" enviado com sucesso!',
+                      ),
                       backgroundColor: Colors.green,
                     ),
                   );
@@ -3182,10 +3481,14 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('❌ Erro: $e'), 
+                      content: Text('❌ Erro: $e'),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 10),
-                      action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
+                      action: SnackBarAction(
+                        label: 'OK',
+                        textColor: Colors.white,
+                        onPressed: () {},
+                      ),
                     ),
                   );
                 }
@@ -3204,7 +3507,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.purple.withOpacity(0.3), Colors.purple.withOpacity(0.1)],
+          colors: [
+            Colors.purple.withOpacity(0.3),
+            Colors.purple.withOpacity(0.1),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -3242,7 +3548,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     children: [
                       Text(
                         '🗄️ SINCRONIZAR COM SUPABASE',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                       SizedBox(height: 6),
                       Text(
@@ -3264,7 +3574,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
   Future<void> _sincronizarComSupabase(BuildContext context) async {
     if (!SupabaseService.isAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('❌ Supabase não está disponível'), backgroundColor: Colors.red),
+        const SnackBar(
+          content: Text('❌ Supabase não está disponível'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
@@ -3274,20 +3587,26 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
     if (empresas.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('❌ Nenhuma empresa encontrada'), backgroundColor: Colors.red),
+        const SnackBar(
+          content: Text('❌ Nenhuma empresa encontrada'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
 
     // Mostrar diálogo para selecionar empresa
     String? empresaSelecionadaId;
-    
+
     if (mounted) {
       empresaSelecionadaId = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
-          title: const Text('Selecione a Empresa', style: TextStyle(color: Colors.white)),
+          title: const Text(
+            'Selecione a Empresa',
+            style: TextStyle(color: Colors.white),
+          ),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView.builder(
@@ -3322,8 +3641,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
     if (empresaSelecionadaId == null) return;
 
     // Carregar dados da empresa selecionada
-    final empresaSelecionada = empresas.firstWhere((e) => e.id == empresaSelecionadaId);
-    
+    final empresaSelecionada = empresas.firstWhere(
+      (e) => e.id == empresaSelecionadaId,
+    );
+
     // Trocar para a empresa temporariamente para sincronizar
     final dataService = Provider.of<DataService>(context, listen: false);
     await authService.selecionarEmpresa(empresaSelecionada);
@@ -3381,7 +3702,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ Erro ao sincronizar: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('❌ Erro ao sincronizar: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -3392,7 +3716,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.orange.withOpacity(0.3), Colors.orange.withOpacity(0.1)],
+          colors: [
+            Colors.orange.withOpacity(0.3),
+            Colors.orange.withOpacity(0.1),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -3421,7 +3748,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     color: Colors.orange,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.bug_report, color: Colors.white, size: 36),
+                  child: const Icon(
+                    Icons.bug_report,
+                    color: Colors.white,
+                    size: 36,
+                  ),
                 ),
                 const SizedBox(width: 20),
                 const Expanded(
@@ -3430,7 +3761,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     children: [
                       Text(
                         '🔍 TESTAR SUPABASE',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                       SizedBox(height: 6),
                       Text(
@@ -3452,10 +3787,13 @@ class _EmpresasPageState extends State<EmpresasPage> {
   Future<void> _testarSupabase(BuildContext context) async {
     final dataService = Provider.of<DataService>(context, listen: false);
     final empresaId = dataService.currentEmpresaId;
-    
+
     if (empresaId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('❌ Selecione uma empresa primeiro'), backgroundColor: Colors.red),
+        const SnackBar(
+          content: Text('❌ Selecione uma empresa primeiro'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
@@ -3482,10 +3820,12 @@ class _EmpresasPageState extends State<EmpresasPage> {
     );
 
     try {
-      final resultado = await SupabaseService.instance.testarInsercao(empresaId);
-      
+      final resultado = await SupabaseService.instance.testarInsercao(
+        empresaId,
+      );
+
       if (mounted) Navigator.pop(context);
-      
+
       if (resultado['sucesso'] == true) {
         showDialog(
           context: context,
@@ -3570,7 +3910,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     color: Colors.blue,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.cloud_upload, color: Colors.white, size: 36),
+                  child: const Icon(
+                    Icons.cloud_upload,
+                    color: Colors.white,
+                    size: 36,
+                  ),
                 ),
                 const SizedBox(width: 20),
                 const Expanded(
@@ -3579,7 +3923,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     children: [
                       Text(
                         '☁️ BACKUP GLOBAL DRIVE',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                       SizedBox(height: 6),
                       Text(
@@ -3589,7 +3937,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     ],
                   ),
                 ),
-                const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white,
+                  size: 20,
+                ),
               ],
             ),
           ),
@@ -3623,7 +3975,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
           onTap: () {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const BackupRestorePage()),
+              MaterialPageRoute(
+                builder: (context) => const BackupRestorePage(),
+              ),
             );
           },
           borderRadius: BorderRadius.circular(16),
@@ -3637,7 +3991,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     color: Colors.red,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.storage, color: Colors.white, size: 36),
+                  child: const Icon(
+                    Icons.storage,
+                    color: Colors.white,
+                    size: 36,
+                  ),
                 ),
                 const SizedBox(width: 20),
                 const Expanded(
@@ -3646,7 +4004,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     children: [
                       Text(
                         '🗄️ BACKUP & RESTAURAÇÃO (LOCAL)',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                       SizedBox(height: 6),
                       Text(
@@ -3670,7 +4032,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.green.withOpacity(0.3), Colors.green.withOpacity(0.1)],
+          colors: [
+            Colors.green.withOpacity(0.3),
+            Colors.green.withOpacity(0.1),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -3690,7 +4055,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
           onTap: () {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const GoogleDriveBackupPage()),
+              MaterialPageRoute(
+                builder: (context) => const GoogleDriveBackupPage(),
+              ),
             );
           },
           borderRadius: BorderRadius.circular(16),
@@ -3704,7 +4071,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     color: Colors.green,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.settings_backup_restore, color: Colors.white, size: 36),
+                  child: const Icon(
+                    Icons.settings_backup_restore,
+                    color: Colors.white,
+                    size: 36,
+                  ),
                 ),
                 const SizedBox(width: 20),
                 const Expanded(
@@ -3713,7 +4084,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     children: [
                       Text(
                         '📥 RESTAURAR DADOS (CLOUDRIVER)',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                       SizedBox(height: 6),
                       Text(
@@ -3745,16 +4120,16 @@ class _EmpresasPageState extends State<EmpresasPage> {
           const SizedBox(height: 24),
           Text(
             'Nenhuma empresa cadastrada',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: Colors.white70,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(color: Colors.white70),
           ),
           const SizedBox(height: 8),
           Text(
             'Toque no botão + para adicionar uma empresa',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Colors.white54,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Colors.white54),
           ),
         ],
       ),
@@ -3766,19 +4141,26 @@ class _EmpresasPageState extends State<EmpresasPage> {
       builder: (context, authService, _) {
         final empresaAtual = authService.empresaAtual;
         final empresasPermitidas = authService.getEmpresasDoUsuario();
-        final podeImportar = empresaAtual != null || empresasPermitidas.length == 1;
-        
+        final podeImportar =
+            empresaAtual != null || empresasPermitidas.length == 1;
+
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
           decoration: BoxDecoration(
             gradient: podeImportar
                 ? LinearGradient(
-                    colors: [Colors.green.withOpacity(0.3), Colors.green.withOpacity(0.1)],
+                    colors: [
+                      Colors.green.withOpacity(0.3),
+                      Colors.green.withOpacity(0.1),
+                    ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   )
                 : LinearGradient(
-                    colors: [Colors.orange.withOpacity(0.3), Colors.orange.withOpacity(0.1)],
+                    colors: [
+                      Colors.orange.withOpacity(0.3),
+                      Colors.orange.withOpacity(0.1),
+                    ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -3789,7 +4171,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
             ),
             boxShadow: [
               BoxShadow(
-                color: (podeImportar ? Colors.green : Colors.orange).withOpacity(0.3),
+                color: (podeImportar ? Colors.green : Colors.orange)
+                    .withOpacity(0.3),
                 blurRadius: 10,
                 spreadRadius: 2,
               ),
@@ -3811,7 +4194,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         borderRadius: BorderRadius.circular(14),
                         boxShadow: [
                           BoxShadow(
-                            color: (podeImportar ? Colors.green : Colors.orange).withOpacity(0.5),
+                            color: (podeImportar ? Colors.green : Colors.orange)
+                                .withOpacity(0.5),
                             blurRadius: 8,
                             spreadRadius: 1,
                           ),
@@ -3829,7 +4213,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            podeImportar 
+                            podeImportar
                                 ? '📊 IMPORTAR PRODUTOS EXCEL'
                                 : '⚠️ Selecione uma empresa para importar',
                             style: const TextStyle(
@@ -3842,8 +4226,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                           Text(
                             podeImportar
                                 ? empresaAtual != null
-                                    ? 'Empresa: ${empresaAtual.nomeExibicao}\nClique para selecionar arquivo Excel'
-                                    : 'Clique para importar produtos de um arquivo Excel'
+                                      ? 'Empresa: ${empresaAtual.nomeExibicao}\nClique para selecionar arquivo Excel'
+                                      : 'Clique para importar produtos de um arquivo Excel'
                                 : 'Clique no botão "Selecionar" da empresa primeiro',
                             style: TextStyle(
                               fontSize: 14,
@@ -3855,7 +4239,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       ),
                     ),
                     Icon(
-                      podeImportar ? Icons.arrow_forward_ios : Icons.info_outline,
+                      podeImportar
+                          ? Icons.arrow_forward_ios
+                          : Icons.info_outline,
                       color: Colors.white,
                       size: 24,
                     ),
@@ -3874,7 +4260,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
       builder: (context, authService, _) {
         final empresaAtual = authService.empresaAtual;
         final empresasPermitidas = authService.getEmpresasDoUsuario();
-        final podeImportar = empresaAtual != null || empresasPermitidas.length == 1;
+        final podeImportar =
+            empresaAtual != null || empresasPermitidas.length == 1;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
@@ -3942,9 +4329,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                           Text(
                             podeImportar
                                 ? empresaAtual != null
-                                    ? 'Empresa: ${empresaAtual.nomeExibicao}\n'
-                                        'Importa clientes e saldo devedor (fiado)'
-                                    : 'Importa clientes e saldo devedor (fiado)'
+                                      ? 'Empresa: ${empresaAtual.nomeExibicao}\n'
+                                            'Importa clientes e saldo devedor (fiado)'
+                                      : 'Importa clientes e saldo devedor (fiado)'
                                 : 'Selecione uma empresa antes de importar',
                             style: TextStyle(
                               fontSize: 14,
@@ -4040,23 +4427,40 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         // Bridge Status Badge
                         Consumer<DataService>(
                           builder: (context, dataService, _) {
-                            final bool isBridgeOnline = dataService.isEmpresaBridgeOnline(empresa.cnpj);
+                            final bool isBridgeOnline = dataService
+                                .isEmpresaBridgeOnline(empresa.cnpj);
                             if (!isBridgeOnline) return const SizedBox.shrink();
-                            
+
                             return Container(
                               margin: const EdgeInsets.only(left: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.green.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                border: Border.all(
+                                  color: Colors.green.withOpacity(0.3),
+                                ),
                               ),
                               child: const Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.circle, color: Colors.green, size: 6),
+                                  Icon(
+                                    Icons.circle,
+                                    color: Colors.green,
+                                    size: 6,
+                                  ),
                                   SizedBox(width: 4),
-                                  Text('ONLINE', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  Text(
+                                    'ONLINE',
+                                    style: TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ],
                               ),
                             );
@@ -4117,7 +4521,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     const SizedBox(height: 4),
                     InkWell(
                       onTap: () async {
-                        await Clipboard.setData(ClipboardData(text: empresa.id));
+                        await Clipboard.setData(
+                          ClipboardData(text: empresa.id),
+                        );
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -4141,7 +4547,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                             ),
                           ),
                           const SizedBox(width: 4),
-                          Icon(Icons.copy_rounded, size: 11, color: Colors.white.withOpacity(0.3)),
+                          Icon(
+                            Icons.copy_rounded,
+                            size: 11,
+                            color: Colors.white.withOpacity(0.3),
+                          ),
                         ],
                       ),
                     ),
@@ -4155,28 +4565,36 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   child: ElevatedButton.icon(
                     onPressed: () async {
                       // Validar acesso antes de selecionar
-                      final empresasPermitidas = authService.getEmpresasDoUsuario();
+                      final empresasPermitidas = authService
+                          .getEmpresasDoUsuario();
                       if (!empresasPermitidas.any((e) => e.id == empresa.id)) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('Você não tem permissão para acessar esta empresa'),
+                            content: Text(
+                              'Você não tem permissão para acessar esta empresa',
+                            ),
                             backgroundColor: Colors.red,
                           ),
                         );
                         return;
                       }
                       await authService.selecionarEmpresa(empresa);
-                      final dataService = Provider.of<DataService>(context, listen: false);
+                      final dataService = Provider.of<DataService>(
+                        context,
+                        listen: false,
+                      );
                       final empAtualizada = authService.empresaAtual ?? empresa;
                       dataService.setEmpresaAtual(empAtualizada);
 
                       final motivo = empAtualizada.verificarMotivoBloqueio(
-                        ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
+                        ultimaValidacaoOnline:
+                            dataService.ultimaValidacaoOnline,
                         ultimaDataExecucao: dataService.ultimaDataExecucao,
                       );
 
                       if (mounted) {
-                        if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+                        if (motivo != MotivoBloqueioEmpresa.nenhum &&
+                            !dataService.liberacaoProvisoriaAtiva) {
                           Navigator.pushReplacement(
                             context,
                             MaterialPageRoute(
@@ -4189,7 +4607,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('✅ Empresa ${empresa.nomeExibicao} selecionada!'),
+                              content: Text(
+                                '✅ Empresa ${empresa.nomeExibicao} selecionada!',
+                              ),
                               backgroundColor: Colors.green,
                               duration: const Duration(seconds: 3),
                             ),
@@ -4199,11 +4619,17 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       }
                     },
                     icon: const Icon(Icons.check_circle, size: 18),
-                    label: const Text('Selecionar', style: TextStyle(fontSize: 12)),
+                    label: const Text(
+                      'Selecionar',
+                      style: TextStyle(fontSize: 12),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                     ),
                   ),
                 ),
@@ -4215,7 +4641,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     final resultado = await Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => AdicionarEmpresaPage(empresa: empresa),
+                        builder: (context) =>
+                            AdicionarEmpresaPage(empresa: empresa),
                       ),
                     );
                     if (resultado == true && mounted) {
@@ -4228,18 +4655,24 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     }
                   } else if (value == 'selecionar') {
                     // Validar acesso antes de selecionar
-                    final empresasPermitidas = authService.getEmpresasDoUsuario();
+                    final empresasPermitidas = authService
+                        .getEmpresasDoUsuario();
                     if (!empresasPermitidas.any((e) => e.id == empresa.id)) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Você não tem permissão para acessar esta empresa'),
+                          content: Text(
+                            'Você não tem permissão para acessar esta empresa',
+                          ),
                           backgroundColor: Colors.red,
                         ),
                       );
                       return;
                     }
                     await authService.selecionarEmpresa(empresa);
-                    final dataService = Provider.of<DataService>(context, listen: false);
+                    final dataService = Provider.of<DataService>(
+                      context,
+                      listen: false,
+                    );
                     final empAtualizada = authService.empresaAtual ?? empresa;
                     dataService.setEmpresaAtual(empAtualizada);
 
@@ -4249,7 +4682,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     );
 
                     if (mounted) {
-                      if (motivo != MotivoBloqueioEmpresa.nenhum && !dataService.liberacaoProvisoriaAtiva) {
+                      if (motivo != MotivoBloqueioEmpresa.nenhum &&
+                          !dataService.liberacaoProvisoriaAtiva) {
                         Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(
@@ -4262,7 +4696,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Empresa ${empresa.nomeExibicao} selecionada'),
+                            content: Text(
+                              'Empresa ${empresa.nomeExibicao} selecionada',
+                            ),
                             backgroundColor: Colors.green,
                           ),
                         );
@@ -4273,7 +4709,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     if (!isEmpresaAtual) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Selecione a empresa antes de importar produtos'),
+                          content: Text(
+                            'Selecione a empresa antes de importar produtos',
+                          ),
                           backgroundColor: Colors.orange,
                         ),
                       );
@@ -4284,18 +4722,18 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     _confirmarExclusao(context, empresa, authService);
                   } else if (value == 'vincular_bridge') {
                     _selecionarPCEDispararComando(
-                      context, 
-                      'set_identity', 
+                      context,
+                      'set_identity',
                       'Vincular Computador',
                       extraData: {
                         'cnpj': empresa.cnpj,
                         'nome': empresa.nomeExibicao,
-                      }
+                      },
                     );
                   } else if (value == 'reiniciar_bridge') {
                     _selecionarPCEDispararComando(
-                      context, 
-                      'restart', 
+                      context,
+                      'restart',
                       'Reiniciar Emissor',
                     );
                   } else if (value == 'outros_bridge') {
@@ -4306,9 +4744,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 },
                 itemBuilder: (context) {
                   final usuarioAtual = authService.usuarioAtual;
-                  final isUsuarioMaster = usuarioAtual?.email.toLowerCase() == 'user';
-                  final podeImportarDeletar = isUsuarioMaster || usuarioAtual?.isMaster == true;
-                  
+                  final isUsuarioMaster =
+                      usuarioAtual?.email.toLowerCase() == 'user';
+                  final podeImportarDeletar =
+                      isUsuarioMaster || usuarioAtual?.isMaster == true;
+
                   return [
                     const PopupMenuItem(
                       value: 'editar',
@@ -4336,9 +4776,16 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         value: 'importar_produtos',
                         child: Row(
                           children: [
-                            Icon(Icons.file_upload, size: 20, color: Colors.green),
+                            Icon(
+                              Icons.file_upload,
+                              size: 20,
+                              color: Colors.green,
+                            ),
                             SizedBox(width: 8),
-                            Text('Importar Produtos Excel', style: TextStyle(color: Colors.green)),
+                            Text(
+                              'Importar Produtos Excel',
+                              style: TextStyle(color: Colors.green),
+                            ),
                           ],
                         ),
                       ),
@@ -4349,20 +4796,30 @@ class _EmpresasPageState extends State<EmpresasPage> {
                           children: [
                             Icon(Icons.delete, size: 20, color: Colors.red),
                             SizedBox(width: 8),
-                            Text('Excluir', style: TextStyle(color: Colors.red)),
+                            Text(
+                              'Excluir',
+                              style: TextStyle(color: Colors.red),
+                            ),
                           ],
                         ),
                       ),
-                    
+
                     // Opção de Vínculo do Bridge (Apenas ADMIN "user")
                     if (isUsuarioMaster) ...[
                       const PopupMenuItem(
                         value: 'reiniciar_bridge',
                         child: Row(
                           children: [
-                            Icon(Icons.restart_alt, color: Colors.blue, size: 20),
+                            Icon(
+                              Icons.restart_alt,
+                              color: Colors.blue,
+                              size: 20,
+                            ),
                             SizedBox(width: 12),
-                            Text('Reiniciar Emissor', style: TextStyle(color: Colors.blue)),
+                            Text(
+                              'Reiniciar Emissor',
+                              style: TextStyle(color: Colors.blue),
+                            ),
                           ],
                         ),
                       ),
@@ -4370,9 +4827,16 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         value: 'vincular_bridge',
                         child: Row(
                           children: [
-                            Icon(Icons.settings_remote, color: Colors.orange, size: 20),
+                            Icon(
+                              Icons.settings_remote,
+                              color: Colors.orange,
+                              size: 20,
+                            ),
                             SizedBox(width: 12),
-                            Text('Vincular Bridge', style: TextStyle(color: Colors.orange)),
+                            Text(
+                              'Vincular Bridge',
+                              style: TextStyle(color: Colors.orange),
+                            ),
                           ],
                         ),
                       ),
@@ -4380,7 +4844,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         value: 'outros_bridge',
                         child: Row(
                           children: [
-                            Icon(Icons.more_horiz, color: Colors.white70, size: 20),
+                            Icon(
+                              Icons.more_horiz,
+                              color: Colors.white70,
+                              size: 20,
+                            ),
                             SizedBox(width: 12),
                             Text('Outros Comandos'),
                           ],
@@ -4393,9 +4861,16 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         value: 'publicar_atualizacao',
                         child: Row(
                           children: [
-                            Icon(Icons.cloud_upload, color: Colors.cyan, size: 20),
+                            Icon(
+                              Icons.cloud_upload,
+                              color: Colors.cyan,
+                              size: 20,
+                            ),
                             SizedBox(width: 12),
-                            Text('📤 Publicar Atualização', style: TextStyle(color: Colors.cyan)),
+                            Text(
+                              '📤 Publicar Atualização',
+                              style: TextStyle(color: Colors.cyan),
+                            ),
                           ],
                         ),
                       ),
@@ -4412,9 +4887,12 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
   /// Publica uma atualização do app direcionada para esta empresa no Supabase
   Future<void> _publicarAtualizacaoParaEmpresa(
-      BuildContext context, Empresa empresa) async {
+    BuildContext context,
+    Empresa empresa,
+  ) async {
     await _abrirConfirmacaoDePublicacao(
-        _DestinoAtualizacao.paraEmpresas(<Empresa>[empresa]));
+      _DestinoAtualizacao.paraEmpresas(<Empresa>[empresa]),
+    );
   }
 
   void _confirmarExclusao(
@@ -4474,7 +4952,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Empresa ${empresasPermitidas.first.nomeExibicao} selecionada automaticamente'),
+              content: Text(
+                'Empresa ${empresasPermitidas.first.nomeExibicao} selecionada automaticamente',
+              ),
               backgroundColor: Colors.blue,
               duration: const Duration(seconds: 2),
             ),
@@ -4483,7 +4963,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
       } else if (empresasPermitidas.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Nenhuma empresa cadastrada. Adicione uma empresa primeiro.'),
+            content: Text(
+              'Nenhuma empresa cadastrada. Adicione uma empresa primeiro.',
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -4492,7 +4974,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
         // Se houver múltiplas empresas, pedir para selecionar
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Selecione uma empresa antes de importar produtos (menu da empresa → Selecionar)'),
+            content: Text(
+              'Selecione uma empresa antes de importar produtos (menu da empresa → Selecionar)',
+            ),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 4),
           ),
@@ -4593,7 +5077,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
     }
 
     final platformFile = result.files.single;
-    
+
     // Verificar se tem bytes (web) ou path (desktop/mobile)
     if (platformFile.bytes == null && platformFile.path == null) {
       if (mounted) {
@@ -4609,19 +5093,24 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
     // Mostrar diálogo de progresso com atualização em tempo real
     final progressNotifier = ValueNotifier<ImportProgress>(
-      ImportProgress(processados: 0, total: 0, etapa: 'Iniciando...', mensagens: []),
+      ImportProgress(
+        processados: 0,
+        total: 0,
+        etapa: 'Iniciando...',
+        mensagens: [],
+      ),
     );
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => ValueListenableBuilder<ImportProgress>(
         valueListenable: progressNotifier,
         builder: (context, progress, child) {
-          final percentual = progress.total > 0 
+          final percentual = progress.total > 0
               ? (progress.processados / progress.total * 100).toStringAsFixed(1)
               : '0.0';
-          
+
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
             title: const Text(
@@ -4633,64 +5122,77 @@ class _EmpresasPageState extends State<EmpresasPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                // Barra de progresso
-                LinearProgressIndicator(
-                  value: progress.total > 0 ? progress.processados / progress.total : 0,
-                  backgroundColor: Colors.white10,
-                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.blueAccent),
-                  minHeight: 8,
-                ),
-                const SizedBox(height: 16),
-                // Texto do progresso
-                Text(
-                  '${progress.processados} de ${progress.total} (${percentual}%)',
-                  style: const TextStyle(color: Colors.white70, fontSize: 14),
-                ),
-                const SizedBox(height: 8),
-                // Etapa atual
-                Text(
-                  progress.etapa,
-                  style: const TextStyle(color: Colors.blueAccent, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                // Lista de mensagens (últimas 5)
-                if (progress.mensagens.isNotEmpty) ...[
-                  Container(
-                    height: 120,
-                    decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(8),
+                  // Barra de progresso
+                  LinearProgressIndicator(
+                    value: progress.total > 0
+                        ? progress.processados / progress.total
+                        : 0,
+                    backgroundColor: Colors.white10,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.blueAccent,
                     ),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      reverse: true,
-                      itemCount: progress.mensagens.length > 5 ? 5 : progress.mensagens.length,
-                      itemBuilder: (context, index) {
-                        final msgIndex = progress.mensagens.length - 1 - index;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          child: Text(
-                            progress.mensagens[msgIndex],
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 10,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      },
-                    ),
+                    minHeight: 8,
                   ),
+                  const SizedBox(height: 16),
+                  // Texto do progresso
+                  Text(
+                    '${progress.processados} de ${progress.total} (${percentual}%)',
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                  const SizedBox(height: 8),
+                  // Etapa atual
+                  Text(
+                    progress.etapa,
+                    style: const TextStyle(
+                      color: Colors.blueAccent,
+                      fontSize: 12,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  // Lista de mensagens (últimas 5)
+                  if (progress.mensagens.isNotEmpty) ...[
+                    Container(
+                      height: 120,
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        reverse: true,
+                        itemCount: progress.mensagens.length > 5
+                            ? 5
+                            : progress.mensagens.length,
+                        itemBuilder: (context, index) {
+                          final msgIndex =
+                              progress.mensagens.length - 1 - index;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              progress.mensagens[msgIndex],
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 10,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-        );
-      },
-    ),
-  );
+          );
+        },
+      ),
+    );
 
     // Callback de progresso
     void onProgress(int processados, int total, String etapa) {
@@ -4698,7 +5200,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
         processados: processados,
         total: total,
         etapa: etapa,
-        mensagens: [...progressNotifier.value.mensagens, etapa].take(20).toList(),
+        mensagens: [
+          ...progressNotifier.value.mensagens,
+          etapa,
+        ].take(20).toList(),
       );
     }
 
@@ -4757,16 +5262,20 @@ class _EmpresasPageState extends State<EmpresasPage> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    ...mensagem.take(10).map((m) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            m,
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11,
+                    ...mensagem
+                        .take(10)
+                        .map(
+                          (m) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              m,
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
-                        )),
+                        ),
                     if (mensagem.length > 10)
                       Text(
                         '... e mais ${mensagem.length - 10} mensagens',
@@ -4800,7 +5309,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
               duration: const Duration(seconds: 3),
             ),
           );
-          
+
           // Aguardar Firebase sincronizar e salvar localmente
           await Future.delayed(const Duration(seconds: 2));
           await dataService.salvarImediatamente();
@@ -4843,7 +5352,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
       } else if (empresasPermitidas.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Nenhuma empresa cadastrada. Adicione uma empresa primeiro.'),
+            content: Text(
+              'Nenhuma empresa cadastrada. Adicione uma empresa primeiro.',
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -4879,7 +5390,10 @@ class _EmpresasPageState extends State<EmpresasPage> {
               children: [
                 const Text(
                   'Formato esperado (qualquer ordem, o sistema detecta pelo cabeçalho):',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 const Text(
@@ -4993,7 +5507,12 @@ class _EmpresasPageState extends State<EmpresasPage> {
 
     // Diálogo de progresso.
     final progressNotifier = ValueNotifier<ImportProgress>(
-      ImportProgress(processados: 0, total: 0, etapa: 'Iniciando...', mensagens: []),
+      ImportProgress(
+        processados: 0,
+        total: 0,
+        etapa: 'Iniciando...',
+        mensagens: [],
+      ),
     );
     showDialog(
       context: context,
@@ -5020,7 +5539,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         ? progress.processados / progress.total
                         : 0,
                     backgroundColor: Colors.white10,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.cyan),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.cyan,
+                    ),
                     minHeight: 8,
                   ),
                   const SizedBox(height: 16),
@@ -5107,18 +5628,26 @@ class _EmpresasPageState extends State<EmpresasPage> {
                   const SizedBox(height: 16),
                   const Text(
                     'Detalhes:',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  ...mensagens.take(10).map(
-                    (m) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        m,
-                        style: const TextStyle(color: Colors.white54, fontSize: 11),
-                      ),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  ...mensagens
+                      .take(10)
+                      .map(
+                        (m) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            m,
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ),
                   if (mensagens.length > 10)
                     Text(
                       '... e mais ${mensagens.length - 10} mensagens',
@@ -5145,7 +5674,9 @@ class _EmpresasPageState extends State<EmpresasPage> {
       if (sucesso > 0 || atualizados > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ ${sucesso + atualizados} clientes processados com sucesso!'),
+            content: Text(
+              '✅ ${sucesso + atualizados} clientes processados com sucesso!',
+            ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
@@ -5167,4 +5698,3 @@ class _EmpresasPageState extends State<EmpresasPage> {
     }
   }
 }
-

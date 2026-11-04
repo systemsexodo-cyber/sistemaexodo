@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/models/cliente.dart';
 import 'package:intl/intl.dart';
@@ -28,7 +29,6 @@ import 'criar_romaneio_page.dart';
 import 'romaneios_page.dart';
 import '../utils/numeracao_venda.dart';
 
-
 class PedidosPage extends StatefulWidget {
   const PedidosPage({super.key});
 
@@ -46,6 +46,21 @@ class _PedidosPageState extends State<PedidosPage> {
   bool _modoSelecao = false;
   final Set<String> _selecionadosIds = {};
 
+  // Navegação por teclado (setas ↑/↓) na lista de pedidos.
+  // _pedidoDestaqueId é o pedido que está com a borda de destaque (null =
+  // nenhum) e _cardKeys guarda uma chave por pedido para rolar até o card.
+  String? _pedidoDestaqueId;
+  final Map<String, GlobalKey> _cardKeys = {};
+  final ScrollController _listaScrollController = ScrollController();
+  final FocusNode _paginaFocusNode = FocusNode(debugLabel: 'pedidos');
+  // O campo de busca trata as setas no próprio nó de foco para que a lista
+  // ande mesmo com o cursor no texto (o TextField usaria as setas para
+  // mover o cursor).
+  late final FocusNode _buscaFocusNode = FocusNode(
+    debugLabel: 'buscaPedidos',
+    onKeyEvent: _handleOrderNavigationKey,
+  );
+
   final List<String> _statusDisponiveis = [
     'Todos',
     'Pendente',
@@ -57,6 +72,9 @@ class _PedidosPageState extends State<PedidosPage> {
 
   @override
   void dispose() {
+    _paginaFocusNode.dispose();
+    _buscaFocusNode.dispose();
+    _listaScrollController.dispose();
     _buscaController.dispose();
     super.dispose();
   }
@@ -66,11 +84,15 @@ class _PedidosPageState extends State<PedidosPage> {
     // Usar listen: true para atualizar automaticamente quando os dados mudarem
     final dataService = Provider.of<DataService>(context, listen: true);
     final authService = Provider.of<AuthService>(context, listen: false);
-    final pedidos = _filtrarPedidos(dataService.pedidos, authService, dataService);
+    final pedidos = _filtrarPedidos(
+      dataService.pedidos,
+      authService,
+      dataService,
+    );
     // Largura de celular: aplica o mesmo padrão da tela de Produtos.
     final ehCelular = MediaQuery.sizeOf(context).width < 700;
 
-    return AppTheme.appBackground(
+    final Widget tela = AppTheme.appBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
@@ -99,7 +121,10 @@ class _PedidosPageState extends State<PedidosPage> {
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.delivery_dining, color: Colors.greenAccent),
+                icon: const Icon(
+                  Icons.delivery_dining,
+                  color: Colors.greenAccent,
+                ),
                 tooltip: 'Gerar Romaneio',
                 onPressed: _selecionadosIds.isEmpty ? null : _gerarRomaneio,
               ),
@@ -115,26 +140,43 @@ class _PedidosPageState extends State<PedidosPage> {
             ] else ...[
               // No celular estes dois atalhos descem para o menu "⋮".
               if (!ehCelular) ...[
-              IconButton(
-                icon: const Icon(Icons.request_quote, color: Colors.purpleAccent),
-                tooltip: 'Orçamentos (propostas com validade)',
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const OrcamentosPage()),
-                  );
-                  if (mounted) setState(() {});
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.assignment_outlined),
-                tooltip: 'Ver Romaneios',
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const RomaneiosPage()),
+                IconButton(
+                  icon: const Icon(
+                    Icons.request_quote,
+                    color: Colors.purpleAccent,
+                  ),
+                  tooltip: 'Orçamentos (propostas com validade)',
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => OrcamentosPage()),
+                    );
+                    if (mounted) setState(() {});
+                  },
                 ),
-              ),
+                IconButton(
+                  icon: const Icon(Icons.assignment_outlined),
+                  tooltip: 'Ver Romaneios',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => RomaneiosPage()),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.point_of_sale,
+                    color: Colors.greenAccent,
+                  ),
+                  tooltip: 'Abrir PDV - Venda Direta',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => VendaDiretaPage(),
+                      ),
+                    );
+                  },
+                ),
               ],
               const SyncStatusWidget(),
               // Botão de busca
@@ -152,6 +194,9 @@ class _PedidosPageState extends State<PedidosPage> {
                     if (!_mostrarBusca) {
                       _termoBusca = '';
                       _buscaController.clear();
+                      // Volta o foco para a página para as setas continuarem
+                      // correndo a lista depois de fechar a busca.
+                      _paginaFocusNode.requestFocus();
                     }
                   });
                 },
@@ -208,28 +253,19 @@ class _PedidosPageState extends State<PedidosPage> {
                   .toList(),
             ),
             if (!ehCelular) ...[
-            // Botão controle de entregas
-            IconButton(
-              icon: Icon(Icons.local_shipping, color: Colors.blue.shade800),
-              tooltip: 'Controle de Entregas',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const EntregasPage()),
-                );
-              },
-            ),
-            // Botão PDV
-            IconButton(
-              icon: const Icon(Icons.point_of_sale, color: Colors.greenAccent),
-              tooltip: 'Abrir PDV - Venda Direta',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => VendaDiretaPage()),
-                );
-              },
-            ),
+              // Botão controle de entregas
+              IconButton(
+                icon: Icon(Icons.local_shipping, color: Colors.blue.shade800),
+                tooltip: 'Controle de Entregas',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const EntregasPage(),
+                    ),
+                  );
+                },
+              ),
             ],
             // No celular os quatro atalhos acima ficam no menu "⋮", com o
             // mesmo padrão da tela de Produtos (topo compacto).
@@ -245,61 +281,82 @@ class _PedidosPageState extends State<PedidosPage> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                          builder: (context) => const OrcamentosPage()),
+                        builder: (context) => const OrcamentosPage(),
+                      ),
                     ).then((_) {
                       if (mounted) setState(() {});
                     });
                   } else if (valor == 'romaneios') {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const RomaneiosPage()),
+                      MaterialPageRoute(
+                        builder: (context) => const RomaneiosPage(),
+                      ),
                     );
                   } else if (valor == 'entregas') {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const EntregasPage()),
+                      MaterialPageRoute(
+                        builder: (context) => const EntregasPage(),
+                      ),
                     );
                   } else if (valor == 'pdv') {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => VendaDiretaPage()),
+                      MaterialPageRoute(
+                        builder: (context) => VendaDiretaPage(),
+                      ),
                     );
                   }
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(
                     value: 'orcamentos',
-                    child: Row(children: [
-                      Icon(Icons.request_quote,
-                          size: 18, color: Colors.purpleAccent),
-                      SizedBox(width: 8),
-                      Text('Orçamentos'),
-                    ]),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.request_quote,
+                          size: 18,
+                          color: Colors.purpleAccent,
+                        ),
+                        SizedBox(width: 8),
+                        Text('Orçamentos'),
+                      ],
+                    ),
                   ),
                   PopupMenuItem(
                     value: 'romaneios',
-                    child: Row(children: [
-                      Icon(Icons.assignment_outlined, size: 18),
-                      SizedBox(width: 8),
-                      Text('Romaneios'),
-                    ]),
+                    child: Row(
+                      children: [
+                        Icon(Icons.assignment_outlined, size: 18),
+                        SizedBox(width: 8),
+                        Text('Romaneios'),
+                      ],
+                    ),
                   ),
                   PopupMenuItem(
                     value: 'entregas',
-                    child: Row(children: [
-                      Icon(Icons.local_shipping, size: 18),
-                      SizedBox(width: 8),
-                      Text('Controle de Entregas'),
-                    ]),
+                    child: Row(
+                      children: [
+                        Icon(Icons.local_shipping, size: 18),
+                        SizedBox(width: 8),
+                        Text('Controle de Entregas'),
+                      ],
+                    ),
                   ),
                   PopupMenuItem(
                     value: 'pdv',
-                    child: Row(children: [
-                      Icon(Icons.point_of_sale,
-                          size: 18, color: Colors.greenAccent),
-                      SizedBox(width: 8),
-                      Text('Abrir PDV'),
-                    ]),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.point_of_sale,
+                          size: 18,
+                          color: Colors.greenAccent,
+                        ),
+                        SizedBox(width: 8),
+                        Text('Abrir PDV'),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -322,8 +379,16 @@ class _PedidosPageState extends State<PedidosPage> {
             // Filtro de Data
             _buildFiltroData(),
 
+            // Aviso de pedido do e-commerce recém-chegado da nuvem
+            // (o som já tocou no DataService quando o pedido entrou)
+            if (dataService.avisoPedidoEcommerce != null)
+              _buildAvisoPedidoEcommerce(dataService),
+
             // Indicador de resultados
-            if (_termoBusca.isNotEmpty || _filtroStatus != 'Todos' || _dataInicioFiltro != null || _dataFimFiltro != null)
+            if (_termoBusca.isNotEmpty ||
+                _filtroStatus != 'Todos' ||
+                _dataInicioFiltro != null ||
+                _dataFimFiltro != null)
               _buildIndicadorResultados(
                 pedidos.length,
                 dataService.pedidos.length,
@@ -337,7 +402,8 @@ class _PedidosPageState extends State<PedidosPage> {
             ),
           ],
         ),
-        floatingActionButton: (authService.usuarioAtual?.tipo == TipoUsuario.vendedor)
+        floatingActionButton:
+            (authService.usuarioAtual?.tipo == TipoUsuario.vendedor)
             ? null // Vendedores não podem criar pedidos manualmente
             : FloatingActionButton.extended(
                 onPressed: () => _abrirLancamentoPedido(context),
@@ -347,18 +413,190 @@ class _PedidosPageState extends State<PedidosPage> {
               ),
       ),
     );
+
+    // Setas ↑/↓ correm a lista e o Enter abre o pedido destacado. O "Focus"
+    // da página recebe a tecla antes dos atalhos/botões internos, então a
+    // tecla é consumida (Não dispara o botão que estiver com foco).
+    // ESC volta para a tela anterior — no fluxo do caixa, o PDV — do mesmo
+    // jeito que a seta de voltar do AppBar.
+    return Focus(
+      focusNode: _paginaFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleOrderNavigationKey,
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape): _voltarComEsc,
+        },
+        child: tela,
+      ),
+    );
   }
 
-  List<Pedido> _filtrarPedidos(List<Pedido> pedidos, AuthService authService, DataService dataService) {
+  KeyEventResult _handleOrderNavigationKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final tecla = event.logicalKey;
+    final desce = tecla == LogicalKeyboardKey.arrowDown;
+    final sobe = tecla == LogicalKeyboardKey.arrowUp;
+    final confirma =
+        tecla == LogicalKeyboardKey.enter ||
+        tecla == LogicalKeyboardKey.numpadEnter;
+    if (!desce && !sobe && !confirma) return KeyEventResult.ignored;
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) {
+      return KeyEventResult.ignored;
+    }
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final pedidos = _filtrarPedidos(
+      dataService.pedidos,
+      authService,
+      dataService,
+    );
+    if (pedidos.isEmpty) return KeyEventResult.ignored;
+
+    if (confirma) {
+      // Se ainda não houve navegação por setas, considera selecionado o
+      // primeiro card visível, que já aparece com borda de destaque.
+      final indice = _pedidoDestaqueId == null
+          ? 0
+          : pedidos.indexWhere((p) => p.id == _pedidoDestaqueId);
+      if (indice < 0 || indice >= pedidos.length) {
+        return KeyEventResult.ignored;
+      }
+      _acionarPedido(pedidos[indice], dataService);
+      return KeyEventResult.handled;
+    }
+
+    _moverDestaque(pedidos, desce ? 1 : -1);
+    return KeyEventResult.handled;
+  }
+
+  /// Move a borda de destaque pela lista de pedidos já filtrada.
+  /// Sem "wrap": no primeiro/último pedido a seta apenas para.
+  void _moverDestaque(List<Pedido> pedidos, int delta) {
+    if (pedidos.isEmpty) return;
+    final atual = pedidos.indexWhere((p) => p.id == _pedidoDestaqueId);
+    // Nada destacado (ou o destaque saiu da lista por causa de um filtro):
+    // a primeira seta já cai no primeiro pedido.
+    // O primeiro card já fica destacado ao abrir a tela; portanto a
+    // primeira seta para baixo deve avançar para o segundo.
+    final novoIndice = atual < 0
+        ? (delta > 0 ? 1 : 0).clamp(0, pedidos.length - 1).toInt()
+        : (atual + delta).clamp(0, pedidos.length - 1).toInt();
+    final pedido = pedidos[novoIndice];
+    if (pedido.id == _pedidoDestaqueId) return;
+    setState(() => _pedidoDestaqueId = pedido.id);
+    _garantirCardVisivel(pedidos, novoIndice);
+  }
+
+  /// Executa a ação do pedido destacado, como o toque no card: no modo
+  /// seleção marca/desmarca; pago abre os detalhes; os demais abrem o
+  /// lançamento do pedido. Cancelados não fazem nada.
+  void _acionarPedido(Pedido pedido, DataService dataService) {
+    if (!mounted) return;
+    if (_modoSelecao) {
+      _alternarSelecao(pedido.id);
+      return;
+    }
+    final status = pedido.status.toLowerCase();
+    if (status == 'cancelado') return;
+    final isPago = pedido.totalmenteRecebido || status.trim() == 'pago';
+    if (isPago) {
+      _mostrarDetalhesPedidoPago(context, pedido, dataService);
+    } else {
+      _abrirLancamentoPedido(context, pedido: pedido);
+    }
+  }
+
+  /// Rola a lista para manter o pedido destacado visível. O ListView.builder
+  /// só constrói os cards próximos da tela: quando o pedido destacado ainda
+  /// não existe na árvore, encosta o card vizinho mais próximo na borda da
+  /// tela e tenta de novo no quadro seguinte, para a borda não "sumir" ao
+  /// correr a lista com as setas.
+  void _garantirCardVisivel(
+    List<Pedido> pedidos,
+    int indice, {
+    int tentativa = 0,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (indice < 0 || indice >= pedidos.length) return;
+      final ctx = _cardKeys[pedidos[indice].id]?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+        );
+        return;
+      }
+      if (tentativa >= 10) return;
+
+      // Aproxima pelo vizinho mais próximo já montado: o seguinte (desce a
+      // lista, encostando embaixo) ou o anterior (sobe, encostando em cima).
+      int? vizinho;
+      double alinhamento = 1.0;
+      for (var i = indice - 1; i >= 0; i--) {
+        if (_cardKeys[pedidos[i].id]?.currentContext != null) {
+          vizinho = i;
+          break;
+        }
+      }
+      if (vizinho == null) {
+        alinhamento = 0.0;
+        for (var i = indice + 1; i < pedidos.length; i++) {
+          if (_cardKeys[pedidos[i].id]?.currentContext != null) {
+            vizinho = i;
+            break;
+          }
+        }
+      }
+      if (vizinho == null) return;
+      final ctxVizinho = _cardKeys[pedidos[vizinho].id]?.currentContext;
+      if (ctxVizinho == null) return;
+      Scrollable.ensureVisible(
+        ctxVizinho,
+        alignment: alinhamento,
+        duration: Duration.zero,
+      );
+      // O próximo quadro constrói os cards que faltam e roda outra tentativa.
+      WidgetsBinding.instance.scheduleFrame();
+      _garantirCardVisivel(pedidos, indice, tentativa: tentativa + 1);
+    });
+  }
+
+  /// Volta para a tela anterior ao pressionar ESC. No modo de seleção, o ESC
+  /// apenas cancela a seleção em vez de sair da tela.
+  void _voltarComEsc() {
+    if (!mounted) return;
+    if (_modoSelecao) {
+      setState(() {
+        _modoSelecao = false;
+        _selecionadosIds.clear();
+      });
+      return;
+    }
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) navigator.pop();
+  }
+
+  List<Pedido> _filtrarPedidos(
+    List<Pedido> pedidos,
+    AuthService authService,
+    DataService dataService,
+  ) {
     // Se o usuário logado é vendedor, mostrar apenas seus pedidos
     final usuarioAtual = authService.usuarioAtual;
     final isVendedor = usuarioAtual?.tipo == TipoUsuario.vendedor;
     String? funcionarioIdVendedor;
-    
+
     if (isVendedor && usuarioAtual?.funcionarioId != null) {
       funcionarioIdVendedor = usuarioAtual!.funcionarioId;
     }
-    
+
     // Obter links de vendedores se necessário
     LinkVendedor? linkVendedorLogado;
     if (isVendedor && funcionarioIdVendedor != null) {
@@ -373,41 +611,41 @@ class _PedidosPageState extends State<PedidosPage> {
         ),
       );
     }
-    
+
     // Filtrar apenas pedidos tradicionais (PED-), não vendas do PDV (CX1-, VND-)
     // Incluir pedidos do e-commerce mesmo que tenham serviços
-    List<Pedido> resultado = pedidos
-        .where(
-          (p) {
-            // Se for vendedor, mostrar apenas pedidos do e-commerce dele
-            if (isVendedor && funcionarioIdVendedor != null && linkVendedorLogado != null) {
-              // Só mostrar se o pedido for do e-commerce E do vendedor logado
-              if (linkVendedorLogado.id.isEmpty) {
-                return false; // Vendedor não tem link, não mostra nada
-              }
-              
-              final isPedidoDoVendedor = p.vendedorId == funcionarioIdVendedor ||
-                  p.linkVendedorId == linkVendedorLogado.id ||
-                  p.linkVendedorCodigo == linkVendedorLogado.codigoLink;
-              
-              if (!isPedidoDoVendedor) {
-                return false; // Não é pedido deste vendedor
-              }
-            }
-            
-            // Incluir apenas pedidos tradicionais (PED-), não vendas do PDV (CX1-, VND-)
-            final isPedidoValido = !NumeracaoVenda.ehVendaPdv(p.numero);
-            
-            // Incluir pedidos do e-commerce (identificados pelo campo origemEcommerce OU linkVendedorId/linkVendedorCodigo)
-            final isPedidoEcommerce = p.origemEcommerce ||
-                (p.linkVendedorId != null && p.linkVendedorId!.isNotEmpty) ||
-                (p.linkVendedorCodigo != null && p.linkVendedorCodigo!.isNotEmpty);
-            
-            // Se for pedido válido
-            return isPedidoValido;
-          },
-        )
-        .toList();
+    List<Pedido> resultado = pedidos.where((p) {
+      // Se for vendedor, mostrar apenas pedidos do e-commerce dele
+      if (isVendedor &&
+          funcionarioIdVendedor != null &&
+          linkVendedorLogado != null) {
+        // Só mostrar se o pedido for do e-commerce E do vendedor logado
+        if (linkVendedorLogado.id.isEmpty) {
+          return false; // Vendedor não tem link, não mostra nada
+        }
+
+        final isPedidoDoVendedor =
+            p.vendedorId == funcionarioIdVendedor ||
+            p.linkVendedorId == linkVendedorLogado.id ||
+            p.linkVendedorCodigo == linkVendedorLogado.codigoLink;
+
+        if (!isPedidoDoVendedor) {
+          return false; // Não é pedido deste vendedor
+        }
+      }
+
+      // Incluir apenas pedidos tradicionais (PED-), não vendas do PDV (CX1-, VND-)
+      final isPedidoValido = !NumeracaoVenda.ehVendaPdv(p.numero);
+
+      // Incluir pedidos do e-commerce (identificados pelo campo origemEcommerce OU linkVendedorId/linkVendedorCodigo)
+      final isPedidoEcommerce =
+          p.origemEcommerce ||
+          (p.linkVendedorId != null && p.linkVendedorId!.isNotEmpty) ||
+          (p.linkVendedorCodigo != null && p.linkVendedorCodigo!.isNotEmpty);
+
+      // Se for pedido válido
+      return isPedidoValido;
+    }).toList();
 
     // Filtro por status
     if (_filtroStatus != 'Todos') {
@@ -456,66 +694,78 @@ class _PedidosPageState extends State<PedidosPage> {
     if (_termoBusca.isNotEmpty) {
       final termo = _termoBusca.trim();
       final termoLower = termo.toLowerCase();
-      
+
       // Extrair números do termo
       final numerosNoTermo = termo.replaceAll(RegExp(r'[^0-9]'), '');
-      
+
       resultado = resultado.where((pedido) {
         final numeroPedido = pedido.numero.toLowerCase();
-        final numeroPedidoLimpo = pedido.numero.replaceAll(RegExp(r'[^0-9]'), '');
+        final numeroPedidoLimpo = pedido.numero.replaceAll(
+          RegExp(r'[^0-9]'),
+          '',
+        );
         final clienteNome = (pedido.clienteNome ?? '').toLowerCase();
-        
+
         // 1. Match exato do número do pedido (maior prioridade)
         if (numeroPedido == termoLower || numeroPedidoLimpo == numerosNoTermo) {
           return true;
         }
-        
+
         // 2. Match exato do número sem prefixo (ex: "0001" encontra "PED-0001")
         if (numerosNoTermo.isNotEmpty && numeroPedidoLimpo == numerosNoTermo) {
           return true;
         }
-        
+
         // 3. Número do pedido começa com o termo (ex: "PED-00" encontra "PED-0001")
-        if (numeroPedido.startsWith(termoLower) || numeroPedidoLimpo.startsWith(numerosNoTermo)) {
+        if (numeroPedido.startsWith(termoLower) ||
+            numeroPedidoLimpo.startsWith(numerosNoTermo)) {
           return true;
         }
-        
+
         // 4. Número do pedido termina com o termo (ex: "01" encontra "PED-0001")
-        if (numeroPedidoLimpo.endsWith(numerosNoTermo) && numerosNoTermo.length >= 2) {
+        if (numeroPedidoLimpo.endsWith(numerosNoTermo) &&
+            numerosNoTermo.length >= 2) {
           return true;
         }
-        
+
         // 5. Match exato do nome do cliente
         if (clienteNome == termoLower) {
           return true;
         }
-        
+
         // 6. Nome do cliente começa com o termo
         if (clienteNome.startsWith(termoLower)) {
           return true;
         }
-        
+
         // 7. Busca por palavras no nome do cliente (split por espaços)
-        final palavrasTermo = termoLower.split(' ').where((p) => p.isNotEmpty).toList();
+        final palavrasTermo = termoLower
+            .split(' ')
+            .where((p) => p.isNotEmpty)
+            .toList();
         if (palavrasTermo.isNotEmpty) {
           final palavrasCliente = clienteNome.split(' ');
-          final todasPalavrasEncontradas = palavrasTermo.every((palavra) =>
-              palavrasCliente.any((pc) => pc.startsWith(palavra) || pc.contains(palavra)));
+          final todasPalavrasEncontradas = palavrasTermo.every(
+            (palavra) => palavrasCliente.any(
+              (pc) => pc.startsWith(palavra) || pc.contains(palavra),
+            ),
+          );
           if (todasPalavrasEncontradas) {
             return true;
           }
         }
-        
+
         // 8. Nome do cliente contém o termo
         if (clienteNome.contains(termoLower)) {
           return true;
         }
-        
+
         // 9. Número do pedido contém o termo
-        if (numeroPedido.contains(termoLower) || numeroPedidoLimpo.contains(numerosNoTermo)) {
+        if (numeroPedido.contains(termoLower) ||
+            numeroPedidoLimpo.contains(numerosNoTermo)) {
           return true;
         }
-        
+
         // 10. Busca por valor exato
         final valorTermo = double.tryParse(termo.replaceAll(',', '.'));
         if (valorTermo != null) {
@@ -525,27 +775,29 @@ class _PedidosPageState extends State<PedidosPage> {
             return true;
           }
         }
-        
+
         return false;
       }).toList();
-      
+
       // Ordenar por relevância: matches exatos primeiro
       resultado.sort((a, b) {
         final aNumero = a.numero.toLowerCase();
         final bNumero = b.numero.toLowerCase();
         final aCliente = (a.clienteNome ?? '').toLowerCase();
         final bCliente = (b.clienteNome ?? '').toLowerCase();
-        
+
         // Priorizar matches exatos
         final aExato = aNumero == termoLower || aCliente == termoLower;
         final bExato = bNumero == termoLower || bCliente == termoLower;
         if (aExato != bExato) return aExato ? -1 : 1;
-        
+
         // Depois matches que começam com o termo
-        final aComeca = aNumero.startsWith(termoLower) || aCliente.startsWith(termoLower);
-        final bComeca = bNumero.startsWith(termoLower) || bCliente.startsWith(termoLower);
+        final aComeca =
+            aNumero.startsWith(termoLower) || aCliente.startsWith(termoLower);
+        final bComeca =
+            bNumero.startsWith(termoLower) || bCliente.startsWith(termoLower);
         if (aComeca != bComeca) return aComeca ? -1 : 1;
-        
+
         // Por último, ordenar por data (mais recente primeiro)
         return b.dataPedido.compareTo(a.dataPedido);
       });
@@ -580,13 +832,15 @@ class _PedidosPageState extends State<PedidosPage> {
         if (isInicio) {
           _dataInicioFiltro = data;
           // Se a data inicial for depois da final, ajustar a final
-          if (_dataFimFiltro != null && _dataInicioFiltro!.isAfter(_dataFimFiltro!)) {
+          if (_dataFimFiltro != null &&
+              _dataInicioFiltro!.isAfter(_dataFimFiltro!)) {
             _dataFimFiltro = _dataInicioFiltro;
           }
         } else {
           _dataFimFiltro = data;
           // Se a data final for antes da inicial, ajustar a inicial
-          if (_dataInicioFiltro != null && _dataFimFiltro!.isBefore(_dataInicioFiltro!)) {
+          if (_dataInicioFiltro != null &&
+              _dataFimFiltro!.isBefore(_dataInicioFiltro!)) {
             _dataInicioFiltro = _dataFimFiltro;
           }
         }
@@ -612,7 +866,7 @@ class _PedidosPageState extends State<PedidosPage> {
       );
       return;
     }
-    
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => LancarPedidoPage(pedidoExistente: pedido),
@@ -628,14 +882,14 @@ class _PedidosPageState extends State<PedidosPage> {
     if (pedido.status == novoStatus) return;
 
     Pedido pedidoAtualizado = pedido.copyWith(status: novoStatus);
-    
+
     // Se for um delivery e o status for "Entregue", atualizar também o status do delivery
     if (novoStatus.toLowerCase() == 'entregue' && pedido.deliveryInfo != null) {
       pedidoAtualizado = pedidoAtualizado.copyWith(
         deliveryInfo: pedido.deliveryInfo!.copyWith(status: 'entregue'),
       );
     }
-    
+
     dataService.updatePedido(pedidoAtualizado);
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -643,6 +897,67 @@ class _PedidosPageState extends State<PedidosPage> {
         content: Text('Status alterado para "$novoStatus"'),
         backgroundColor: _getCorStatus(novoStatus),
         duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Faixa no topo da tela quando um pedido do e-commerce acabou de chegar da
+  /// nuvem/outro aparelho. O som toca no DataService; aqui fica o aviso
+  /// visível até o lojista conferir — tocar nele já busca o pedido na lista.
+  Widget _buildAvisoPedidoEcommerce(DataService dataService) {
+    final aviso = dataService.avisoPedidoEcommerce!;
+    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _mostrarBusca = true;
+          _termoBusca = aviso.numero;
+          _buscaController.text = aviso.numero;
+        });
+        dataService.limparAvisoPedidoEcommerce();
+      },
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.green.shade700.withOpacity(0.9),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.greenAccent),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.shopping_bag, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Novo pedido da loja ${aviso.numero}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    [
+                      if (aviso.cliente.isNotEmpty && aviso.cliente != 'null')
+                        aviso.cliente,
+                      formatoMoeda.format(aviso.total),
+                    ].join(' • '),
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white),
+              tooltip: 'Fechar aviso',
+              onPressed: () => dataService.limparAvisoPedidoEcommerce(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -728,47 +1043,53 @@ class _PedidosPageState extends State<PedidosPage> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: TextField(
-                        controller: _buscaController,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
+                      // Intercepta as setas no nível do campo de busca antes
+                      // que o EditableText as use para mover o cursor.
+                      child: Focus(
+                        onKeyEvent: _handleOrderNavigationKey,
+                        child: TextField(
+                          controller: _buscaController,
+                          focusNode: _buscaFocusNode,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                          ),
+                          autofocus: true,
+                          decoration: InputDecoration(
+                            hintText: 'Ex: "001", "João", "PED-0005"...',
+                            hintStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.5),
+                            ),
+                            prefixIcon: const Icon(
+                              Icons.search,
+                              color: Colors.white70,
+                            ),
+                            suffixIcon: _termoBusca.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(
+                                      Icons.clear,
+                                      color: Colors.white70,
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _termoBusca = '';
+                                        _buscaController.clear();
+                                      });
+                                    },
+                                  )
+                                : null,
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 16,
+                            ),
+                          ),
+                          onChanged: (valor) {
+                            setState(() {
+                              _termoBusca = valor;
+                            });
+                          },
                         ),
-                        autofocus: true,
-                        decoration: InputDecoration(
-                          hintText: 'Ex: "001", "João", "PED-0005"...',
-                          hintStyle: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
-                          ),
-                          prefixIcon: const Icon(
-                            Icons.search,
-                            color: Colors.white70,
-                          ),
-                          suffixIcon: _termoBusca.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(
-                                    Icons.clear,
-                                    color: Colors.white70,
-                                  ),
-                                  onPressed: () {
-                                    setState(() {
-                                      _termoBusca = '';
-                                      _buscaController.clear();
-                                    });
-                                  },
-                                )
-                              : null,
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 16,
-                          ),
-                        ),
-                        onChanged: (valor) {
-                          setState(() {
-                            _termoBusca = valor;
-                          });
-                        },
                       ),
                     ),
                     // Dicas de busca
@@ -826,7 +1147,6 @@ class _PedidosPageState extends State<PedidosPage> {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-
                 const Icon(
                   Icons.calendar_today,
                   size: 18,
@@ -846,26 +1166,25 @@ class _PedidosPageState extends State<PedidosPage> {
                 GestureDetector(
                   onTap: () => _selecionarDataFiltro(true),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.orange.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Colors.orange.withOpacity(0.3),
-                      ),
+                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.event,
-                          size: 16,
-                          color: Colors.orange,
-                        ),
+                        const Icon(Icons.event, size: 16, color: Colors.orange),
                         const SizedBox(width: 6),
                         Text(
                           _dataInicioFiltro != null
-                              ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!)
+                              ? DateFormat(
+                                  'dd/MM/yyyy',
+                                ).format(_dataInicioFiltro!)
                               : 'Data inicial',
                           style: TextStyle(
                             color: _dataInicioFiltro != null
@@ -880,31 +1199,25 @@ class _PedidosPageState extends State<PedidosPage> {
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    'até',
-                    style: TextStyle(color: Colors.white54),
-                  ),
+                  child: Text('até', style: TextStyle(color: Colors.white54)),
                 ),
                 // Data Final
                 GestureDetector(
                   onTap: () => _selecionarDataFiltro(false),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.orange.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Colors.orange.withOpacity(0.3),
-                      ),
+                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.event,
-                          size: 16,
-                          color: Colors.orange,
-                        ),
+                        const Icon(Icons.event, size: 16, color: Colors.orange),
                         const SizedBox(width: 6),
                         Text(
                           _dataFimFiltro != null
@@ -922,7 +1235,6 @@ class _PedidosPageState extends State<PedidosPage> {
                   ),
                 ),
 
-
                 // Botão Limpar Filtro
                 if (_dataInicioFiltro != null || _dataFimFiltro != null)
                   TextButton.icon(
@@ -936,7 +1248,10 @@ class _PedidosPageState extends State<PedidosPage> {
                     label: const Text('Limpar'),
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.orange,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
@@ -945,7 +1260,6 @@ class _PedidosPageState extends State<PedidosPage> {
             )
           : Row(
               children: [
-
                 const Icon(
                   Icons.calendar_today,
                   size: 18,
@@ -965,26 +1279,25 @@ class _PedidosPageState extends State<PedidosPage> {
                 GestureDetector(
                   onTap: () => _selecionarDataFiltro(true),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.orange.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Colors.orange.withOpacity(0.3),
-                      ),
+                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.event,
-                          size: 16,
-                          color: Colors.orange,
-                        ),
+                        const Icon(Icons.event, size: 16, color: Colors.orange),
                         const SizedBox(width: 6),
                         Text(
                           _dataInicioFiltro != null
-                              ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!)
+                              ? DateFormat(
+                                  'dd/MM/yyyy',
+                                ).format(_dataInicioFiltro!)
                               : 'Data inicial',
                           style: TextStyle(
                             color: _dataInicioFiltro != null
@@ -999,31 +1312,25 @@ class _PedidosPageState extends State<PedidosPage> {
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    'até',
-                    style: TextStyle(color: Colors.white54),
-                  ),
+                  child: Text('até', style: TextStyle(color: Colors.white54)),
                 ),
                 // Data Final
                 GestureDetector(
                   onTap: () => _selecionarDataFiltro(false),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.orange.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Colors.orange.withOpacity(0.3),
-                      ),
+                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.event,
-                          size: 16,
-                          color: Colors.orange,
-                        ),
+                        const Icon(Icons.event, size: 16, color: Colors.orange),
                         const SizedBox(width: 6),
                         Text(
                           _dataFimFiltro != null
@@ -1041,7 +1348,7 @@ class _PedidosPageState extends State<PedidosPage> {
                   ),
                 ),
 
-          const Spacer(),
+                const Spacer(),
 
                 // Botão Limpar Filtro
                 if (_dataInicioFiltro != null || _dataFimFiltro != null)
@@ -1056,7 +1363,10 @@ class _PedidosPageState extends State<PedidosPage> {
                     label: const Text('Limpar'),
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.orange,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
@@ -1119,7 +1429,8 @@ class _PedidosPageState extends State<PedidosPage> {
                   if (_dataInicioFiltro != null || _dataFimFiltro != null) ...[
                     const TextSpan(text: ' • '),
                     TextSpan(
-                      text: 'Período: ${_dataInicioFiltro != null ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!) : '...'} até ${_dataFimFiltro != null ? DateFormat('dd/MM/yyyy').format(_dataFimFiltro!) : '...'}',
+                      text:
+                          'Período: ${_dataInicioFiltro != null ? DateFormat('dd/MM/yyyy').format(_dataInicioFiltro!) : '...'} até ${_dataFimFiltro != null ? DateFormat('dd/MM/yyyy').format(_dataFimFiltro!) : '...'}',
                       style: const TextStyle(
                         color: Colors.orange,
                         fontWeight: FontWeight.bold,
@@ -1130,7 +1441,10 @@ class _PedidosPageState extends State<PedidosPage> {
               ),
             ),
           ),
-          if (_termoBusca.isNotEmpty || _filtroStatus != 'Todos' || _dataInicioFiltro != null || _dataFimFiltro != null)
+          if (_termoBusca.isNotEmpty ||
+              _filtroStatus != 'Todos' ||
+              _dataInicioFiltro != null ||
+              _dataFimFiltro != null)
             TextButton.icon(
               onPressed: () {
                 setState(() {
@@ -1159,11 +1473,19 @@ class _PedidosPageState extends State<PedidosPage> {
     DataService dataService,
   ) {
     return ListView.builder(
+      controller: _listaScrollController,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       itemCount: pedidos.length,
       itemBuilder: (context, index) {
         final pedido = pedidos[index];
-        return _buildCardPedido(context, pedido, dataService);
+        return _buildCardPedido(
+          context,
+          pedido,
+          dataService,
+          key: _cardKeys.putIfAbsent(pedido.id, () => GlobalKey()),
+          selecionadoTeclado:
+              pedido.id == (_pedidoDestaqueId ?? pedidos.firstOrNull?.id),
+        );
       },
     );
   }
@@ -1185,14 +1507,17 @@ class _PedidosPageState extends State<PedidosPage> {
   void _gerarRomaneio() async {
     // Pegar pedidos selecionados
     final dataService = Provider.of<DataService>(context, listen: false);
-    final selecionados = dataService.pedidos.where((p) => _selecionadosIds.contains(p.id)).toList();
-    
+    final selecionados = dataService.pedidos
+        .where((p) => _selecionadosIds.contains(p.id))
+        .toList();
+
     if (selecionados.isEmpty) return;
 
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => CriarRomaneioPage(pedidosSelecionados: selecionados),
+        builder: (context) =>
+            CriarRomaneioPage(pedidosSelecionados: selecionados),
       ),
     );
 
@@ -1207,16 +1532,22 @@ class _PedidosPageState extends State<PedidosPage> {
   Widget _buildCardPedido(
     BuildContext context,
     Pedido pedido,
-    DataService dataService,
-  ) {
+    DataService dataService, {
+    Key? key,
+    bool selecionadoTeclado = false,
+  }) {
     final isCancelado = pedido.status.toLowerCase() == 'cancelado';
     // Pedidos cancelados não são considerados como pagos, mesmo que tenham recebido
-    final isPago = !isCancelado && (pedido.totalmenteRecebido || pedido.status.toLowerCase().trim() == 'pago');
-    final isParcialmentePago = !isCancelado && pedido.totalRecebido > 0 && !isPago;
+    final isPago =
+        !isCancelado &&
+        (pedido.totalmenteRecebido ||
+            pedido.status.toLowerCase().trim() == 'pago');
+    final isParcialmentePago =
+        !isCancelado && pedido.totalRecebido > 0 && !isPago;
     final isSelecionado = _selecionadosIds.contains(pedido.id);
     // No celular (< 700px) os blocos laterais descem para o card.
     final ehCelular = MediaQuery.sizeOf(context).width < 700;
-    
+
     final cliente = pedido.clienteId != null
         ? dataService.clientes
               .where((c) => c.id == pedido.clienteId)
@@ -1227,20 +1558,37 @@ class _PedidosPageState extends State<PedidosPage> {
     final entrega = dataService.getEntregaPorPedido(pedido.id);
     final taxaEntrega = entrega?.taxaEntrega;
     // Verificar se é pedido do e-commerce: campo origemEcommerce OU tem link de vendedor
-    final isPedidoEcommerce = pedido.origemEcommerce ||
+    final isPedidoEcommerce =
+        pedido.origemEcommerce ||
         (pedido.linkVendedorId != null && pedido.linkVendedorId!.isNotEmpty) ||
-        (pedido.linkVendedorCodigo != null && pedido.linkVendedorCodigo!.isNotEmpty);
+        (pedido.linkVendedorCodigo != null &&
+            pedido.linkVendedorCodigo!.isNotEmpty);
 
     return Container(
+      key: key,
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: isSelecionado
-                ? [
-                    Colors.blue.shade700.withOpacity(0.4),
-                    Colors.blue.shade900.withOpacity(0.3),
-                  ]
-                : isCancelado
+        boxShadow: selecionadoTeclado
+            ? [
+                BoxShadow(
+                  color: Colors.cyanAccent.withOpacity(0.75),
+                  blurRadius: 20,
+                  spreadRadius: 2,
+                ),
+                BoxShadow(
+                  color: Colors.white.withOpacity(0.18),
+                  blurRadius: 4,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+        gradient: LinearGradient(
+          colors: isSelecionado
+              ? [
+                  Colors.blue.shade700.withOpacity(0.4),
+                  Colors.blue.shade900.withOpacity(0.3),
+                ]
+              : isCancelado
               ? [
                   Colors.red.shade900,
                   Colors.red.shade800,
@@ -1255,10 +1603,17 @@ class _PedidosPageState extends State<PedidosPage> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
-        border: isSelecionado
+        // O destaque do teclado tem prioridade para envolver o card inteiro,
+        // mesmo quando o pedido também está marcado no modo de seleção.
+        border: selecionadoTeclado
+            ? Border.all(color: Colors.cyanAccent, width: 4)
+            : isSelecionado
             ? Border.all(color: Colors.blueAccent, width: 3)
             : isCancelado
-            ? Border.all(color: Colors.redAccent, width: 2) // Borda vermelha para cancelado
+            ? Border.all(
+                color: Colors.redAccent,
+                width: 2,
+              ) // Borda vermelha para cancelado
             : isPago
             ? Border.all(color: Colors.greenAccent, width: 2)
             : isParcialmentePago
@@ -1271,13 +1626,10 @@ class _PedidosPageState extends State<PedidosPage> {
             _alternarSelecao(pedido.id);
           }
         },
-        onTap: _modoSelecao 
-            ? () => _alternarSelecao(pedido.id)
-            : isCancelado
-            ? null // Pedidos cancelados não são clicáveis
-            : isPago
-            ? () => _mostrarDetalhesPedidoPago(context, pedido, dataService)
-            : () => _abrirLancamentoPedido(context, pedido: pedido),
+        // Pedidos cancelados não são clicáveis.
+        onTap: isCancelado && !_modoSelecao
+            ? null
+            : () => _acionarPedido(pedido, dataService),
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -1294,79 +1646,79 @@ class _PedidosPageState extends State<PedidosPage> {
                   children: [
                     Row(
                       children: [
-
-                          if (_modoSelecao) ...[
-                            Checkbox(
-                              value: isSelecionado,
-                              onChanged: (_) => _alternarSelecao(pedido.id),
-                              activeColor: Colors.blueAccent,
-                              side: BorderSide(color: Colors.white.withOpacity(0.4)),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          // Número do pedido
-                          Text(
-                            pedido.numero.isNotEmpty
-                                ? pedido.numero
-                                : '#${pedido.id.substring(pedido.id.length > 6 ? pedido.id.length - 6 : 0)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
+                        if (_modoSelecao) ...[
+                          Checkbox(
+                            value: isSelecionado,
+                            onChanged: (_) => _alternarSelecao(pedido.id),
+                            activeColor: Colors.blueAccent,
+                            side: BorderSide(
+                              color: Colors.white.withOpacity(0.4),
                             ),
                           ),
                           const SizedBox(width: 8),
+                        ],
+                        // Número do pedido
+                        Text(
+                          pedido.numero.isNotEmpty
+                              ? pedido.numero
+                              : '#${pedido.id.substring(pedido.id.length > 6 ? pedido.id.length - 6 : 0)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
 
                         const Spacer(),
 
-                          // Valor total
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
+                        // Valor total
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'R\$ ${pedido.totalGeral.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                            if (isParcialmentePago) ...[
+                              const SizedBox(height: 2),
                               Text(
-                                'R\$ ${pedido.totalGeral.toStringAsFixed(2)}',
+                                'Falta: R\$ ${pedido.valorPendente.toStringAsFixed(2)}',
                                 style: const TextStyle(
-                                  color: Colors.white,
+                                  color: Colors.orangeAccent,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 18,
                                 ),
                               ),
-                              if (isParcialmentePago) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  'Falta: R\$ ${pedido.valorPendente.toStringAsFixed(2)}',
-                                  style: const TextStyle(
-                                    color: Colors.orangeAccent,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                              if (taxaEntrega != null && taxaEntrega > 0) ...[
-                                const SizedBox(height: 2),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.local_shipping,
-                                      color: Colors.orange,
-                                      size: 12,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Taxa: R\$ ${taxaEntrega.toStringAsFixed(2)}',
-                                      style: const TextStyle(
-                                        color: Colors.orange,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
                             ],
-                          ),
-
+                            if (taxaEntrega != null && taxaEntrega > 0) ...[
+                              const SizedBox(height: 2),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.local_shipping,
+                                    color: Colors.orange,
+                                    size: 12,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Taxa: R\$ ${taxaEntrega.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Colors.orange,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -1374,316 +1726,360 @@ class _PedidosPageState extends State<PedidosPage> {
                       spacing: 6,
                       runSpacing: 4,
                       children: [
-                          // Badge E-commerce
-                          if (isPedidoEcommerce)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.purple,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.shopping_cart,
+                        // Badge E-commerce
+                        if (isPedidoEcommerce)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.purple,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.shopping_cart,
+                                  color: Colors.white,
+                                  size: 12,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'E-commerce',
+                                  style: TextStyle(
                                     color: Colors.white,
-                                    size: 12,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10,
                                   ),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'E-commerce',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 10,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
-                          if (isPedidoEcommerce) const SizedBox(width: 8),
+                          ),
+                        if (isPedidoEcommerce) const SizedBox(width: 8),
 
-                  
-                          // Badge Delivery vs Venda Direta
-                          if (pedido.deliveryInfo != null) ...[
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withOpacity(0.8),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.local_shipping, color: Colors.white, size: 12),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'DELIVERY',
-                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
-                                  ),
-                                ],
-                              ),
+                        // Badge Delivery vs Venda Direta
+                        if (pedido.deliveryInfo != null) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
                             ),
-                            const SizedBox(width: 8),
-                          ] else if (!isPedidoEcommerce) ...[
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.withOpacity(0.8),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.assignment, color: Colors.white, size: 12),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'LANÇAMENTO',
-                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
-                                  ),
-                                ],
-                              ),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.8),
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                            const SizedBox(width: 8),
-                          ],
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.local_shipping,
+                                  color: Colors.white,
+                                  size: 12,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'DELIVERY',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ] else if (!isPedidoEcommerce) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withOpacity(0.8),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.assignment,
+                                  color: Colors.white,
+                                  size: 12,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'LANÇAMENTO',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
 
-                          // Badge PAGO
-                          // Badge EM ABERTO (Parcialmente Pago)
-                          if (isParcialmentePago)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.amber,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.hourglass_bottom,
+                        // Badge PAGO
+                        // Badge EM ABERTO (Parcialmente Pago)
+                        if (isParcialmentePago)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.amber,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.hourglass_bottom,
+                                  color: Color(0xFF795548),
+                                  size: 12,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'EM ABERTO - Falta R\$ ${(pedido.totalGeral - pedido.totalRecebido).toStringAsFixed(2)}',
+                                  style: const TextStyle(
                                     color: Color(0xFF795548),
-                                    size: 12,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10,
                                   ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    'EM ABERTO - Falta R\$ ${(pedido.totalGeral - pedido.totalRecebido).toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Color(0xFF795548),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 10,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
-
+                          ),
                       ],
                     ),
                   ],
                 )
               else
-              Row(
-                children: [
-
-                  if (_modoSelecao) ...[
-                    Checkbox(
-                      value: isSelecionado,
-                      onChanged: (_) => _alternarSelecao(pedido.id),
-                      activeColor: Colors.blueAccent,
-                      side: BorderSide(color: Colors.white.withOpacity(0.4)),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  // Número do pedido
-                  Text(
-                    pedido.numero.isNotEmpty
-                        ? pedido.numero
-                        : '#${pedido.id.substring(pedido.id.length > 6 ? pedido.id.length - 6 : 0)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Badge E-commerce
-                  if (isPedidoEcommerce)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
+                Row(
+                  children: [
+                    if (_modoSelecao) ...[
+                      Checkbox(
+                        value: isSelecionado,
+                        onChanged: (_) => _alternarSelecao(pedido.id),
+                        activeColor: Colors.blueAccent,
+                        side: BorderSide(color: Colors.white.withOpacity(0.4)),
                       ),
-                      decoration: BoxDecoration(
-                        color: Colors.purple,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.shopping_cart,
-                            color: Colors.white,
-                            size: 12,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            'E-commerce',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (isPedidoEcommerce) const SizedBox(width: 8),
-
-                  
-                  // Badge Delivery vs Venda Direta
-                  if (pedido.deliveryInfo != null) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.8),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.local_shipping, color: Colors.white, size: 12),
-                          SizedBox(width: 4),
-                          Text(
-                            'DELIVERY',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
-                          ),
-                        ],
+                      const SizedBox(width: 8),
+                    ],
+                    // Número do pedido
+                    Text(
+                      pedido.numero.isNotEmpty
+                          ? pedido.numero
+                          : '#${pedido.id.substring(pedido.id.length > 6 ? pedido.id.length - 6 : 0)}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
                       ),
                     ),
                     const SizedBox(width: 8),
-                  ] else if (!isPedidoEcommerce) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.withOpacity(0.8),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.assignment, color: Colors.white, size: 12),
-                          SizedBox(width: 4),
-                          Text(
-                            'LANÇAMENTO',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-
-                  // Badge PAGO
-                  // Badge EM ABERTO (Parcialmente Pago)
-                  if (isParcialmentePago)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.amber,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.hourglass_bottom,
-                            color: Color(0xFF795548),
-                            size: 12,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'EM ABERTO - Falta R\$ ${(pedido.totalGeral - pedido.totalRecebido).toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              color: Color(0xFF795548),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                  const Spacer(),
-
-                  // Valor total
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'R\$ ${pedido.totalGeral.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
+                    // Badge E-commerce
+                    if (isPedidoEcommerce)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
                         ),
-                      ),
-                      if (isParcialmentePago) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          'Falta: R\$ ${pedido.valorPendente.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            color: Colors.orangeAccent,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        decoration: BoxDecoration(
+                          color: Colors.purple,
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                      ],
-                      if (taxaEntrega != null && taxaEntrega > 0) ...[
-                        const SizedBox(height: 2),
-                        Row(
+                        child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(
-                              Icons.local_shipping,
-                              color: Colors.orange,
+                            Icon(
+                              Icons.shopping_cart,
+                              color: Colors.white,
                               size: 12,
                             ),
-                            const SizedBox(width: 4),
+                            SizedBox(width: 4),
                             Text(
-                              'Taxa: R\$ ${taxaEntrega.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                color: Colors.orange,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
+                              'E-commerce',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 10,
                               ),
                             ),
                           ],
                         ),
-                      ],
-                    ],
-                  ),
+                      ),
+                    if (isPedidoEcommerce) const SizedBox(width: 8),
 
-                ],
-              ),
+                    // Badge Delivery vs Venda Direta
+                    if (pedido.deliveryInfo != null) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.local_shipping,
+                              color: Colors.white,
+                              size: 12,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'DELIVERY',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ] else if (!isPedidoEcommerce) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.assignment,
+                              color: Colors.white,
+                              size: 12,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'LANÇAMENTO',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+
+                    // Badge PAGO
+                    // Badge EM ABERTO (Parcialmente Pago)
+                    if (isParcialmentePago)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.amber,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.hourglass_bottom,
+                              color: Color(0xFF795548),
+                              size: 12,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'EM ABERTO - Falta R\$ ${(pedido.totalGeral - pedido.totalRecebido).toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Color(0xFF795548),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                    const Spacer(),
+
+                    // Valor total
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'R\$ ${pedido.totalGeral.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+                        if (isParcialmentePago) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Falta: R\$ ${pedido.valorPendente.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                        if (taxaEntrega != null && taxaEntrega > 0) ...[
+                          const SizedBox(height: 2),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.local_shipping,
+                                color: Colors.orange,
+                                size: 12,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Taxa: R\$ ${taxaEntrega.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: Colors.orange,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
 
               if (isParcialmentePago) ...[
                 const SizedBox(height: 8),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
-                    value: (pedido.totalRecebido / pedido.totalGeral).clamp(0.0, 1.0),
+                    value: (pedido.totalRecebido / pedido.totalGeral).clamp(
+                      0.0,
+                      1.0,
+                    ),
                     backgroundColor: Colors.white10,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.orangeAccent),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.orangeAccent,
+                    ),
                     minHeight: 4,
                   ),
                 ),
@@ -1693,11 +2089,17 @@ class _PedidosPageState extends State<PedidosPage> {
                   children: [
                     Text(
                       'Recebido: R\$ ${pedido.totalRecebido.toStringAsFixed(2)}',
-                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 10,
+                      ),
                     ),
                     Text(
                       '${((pedido.totalRecebido / pedido.totalGeral) * 100).toStringAsFixed(0)}%',
-                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 10,
+                      ),
                     ),
                   ],
                 ),
@@ -1740,7 +2142,8 @@ class _PedidosPageState extends State<PedidosPage> {
                   ],
                 ],
               ),
-              if (pedido.clienteEndereco != null && pedido.clienteEndereco!.isNotEmpty) ...[
+              if (pedido.clienteEndereco != null &&
+                  pedido.clienteEndereco!.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1766,7 +2169,9 @@ class _PedidosPageState extends State<PedidosPage> {
                 ),
               ],
               // Linha 3: Vendedor E-commerce (se existir)
-              if (isPedidoEcommerce && pedido.vendedorNome != null && pedido.vendedorNome!.isNotEmpty) ...[
+              if (isPedidoEcommerce &&
+                  pedido.vendedorNome != null &&
+                  pedido.vendedorNome!.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Row(
                   children: [
@@ -1787,9 +2192,13 @@ class _PedidosPageState extends State<PedidosPage> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (pedido.linkVendedorCodigo != null && pedido.linkVendedorCodigo!.isNotEmpty) ...[
+                    if (pedido.linkVendedorCodigo != null &&
+                        pedido.linkVendedorCodigo!.isNotEmpty) ...[
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.purple.withOpacity(0.3),
                           borderRadius: BorderRadius.circular(6),
@@ -1842,129 +2251,138 @@ class _PedidosPageState extends State<PedidosPage> {
                   children: [
                     Row(
                       children: [
-
-                           // Data
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _formatarDataCurta(pedido.dataPedido),
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.5),
-                                  fontSize: 11,
-                                ),
-                              ),
-                              if (pedido.deliveryInfo?.dataEntrega != null)
-                                Row(
-                                  children: [
-                                    const Icon(Icons.delivery_dining, size: 10, color: Colors.blueAccent),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      _formatarDataHora(pedido.deliveryInfo!.dataEntrega!),
-                                      style: const TextStyle(
-                                        color: Colors.blueAccent,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              if (_orcamentoDeOrigem(pedido) != null)
-                                Row(
-                                  children: [
-                                    const Icon(Icons.request_quote,
-                                        size: 10, color: Colors.purpleAccent),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Orçamento ${_orcamentoDeOrigem(pedido)}',
-                                      style: const TextStyle(
-                                        color: Colors.purpleAccent,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                          const SizedBox(width: 12),
-                          // Itens
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '${pedido.quantidadeItens} ${pedido.quantidadeItens == 1 ? 'item' : 'itens'}',
+                        // Data
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _formatarDataCurta(pedido.dataPedido),
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
+                                color: Colors.white.withOpacity(0.5),
                                 fontSize: 11,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          // Status badge
-                          if (!isPago)
-                            PopupMenuButton<String>(
-                              onSelected: (novoStatus) =>
-                                  _alterarStatus(pedido, novoStatus, dataService),
-                              padding: EdgeInsets.zero,
-                              itemBuilder: (context) =>
-                                  [
-                                        'Pendente',
-                                        'Parcialmente Pago',
-                                        'Em Andamento',
-                                        'Entregue',
-                                        'Pago',
-                                        'Cancelado',
-                                      ]
-                                      .map(
-                                        (status) => PopupMenuItem(
-                                          value: status,
-                                          child: Row(
-                                            children: [
-                                              Container(
-                                                width: 10,
-                                                height: 10,
-                                                decoration: BoxDecoration(
-                                                  color: _getCorStatus(status),
-                                                  shape: BoxShape.circle,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                status,
-                                                style: const TextStyle(fontSize: 13),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _getCorStatus(pedido.status),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  pedido.status,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 10,
+                            if (pedido.deliveryInfo?.dataEntrega != null)
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.delivery_dining,
+                                    size: 10,
+                                    color: Colors.blueAccent,
                                   ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _formatarDataHora(
+                                      pedido.deliveryInfo!.dataEntrega!,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.blueAccent,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            if (_orcamentoDeOrigem(pedido) != null)
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.request_quote,
+                                    size: 10,
+                                    color: Colors.purpleAccent,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Orçamento ${_orcamentoDeOrigem(pedido)}',
+                                    style: const TextStyle(
+                                      color: Colors.purpleAccent,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
+                        const SizedBox(width: 12),
+                        // Itens
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${pedido.quantidadeItens} ${pedido.quantidadeItens == 1 ? 'item' : 'itens'}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // Status badge
+                        if (!isPago)
+                          PopupMenuButton<String>(
+                            onSelected: (novoStatus) =>
+                                _alterarStatus(pedido, novoStatus, dataService),
+                            padding: EdgeInsets.zero,
+                            itemBuilder: (context) =>
+                                [
+                                      'Pendente',
+                                      'Parcialmente Pago',
+                                      'Em Andamento',
+                                      'Entregue',
+                                      'Pago',
+                                      'Cancelado',
+                                    ]
+                                    .map(
+                                      (status) => PopupMenuItem(
+                                        value: status,
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 10,
+                                              height: 10,
+                                              decoration: BoxDecoration(
+                                                color: _getCorStatus(status),
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              status,
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _getCorStatus(pedido.status),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                pedido.status,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
                                 ),
                               ),
                             ),
-
+                          ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -1973,441 +2391,527 @@ class _PedidosPageState extends State<PedidosPage> {
                       spacing: 2,
                       runSpacing: 4,
                       children: [
-
-                          // Ações de edição - sempre visíveis
-                          // Botão receber pagamento
-                          if (!isPago && pedido.status.toLowerCase() != 'cancelado')
-                            IconButton(
-                              onPressed: () => _abrirRecebimento(context, pedido),
-                              icon: const Icon(
-                                Icons.attach_money,
-                                size: 18,
-                                color: Colors.greenAccent,
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 32,
-                                minHeight: 32,
-                              ),
-                              tooltip: 'Receber Pagamento',
-                            ),
-                          if (!isPago && pedido.status.toLowerCase() != 'cancelado' && NumeracaoVenda.ehVendaPdv(pedido.numero))
-                            IconButton(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => VendaDiretaPage(pedidoParaEditar: pedido),
-                                  ),
-                                );
-                              },
-                              icon: const Icon(
-                                Icons.shopping_cart_checkout,
-                                size: 18,
-                                color: Colors.blueAccent,
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 32,
-                                minHeight: 32,
-                              ),
-                              tooltip: 'Continuar Venda no PDV',
-                            ),
-                          if (!isPago && pedido.status.toLowerCase() != 'cancelado') const SizedBox(width: 2),
-                          // Botão editar
+                        // Ações de edição - sempre visíveis
+                        // Botão receber pagamento
+                        if (!isPago &&
+                            pedido.status.toLowerCase() != 'cancelado')
                           IconButton(
-                            onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                                ? null
-                                : () {
-                                    final authService = Provider.of<AuthService>(context, listen: false);
-                                    final empresa = authService.empresaAtual;
-                                    final exigirSenha = empresa?.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
-
-                                    if (exigirSenha) {
-                                      _solicitarSenhaAdmin(
-                                        context: context,
-                                        titulo: 'Autorização do Administrador',
-                                        mensagem: 'Digite a senha master para alterar o pedido ${pedido.numero}:',
-                                        onConfirmar: () => _abrirLancamentoPedido(context, pedido: pedido),
-                                      );
-                                    } else {
-                                      _abrirLancamentoPedido(context, pedido: pedido);
-                                    }
-                                  },
-                            icon: Icon(
-                              Icons.edit,
-                              size: 18,
-                              color: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                                  ? Colors.white30
-                                  : Colors.lightBlueAccent,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(
-                              minWidth: 32,
-                              minHeight: 32,
-                            ),
-                            tooltip: isPago
-                                ? 'Pedido pago não pode ser editado'
-                                : pedido.status.toLowerCase() == 'cancelado'
-                                    ? 'Pedido cancelado não pode ser editado'
-                                    : 'Editar',
-                          ),
-                          const SizedBox(width: 2),
-                          // Botão cancelar
-                          IconButton(
-                            onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                                ? null
-                                : () {
-                                    final authService = Provider.of<AuthService>(context, listen: false);
-                                    final empresa = authService.empresaAtual;
-                                    final exigirSenha = empresa?.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
-
-                                    if (exigirSenha) {
-                                      _solicitarSenhaAdmin(
-                                        context: context,
-                                        titulo: 'Autorização do Administrador',
-                                        mensagem: 'Digite a senha master para cancelar o pedido ${pedido.numero}:',
-                                        onConfirmar: () => _confirmarCancelamento(context, pedido, dataService),
-                                      );
-                                    } else {
-                                      _confirmarCancelamento(context, pedido, dataService);
-                                    }
-                                  },
-                            icon: Icon(
-                              Icons.cancel_outlined,
-                              size: 18,
-                              color: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                                  ? Colors.white30
-                                  : Colors.orangeAccent,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(
-                              minWidth: 32,
-                              minHeight: 32,
-                            ),
-                            tooltip: isPago
-                                ? 'Pedido pago não pode ser cancelado'
-                                : pedido.status.toLowerCase() == 'cancelado'
-                                    ? 'Pedido já está cancelado'
-                                    : 'Cancelar Pedido',
-                          ),
-                          const SizedBox(width: 2),
-                          // Botão imprimir - disponível para todos os pedidos
-                          IconButton(
-                            onPressed: () => _mostrarDialogoTipoImpressaoPedido(context, pedido),
+                            onPressed: () => _abrirRecebimento(context, pedido),
                             icon: const Icon(
-                              Icons.print,
+                              Icons.attach_money,
                               size: 18,
-                              color: Colors.orange,
+                              color: Colors.greenAccent,
                             ),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(
                               minWidth: 32,
                               minHeight: 32,
                             ),
-                            tooltip: 'Imprimir Pedido',
+                            tooltip: 'Receber Pagamento',
                           ),
-                          const SizedBox(width: 2),
-                          // Botão reimprimir produção - imprime os tickets nas impressoras dos setores
+                        if (!isPago &&
+                            pedido.status.toLowerCase() != 'cancelado' &&
+                            NumeracaoVenda.ehVendaPdv(pedido.numero))
                           IconButton(
-                            onPressed: () => _reimprimirProducao(context, pedido),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      VendaDiretaPage(pedidoParaEditar: pedido),
+                                ),
+                              );
+                            },
                             icon: const Icon(
-                              Icons.restaurant,
+                              Icons.shopping_cart_checkout,
                               size: 18,
-                              color: Colors.deepOrangeAccent,
+                              color: Colors.blueAccent,
                             ),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(
                               minWidth: 32,
                               minHeight: 32,
                             ),
-                            tooltip: 'Reimprimir Produção (setores)',
+                            tooltip: 'Continuar Venda no PDV',
                           ),
+                        if (!isPago &&
+                            pedido.status.toLowerCase() != 'cancelado')
+                          const SizedBox(width: 2),
+                        // Botão editar
+                        IconButton(
+                          onPressed:
+                              (isPago ||
+                                  pedido.status.toLowerCase() == 'cancelado')
+                              ? null
+                              : () {
+                                  final authService = Provider.of<AuthService>(
+                                    context,
+                                    listen: false,
+                                  );
+                                  final empresa = authService.empresaAtual;
+                                  final exigirSenha =
+                                      empresa
+                                          ?.configuracoes?['exigir_senha_alterar_pedido'] ??
+                                      false;
 
+                                  if (exigirSenha) {
+                                    _solicitarSenhaAdmin(
+                                      context: context,
+                                      titulo: 'Autorização do Administrador',
+                                      mensagem:
+                                          'Digite a senha master para alterar o pedido ${pedido.numero}:',
+                                      onConfirmar: () => _abrirLancamentoPedido(
+                                        context,
+                                        pedido: pedido,
+                                      ),
+                                    );
+                                  } else {
+                                    _abrirLancamentoPedido(
+                                      context,
+                                      pedido: pedido,
+                                    );
+                                  }
+                                },
+                          icon: Icon(
+                            Icons.edit,
+                            size: 18,
+                            color:
+                                (isPago ||
+                                    pedido.status.toLowerCase() == 'cancelado')
+                                ? Colors.white30
+                                : Colors.lightBlueAccent,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          tooltip: isPago
+                              ? 'Pedido pago não pode ser editado'
+                              : pedido.status.toLowerCase() == 'cancelado'
+                              ? 'Pedido cancelado não pode ser editado'
+                              : 'Editar',
+                        ),
+                        const SizedBox(width: 2),
+                        // Botão cancelar
+                        IconButton(
+                          onPressed:
+                              (isPago ||
+                                  pedido.status.toLowerCase() == 'cancelado')
+                              ? null
+                              : () {
+                                  final authService = Provider.of<AuthService>(
+                                    context,
+                                    listen: false,
+                                  );
+                                  final empresa = authService.empresaAtual;
+                                  final exigirSenha =
+                                      empresa
+                                          ?.configuracoes?['exigir_senha_cancelar_pedido'] ??
+                                      false;
+
+                                  if (exigirSenha) {
+                                    _solicitarSenhaAdmin(
+                                      context: context,
+                                      titulo: 'Autorização do Administrador',
+                                      mensagem:
+                                          'Digite a senha master para cancelar o pedido ${pedido.numero}:',
+                                      onConfirmar: () => _confirmarCancelamento(
+                                        context,
+                                        pedido,
+                                        dataService,
+                                      ),
+                                    );
+                                  } else {
+                                    _confirmarCancelamento(
+                                      context,
+                                      pedido,
+                                      dataService,
+                                    );
+                                  }
+                                },
+                          icon: Icon(
+                            Icons.cancel_outlined,
+                            size: 18,
+                            color:
+                                (isPago ||
+                                    pedido.status.toLowerCase() == 'cancelado')
+                                ? Colors.white30
+                                : Colors.orangeAccent,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          tooltip: isPago
+                              ? 'Pedido pago não pode ser cancelado'
+                              : pedido.status.toLowerCase() == 'cancelado'
+                              ? 'Pedido já está cancelado'
+                              : 'Cancelar Pedido',
+                        ),
+                        const SizedBox(width: 2),
+                        // Botão imprimir - disponível para todos os pedidos
+                        IconButton(
+                          onPressed: () => _mostrarDialogoTipoImpressaoPedido(
+                            context,
+                            pedido,
+                          ),
+                          icon: const Icon(
+                            Icons.print,
+                            size: 18,
+                            color: Colors.orange,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          tooltip: 'Imprimir Pedido',
+                        ),
+                        const SizedBox(width: 2),
+                        // Botão reimprimir produção - imprime os tickets nas impressoras dos setores
+                        IconButton(
+                          onPressed: () => _reimprimirProducao(context, pedido),
+                          icon: const Icon(
+                            Icons.restaurant,
+                            size: 18,
+                            color: Colors.deepOrangeAccent,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          tooltip: 'Reimprimir Produção (setores)',
+                        ),
                       ],
                     ),
                   ],
                 )
               else
-              Row(
-                children: [
-
-                   // Data
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _formatarDataCurta(pedido.dataPedido),
+                Row(
+                  children: [
+                    // Data
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _formatarDataCurta(pedido.dataPedido),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 11,
+                          ),
+                        ),
+                        if (pedido.deliveryInfo?.dataEntrega != null)
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.delivery_dining,
+                                size: 10,
+                                color: Colors.blueAccent,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _formatarDataHora(
+                                  pedido.deliveryInfo!.dataEntrega!,
+                                ),
+                                style: const TextStyle(
+                                  color: Colors.blueAccent,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        if (_orcamentoDeOrigem(pedido) != null)
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.request_quote,
+                                size: 10,
+                                color: Colors.purpleAccent,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Orçamento ${_orcamentoDeOrigem(pedido)}',
+                                style: const TextStyle(
+                                  color: Colors.purpleAccent,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: 12),
+                    // Itens
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${pedido.quantidadeItens} ${pedido.quantidadeItens == 1 ? 'item' : 'itens'}',
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.5),
+                          color: Colors.white.withOpacity(0.7),
                           fontSize: 11,
                         ),
                       ),
-                      if (pedido.deliveryInfo?.dataEntrega != null)
-                        Row(
-                          children: [
-                            const Icon(Icons.delivery_dining, size: 10, color: Colors.blueAccent),
-                            const SizedBox(width: 4),
-                            Text(
-                              _formatarDataHora(pedido.deliveryInfo!.dataEntrega!),
-                              style: const TextStyle(
-                                color: Colors.blueAccent,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      if (_orcamentoDeOrigem(pedido) != null)
-                        Row(
-                          children: [
-                            const Icon(Icons.request_quote,
-                                size: 10, color: Colors.purpleAccent),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Orçamento ${_orcamentoDeOrigem(pedido)}',
-                              style: const TextStyle(
-                                color: Colors.purpleAccent,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                  const SizedBox(width: 12),
-                  // Itens
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
                     ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${pedido.quantidadeItens} ${pedido.quantidadeItens == 1 ? 'item' : 'itens'}',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.7),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Status badge
-                  if (!isPago)
-                    PopupMenuButton<String>(
-                      onSelected: (novoStatus) =>
-                          _alterarStatus(pedido, novoStatus, dataService),
-                      padding: EdgeInsets.zero,
-                      itemBuilder: (context) =>
-                          [
-                                'Pendente',
-                                'Parcialmente Pago',
-                                'Em Andamento',
-                                'Entregue',
-                                'Pago',
-                                'Cancelado',
-                              ]
-                              .map(
-                                (status) => PopupMenuItem(
-                                  value: status,
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 10,
-                                        height: 10,
-                                        decoration: BoxDecoration(
-                                          color: _getCorStatus(status),
-                                          shape: BoxShape.circle,
+                    const SizedBox(width: 8),
+                    // Status badge
+                    if (!isPago)
+                      PopupMenuButton<String>(
+                        onSelected: (novoStatus) =>
+                            _alterarStatus(pedido, novoStatus, dataService),
+                        padding: EdgeInsets.zero,
+                        itemBuilder: (context) =>
+                            [
+                                  'Pendente',
+                                  'Parcialmente Pago',
+                                  'Em Andamento',
+                                  'Entregue',
+                                  'Pago',
+                                  'Cancelado',
+                                ]
+                                .map(
+                                  (status) => PopupMenuItem(
+                                    value: status,
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 10,
+                                          height: 10,
+                                          decoration: BoxDecoration(
+                                            color: _getCorStatus(status),
+                                            shape: BoxShape.circle,
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        status,
-                                        style: const TextStyle(fontSize: 13),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          status,
+                                          style: const TextStyle(fontSize: 13),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              )
-                              .toList(),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _getCorStatus(pedido.status),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          pedido.status,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
+                                )
+                                .toList(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _getCorStatus(pedido.status),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            pedido.status,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 10,
+                            ),
                           ),
                         ),
                       ),
-                    ),
 
-                  const Spacer(),
+                    const Spacer(),
 
-                  // Ações de edição - sempre visíveis
-                  // Botão receber pagamento
-                  if (!isPago && pedido.status.toLowerCase() != 'cancelado')
+                    // Ações de edição - sempre visíveis
+                    // Botão receber pagamento
+                    if (!isPago && pedido.status.toLowerCase() != 'cancelado')
+                      IconButton(
+                        onPressed: () => _abrirRecebimento(context, pedido),
+                        icon: const Icon(
+                          Icons.attach_money,
+                          size: 18,
+                          color: Colors.greenAccent,
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
+                        tooltip: 'Receber Pagamento',
+                      ),
+                    if (!isPago &&
+                        pedido.status.toLowerCase() != 'cancelado' &&
+                        NumeracaoVenda.ehVendaPdv(pedido.numero))
+                      IconButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  VendaDiretaPage(pedidoParaEditar: pedido),
+                            ),
+                          );
+                        },
+                        icon: const Icon(
+                          Icons.shopping_cart_checkout,
+                          size: 18,
+                          color: Colors.blueAccent,
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
+                        tooltip: 'Continuar Venda no PDV',
+                      ),
+                    if (!isPago && pedido.status.toLowerCase() != 'cancelado')
+                      const SizedBox(width: 2),
+                    // Botão editar
                     IconButton(
-                      onPressed: () => _abrirRecebimento(context, pedido),
-                      icon: const Icon(
-                        Icons.attach_money,
+                      onPressed:
+                          (isPago || pedido.status.toLowerCase() == 'cancelado')
+                          ? null
+                          : () {
+                              final authService = Provider.of<AuthService>(
+                                context,
+                                listen: false,
+                              );
+                              final empresa = authService.empresaAtual;
+                              final exigirSenha =
+                                  empresa
+                                      ?.configuracoes?['exigir_senha_alterar_pedido'] ??
+                                  false;
+
+                              if (exigirSenha) {
+                                _solicitarSenhaAdmin(
+                                  context: context,
+                                  titulo: 'Autorização do Administrador',
+                                  mensagem:
+                                      'Digite a senha master para alterar o pedido ${pedido.numero}:',
+                                  onConfirmar: () => _abrirLancamentoPedido(
+                                    context,
+                                    pedido: pedido,
+                                  ),
+                                );
+                              } else {
+                                _abrirLancamentoPedido(context, pedido: pedido);
+                              }
+                            },
+                      icon: Icon(
+                        Icons.edit,
                         size: 18,
-                        color: Colors.greenAccent,
+                        color:
+                            (isPago ||
+                                pedido.status.toLowerCase() == 'cancelado')
+                            ? Colors.white30
+                            : Colors.lightBlueAccent,
                       ),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
                         minWidth: 32,
                         minHeight: 32,
                       ),
-                      tooltip: 'Receber Pagamento',
+                      tooltip: isPago
+                          ? 'Pedido pago não pode ser editado'
+                          : pedido.status.toLowerCase() == 'cancelado'
+                          ? 'Pedido cancelado não pode ser editado'
+                          : 'Editar',
                     ),
-                  if (!isPago && pedido.status.toLowerCase() != 'cancelado' && NumeracaoVenda.ehVendaPdv(pedido.numero))
+                    const SizedBox(width: 2),
+                    // Botão cancelar
                     IconButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => VendaDiretaPage(pedidoParaEditar: pedido),
-                          ),
-                        );
-                      },
-                      icon: const Icon(
-                        Icons.shopping_cart_checkout,
+                      onPressed:
+                          (isPago || pedido.status.toLowerCase() == 'cancelado')
+                          ? null
+                          : () {
+                              final authService = Provider.of<AuthService>(
+                                context,
+                                listen: false,
+                              );
+                              final empresa = authService.empresaAtual;
+                              final exigirSenha =
+                                  empresa
+                                      ?.configuracoes?['exigir_senha_cancelar_pedido'] ??
+                                  false;
+
+                              if (exigirSenha) {
+                                _solicitarSenhaAdmin(
+                                  context: context,
+                                  titulo: 'Autorização do Administrador',
+                                  mensagem:
+                                      'Digite a senha master para cancelar o pedido ${pedido.numero}:',
+                                  onConfirmar: () => _confirmarCancelamento(
+                                    context,
+                                    pedido,
+                                    dataService,
+                                  ),
+                                );
+                              } else {
+                                _confirmarCancelamento(
+                                  context,
+                                  pedido,
+                                  dataService,
+                                );
+                              }
+                            },
+                      icon: Icon(
+                        Icons.cancel_outlined,
                         size: 18,
-                        color: Colors.blueAccent,
+                        color:
+                            (isPago ||
+                                pedido.status.toLowerCase() == 'cancelado')
+                            ? Colors.white30
+                            : Colors.orangeAccent,
                       ),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
                         minWidth: 32,
                         minHeight: 32,
                       ),
-                      tooltip: 'Continuar Venda no PDV',
+                      tooltip: isPago
+                          ? 'Pedido pago não pode ser cancelado'
+                          : pedido.status.toLowerCase() == 'cancelado'
+                          ? 'Pedido já está cancelado'
+                          : 'Cancelar Pedido',
                     ),
-                  if (!isPago && pedido.status.toLowerCase() != 'cancelado') const SizedBox(width: 2),
-                  // Botão editar
-                  IconButton(
-                    onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                        ? null
-                        : () {
-                            final authService = Provider.of<AuthService>(context, listen: false);
-                            final empresa = authService.empresaAtual;
-                            final exigirSenha = empresa?.configuracoes?['exigir_senha_alterar_pedido'] ?? false;
-
-                            if (exigirSenha) {
-                              _solicitarSenhaAdmin(
-                                context: context,
-                                titulo: 'Autorização do Administrador',
-                                mensagem: 'Digite a senha master para alterar o pedido ${pedido.numero}:',
-                                onConfirmar: () => _abrirLancamentoPedido(context, pedido: pedido),
-                              );
-                            } else {
-                              _abrirLancamentoPedido(context, pedido: pedido);
-                            }
-                          },
-                    icon: Icon(
-                      Icons.edit,
-                      size: 18,
-                      color: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                          ? Colors.white30
-                          : Colors.lightBlueAccent,
+                    const SizedBox(width: 2),
+                    // Botão imprimir - disponível para todos os pedidos
+                    IconButton(
+                      onPressed: () =>
+                          _mostrarDialogoTipoImpressaoPedido(context, pedido),
+                      icon: const Icon(
+                        Icons.print,
+                        size: 18,
+                        color: Colors.orange,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      tooltip: 'Imprimir Pedido',
                     ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
+                    const SizedBox(width: 2),
+                    // Botão reimprimir produção - imprime os tickets nas impressoras dos setores
+                    IconButton(
+                      onPressed: () => _reimprimirProducao(context, pedido),
+                      icon: const Icon(
+                        Icons.restaurant,
+                        size: 18,
+                        color: Colors.deepOrangeAccent,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      tooltip: 'Reimprimir Produção (setores)',
                     ),
-                    tooltip: isPago
-                        ? 'Pedido pago não pode ser editado'
-                        : pedido.status.toLowerCase() == 'cancelado'
-                            ? 'Pedido cancelado não pode ser editado'
-                            : 'Editar',
-                  ),
-                  const SizedBox(width: 2),
-                  // Botão cancelar
-                  IconButton(
-                    onPressed: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                        ? null
-                        : () {
-                            final authService = Provider.of<AuthService>(context, listen: false);
-                            final empresa = authService.empresaAtual;
-                            final exigirSenha = empresa?.configuracoes?['exigir_senha_cancelar_pedido'] ?? false;
-
-                            if (exigirSenha) {
-                              _solicitarSenhaAdmin(
-                                context: context,
-                                titulo: 'Autorização do Administrador',
-                                mensagem: 'Digite a senha master para cancelar o pedido ${pedido.numero}:',
-                                onConfirmar: () => _confirmarCancelamento(context, pedido, dataService),
-                              );
-                            } else {
-                              _confirmarCancelamento(context, pedido, dataService);
-                            }
-                          },
-                    icon: Icon(
-                      Icons.cancel_outlined,
-                      size: 18,
-                      color: (isPago || pedido.status.toLowerCase() == 'cancelado')
-                          ? Colors.white30
-                          : Colors.orangeAccent,
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    tooltip: isPago
-                        ? 'Pedido pago não pode ser cancelado'
-                        : pedido.status.toLowerCase() == 'cancelado'
-                            ? 'Pedido já está cancelado'
-                            : 'Cancelar Pedido',
-                  ),
-                  const SizedBox(width: 2),
-                  // Botão imprimir - disponível para todos os pedidos
-                  IconButton(
-                    onPressed: () => _mostrarDialogoTipoImpressaoPedido(context, pedido),
-                    icon: const Icon(
-                      Icons.print,
-                      size: 18,
-                      color: Colors.orange,
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    tooltip: 'Imprimir Pedido',
-                  ),
-                  const SizedBox(width: 2),
-                  // Botão reimprimir produção - imprime os tickets nas impressoras dos setores
-                  IconButton(
-                    onPressed: () => _reimprimirProducao(context, pedido),
-                    icon: const Icon(
-                      Icons.restaurant,
-                      size: 18,
-                      color: Colors.deepOrangeAccent,
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    tooltip: 'Reimprimir Produção (setores)',
-                  ),
-
-                ],
-              ),
+                  ],
+                ),
 
               // Linha 5: Botão de Receber em destaque (para pedidos não pagos e não cancelados)
               if (!isPago && pedido.status.toLowerCase() != 'cancelado') ...[
@@ -2692,15 +3196,21 @@ class _PedidosPageState extends State<PedidosPage> {
           TextButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              final authService = Provider.of<AuthService>(context, listen: false);
+              final authService = Provider.of<AuthService>(
+                context,
+                listen: false,
+              );
               final empresa = authService.empresaAtual;
-              final senhaDefinida = empresa?.configuracoes?['senha_admin']?.toString() ?? '';
+              final senhaDefinida =
+                  empresa?.configuracoes?['senha_admin']?.toString() ?? '';
 
               if (senhaDefinida.trim().isEmpty) {
                 // Se não houver senha master configurada na empresa
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Configure uma Senha Master Admin no cadastro da empresa para liberar alterações de pedidos pagos.'),
+                    content: Text(
+                      'Configure uma Senha Master Admin no cadastro da empresa para liberar alterações de pedidos pagos.',
+                    ),
                     backgroundColor: Colors.orange,
                   ),
                 );
@@ -2710,7 +3220,8 @@ class _PedidosPageState extends State<PedidosPage> {
               _solicitarSenhaAdmin(
                 context: context,
                 titulo: 'Liberar Alteração de Pedido Pago',
-                mensagem: 'Insira a Senha Master para permitir a alteração deste pedido pago:',
+                mensagem:
+                    'Insira a Senha Master para permitir a alteração deste pedido pago:',
                 onConfirmar: () {
                   _abrirLancamentoPedido(context, pedido: pedido);
                 },
@@ -2718,9 +3229,7 @@ class _PedidosPageState extends State<PedidosPage> {
             },
             icon: const Icon(Icons.lock_open, size: 18),
             label: const Text('Liberar Alteração'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.redAccent,
-            ),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
           ),
           TextButton.icon(
             onPressed: () {
@@ -2729,9 +3238,7 @@ class _PedidosPageState extends State<PedidosPage> {
             },
             icon: const Icon(Icons.receipt, size: 18),
             label: const Text('Imprimir'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.orange,
-            ),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -2755,7 +3262,11 @@ class _PedidosPageState extends State<PedidosPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.receipt, color: Colors.orange, size: 32),
+              leading: const Icon(
+                Icons.receipt,
+                color: Colors.orange,
+                size: 32,
+              ),
               title: const Text('Impressora Térmica (80mm)'),
               subtitle: const Text('Pedido para impressora térmica'),
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
@@ -2766,7 +3277,11 @@ class _PedidosPageState extends State<PedidosPage> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.receipt_long, color: Colors.purple, size: 32),
+              leading: const Icon(
+                Icons.receipt_long,
+                color: Colors.purple,
+                size: 32,
+              ),
               title: const Text('Romaneio / Separação (80mm)'),
               subtitle: const Text('Apenas itens, sem valores financeiros'),
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
@@ -2777,7 +3292,11 @@ class _PedidosPageState extends State<PedidosPage> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.picture_as_pdf, color: Colors.blue, size: 32),
+              leading: const Icon(
+                Icons.picture_as_pdf,
+                color: Colors.blue,
+                size: 32,
+              ),
               title: const Text('PDF Normal (A4)'),
               subtitle: const Text('Pedido em formato PDF'),
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
@@ -2788,24 +3307,44 @@ class _PedidosPageState extends State<PedidosPage> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.visibility, color: Colors.teal, size: 32),
+              leading: const Icon(
+                Icons.visibility,
+                color: Colors.teal,
+                size: 32,
+              ),
               title: const Text('Pré-visualizar PDF'),
-              subtitle: const Text('Ver o pedido em PDF (A4) antes de imprimir'),
+              subtitle: const Text(
+                'Ver o pedido em PDF (A4) antes de imprimir',
+              ),
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
               onTap: () {
                 Navigator.pop(context);
-                _imprimirPDFPedido(context, pedido, termico: false, forcarPreview: true);
+                _imprimirPDFPedido(
+                  context,
+                  pedido,
+                  termico: false,
+                  forcarPreview: true,
+                );
               },
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.visibility, color: Colors.deepOrange, size: 32),
+              leading: const Icon(
+                Icons.visibility,
+                color: Colors.deepOrange,
+                size: 32,
+              ),
               title: const Text('Pré-visualizar Térmico (80mm)'),
               subtitle: const Text('Ver a via térmica antes de imprimir'),
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
               onTap: () {
                 Navigator.pop(context);
-                _imprimirPDFPedido(context, pedido, termico: true, forcarPreview: true);
+                _imprimirPDFPedido(
+                  context,
+                  pedido,
+                  termico: true,
+                  forcarPreview: true,
+                );
               },
             ),
           ],
@@ -2830,7 +3369,7 @@ class _PedidosPageState extends State<PedidosPage> {
     // Obter empresa atual
     final authService = Provider.of<AuthService>(context, listen: false);
     Empresa? empresa = authService.empresaAtual;
-    
+
     if (empresa == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2845,7 +3384,7 @@ class _PedidosPageState extends State<PedidosPage> {
 
     // Mostrar diálogo de processamento apenas durante a geração do PDF
     if (!context.mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -2858,7 +3397,11 @@ class _PedidosPageState extends State<PedidosPage> {
               children: [
                 const CircularProgressIndicator(),
                 const SizedBox(height: 16),
-                Text(termico ? 'Gerando Pedido (Térmico)...' : 'Gerando Pedido (PDF)...'),
+                Text(
+                  termico
+                      ? 'Gerando Pedido (Térmico)...'
+                      : 'Gerando Pedido (PDF)...',
+                ),
               ],
             ),
           ),
@@ -2916,7 +3459,9 @@ class _PedidosPageState extends State<PedidosPage> {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Nenhuma empresa selecionada para imprimir a produção'),
+              content: Text(
+                'Nenhuma empresa selecionada para imprimir a produção',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -2925,13 +3470,15 @@ class _PedidosPageState extends State<PedidosPage> {
       }
 
       final inputs = pedido.produtos
-          .map((it) => ItemProducaoInput(
-                id: it.id,
-                nome: it.nome,
-                quantidade: it.quantidade,
-                observacao: it.observacao,
-                adicionais: it.adicionais.map((a) => a.nome).toList(),
-              ))
+          .map(
+            (it) => ItemProducaoInput(
+              id: it.id,
+              nome: it.nome,
+              quantidade: it.quantidade,
+              observacao: it.observacao,
+              adicionais: it.adicionais.map((a) => a.nome).toList(),
+            ),
+          )
           .toList();
 
       if (inputs.isEmpty) {
@@ -2974,9 +3521,11 @@ class _PedidosPageState extends State<PedidosPage> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(qtd > 0
-                ? '✓ $qtd ticket(s) de produção reimpresso(s) em suas impressoras'
-                : 'Nenhum item com impressora de produção configurada'),
+            content: Text(
+              qtd > 0
+                  ? '✓ $qtd ticket(s) de produção reimpresso(s) em suas impressoras'
+                  : 'Nenhum item com impressora de produção configurada',
+            ),
             backgroundColor: qtd > 0 ? Colors.green : Colors.orange,
           ),
         );
@@ -3001,7 +3550,7 @@ class _PedidosPageState extends State<PedidosPage> {
     // Obter empresa atual
     final authService = Provider.of<AuthService>(context, listen: false);
     Empresa? empresa = authService.empresaAtual;
-    
+
     if (empresa == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3016,7 +3565,7 @@ class _PedidosPageState extends State<PedidosPage> {
 
     // Mostrar diálogo de processamento
     if (!context.mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -3055,7 +3604,7 @@ class _PedidosPageState extends State<PedidosPage> {
           onLayout: (PdfPageFormat format) async => pdfBytes,
           name: 'Romaneio_${pedido.numero}',
         );
-        
+
         // Mostrar mensagem de sucesso
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3136,7 +3685,7 @@ class _PedidosPageState extends State<PedidosPage> {
         enderecoCompleto += ', ${cliente.numero}';
       }
     }
-    
+
     final novaEntrega = Entrega(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       pedidoId: pedido.id,
@@ -3456,12 +4005,7 @@ class _PedidosPageState extends State<PedidosPage> {
         ),
         backgroundColor: Colors.orange,
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(
-          top: 50,
-          left: 20,
-          right: 20,
-          bottom: 20,
-        ),
+        margin: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 20),
       ),
     );
   }
@@ -3503,7 +4047,8 @@ class _PedidosPageState extends State<PedidosPage> {
   }) {
     final authService = Provider.of<AuthService>(context, listen: false);
     final empresa = authService.empresaAtual;
-    final senhaDefinida = empresa?.configuracoes?['senha_admin']?.toString() ?? '';
+    final senhaDefinida =
+        empresa?.configuracoes?['senha_admin']?.toString() ?? '';
 
     // Se não tiver senha definida nas configurações da empresa, permite direto
     if (senhaDefinida.trim().isEmpty) {
@@ -3522,7 +4067,14 @@ class _PedidosPageState extends State<PedidosPage> {
           children: [
             const Icon(Icons.security, color: Colors.redAccent),
             const SizedBox(width: 8),
-            Text(titulo, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(
+              titulo,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         content: Column(
@@ -3530,7 +4082,10 @@ class _PedidosPageState extends State<PedidosPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (mensagem != null) ...[
-              Text(mensagem, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              Text(
+                mensagem,
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
               const SizedBox(height: 16),
             ],
             TextField(
@@ -3540,8 +4095,12 @@ class _PedidosPageState extends State<PedidosPage> {
               decoration: const InputDecoration(
                 labelText: 'Senha do Administrador',
                 labelStyle: TextStyle(color: Colors.white70),
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
-                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.redAccent)),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Colors.white30),
+                ),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Colors.redAccent),
+                ),
               ),
             ),
           ],
@@ -3549,10 +4108,16 @@ class _PedidosPageState extends State<PedidosPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () {
               if (senhaController.text == senhaDefinida) {
                 Navigator.pop(ctx);

@@ -79,8 +79,7 @@ class PacoteAtualizacao {
     required this.conteudo,
   });
 
-  String get tamanhoLegivel =>
-      '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  String get tamanhoLegivel => '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
 }
 
 /// Um pacote de versão que JÁ está na nuvem e pode ser reaproveitado.
@@ -95,11 +94,7 @@ class VersaoNaNuvem {
   final int bytes;
   final DateTime? enviadoEm;
 
-  const VersaoNaNuvem({
-    required this.versao,
-    this.bytes = 0,
-    this.enviadoEm,
-  });
+  const VersaoNaNuvem({required this.versao, this.bytes = 0, this.enviadoEm});
 
   String get tamanhoLegivel => bytes <= 0
       ? 'tamanho não informado'
@@ -119,7 +114,7 @@ class VersaoNaNuvem {
 }
 
 class AppUpdateService {
-  static const String currentAppVersion = "1.0.56";
+  static const String currentAppVersion = "1.0.57";
 
   /// Verifica se há uma nova versão do aplicativo no Supabase (Direcionada por Empresa ou Global)
   static Future<Map<String, dynamic>?> verificarAtualizacao({
@@ -132,10 +127,9 @@ class AppUpdateService {
     try {
       // 1. PRIMEIRO: Checar no Supabase se há atualização direcionada para esta empresa
       if (empresaId != null && empresaId.isNotEmpty) {
-        final respEmpresa = await SupabaseService.instance.select(
-          'bridge_config',
-          filters: {'id': 'app_update_$empresaId'},
-        ).timeout(const Duration(seconds: 3));
+        final respEmpresa = await SupabaseService.instance
+            .select('bridge_config', filters: {'id': 'app_update_$empresaId'})
+            .timeout(const Duration(seconds: 3));
 
         if (respEmpresa.isNotEmpty) {
           final config = respEmpresa.first;
@@ -156,7 +150,8 @@ class AppUpdateService {
       }
 
       // 2. SEGUNDO: Checar nas configurações da empresa local
-      if (configsEmpresa != null && configsEmpresa['atualizacao_ativa'] == true) {
+      if (configsEmpresa != null &&
+          configsEmpresa['atualizacao_ativa'] == true) {
         final String vRemota = configsEmpresa['versao_alvo'] ?? '';
         final String downloadUrl = configsEmpresa['update_download_url'] ?? '';
 
@@ -172,12 +167,12 @@ class AppUpdateService {
       }
 
       // 3. TERCEIRO: Fallback para versão global no Supabase se a empresa permitir atualização global
-      final bool bloqueiaAtualizacaoGlobal = configsEmpresa?['bloquear_atualizacao_global'] == true;
+      final bool bloqueiaAtualizacaoGlobal =
+          configsEmpresa?['bloquear_atualizacao_global'] == true;
       if (!bloqueiaAtualizacaoGlobal) {
-        final response = await SupabaseService.instance.select(
-          'bridge_config',
-          filters: {'id': 'app_latest'},
-        ).timeout(const Duration(seconds: 3));
+        final response = await SupabaseService.instance
+            .select('bridge_config', filters: {'id': 'app_latest'})
+            .timeout(const Duration(seconds: 3));
 
         if (response.isNotEmpty) {
           final config = response.first;
@@ -202,21 +197,29 @@ class AppUpdateService {
   }
 
   /// Remove o prefixo de força '!' da versão, se presente
-  static String _limparVersao(String v) => v.startsWith('!') ? v.substring(1) : v;
+  static String _limparVersao(String v) =>
+      v.startsWith('!') ? v.substring(1) : v;
 
   /// Compara se a versão remota é maior que a versão local
-  /// Se a versão remota começar com '!', força a atualização (suporta downgrade)
+  /// Se a versão remota começar com '!', força atualização/downgrade quando a
+  /// versão instalada for diferente; não reaplica o mesmo pacote a cada boot.
   static bool _deveAtualizar(String local, String remota) {
     try {
       // Verificar se é atualização forçada (downgrade prefixado com '!')
       final bool isForced = remota.startsWith('!');
       if (isForced) {
-        remota = remota.substring(1); // Remove o prefixo '!'
-        return true; // Força a atualização independente da versão
+        remota = remota.substring(1);
+        return compararVersoes(local, remota) != 0;
       }
 
-      final localParts = local.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-      final remotaParts = remota.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      final localParts = local
+          .split('.')
+          .map((e) => int.tryParse(e) ?? 0)
+          .toList();
+      final remotaParts = remota
+          .split('.')
+          .map((e) => int.tryParse(e) ?? 0)
+          .toList();
 
       for (int i = 0; i < localParts.length && i < remotaParts.length; i++) {
         if (remotaParts[i] > localParts[i]) return true;
@@ -255,13 +258,17 @@ class AppUpdateService {
   /// trocado e o app fecha em seguida — só um motivo diferente de vazio chega
   /// ao chamador. Um pacote recusado NUNCA é aplicado por cima da instalação.
   static Future<(bool, String)> baixarEAplicarAtualizacao(
-      String downloadUrl, Function(double) onProgress) async {
+    String downloadUrl,
+    Function(double) onProgress,
+  ) async {
     try {
       final currentExePath = Platform.resolvedExecutable;
       final exeDir = p.dirname(currentExePath);
       final ehPacote = downloadUrl.toLowerCase().contains('.zip');
-      final baixado = p.join(exeDir,
-          ehPacote ? 'atualizacao_pendente.zip' : 'sistema_exodo_novo.exe.new');
+      final baixado = p.join(
+        exeDir,
+        ehPacote ? 'atualizacao_pendente.zip' : 'sistema_exodo_novo.exe.new',
+      );
       final staging = p.join(exeDir, 'atualizacao_pendente');
       final batPath = p.join(exeDir, 'self_update_app.bat');
 
@@ -307,7 +314,9 @@ class AppUpdateService {
         // Confere o pacote ANTES de encostar na instalação.
         final (ok, mensagem) = await prepararPacoteBaixado(baixado, staging);
         if (!ok) {
-          debugPrint('>>> [AppUpdateService] ⚠️ Atualização recusada: $mensagem');
+          debugPrint(
+            '>>> [AppUpdateService] ⚠️ Atualização recusada: $mensagem',
+          );
           try {
             File(baixado).deleteSync();
           } catch (_) {}
@@ -336,7 +345,9 @@ class AppUpdateService {
       // O BAT precisa de CRLF de verdade — cmd.exe não entende '\n' sozinho.
       await File(batPath).writeAsString('${bat.join('\r\n')}\r\n');
 
-      debugPrint('>>> [AppUpdateService] Executando script de troca e fechando...');
+      debugPrint(
+        '>>> [AppUpdateService] Executando script de troca e fechando...',
+      );
       // Disparar o BAT sem janela CMD
       // (CreateProcessW + CREATE_NO_WINDOW: o app é GUI, então um cmd.exe comum
       // abriria uma janela de console visível)
@@ -345,9 +356,13 @@ class AppUpdateService {
         arguments: ['/c', batPath],
       );
       if (pid == null) {
-        debugPrint('>>> [AppUpdateService] ⚠️ Falha ao executar o BAT de atualização');
-        return (false,
-            'não consegui iniciar o aplicativo que faz a troca dos arquivos');
+        debugPrint(
+          '>>> [AppUpdateService] ⚠️ Falha ao executar o BAT de atualização',
+        );
+        return (
+          false,
+          'não consegui iniciar o aplicativo que faz a troca dos arquivos',
+        );
       }
       // Fechar a si mesmo imediatamente
       exit(0);
@@ -364,21 +379,30 @@ class AppUpdateService {
   /// como se fosse o arquivo) nunca é aplicado por cima da instalação.
   /// Retorna (ok, mensagem).
   static Future<(bool, String)> prepararPacoteBaixado(
-      String zipPath, String stagingDir) async {
+    String zipPath,
+    String stagingDir,
+  ) async {
     try {
       final bytes = await File(zipPath).readAsBytes();
       if (bytes.length < 1024 * 1024) {
-        return (false,
-            'pacote baixado tem só ${(bytes.length / 1024).toStringAsFixed(0)} KB — download incompleto');
+        return (
+          false,
+          'pacote baixado tem só ${(bytes.length / 1024).toStringAsFixed(0)} KB — download incompleto',
+        );
       }
       if (!pacotePareceZip(bytes)) {
-        return (false, 'o arquivo baixado não é um pacote .zip (não vou aplicar)');
+        return (
+          false,
+          'o arquivo baixado não é um pacote .zip (não vou aplicar)',
+        );
       }
       final archive = ZipDecoder().decodeBytes(bytes);
       final nomes = archive.files.map((f) => f.name).toList();
       if (!nomes.contains('data/app.so')) {
-        return (false,
-            'o pacote não traz o data/app.so (o programa em si) — não vou aplicar');
+        return (
+          false,
+          'o pacote não traz o data/app.so (o programa em si) — não vou aplicar',
+        );
       }
       final staging = Directory(stagingDir);
       if (staging.existsSync()) staging.deleteSync(recursive: true);
@@ -447,8 +471,10 @@ class AppUpdateService {
       ];
       final isGlobal = destinos.isEmpty;
 
-      debugPrint('>>> [AppUpdateService] 📦 Publicando versão $dbVersion '
-          '(${isGlobal ? "GLOBAL" : "EMPRESA(S): ${destinos.join(", ")}"})');
+      debugPrint(
+        '>>> [AppUpdateService] 📦 Publicando versão $dbVersion '
+        '(${isGlobal ? "GLOBAL" : "EMPRESA(S): ${destinos.join(", ")}"})',
+      );
 
       // 1. De onde vem o pacote desta versão:
       //    - `usarPacoteDaNuvem`: reaproveita o que já está publicado (não
@@ -462,37 +488,46 @@ class AppUpdateService {
       if (usarPacoteDaNuvem) {
         onEtapa?.call('Procurando o pacote da versão $versaoLimpa na nuvem...');
         final jaNaNuvem = await listarVersoesNaNuvem();
-        final existente =
-            jaNaNuvem.where((v) => v.versao == versaoLimpa).toList();
+        final existente = jaNaNuvem
+            .where((v) => v.versao == versaoLimpa)
+            .toList();
         if (existente.isEmpty) {
           final disponiveis = jaNaNuvem.isEmpty
               ? 'não há nenhum pacote publicado'
               : 'disponíveis: '
-                  '${jaNaNuvem.take(8).map((v) => v.versao).join(", ")}';
-          return (false,
-              'A versão $versaoLimpa não tem pacote na nuvem ($disponiveis).\n\n'
-              'Para enviar esta versão, gere e compile o pacote antes '
-              '(assistente "Gerar versão" ou a opção de pacote desta máquina).');
+                    '${jaNaNuvem.take(8).map((v) => v.versao).join(", ")}';
+          return (
+            false,
+            'A versão $versaoLimpa não tem pacote na nuvem ($disponiveis).\n\n'
+                'Para enviar esta versão, gere e compile o pacote antes '
+                '(assistente "Gerar versão" ou a opção de pacote desta máquina).',
+          );
         }
         downloadUrl = SupabaseService.instance.client.storage
             .from(bucketName)
             .getPublicUrl(fileName);
-        debugPrint('>>> [AppUpdateService] ♻️ Reaproveitando o pacote já '
-            'publicado da versão $versaoLimpa '
-            '(${existente.first.tamanhoLegivel})');
+        debugPrint(
+          '>>> [AppUpdateService] ♻️ Reaproveitando o pacote já '
+          'publicado da versão $versaoLimpa '
+          '(${existente.first.tamanhoLegivel})',
+        );
       } else {
         onEtapa?.call('Montando o pacote do programa...');
         arquivo = pacote ?? await empacotarAtualizacao();
         if (arquivo == null) {
-          return (false,
-              'Não encontrei o programa compilado para empacotar.\n'
-              'Compile antes com:\n'
-              '  flutter build windows --release\n\n'
-              'Procurei nestas pastas:\n'
-              '${pastasDoProgramaCompilado().map((c) => "  - $c").join("\n")}');
+          return (
+            false,
+            'Não encontrei o programa compilado para empacotar.\n'
+                'Compile antes com:\n'
+                '  flutter build windows --release\n\n'
+                'Procurei nestas pastas:\n'
+                '${pastasDoProgramaCompilado().map((c) => "  - $c").join("\n")}',
+          );
         }
-        debugPrint('>>> [AppUpdateService] 📏 ${arquivo.caminho} — '
-            '${arquivo.tamanhoLegivel} (${arquivo.conteudo.join(", ")})');
+        debugPrint(
+          '>>> [AppUpdateService] 📏 ${arquivo.caminho} — '
+          '${arquivo.tamanhoLegivel} (${arquivo.conteudo.join(", ")})',
+        );
 
         // 2. Upload. Um arquivo POR VERSÃO: cada publicação fica imutável (sem
         //    cache servindo versão velha) e publicar para uma empresa não troca
@@ -502,8 +537,11 @@ class AppUpdateService {
         try {
           await SupabaseService.instance.client.storage
               .from(bucketName)
-              .uploadBinary(fileName, fileBytes,
-                  fileOptions: const FileOptions(upsert: true));
+              .uploadBinary(
+                fileName,
+                fileBytes,
+                fileOptions: const FileOptions(upsert: true),
+              );
         } catch (e) {
           debugPrint('>>> [AppUpdateService] ⚠️ Erro no upload: $e');
           // Criar o bucket só ajuda se ele realmente não existir — e o app
@@ -513,7 +551,7 @@ class AppUpdateService {
             return (
               false,
               'Erro ao enviar o pacote:\n${_curto(e)}'
-                  '${dicaDePermissao(e, 'o bucket "$bucketName"')}'
+                  '${dicaDePermissao(e, 'o bucket "$bucketName"')}',
             );
           }
           try {
@@ -523,13 +561,16 @@ class AppUpdateService {
             );
             await SupabaseService.instance.client.storage
                 .from(bucketName)
-                .uploadBinary(fileName, fileBytes,
-                    fileOptions: const FileOptions(upsert: true));
+                .uploadBinary(
+                  fileName,
+                  fileBytes,
+                  fileOptions: const FileOptions(upsert: true),
+                );
           } catch (e2) {
             return (
               false,
               'Erro ao enviar o pacote:\n${_curto(e2)}'
-                  '${dicaDePermissao(e2, 'o bucket "$bucketName"')}'
+                  '${dicaDePermissao(e2, 'o bucket "$bucketName"')}',
             );
           }
         }
@@ -548,9 +589,11 @@ class AppUpdateService {
         try {
           await SupabaseService.instance.client.storage
               .from(bucketName)
-              .uploadBinary(nomeNotasDaVersao(versaoLimpa),
-                  utf8.encode('$detalhes\n'),
-                  fileOptions: const FileOptions(upsert: true));
+              .uploadBinary(
+                nomeNotasDaVersao(versaoLimpa),
+                utf8.encode('$detalhes\n'),
+                fileOptions: const FileOptions(upsert: true),
+              );
           detalhesPublicados = true;
         } catch (e) {
           debugPrint('>>> [AppUpdateService] ⚠️ Não subi os detalhes: $e');
@@ -565,7 +608,9 @@ class AppUpdateService {
       for (final destino in alvos) {
         final configId = idConfigDoDestino(destino);
         try {
-          await SupabaseService.instance.client.from('bridge_config').upsert(
+          await SupabaseService.instance.client
+              .from('bridge_config')
+              .upsert(
                 registroDaPublicacao(
                   configId: configId,
                   versao: dbVersion,
@@ -586,14 +631,18 @@ class AppUpdateService {
           }
         } catch (e) {
           debugPrint('>>> [AppUpdateService] ❌ Erro ao salvar $configId: $e');
-          falhas.add('$configId (${_curto(e)})'
-              '${dicaDePermissao(e, 'bridge_config')}');
+          falhas.add(
+            '$configId (${_curto(e)})'
+            '${dicaDePermissao(e, 'bridge_config')}',
+          );
         }
       }
 
       if (publicados.isEmpty) {
-        return (false,
-            'O pacote subiu, mas nenhuma versão foi gravada:\n${falhas.join('\n')}');
+        return (
+          false,
+          'O pacote subiu, mas nenhuma versão foi gravada:\n${falhas.join('\n')}',
+        );
       }
 
       final linhas = <String>[
@@ -619,8 +668,10 @@ class AppUpdateService {
       if (force) {
         linhas
           ..add('')
-          ..add('⚠️ Publicada como FORÇADA: quem já estiver numa versão mais '
-              'nova também vai baixar esta.');
+          ..add(
+            '⚠️ Publicada como FORÇADA: quem já estiver numa versão mais '
+            'nova também vai baixar esta.',
+          );
       }
       if (falhas.isNotEmpty) {
         linhas
@@ -641,11 +692,23 @@ class AppUpdateService {
   static List<String> pastasDoProgramaCompilado() {
     final exeDir = p.dirname(Platform.resolvedExecutable);
     final home =
-        Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
+        Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'] ??
+        '';
     return <String>[
       // Build Release do repositório (quando o publicador roda do projeto)
-      p.join(exeDir, '..', '..', '..', '..', 'build', 'windows', 'x64',
-          'runner', 'Release'),
+      p.join(
+        exeDir,
+        '..',
+        '..',
+        '..',
+        '..',
+        'build',
+        'windows',
+        'x64',
+        'runner',
+        'Release',
+      ),
       // Pasta de onde o app está rodando agora
       exeDir,
       // Instalações conhecidas
@@ -660,15 +723,19 @@ class AppUpdateService {
   /// `data/flutter_assets` (telas, fontes, imagens) e o `sistema_exodo_novo.exe`.
   /// Só o `.exe` (como era antes) não atualiza nada: ele é o runner do Flutter,
   /// igualzinho em todas as versões.
-  static Future<PacoteAtualizacao?> empacotarAtualizacao({String? pasta}) async {
+  static Future<PacoteAtualizacao?> empacotarAtualizacao({
+    String? pasta,
+  }) async {
     Directory? origem;
-    final candidatas =
-        pasta != null ? <String>[pasta] : pastasDoProgramaCompilado();
+    final candidatas = pasta != null
+        ? <String>[pasta]
+        : pastasDoProgramaCompilado();
     for (final candidata in candidatas) {
       final dir = Directory(candidata);
       final temCodigo = File(p.join(dir.path, 'data', 'app.so')).existsSync();
-      final temExe =
-          File(p.join(dir.path, 'sistema_exodo_novo.exe')).existsSync();
+      final temExe = File(
+        p.join(dir.path, 'sistema_exodo_novo.exe'),
+      ).existsSync();
       if (temCodigo && temExe) {
         origem = dir;
         break;
@@ -676,14 +743,20 @@ class AppUpdateService {
     }
     if (origem == null) return null;
 
-    final zip = File(p.join(Directory.systemTemp.path,
-        'exodo_pacote_${DateTime.now().millisecondsSinceEpoch}.zip'));
+    final zip = File(
+      p.join(
+        Directory.systemTemp.path,
+        'exodo_pacote_${DateTime.now().millisecondsSinceEpoch}.zip',
+      ),
+    );
     final conteudo = <String>[];
     final encoder = ZipFileEncoder();
     try {
       encoder.create(zip.path);
       await encoder.addFile(
-          File(p.join(origem.path, 'data', 'app.so')), 'data/app.so');
+        File(p.join(origem.path, 'data', 'app.so')),
+        'data/app.so',
+      );
       conteudo.add('data/app.so');
 
       final assets = Directory(p.join(origem.path, 'data', 'flutter_assets'));
@@ -697,8 +770,10 @@ class AppUpdateService {
         conteudo.add('data/flutter_assets');
       }
 
-      await encoder.addFile(File(p.join(origem.path, 'sistema_exodo_novo.exe')),
-          'sistema_exodo_novo.exe');
+      await encoder.addFile(
+        File(p.join(origem.path, 'sistema_exodo_novo.exe')),
+        'sistema_exodo_novo.exe',
+      );
       conteudo.add('sistema_exodo_novo.exe');
       await encoder.close();
     } catch (e) {
@@ -776,8 +851,9 @@ class AppUpdateService {
     return achado?.group(1);
   }
 
-  static final RegExp _nomeDoPacoteNaNuvem =
-      RegExp(r'^sistema_exodo_novo_(\d+(?:\.\d+){1,3})\.zip$');
+  static final RegExp _nomeDoPacoteNaNuvem = RegExp(
+    r'^sistema_exodo_novo_(\d+(?:\.\d+){1,3})\.zip$',
+  );
 
   /// Compara duas versões pelo NÚMERO (1.0.10 é maior que 1.0.9, o que
   /// comparar texto erraria). Devolve <0, 0 ou >0.
@@ -819,7 +895,8 @@ class AppUpdateService {
   /// da mais nova para a mais antiga.
   @visibleForTesting
   static List<VersaoNaNuvem> interpretarVersoesNaNuvem(
-      Iterable<Map<String, dynamic>> objetos) {
+    Iterable<Map<String, dynamic>> objetos,
+  ) {
     final porVersao = <String, VersaoNaNuvem>{};
     for (final objeto in objetos) {
       final versao = versaoDoNomeDoPacote((objeto['name'] ?? '').toString());
@@ -829,7 +906,8 @@ class AppUpdateService {
           ? (meta['size'] as num).toInt()
           : 0;
       final quando = DateTime.tryParse(
-          (objeto['updated_at'] ?? objeto['created_at'] ?? '').toString());
+        (objeto['updated_at'] ?? objeto['created_at'] ?? '').toString(),
+      );
       final atual = porVersao[versao];
       if (atual == null ||
           (quando != null &&
@@ -856,14 +934,20 @@ class AppUpdateService {
           .from(bucketAtualizacoes)
           .list(searchOptions: const SearchOptions(limit: 1000))
           .timeout(const Duration(seconds: 20));
-      return interpretarVersoesNaNuvem(objetos.map<Map<String, dynamic>>((o) => {
-        'name': o.name,
-        'metadata': o.metadata,
-        'updated_at': o.updatedAt,
-        'created_at': o.createdAt,
-      }));
+      return interpretarVersoesNaNuvem(
+        objetos.map<Map<String, dynamic>>(
+          (o) => {
+            'name': o.name,
+            'metadata': o.metadata,
+            'updated_at': o.updatedAt,
+            'created_at': o.createdAt,
+          },
+        ),
+      );
     } catch (e) {
-      debugPrint('>>> [AppUpdateService] ❌ Erro ao listar versões da nuvem: $e');
+      debugPrint(
+        '>>> [AppUpdateService] ❌ Erro ao listar versões da nuvem: $e',
+      );
       return [];
     }
   }
@@ -879,8 +963,8 @@ class AppUpdateService {
   @visibleForTesting
   static String idConfigDoDestino(String? empresaId) =>
       (empresaId == null || empresaId.isEmpty)
-          ? PublicacaoVersao.idGlobal
-          : '${PublicacaoVersao.prefixoEmpresa}$empresaId';
+      ? PublicacaoVersao.idGlobal
+      : '${PublicacaoVersao.prefixoEmpresa}$empresaId';
 
   /// Registro que vai para a `bridge_config`: SOMENTE colunas que existem lá
   /// (id, version, download_url). Mandar coluna a mais (ex: 'ativo') faz o
@@ -891,12 +975,12 @@ class AppUpdateService {
     required String configId,
     required String versao,
     required String url,
-  }) =>
-      {'id': configId, 'version': versao, 'download_url': url};
+  }) => {'id': configId, 'version': versao, 'download_url': url};
 
   @visibleForTesting
   static List<PublicacaoVersao> interpretarPublicacoes(
-      List<Map<String, dynamic>> linhas) {
+    List<Map<String, dynamic>> linhas,
+  ) {
     final lista = <PublicacaoVersao>[];
     for (final linha in linhas) {
       final publicacao = PublicacaoVersao.daLinha(linha);
@@ -958,7 +1042,9 @@ class AppUpdateService {
       pasta = pai;
     }
     final home =
-        Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
+        Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'] ??
+        '';
     if (home.isNotEmpty) {
       // Projetos guardados em ~/.antigravity/<nome>
       final antigravity = Directory(p.join(home, '.antigravity'));
@@ -972,9 +1058,11 @@ class AppUpdateService {
     }
 
     for (final candidata in candidatas) {
-      final temProjeto = File(p.join(candidata, 'pubspec.yaml')).existsSync() &&
-          File(p.join(candidata, 'lib', 'services', 'app_update_service.dart'))
-              .existsSync();
+      final temProjeto =
+          File(p.join(candidata, 'pubspec.yaml')).existsSync() &&
+          File(
+            p.join(candidata, 'lib', 'services', 'app_update_service.dart'),
+          ).existsSync();
       if (temProjeto) return p.normalize(candidata);
     }
     return null;
@@ -1001,13 +1089,16 @@ class AppUpdateService {
     }
   }
 
-  static final RegExp _versaoNoCodigo =
-      RegExp(r'currentAppVersion\s*=\s*"([^"]+)"');
+  static final RegExp _versaoNoCodigo = RegExp(
+    r'currentAppVersion\s*=\s*"([^"]+)"',
+  );
 
   /// Grava a versão nova no código (é isso que faz o cliente enxergar a versão).
   /// Retorna (ok, mensagem).
   static Future<(bool, String)> gravarVersaoNoCodigo(
-      String pasta, String versao) async {
+    String pasta,
+    String versao,
+  ) async {
     final limpa = versao.trim().replaceAll('!', '');
     if (!RegExp(r'^\d+\.\d+\.\d+(\.\d+)?$').hasMatch(limpa)) {
       return (false, 'Versão inválida: "$versao". Use o formato 1.0.37.');
@@ -1019,11 +1110,15 @@ class AppUpdateService {
       }
       final conteudo = await arquivo.readAsString();
       if (!_versaoNoCodigo.hasMatch(conteudo)) {
-        return (false,
-            'Não achei a linha currentAppVersion em ${arquivo.path} — não vou mexer no arquivo.');
+        return (
+          false,
+          'Não achei a linha currentAppVersion em ${arquivo.path} — não vou mexer no arquivo.',
+        );
       }
       final novo = conteudo.replaceFirstMapped(
-          _versaoNoCodigo, (m) => 'currentAppVersion = "$limpa"');
+        _versaoNoCodigo,
+        (m) => 'currentAppVersion = "$limpa"',
+      );
       await arquivo.writeAsString(novo);
       return (true, 'Código agora está na versão $limpa.');
     } catch (e) {
@@ -1087,8 +1182,9 @@ class AppUpdateService {
           .get(Uri.parse(url))
           .timeout(const Duration(seconds: 5));
       if (resposta.statusCode != 200) return null;
-      final texto =
-          utf8.decode(resposta.bodyBytes, allowMalformed: true).trim();
+      final texto = utf8
+          .decode(resposta.bodyBytes, allowMalformed: true)
+          .trim();
       return texto.isEmpty ? null : texto;
     } catch (e) {
       debugPrint('>>> [AppUpdateService] Sem detalhes da versão: $e');
@@ -1101,10 +1197,12 @@ class AppUpdateService {
   /// É o mesmo link que a publicação grava na `bridge_config`. Serve para o
   /// app montar o endereço das NOVIDADES da versão que ELE está rodando: o
   /// `..._<versao>.notas.txt` fica sempre ao lado do pacote.
-  static String urlPublicaDaVersao(String versao) =>
-      SupabaseService.instance.client.storage
-          .from(bucketAtualizacoes)
-          .getPublicUrl(nomePacoteDaVersao(versao));
+  static String urlPublicaDaVersao(String versao) => SupabaseService
+      .instance
+      .client
+      .storage
+      .from(bucketAtualizacoes)
+      .getPublicUrl(nomePacoteDaVersao(versao));
 
   /// As novidades JÁ PUBLICADAS de uma versão (o `..._<versao>.notas.txt` do
   /// bucket). Sem detalhes publicados, devolve `null`.
@@ -1124,8 +1222,9 @@ class AppUpdateService {
     String dois(int n) => n.toString().padLeft(2, '0');
     final carimbo =
         '${dois(data.day)}/${dois(data.month)}/${data.year} ${dois(data.hour)}:${dois(data.minute)}';
-    final textoDetalhes =
-        detalhes.trim().isEmpty ? '(sem detalhes informados)' : detalhes.trim();
+    final textoDetalhes = detalhes.trim().isEmpty
+        ? '(sem detalhes informados)'
+        : detalhes.trim();
     final linhas = <String>['', '## $versao — $carimbo', '- destino: $destino'];
     for (final linha in textoDetalhes.split('\n')) {
       linhas.add('- ${linha.trim()}');
@@ -1145,17 +1244,23 @@ class AppUpdateService {
       final arquivo = File(p.join(pasta, 'HISTORICO_VERSOES.md'));
       if (!await arquivo.exists()) {
         await arquivo.writeAsString(
-            '# Histórico de versões publicadas\n\n'
-            'Cada entrada é escrita quando você publica uma versão pelo sistema.\n');
+          '# Histórico de versões publicadas\n\n'
+          'Cada entrada é escrita quando você publica uma versão pelo sistema.\n',
+        );
       }
       await arquivo.writeAsString(
         entradaDoHistorico(
-            versao: versao, detalhes: detalhes, destino: destino),
+          versao: versao,
+          detalhes: detalhes,
+          destino: destino,
+        ),
         mode: FileMode.append,
       );
       return true;
     } catch (e) {
-      debugPrint('>>> [AppUpdateService] Não consegui escrever o histórico: $e');
+      debugPrint(
+        '>>> [AppUpdateService] Não consegui escrever o histórico: $e',
+      );
       return false;
     }
   }
@@ -1191,26 +1296,37 @@ class AppUpdateService {
           .transform(const LineSplitter())
           .listen(guardar);
 
-      final codigo = await processo.exitCode.timeout(limite, onTimeout: () {
-        processo.kill();
-        return -1;
-      });
+      final codigo = await processo.exitCode.timeout(
+        limite,
+        onTimeout: () {
+          processo.kill();
+          return -1;
+        },
+      );
       await saida.cancel();
       await erros.cancel();
 
       if (codigo == 0) {
-        return (true, 'Programa compilado (${linhas.length} linha(s) de saída).');
+        return (
+          true,
+          'Programa compilado (${linhas.length} linha(s) de saída).',
+        );
       }
       final fim = linhas.length > 8
           ? linhas.sublist(linhas.length - 8).join('\n')
           : linhas.join('\n');
-      return (false, codigo == -1
-          ? 'A compilação passou de ${limite.inMinutes} minutos e foi cancelada.\n$fim'
-          : 'A compilação falhou (código $codigo).\n$fim');
+      return (
+        false,
+        codigo == -1
+            ? 'A compilação passou de ${limite.inMinutes} minutos e foi cancelada.\n$fim'
+            : 'A compilação falhou (código $codigo).\n$fim',
+      );
     } on ProcessException catch (e) {
-      return (false,
-          'Não consegui rodar o "flutter" (${e.message}).\n'
-          'Confira se o Flutter está instalado e no PATH.');
+      return (
+        false,
+        'Não consegui rodar o "flutter" (${e.message}).\n'
+            'Confira se o Flutter está instalado e no PATH.',
+      );
     } catch (e) {
       return (false, 'Erro ao compilar: $e');
     }
@@ -1226,10 +1342,7 @@ class AppUpdateService {
   /// decorrido na etapa faz a barra andar dentro da faixa dela — devagar, cada
   /// vez menos, para não bater no teto e ficar plantada enquanto a compilação
   /// termina. Só concluir a etapa (`empacotando`, `pronta`) chega ao fim dela.
-  static double percentualDaEtapa(
-    EtapaGeracaoVersao etapa,
-    Duration naEtapa,
-  ) {
+  static double percentualDaEtapa(EtapaGeracaoVersao etapa, Duration naEtapa) {
     // Etapa instantânea (a versão pronta): a barra cheia é o próprio valor.
     if (etapa.fim <= etapa.inicio) return etapa.fim;
     final estimativa = etapa.estimativa.inMilliseconds;
@@ -1293,14 +1406,30 @@ class AppUpdateService {
 /// etapas seguem a ordem real do trabalho — gravar o número no código, compilar
 /// (`flutter build windows --release`) e montar o pacote da atualização.
 enum EtapaGeracaoVersao {
-  gravandoCodigo(0.00, 0.05, Duration(seconds: 3),
-      'Gravando o número da versão no código...'),
-  preparandoCompilacao(0.05, 0.15, Duration(minutes: 1),
-      'Preparando a compilação (CMake)...'),
-  compilando(0.15, 0.80, Duration(minutes: 4),
-      'Compilando o programa (esta é a parte demorada)...'),
-  empacotando(0.80, 0.95, Duration(seconds: 20),
-      'Montando o pacote (.exe, app.so e dados)...'),
+  gravandoCodigo(
+    0.00,
+    0.05,
+    Duration(seconds: 3),
+    'Gravando o número da versão no código...',
+  ),
+  preparandoCompilacao(
+    0.05,
+    0.15,
+    Duration(minutes: 1),
+    'Preparando a compilação (CMake)...',
+  ),
+  compilando(
+    0.15,
+    0.80,
+    Duration(minutes: 4),
+    'Compilando o programa (esta é a parte demorada)...',
+  ),
+  empacotando(
+    0.80,
+    0.95,
+    Duration(seconds: 20),
+    'Montando o pacote (.exe, app.so e dados)...',
+  ),
   pronta(1.00, 1.00, Duration.zero, 'Versão pronta.');
 
   const EtapaGeracaoVersao(this.inicio, this.fim, this.estimativa, this.rotulo);

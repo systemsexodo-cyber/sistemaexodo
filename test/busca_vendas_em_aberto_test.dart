@@ -21,6 +21,7 @@ import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
 import 'package:sistema_exodo_novo/models/item_pedido.dart';
 import 'package:sistema_exodo_novo/models/item_servico.dart';
 import 'package:sistema_exodo_novo/models/pedido.dart';
+import 'package:sistema_exodo_novo/models/venda_balcao.dart';
 import 'package:sistema_exodo_novo/pages/venda_direta_page.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
@@ -233,6 +234,58 @@ void main() {
         reason: 'totalmente recebido mesmo sem status Pago também sai');
     expect(find.textContaining('PED-CANCELADO'), findsNothing,
         reason: 'cancelado nunca aparece');
+
+    await _fecharPdv(tester, ds);
+  });
+
+  testWidgets('busca por nome completo acha vendas salvas com valorRecebido 0',
+      (tester) async {
+    final ds = await _abrirPdv(tester);
+
+    ds.vendasBalcao.addAll([
+      VendaBalcao(
+        id: 'VND-0517',
+        numero: 'VND-0517',
+        dataVenda: DateTime(2026, 11, 2, 17, 46),
+        clienteNome: 'charles volnei',
+        valorTotal: 8.50,
+        valorRecebido: 0.0,
+        tipoPagamento: TipoPagamento.outro,
+        itens: [
+          ItemVendaBalcao(
+            id: 'IT-1',
+            nome: 'Agua',
+            precoUnitario: 8.50,
+            quantidade: 1,
+          ),
+        ],
+      ),
+      VendaBalcao(
+        id: 'VND-0004',
+        numero: 'VND-0004',
+        dataVenda: DateTime(2026, 10, 27, 9, 19),
+        clienteNome: 'charles',
+        valorTotal: 20.0,
+        valorRecebido: null,
+        tipoPagamento: TipoPagamento.outro,
+        itens: [
+          ItemVendaBalcao(
+            id: 'IT-2',
+            nome: 'Refrigerante',
+            precoUnitario: 20.0,
+            quantidade: 1,
+          ),
+        ],
+      ),
+    ]);
+
+    await _buscarPorNome(tester, 'charles volnei');
+    await _pump(tester);
+
+    expect(find.textContaining('VND-0517'), findsOneWidget,
+        reason: 'venda salva com nome completo charles volnei deve aparecer');
+    expect(find.textContaining('VND-0004'), findsNothing,
+        reason: 'ao buscar pelo nome completo charles volnei, venda de apenas charles não deve poluir');
 
     await _fecharPdv(tester, ds);
   });

@@ -10,6 +10,10 @@ class FormaPagamentoCustom {
   final String id;
   final String nome;
 
+  /// Código tPag da NFC-e (ex: '01' Dinheiro, '17' PIX, '03' Cartão Crédito).
+  /// Editável no cadastro da empresa.
+  final String codigoNfce;
+
   /// Taxa fixa cobrada a cada transação, em reais.
   final double taxaFixa;
 
@@ -22,6 +26,7 @@ class FormaPagamentoCustom {
   const FormaPagamentoCustom({
     required this.id,
     required this.nome,
+    this.codigoNfce = '99',
     this.taxaFixa = 0.0,
     this.taxaPercentual = 0.0,
     this.ativo = true,
@@ -46,6 +51,7 @@ class FormaPagamentoCustom {
     return FormaPagamentoCustom(
       id: map['id']?.toString() ?? '',
       nome: (map['nome'] ?? map['nomeForma'] ?? '').toString(),
+      codigoNfce: (map['codigoNfce'] ?? map['codigo_nfce'] ?? '99').toString(),
       taxaFixa: toDouble(map['taxaFixa'] ?? map['taxa_fixa']),
       taxaPercentual: toDouble(
         map['taxaPercentual'] ?? map['taxa_percentual'] ?? map['taxaPerc'],
@@ -62,6 +68,7 @@ class FormaPagamentoCustom {
     return {
       'id': id,
       'nome': nome,
+      'codigoNfce': codigoNfce,
       'taxaFixa': taxaFixa,
       'taxaPercentual': taxaPercentual,
       'ativo': ativo,
@@ -71,6 +78,7 @@ class FormaPagamentoCustom {
   FormaPagamentoCustom copyWith({
     String? id,
     String? nome,
+    String? codigoNfce,
     double? taxaFixa,
     double? taxaPercentual,
     bool? ativo,
@@ -78,6 +86,7 @@ class FormaPagamentoCustom {
     return FormaPagamentoCustom(
       id: id ?? this.id,
       nome: nome ?? this.nome,
+      codigoNfce: codigoNfce ?? this.codigoNfce,
       taxaFixa: taxaFixa ?? this.taxaFixa,
       taxaPercentual: taxaPercentual ?? this.taxaPercentual,
       ativo: ativo ?? this.ativo,

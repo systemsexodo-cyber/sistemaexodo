@@ -863,6 +863,37 @@ class DatabaseService {
     'usuarios',
   };
 
+  /// Chaves de `cache_dados` que são GLOBAIS por design (sem empresa).
+  ///
+  /// `cache_dados` NÃO tem coluna `empresa_id`: o isolamento é a CHAVE. Toda
+  /// chave de cache que não começar com `empresa_` e não estiver aqui divide o
+  /// MESMO registro JSON entre todas as empresas. O alerta (uma vez por chave)
+  /// força o chamador a usar `_getEmpresaKey`/`_getChaveComEmpresa`.
+  static const Set<String> _chavesCacheGlobais = {
+    'exodo_sync_queue', // fila de sync: cada item carrega o próprio empresaId
+    'empresas',
+    'usuarios',
+  };
+
+  /// Chaves já alertadas neste processo (evita spam de log a cada chamada).
+  static final Set<String> _chavesCacheAlertadas = {};
+
+  /// Aviso de isolamento para leitura/gravação de `cache_dados` com chave crua.
+  void _alertarChaveCacheSemIsolamento(String chave, String acao) {
+    if (chave.startsWith('empresa_') ||
+        chave.startsWith('backups_') ||
+        _chavesCacheGlobais.contains(chave)) {
+      return;
+    }
+    if (!_chavesCacheAlertadas.add(chave)) return;
+    debugPrint(
+      '>>> [PostgreSQL] 🛡️ cache_dados: $acao com chave CRUA "$chave" — '
+      'esta chave NÃO tem isolamento por empresa (o mesmo JSON atende todas '
+      'as empresas). Use _getEmpresaKey(chave) no chamador para não misturar '
+      'dados entre empresas.',
+    );
+  }
+
   /// Tabelas que PERTENCEM a uma empresa — as que o app SEMPRE lê com
   /// `WHERE empresa_id = <aberta>`.
   ///
@@ -948,6 +979,7 @@ class DatabaseService {
         final conn = await connection;
         if (tabela == null) {
           // Sem tabela mapeada, usa o cache_dados (JSON)
+          _alertarChaveCacheSemIsolamento(chave, 'leitura (completa)');
           await _garantirCacheDados(conn);
           final result = await conn.execute(
             Sql.named(
@@ -2560,6 +2592,7 @@ END;
       try {
         final conn = await connection;
         if (tabela == null) {
+          _alertarChaveCacheSemIsolamento(chave, 'gravação');
           await _salvarCacheDados(conn, chave, lista);
           return;
         }
@@ -3283,25 +3316,25 @@ END;
 
   /// Corpo da leitura, SEM a fila: quem enfileira é o `carregarLista` (assim a
   /// segunda tentativa não fica presa esperando a primeira na mesma fila).
-  Future<List<Map<String, dynamic>>> _carregarListaDoBanco(String chave) async {
-    final tabela = _mapearChaveParaTabela(chave);
-    try {
-      final conn = await connection;
-      if (tabela == null) {
-        await _garantirCacheDados(conn);
-        final result = await conn.execute(
-          Sql.named('SELECT valor_json FROM cache_dados WHERE chave = @chave'),
-          parameters: <String, Object?>{'chave': chave},
-        );
-        if (result.isEmpty) return [];
-        final valorJson = result.first[0] as String?;
-        if (valorJson == null || valorJson.isEmpty) return [];
-        final decoded = jsonDecode(valorJson);
-        if (decoded is List) {
-          return decoded.cast<Map<String, dynamic>>();
+  Future<List<Map<String, dynamic>>> _carregarListaDoBanco(String chave) async {      final tabela = _mapearChaveParaTabela(chave);
+      try {
+        final conn = await connection;
+        if (tabela == null) {
+          _alertarChaveCacheSemIsolamento(chave, 'leitura');
+          await _garantirCacheDados(conn);
+          final result = await conn.execute(
+            Sql.named('SELECT valor_json FROM cache_dados WHERE chave = @chave'),
+            parameters: <String, Object?>{'chave': chave},
+          );
+          if (result.isEmpty) return [];
+          final valorJson = result.first[0] as String?;
+          if (valorJson == null || valorJson.isEmpty) return [];
+          final decoded = jsonDecode(valorJson);
+          if (decoded is List) {
+            return decoded.cast<Map<String, dynamic>>();
+          }
+          return [];
         }
-        return [];
-      }
 
       await _inicializarColunas(conn);
       String sql = 'SELECT * FROM "$tabela"';
@@ -3410,6 +3443,16 @@ END;
         final conn = await connection;
         await _inicializarColunas(conn);
 
+        // 🛡️ ISOLAMENTO: sem empresa aberta a busca devolveria produtos de
+        // TODAS as empresas — o filtro não pode ser opcional.
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ buscarProdutos: nenhuma empresa aberta — '
+            'retornando vazio (sem filtro viriam dados de todas).',
+          );
+          return [];
+        }
+
         String whereClause =
             "(nome ILIKE @queryTermo OR codigo ILIKE @queryTermo OR codigo ILIKE @prefixTermo)";
         final params = <String, Object?>{
@@ -3454,6 +3497,16 @@ END;
         final conn = await connection;
         await _inicializarColunas(conn);
 
+        // 🛡️ ISOLAMENTO: sem empresa aberta a leitura por id devolveria o
+        // produto de QUALQUER empresa com esse id.
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ obterProdutoPorId($id): nenhuma empresa '
+            'aberta — retornando null.',
+          );
+          return null;
+        }
+
         String whereClause = 'id = @id';
         final params = <String, Object?>{'id': id};
 
@@ -3496,6 +3549,17 @@ END;
         if (colunas.isEmpty) return;
         final conn = await connection;
         await _inicializarColunas(conn);
+
+        // 🛡️ ISOLAMENTO: UPDATE sem empresa aberta alteraria colunas de
+        // qualquer empresa (mesma regra de leitura).
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ atualizarColunasProduto($id): nenhuma '
+            'empresa aberta — atualização recusada.',
+          );
+          return;
+        }
+
         final existentes = _tableColumnTypes['produtos'];
         if (existentes == null || existentes.isEmpty) {
           debugPrint(
@@ -3571,6 +3635,17 @@ END;
     return _enqueue(() async {
       try {
         final conn = await connection;
+
+        // 🛡️ ISOLAMENTO: UPDATE de estoque sem empresa aberta mudaria o saldo
+        // do produto em QUALQUER empresa (era um dos caminhos de mistura).
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ atualizarEstoqueLocal($id): nenhuma empresa '
+            'aberta — atualização recusada.',
+          );
+          return;
+        }
+
         String whereClause = 'id = @id';
         final params = <String, Object?>{'id': id, 'estoque': novoEstoque};
 
@@ -3808,6 +3883,17 @@ END;
     return _enqueue(() async {
       try {
         final conn = await connection;
+
+        // 🛡️ ISOLAMENTO: sem empresa aberta o histórico de produto viria de
+        // TODAS as empresas.
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ buscarHistoricoProduto: nenhuma empresa '
+            'aberta — retornando vazio.',
+          );
+          return [];
+        }
+
         String sql =
             'SELECT * FROM produto_historico WHERE produto_id = @produtoId';
         final params = <String, Object?>{
@@ -3840,6 +3926,17 @@ END;
     return _enqueue(() async {
       try {
         final conn = await connection;
+
+        // 🛡️ ISOLAMENTO: sem empresa aberta o histórico geral misturaria o
+        // movimento de estoque (entradas/saídas/deposito) de todas empresas.
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ buscarHistoricoGeral: nenhuma empresa aberta '
+            '— retornando vazio.',
+          );
+          return [];
+        }
+
         String sql = 'SELECT * FROM produto_historico WHERE 1=1';
         final params = <String, Object?>{'limite': limite};
 
@@ -3873,6 +3970,17 @@ END;
     return _enqueue(() async {
       try {
         final conn = await connection;
+
+        // 🛡️ ISOLAMENTO: sem empresa aberta o histórico por usuário misturaria
+        // registros de todas as empresas.
+        if (_empresaId == null || _empresaId!.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ buscarHistoricoPorUsuario: nenhuma empresa '
+            'aberta — retornando vazio.',
+          );
+          return [];
+        }
+
         String sql =
             'SELECT * FROM produto_historico WHERE usuario_id = @usuarioId';
         final params = <String, Object?>{
@@ -3909,13 +4017,28 @@ END;
     return _enqueue(() async {
       try {
         final conn = await connection;
+        await _inicializarColunas(conn);
+
+        // 🛡️ ISOLAMENTO: o UPDATE era SEM filtro de empresa — sem empresa
+        // aberta ele mudaria o status da nota de QUALQUER empresa com esse id.
+        final empresa = _empresaId;
+        if (empresa == null || empresa.isEmpty) {
+          debugPrint(
+            '>>> [PostgreSQL] ⛔ atualizarStatusNFCe($nfceId): nenhuma '
+            'empresa aberta — recusado.',
+          );
+          return;
+        }
+
         await conn.execute(
           Sql.named(
-            'UPDATE nfces SET status = @status, updated_at = @now WHERE id = @id',
+            'UPDATE nfces SET status = @status, updated_at = @now '
+            'WHERE id = @id AND empresa_id = @empresaId',
           ),
           parameters: <String, Object?>{
             'id': nfceId,
             'status': status,
+            'empresaId': empresa,
             'now': DateTime.now().toIso8601String(),
           },
         );
@@ -3939,6 +4062,7 @@ END;
       final tabela = _mapearChaveParaTabela(tableKey) ?? tableKey;
       try {
         final conn = await connection;
+        await _inicializarColunas(conn);
         await conn.runTx((session) async {
           await session.execute(
             "SET LOCAL exodo.sync_mode = '${isSync ? 'on' : 'off'}';",
@@ -3946,12 +4070,30 @@ END;
           String sql = 'DELETE FROM "$tabela" WHERE id = @id';
           final params = <String, Object?>{'id': id};
 
-          if (empresaId != null && empresaId.isNotEmpty) {
-            final columns = _tableColumnTypes[tabela];
-            if (columns != null && columns.containsKey('empresa_id')) {
-              sql += ' AND empresa_id = @empresaId';
-              params['empresaId'] = empresaId;
+          final columns = _tableColumnTypes[tabela];
+          if (deveFiltrarPorEmpresa(tabela, columns)) {
+            // 🛡️ ISOLAMENTO: DELETE em tabela por empresa exige empresa (a do
+            // parâmetro ou a aberta). Sem ela, o DELETE valeria para a linha
+            // encontrada — de qualquer empresa. Antes o filtro só era montado
+            // quando o parâmetro vinha preenchido.
+            final empresaEficaz = (empresaId != null && empresaId.isNotEmpty)
+                ? empresaId
+                : _empresaId;
+            if (empresaEficaz == null || empresaEficaz.isEmpty) {
+              debugPrint(
+                '>>> [PostgreSQL] ⛔ removerItemPostgres($tabela, id=$id): '
+                'nenhuma empresa definida — DELETE RECUSADO (apagaria linha '
+                'de qualquer empresa).',
+              );
+              if (lancarSeFalhar) {
+                throw StateError(
+                  'removerItemPostgres sem empresa definida ($tabela/$id)',
+                );
+              }
+              return;
             }
+            sql += ' AND empresa_id = @empresaId';
+            params['empresaId'] = empresaEficaz;
           }
 
           await session.execute(Sql.named(sql), parameters: params);

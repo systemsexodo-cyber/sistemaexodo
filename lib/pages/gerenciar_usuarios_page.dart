@@ -963,10 +963,18 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     await authService.atualizarUsuario(usuarioAtualizado);
                     if (context.mounted) {
                       Navigator.of(context).pop();
+                      final falhouSync = authService.falhaSyncUsuarios;
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Usuário atualizado com sucesso!'),
-                          backgroundColor: Colors.green,
+                        SnackBar(
+                          content: Text(
+                            falhouSync
+                                ? 'Usuário atualizado no banco local, mas a '
+                                    'sincronização com a nuvem falhou: '
+                                    '${authService.motivoSyncUsuariosFalhou ?? ''}'.trim()
+                                : 'Usuário atualizado com sucesso!',
+                          ),
+                          backgroundColor:
+                              falhouSync ? Colors.orange : Colors.green,
                         ),
                       );
                       setState(() {});
@@ -1009,14 +1017,19 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     try {
       await authService.atualizarUsuario(usuarioAtualizado);
       if (context.mounted) {
+        final falhouSync = authService.falhaSyncUsuarios;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              novoStatus
-                  ? 'Usuário ativado com sucesso!'
-                  : 'Usuário desativado com sucesso!',
+              falhouSync
+                  ? (novoStatus
+                        ? 'Usuário ativado no banco local, mas a sincronização com a nuvem falhou.'
+                        : 'Usuário desativado no banco local, mas a sincronização com a nuvem falhou.')
+                  : (novoStatus
+                        ? 'Usuário ativado com sucesso!'
+                        : 'Usuário desativado com sucesso!'),
             ),
-            backgroundColor: Colors.green,
+            backgroundColor: falhouSync ? Colors.orange : Colors.green,
           ),
         );
         setState(() {});

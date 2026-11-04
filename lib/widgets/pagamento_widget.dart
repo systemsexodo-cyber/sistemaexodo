@@ -7,20 +7,25 @@ import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/cash_back_service.dart';
 import 'cash_back_badge.dart';
+
 /// Widget para seleção e exibição de formas de pagamento
 class PagamentoWidget extends StatefulWidget {
   final double totalPedido;
   final List<PagamentoPedido> pagamentos;
   final Function(List<PagamentoPedido>) onPagamentosChanged;
+  final Function(List<PagamentoPedido>)? onPagamentoEditado;
   final String?
   clienteId; // ID do cliente selecionado (para validação de crediário/fiado)
+  final String? clienteNome;
 
   const PagamentoWidget({
     super.key,
     required this.totalPedido,
     required this.pagamentos,
     required this.onPagamentosChanged,
+    this.onPagamentoEditado,
     this.clienteId,
+    this.clienteNome,
   });
 
   @override
@@ -30,9 +35,23 @@ class PagamentoWidget extends StatefulWidget {
 class _PagamentoWidgetState extends State<PagamentoWidget> {
   final _formatoData = DateFormat('dd/MM/yyyy');
   final _formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  late List<PagamentoPedido> _pagamentos;
 
-  double get _totalLancado =>
-      widget.pagamentos.fold(0.0, (sum, p) => sum + p.valor);
+  @override
+  void initState() {
+    super.initState();
+    _pagamentos = List.of(widget.pagamentos);
+  }
+
+  @override
+  void didUpdateWidget(covariant PagamentoWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.pagamentos, widget.pagamentos)) {
+      _pagamentos = List.of(widget.pagamentos);
+    }
+  }
+
+  double get _totalLancado => _pagamentos.fold(0.0, (sum, p) => sum + p.valor);
 
   double get _valorRestante => widget.totalPedido - _totalLancado;
 
@@ -86,12 +105,12 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     final dataService = Provider.of<DataService>(context, listen: false);
 
     // Validação: cliente com cash back desativado não pode usá-lo como pagamento
-    if (tipo == TipoPagamento.cashBack &&
-        !_clienteCashbackAtivo(dataService)) {
+    if (tipo == TipoPagamento.cashBack && !_clienteCashbackAtivo(dataService)) {
       _mostrarErroCashbackInativo();
       return;
     }
-    final pagamentosConfig = dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
+    final pagamentosConfig =
+        dataService.empresaAtual?.configuracoes?['pagamentos'] as Map?;
     final config = pagamentosConfig?[tipo.name] as Map?;
     final descontoPerc = (config?['descontoPerc'] as num?)?.toDouble() ?? 0.0;
     final acrescimoPerc = (config?['acrescimoPerc'] as num?)?.toDouble() ?? 0.0;
@@ -125,16 +144,19 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
       );
     }
 
-    _mostrarDialogPagamento(tipo, valorSugerido, descontoCalc: descontoAplicado, acrescimoCalc: acrescimoAplicado);
+    _mostrarDialogPagamento(
+      tipo,
+      valorSugerido,
+      descontoCalc: descontoAplicado,
+      acrescimoCalc: acrescimoAplicado,
+    );
   }
 
   // Erro quando o cliente identificado não tem saldo de cash back
   void _mostrarErroSemSaldoCashBack() {
     ScaffoldMessenger.of(this.context).showSnackBar(
       const SnackBar(
-        content: Text(
-          'Este cliente não tem saldo de Cash Back disponível',
-        ),
+        content: Text('Este cliente não tem saldo de Cash Back disponível'),
         backgroundColor: Colors.amber,
         duration: Duration(seconds: 3),
       ),
@@ -146,8 +168,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     final tipoNome = tipo == TipoPagamento.crediario
         ? 'Crediário'
         : tipo == TipoPagamento.cashBack
-            ? 'Cash Back'
-            : 'Fiado';
+        ? 'Cash Back'
+        : 'Fiado';
     final corTipo = tipo == TipoPagamento.crediario ? Colors.pink : Colors.red;
 
     showDialog(
@@ -309,13 +331,16 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     final valorInicial = pagamentoExistente != null
         ? pagamentoExistente.valor
         : (valorSugerido > 0 ? valorSugerido : 0.0);
-    
+
     final valorController = TextEditingController(
       text: valorInicial.toStringAsFixed(2),
     );
     final valorRecebidoController = TextEditingController();
     final observacaoController = TextEditingController(
       text: pagamentoExistente?.observacao ?? '',
+    );
+    final nomePagadorController = TextEditingController(
+      text: pagamentoExistente?.nomePagador ?? widget.clienteNome ?? '',
     );
 
     int parcelas = 1;
@@ -342,7 +367,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
           // Função para calcular troco
           void calcularTroco() {
             final valorPagar =
-                double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0.0;
+                double.tryParse(valorController.text.replaceAll(',', '.')) ??
+                0.0;
             final valorRecebido =
                 double.tryParse(
                   valorRecebidoController.text.replaceAll(',', '.'),
@@ -351,7 +377,9 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
             setDialogState(() {
               // Troco = valor recebido - valor a pagar
               // Se valor recebido for maior que valor a pagar, há troco
-              troco = valorRecebido > valorPagar ? valorRecebido - valorPagar : 0.0;
+              troco = valorRecebido > valorPagar
+                  ? valorRecebido - valorPagar
+                  : 0.0;
             });
           }
 
@@ -570,6 +598,19 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                     ),
                   ],
 
+                  if (!isFiado && (!parcelar || parcelas <= 1)) ...[
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: nomePagadorController,
+                      textInputAction: TextInputAction.done,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Quem pagou?',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                  ],
+
                   // Observação
                   const SizedBox(height: 16),
                   const Text(
@@ -682,7 +723,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                     );
                     final saldo = _saldoCashbackDoCliente(dataSvc);
                     double jaLancado = 0.0;
-                    for (final p in widget.pagamentos) {
+                    for (final p in _pagamentos) {
                       if (p.tipo == TipoPagamento.cashBack &&
                           p.id != pagamentoExistente?.id) {
                         jaLancado += p.valor;
@@ -705,6 +746,20 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                     }
                   }
 
+                  final nomePagador = nomePagadorController.text.trim();
+                  final pagamentoSeraRecebido =
+                      pagamentoExistente?.recebido ??
+                      (!isFiado && (!parcelar || parcelas <= 1));
+                  if (pagamentoSeraRecebido && nomePagador.isEmpty) {
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Informe quem realizou o pagamento.'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
                   final String? obs = observacaoController.text.isNotEmpty
                       ? observacaoController.text
                       : null;
@@ -718,9 +773,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                     trocoFinal = troco;
                   }
 
-                  final novaLista = List<PagamentoPedido>.from(
-                    widget.pagamentos,
-                  );
+                  final novaLista = List<PagamentoPedido>.from(_pagamentos);
 
                   // Se tiver parcelamento, criar múltiplas parcelas
                   if (parcelar && parcelas > 1) {
@@ -753,15 +806,28 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                           pagamentoExistente?.id ??
                           DateTime.now().millisecondsSinceEpoch.toString(),
                       tipo: tipo,
-                      nomeForma: nomeFormaCustom ?? pagamentoExistente?.nomeForma,
+                      nomeForma:
+                          nomeFormaCustom ?? pagamentoExistente?.nomeForma,
                       valor: valor,
                       observacao: obs,
                       valorRecebido: valorRecebidoFinal,
-                      troco: trocoFinal,
-                      // Formas personalizadas entram como recebidas na hora.
-                      recebido: nomeFormaCustom != null
+                      troco:
+                          trocoFinal, // Novo pagamento entra como recebido; se for atualizar existente, mantém o status anterior.
+                      // Formas personalizadas já vêm como recebidas na hora.
+                      recebido: pagamentoExistente == null
                           ? true
-                          : (pagamentoExistente?.recebido ?? false),
+                          : (nomeFormaCustom != null
+                                ? true
+                                : pagamentoExistente!.recebido),
+                      dataRecebimento:
+                          pagamentoExistente?.dataRecebimento ??
+                          (pagamentoExistente == null && !isFiado
+                              ? DateTime.now()
+                              : null),
+                      nomePagador: nomePagador.isEmpty
+                          ? pagamentoExistente?.nomePagador
+                          : nomePagador,
+
                       // Se for fiado, usar a data de vencimento selecionada
                       dataVencimento: isFiado ? dataVencimentoFiado : null,
                     );
@@ -804,7 +870,12 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
           );
         },
       ),
-    );
+    ).then((_) {
+      valorController.dispose();
+      valorRecebidoController.dispose();
+      observacaoController.dispose();
+      nomePagadorController.dispose();
+    });
   }
 
   Widget _buildCalculadoraTroco(
@@ -925,7 +996,9 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                     valorRecebidoController.text.replaceAll(',', '.'),
                   ) ??
                   0.0;
-              final faltando = valorPagar > valorRecebido ? valorPagar - valorRecebido : 0.0;
+              final faltando = valorPagar > valorRecebido
+                  ? valorPagar - valorRecebido
+                  : 0.0;
 
               if (troco > 0) {
                 // Mostra troco
@@ -1354,12 +1427,12 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
       return;
     }
 
-    novaLista = widget.pagamentos.where((p) => p.id != pagamento.id).toList();
+    novaLista = _pagamentos.where((p) => p.id != pagamento.id).toList();
     widget.onPagamentosChanged(novaLista);
   }
 
   void _confirmarRemocaoParcelamento(PagamentoPedido pagamento) {
-    final parcelasDoGrupo = widget.pagamentos
+    final parcelasDoGrupo = _pagamentos
         .where((p) => p.parcelamentoId == pagamento.parcelamentoId)
         .toList();
 
@@ -1403,7 +1476,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
           ElevatedButton(
             onPressed: () {
               // Remover apenas esta parcela
-              final novaLista = widget.pagamentos
+              final novaLista = _pagamentos
                   .where((p) => p.id != pagamento.id)
                   .toList();
               widget.onPagamentosChanged(novaLista);
@@ -1415,7 +1488,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
           ElevatedButton(
             onPressed: () {
               // Remover todas as parcelas do grupo
-              final novaLista = widget.pagamentos
+              final novaLista = _pagamentos
                   .where((p) => p.parcelamentoId != pagamento.parcelamentoId)
                   .toList();
               widget.onPagamentosChanged(novaLista);
@@ -1437,7 +1510,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         _buildCabecalho(),
         const SizedBox(height: 12),
         _buildBotoesPagamento(),
-        if (widget.pagamentos.isNotEmpty) ...[
+        if (_pagamentos.isNotEmpty) ...[
           const SizedBox(height: 16),
           _buildListaPagamentos(),
         ],
@@ -1502,10 +1575,10 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
 
   Widget _buildBotoesPagamento() {
     final dataService = Provider.of<DataService>(context, listen: true);
-    final formasCustom =
-        TaxaPagamentoService.formasPersonalizadasAtivas(dataService.empresaAtual);
-    final temCliente =
-        widget.clienteId != null && widget.clienteId!.isNotEmpty;
+    final formasCustom = TaxaPagamentoService.formasPersonalizadasAtivas(
+      dataService.empresaAtual,
+    );
+    final temCliente = widget.clienteId != null && widget.clienteId!.isNotEmpty;
     final saldoCashBack = _saldoCashbackDoCliente(dataService);
 
     return Column(
@@ -1525,7 +1598,9 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
           spacing: 8,
           runSpacing: 8,
           children: [
-            ...TipoPagamento.values.map((tipo) => _buildBotaoTipoPagamento(tipo)),
+            ...TipoPagamento.values.map(
+              (tipo) => _buildBotaoTipoPagamento(tipo),
+            ),
             ...formasCustom.map((forma) => _buildBotaoFormaCustom(forma)),
           ],
         ),
@@ -1627,7 +1702,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     // Agrupar parcelas por parcelamentoId
     final Map<String?, List<PagamentoPedido>> grupos = {};
 
-    for (final pag in widget.pagamentos) {
+    for (final pag in _pagamentos) {
       if (pag.isParcela && pag.parcelamentoId != null) {
         grupos.putIfAbsent(pag.parcelamentoId, () => []).add(pag);
       } else {
@@ -1931,13 +2006,18 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  pagamento.tipo.nome,
+                  pagamento.nomeExibicao,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
                   ),
                 ),
+                if (pagamento.nomePagador?.trim().isNotEmpty == true)
+                  Text(
+                    'Pago por: ${pagamento.nomePagador}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
                 if (pagamento.observacao != null &&
                     pagamento.observacao!.isNotEmpty)
                   Padding(
@@ -2026,6 +2106,19 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
           ),
           const SizedBox(width: 8),
           InkWell(
+            onTap: () => _editarPagamento(pagamento),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.8),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.edit, color: Colors.white, size: 22),
+            ),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
             onTap: () => _confirmarRemocao(pagamento),
             borderRadius: BorderRadius.circular(10),
             child: Container(
@@ -2047,6 +2140,117 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         ],
       ),
     );
+  }
+
+  void _editarPagamento(PagamentoPedido pagamento) {
+    final valorController = TextEditingController(
+      text: pagamento.valor.toStringAsFixed(2),
+    );
+    var tipoSelecionado = pagamento.tipo;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text(
+            'Editar pagamento',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<TipoPagamento>(
+                value: tipoSelecionado,
+                dropdownColor: const Color(0xFF1E1E2E),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'Forma'),
+                items: TipoPagamento.values
+                    .map(
+                      (tipo) =>
+                          DropdownMenuItem(value: tipo, child: Text(tipo.nome)),
+                    )
+                    .toList(),
+                onChanged: (tipo) {
+                  if (tipo != null) {
+                    setDialogState(() => tipoSelecionado = tipo);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: valorController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Valor',
+                  prefixText: 'R\$ ',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final novoValor = double.tryParse(
+                  valorController.text.trim().replaceAll(',', '.'),
+                );
+                if (novoValor == null || novoValor <= 0) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Informe um valor válido.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                final novaLista = _pagamentos.map((item) {
+                  if (item.id != pagamento.id) return item;
+                  return PagamentoPedido(
+                    id: item.id,
+                    tipo: tipoSelecionado,
+                    tipoOriginal: tipoSelecionado == pagamento.tipo
+                        ? pagamento.tipoOriginal
+                        : (pagamento.tipoOriginal ?? pagamento.tipo),
+                    nomeForma: tipoSelecionado == pagamento.tipo
+                        ? item.nomeForma
+                        : null,
+                    valor: novoValor,
+                    parcelas: item.parcelas,
+                    numeroParcela: item.numeroParcela,
+                    parcelamentoId: item.parcelamentoId,
+                    dataVencimento: item.dataVencimento,
+                    recebido: item.recebido,
+                    dataRecebimento: item.dataRecebimento,
+                    nomePagador: item.nomePagador,
+                    observacao: item.observacao,
+                    valorRecebido: item.valorRecebido,
+                    troco: item.troco,
+                    desconto: item.desconto,
+                    acrescimo: item.acrescimo,
+                  );
+                }).toList();
+                setState(() => _pagamentos = novaLista);
+                final onPagamentoEditado = widget.onPagamentoEditado;
+                if (onPagamentoEditado != null) {
+                  onPagamentoEditado(novaLista);
+                } else {
+                  widget.onPagamentosChanged(novaLista);
+                }
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    ).then((_) => valorController.dispose());
   }
 
   void _confirmarRemocao(PagamentoPedido pagamento) {
@@ -2173,8 +2377,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
   Widget _buildResumo() {
     // Verifica se todos os pagamentos são Dinheiro para permitir troco
     final todosDinheiro =
-        widget.pagamentos.isNotEmpty &&
-        widget.pagamentos.every((p) => p.tipo == TipoPagamento.dinheiro);
+        _pagamentos.isNotEmpty &&
+        _pagamentos.every((p) => p.tipo == TipoPagamento.dinheiro);
 
     // Calcula se há troco (lançado > total) - MAS SÓ SE TODOS FOREM DINHEIRO
     final temTroco = todosDinheiro && _totalLancado > widget.totalPedido + 0.01;
@@ -2294,6 +2498,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Colors.blueAccent;
       case TipoPagamento.cashBack:
         return Colors.amber;
+      case TipoPagamento.mercado_pago:
+        return Colors.amber;
     }
   }
 
@@ -2321,6 +2527,8 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
         return Icons.swap_horiz;
       case TipoPagamento.cashBack:
         return Icons.local_atm;
+      case TipoPagamento.mercado_pago:
+        return Icons.qr_code;
     }
   }
 }
