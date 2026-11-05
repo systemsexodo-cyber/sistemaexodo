@@ -531,6 +531,8 @@ class _PdvPageState extends State<PdvPage> {
                   preco: i.precoUnitario,
                   observacao: i.observacao,
                   fornecedorNome: i.fornecedorNome,
+                  vendedorId: i.vendedorId,
+                  vendedorNome: i.vendedorNome,
                   adicionais: i.adicionais,
                   unidadeVenda: i.unidadeVenda,
                   quantidadeBaixa: i.quantidadeBaixa,
@@ -8278,10 +8280,13 @@ class _PdvPageState extends State<PdvPage> {
   }
 
   // Editar nome do cliente em venda salva sem cliente
-  void _editarNomeClienteVendaSalva(Pedido pedido, DataService dataService) {
+  Future<void> _editarNomeClienteVendaSalva(
+    Pedido pedido,
+    DataService dataService,
+  ) async {
     final controller = TextEditingController(text: pedido.clienteNome ?? '');
 
-    showDialog(
+    final novoNome = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
@@ -8344,64 +8349,101 @@ class _PdvPageState extends State<PdvPage> {
             ),
           ),
           ElevatedButton(
-            onPressed: () {
-              final novoNome = controller.text.trim();
-              if (novoNome.isNotEmpty) {
-                final pedidoAtualizado = pedido.copyWith(
-                  clienteNome: novoNome,
-                  updatedAt: DateTime.now(),
-                );
-                dataService.updatePedido(pedidoAtualizado);
-
-                // Se o pedido está selecionado, atualizar também
-                if (_pedidoSelecionado?.id == pedido.id) {
-                  setState(() {
-                    _pedidoSelecionado = pedidoAtualizado;
-                  });
-                }
-
-                Navigator.pop(context);
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Row(
-                      children: [
-                        const Icon(Icons.check_circle, color: Colors.white),
-                        const SizedBox(width: 8),
-                        Text('Nome do cliente atualizado: $novoNome'),
-                      ],
-                    ),
-                    backgroundColor: Colors.green,
-                    behavior: SnackBarBehavior.floating,
-                    margin: const EdgeInsets.only(
-                      top: 50,
-                      left: 20,
-                      right: 20,
-                      bottom: 20,
-                    ),
-                  ),
-                );
-              } else {
-                // Se o nome estiver vazio, remover o nome do cliente
-                final pedidoAtualizado = pedido.copyWith(
-                  clienteNome: null,
-                  updatedAt: DateTime.now(),
-                );
-                dataService.updatePedido(pedidoAtualizado);
-
-                if (_pedidoSelecionado?.id == pedido.id) {
-                  setState(() {
-                    _pedidoSelecionado = pedidoAtualizado;
-                  });
-                }
-
-                Navigator.pop(context);
-              }
-            },
+            // Nome vazio = remover o nome do cliente do pedido.
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
             child: const Text('Salvar'),
           ),
         ],
+      ),
+    );
+
+    // Cancelou o diálogo: nada a gravar.
+    if (novoNome == null || !mounted) return;
+
+    // A lista "Pedidos" mistura PEDIDOS e VENDAS DE BALCÃO: o card de uma venda
+    // é um Pedido temporário montado em `_buscarPedidos`. Gravar sempre em
+    // `pedidos` fazia a edição de uma venda cair no vazio — nada era salvo e o
+    // nome antigo continuava na tela. O DataService descobre qual dos dois
+    // documentos é e grava na tabela certa.
+    Pedido? documentoSalvo;
+    try {
+      documentoSalvo = await dataService.atualizarNomeClienteDocumento(
+        pedido,
+        nome: novoNome.isEmpty ? null : novoNome,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Não foi possível salvar o nome do cliente: $e'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(
+            top: 50,
+            left: 20,
+            right: 20,
+            bottom: 20,
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    if (documentoSalvo == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Não encontrei este pedido/venda para salvar o nome. '
+            'Recarregue a lista e tente de novo.',
+          ),
+          backgroundColor: Colors.orange.shade800,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(
+            top: 50,
+            left: 20,
+            right: 20,
+            bottom: 20,
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      final selecionado = _pedidoSelecionado;
+      if (selecionado == null ||
+          selecionado.id == pedido.id ||
+          (selecionado.numero.isNotEmpty &&
+              selecionado.numero == pedido.numero)) {
+        _pedidoSelecionado = documentoSalvo;
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                novoNome.isEmpty
+                    ? 'Nome do cliente removido do pedido.'
+                    : 'Nome do cliente atualizado: $novoNome',
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(
+          top: 50,
+          left: 20,
+          right: 20,
+          bottom: 20,
+        ),
       ),
     );
   }
@@ -9241,6 +9283,17 @@ class _PdvPageState extends State<PdvPage> {
     final isCancelado = pedido.status.toLowerCase() == 'cancelado';
     final isDelivery = pedido.deliveryInfo != null;
 
+    final vendedoresDoPedido = <String>{};
+    final vendedorPedido = (pedido.vendedorNome ?? '').trim();
+    if (vendedorPedido.isNotEmpty) vendedoresDoPedido.add(vendedorPedido);
+    for (final item in pedido.produtos) {
+      final nome = (item.vendedorNome ?? '').trim();
+      if (nome.isNotEmpty) vendedoresDoPedido.add(nome);
+    }
+    final vendedorNome = vendedoresDoPedido.isEmpty
+        ? null
+        : vendedoresDoPedido.join(' / ');
+
     final colorBase = isCancelado
         ? Colors.red
         : isRecebido
@@ -9526,6 +9579,45 @@ class _PdvPageState extends State<PdvPage> {
                         ],
                       ],
                     ),
+                    if (vendedorNome != null && vendedorNome.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent.withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.orangeAccent.withOpacity(0.30),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.person_outline_rounded,
+                              color: Colors.orangeAccent,
+                              size: 13,
+                            ),
+                            const SizedBox(width: 5),
+                            Flexible(
+                              child: Text(
+                                'VENDEDOR: $vendedorNome',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.orangeAccent,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     // Nome do cliente - editável se for venda salva sem cliente
                     Builder(

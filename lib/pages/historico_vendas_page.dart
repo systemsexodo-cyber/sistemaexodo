@@ -160,6 +160,33 @@ class ItemHistorico {
   /// Quebra de mercadoria registrada pelo PDV (saída de estoque — NÃO é venda)
   bool get isQuebra => estoqueHistorico != null;
 
+  /// Nome do vendedor responsável pela venda.
+  /// Nas vendas de balcão, o vendedor é registrado por item; quando houver
+  /// mais de um vendedor na mesma venda, todos são exibidos no card.
+  String? get vendedorNomeExibicao {
+    final nomes = <String>{};
+
+    if (vendaBalcao != null) {
+      for (final item in vendaBalcao!.itens) {
+        final nome = (item.vendedorNome ?? '').trim();
+        if (nome.isNotEmpty) nomes.add(nome);
+      }
+    }
+
+    if (pedido != null) {
+      final nome = (pedido!.vendedorNome ?? '').trim();
+      if (nome.isNotEmpty) nomes.add(nome);
+      for (final item in pedido!.produtos) {
+        final nome = (item.vendedorNome ?? '').trim();
+        if (nome.isNotEmpty) nomes.add(nome);
+      }
+    }
+
+    if (nomes.isEmpty) return null;
+    if (nomes.length == 1) return nomes.first;
+    return nomes.join(' / ');
+  }
+
   double? get valorRecebido {
     if (vendaBalcao != null) {
       if (vendaBalcao!.valorRecebido != null) return vendaBalcao!.valorRecebido;
@@ -1879,6 +1906,11 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
       formaPagamentoStr = item.tipoPagamento!.nome;
     }
 
+    final vendedorNome = item.vendedorNomeExibicao;
+    final mostrarVendedor = vendedorNome != null &&
+        vendedorNome.trim().isNotEmpty &&
+        (item.vendaBalcao != null || item.pedido != null);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -2078,6 +2110,48 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               ),
                             ),
                           ),
+                          // Vendedor responsável pela venda (registrado por item no PDV)
+                          if (mostrarVendedor) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              constraints: const BoxConstraints(maxWidth: 220),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orangeAccent.withOpacity(0.10),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: Colors.orangeAccent.withOpacity(0.30),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.person_outline_rounded,
+                                    color: Colors.orangeAccent,
+                                    size: 11,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      'VENDEDOR: $vendedorNome',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 0.3,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                           // Badge do número do caixa (fechamento/sangria/suprimento)
                           if (item.caixaNumero != null &&
                               item.caixaNumero!.isNotEmpty) ...[
@@ -2105,31 +2179,49 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               ),
                             ),
                           ],
-                          // Badge do responsável (caixa)
+                          // Responsável pela ABERTURA do caixa desta venda.
                           if (item.responsavel != null &&
                               item.responsavel!.isNotEmpty &&
-                              item.fechamentoCaixa != null) ...[
+                              (item.vendaBalcao != null ||
+                                  item.pedido != null ||
+                                  item.fechamentoCaixa != null)) ...[
                             const SizedBox(width: 4),
                             Container(
+                              constraints: const BoxConstraints(maxWidth: 220),
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
+                                horizontal: 7,
                                 vertical: 2,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.deepPurple.withOpacity(0.1),
+                                color: Colors.deepPurple.withOpacity(0.10),
                                 borderRadius: BorderRadius.circular(6),
                                 border: Border.all(
-                                  color: Colors.deepPurple.withOpacity(0.3),
+                                  color: Colors.deepPurple.withOpacity(0.30),
                                 ),
                               ),
-                              child: Text(
-                                'OP: ${item.responsavel}',
-                                style: const TextStyle(
-                                  color: Colors.deepPurpleAccent,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.5,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.lock_open_rounded,
+                                    color: Colors.deepPurpleAccent,
+                                    size: 11,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      'RESP. ABERTURA: ${item.responsavel}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.deepPurpleAccent,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 0.3,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -2255,7 +2347,7 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               ),
                             ),
                             Text(
-                              'Resp: ${item.responsavel}',
+                              'Resp. abertura: ${item.responsavel}',
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.4),
                                 fontSize: 12,

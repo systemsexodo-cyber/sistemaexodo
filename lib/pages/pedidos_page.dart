@@ -1564,6 +1564,59 @@ class _PedidosPageState extends State<PedidosPage> {
         (pedido.linkVendedorCodigo != null &&
             pedido.linkVendedorCodigo!.isNotEmpty);
 
+    // Vendedor responsável: primeiro o vendedor do pedido; como fallback,
+    // usa os vendedores registrados nos itens. Isso cobre pedidos tradicionais,
+    // delivery e vendas salvas que foram convertidas para Pedido.
+    final vendedoresDoPedido = <String>{};
+    final vendedorPedido = (pedido.vendedorNome ?? '').trim();
+    if (vendedorPedido.isNotEmpty) vendedoresDoPedido.add(vendedorPedido);
+    for (final item in pedido.produtos) {
+      final nome = (item.vendedorNome ?? '').trim();
+      if (nome.isNotEmpty) vendedoresDoPedido.add(nome);
+    }
+    final vendedorNome = vendedoresDoPedido.isEmpty
+        ? null
+        : vendedoresDoPedido.join(' / ');
+
+    Widget buildBadgeVendedor() {
+      if (vendedorNome == null || vendedorNome.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.orangeAccent.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: Colors.orangeAccent.withOpacity(0.35),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.person_outline_rounded,
+              color: Colors.orangeAccent,
+              size: 12,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                'VENDEDOR: $vendedorNome',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       key: key,
       margin: const EdgeInsets.only(bottom: 12),
@@ -1726,6 +1779,7 @@ class _PedidosPageState extends State<PedidosPage> {
                       spacing: 6,
                       runSpacing: 4,
                       children: [
+                        buildBadgeVendedor(),
                         // Badge E-commerce
                         if (isPedidoEcommerce)
                           Container(
@@ -1884,6 +1938,11 @@ class _PedidosPageState extends State<PedidosPage> {
                       ),
                     ),
                     const SizedBox(width: 8),
+                    // Vendedor responsável
+                    if (vendedorNome != null && vendedorNome.isNotEmpty) ...[
+                      buildBadgeVendedor(),
+                      const SizedBox(width: 8),
+                    ],
                     // Badge E-commerce
                     if (isPedidoEcommerce)
                       Container(
