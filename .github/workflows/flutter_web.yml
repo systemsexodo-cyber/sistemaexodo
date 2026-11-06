@@ -1,0 +1,55 @@
+name: Flutter Build & Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Get Supabase credentials
+        env:
+          SUPABASE_PROJECT_REF: "${{ secrets.SUPABASE_PROJECT_REF }}"
+          SUPABASE_ANON_KEY: "${{ secrets.SUPABASE_ANON_KEY }}"
+        run: echo "Credentials available"
+
+      - name: Build Web Release
+        run: |
+          flutter build web --release
+
+      - name: Upload to Supabase Storage
+        env:
+          SUPABASE_PROJECT_REF: "${{ secrets.SUPABASE_PROJECT_REF }}"
+          SUPABASE_ANON_KEY: "${{ secrets.SUPABASE_ANON_KEY }}"
+        run: |
+          # Upload o build/web.zip para o bucket atualizacoes
+          curl -X POST \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -F "file=@build/web.zip" \
+            https://${SUPABASE_PROJECT_REF}.supabase.co/storage/v1/object/upload?bucket=atualizacoes&path=sistema_exodo_novo_${{ github.run_number }}.zip
+
+      - name: Update bridge_config with new version
+        env:
+          SUPABASE_PROJECT_REF: "${{ secrets.SUPABASE_PROJECT_REF }}"
+          SUPABASE_ANON_KEY: "${{ secrets.SUPABASE_ANON_KEY }}"
+        run: |
+          # Pega a versão do tag ou commit e atualiza o bridge_config
+          VERSION="${{ github.run_number }}"  # ou usar um tag version
+          # Exemplo: PATCH /rest/v1/bridge_config
+          curl -X PATCH \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\": \"${VERSION}\", \"download_url\": \"https://${SUPABASE_PROJECT_REF}.supabase.co/storage/v1/object/public/atualizacoes/sistema_exodo_novo_${VERSION}.zip\", \"ativo\": true}" \
+            https://${SUPABASE_PROJECT_REF}.rest.v1/bridge_config
