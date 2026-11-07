@@ -23,6 +23,7 @@ versão instalada for DIFERENTE (é assim que se faz downgrade).
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -120,8 +121,64 @@ def gravar_versao_no_codigo(versao):
     return mudou
 
 
+def achar_flutter():
+    """Descobre o flutter mesmo quando ele não está no PATH do processo.
+
+    O painel da central roda este script sem herdar o PATH do PowerShell, então
+    `flutter` dava "comando não encontrado". Procuramos na ordem: PATH, variável
+    FLUTTER_ROOT, o SDK que o projeto já usa (.dart_tool/package_config.json) e
+    os diretórios mais comuns.
+    """
+    achado = shutil.which("flutter")
+    if achado:
+        return achado
+
+    candidatos = []
+    raiz = os.environ.get("FLUTTER_ROOT", "").strip()
+    if raiz:
+        candidatos.append(os.path.join(raiz, "bin", "flutter.bat"))
+
+    try:
+        with open(
+            os.path.join(BASE_DIR, ".dart_tool", "package_config.json"),
+            encoding="utf-8",
+        ) as arquivo:
+            for pacote in json.load(arquivo).get("packages") or []:
+                if pacote.get("name") != "flutter":
+                    continue
+                uri = str(pacote.get("rootUri", ""))
+                if uri.startswith("file:///"):
+                    # <sdk>/packages/flutter  ->  <sdk>/bin/flutter.bat
+                    caminho = uri[len("file:///") :]
+                    sdk = os.path.dirname(os.path.dirname(caminho))
+                    candidatos.append(os.path.join(sdk, "bin", "flutter.bat"))
+                break
+    except Exception:
+        pass
+
+    candidatos += [
+        "C:/src/flutter/bin/flutter.bat",
+        "C:/flutter/bin/flutter.bat",
+        "C:/dev/flutter/bin/flutter.bat",
+        os.path.expanduser("~/flutter/bin/flutter.bat"),
+    ]
+    for candidato in candidatos:
+        if candidato and os.path.isfile(candidato):
+            return candidato
+    return None
+
+
 def rodar(comando, descricao):
     """Roda um comando no projeto; devolve (ok, mensagem)."""
+    comando = list(comando)
+    if comando and comando[0] == "flutter":
+        caminho = achar_flutter()
+        if caminho:
+            comando[0] = caminho
+    if os.name == "nt" and comando and comando[0].lower().endswith(
+        (".bat", ".cmd")
+    ):
+        comando = ["cmd", "/c"] + comando
     log(f"▶ {descricao}")
     log(f"  $ {' '.join(comando)}")
     try:
@@ -134,7 +191,14 @@ def rodar(comando, descricao):
             errors="replace",
         )
     except FileNotFoundError:
-        return False, f"comando não encontrado: {comando[0]}"
+        return False, (
+            f"comando não encontrado: {comando[0]}"
+            + (
+                " — instale o Flutter ou defina FLUTTER_ROOT"
+                if comando[0].lower().endswith("flutter") or comando[0] == "flutter"
+                else ""
+            )
+        )
     saida = (processo.stdout or "") + (processo.stderr or "")
     if processo.returncode != 0:
         ultimas = "\n".join(saida.strip().splitlines()[-15:])
