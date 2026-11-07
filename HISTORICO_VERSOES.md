@@ -9,3 +9,19 @@ Cada entrada é escrita quando você publica uma versão pelo sistema.
 ## 1.0.40 — 26/09/2026 13:44
 - destino: empresas: É O BICHO PETSHOP
 - (sem detalhes informados)
+
+## 1.0.57 — 04/11/2026 15:50
+- destino: empresas: É O BICHO PETSHOP
+- (sem detalhes informados)
+
+## 1.0.58 — 04/11/2026 19:37
+- destino: empresas: É O BICHO PETSHOP
+- (sem detalhes informados)
+
+## 1.0.59 — 04/11/2026 20:00
+- destino: empresas: É O BICHO PETSHOP
+- (sem detalhes informados)
+
+## 1.0.61 — 07/11/2026 00:59
+- destino: empresa bd45d75b-fee4-4ac2-8975-0f36f61d01bf
+- (sem detalhes informados)

@@ -253,6 +253,16 @@ Future<void> _main() async {
 
   // CAPTURAR ERROS GLOBAIS PARA DEBUG
   FlutterError.onError = (FlutterErrorDetails details) {
+    // BUG CONHECIDO DO FLUTTER (nao e do nosso codigo):
+    // 'referenceBox.attached' acontece quando o mouse esta sobre um InkWell
+    // (efeito de toque) e o widget sai da tela/recebe rebuild no mesmo quadro
+    // - tipico ao abrir/fechar um dialogo com o mouse em cima de um card.
+    // E uma falha de pintura do framework; o app continua funcionando.
+    // Ignoramos para nao derrubar a tela com o erro vermelho.
+    final textoErro = details.exception.toString();
+    if (textoErro.contains('referenceBox.attached')) {
+      return;
+    }
     FlutterError.presentError(details);
     debugPrint(
       '>>>>> [ERRO GLOBAL] ${details.exception.runtimeType}: ${details.exception}',

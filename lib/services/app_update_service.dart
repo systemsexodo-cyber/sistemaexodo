@@ -114,7 +114,7 @@ class VersaoNaNuvem {
 }
 
 class AppUpdateService {
-  static const String currentAppVersion = "1.0.57";
+  static const String currentAppVersion = "1.0.61";
 
   /// Verifica se há uma nova versão do aplicativo no Supabase (Direcionada por Empresa ou Global)
   static Future<Map<String, dynamic>?> verificarAtualizacao({
@@ -196,6 +196,54 @@ class AppUpdateService {
     return null;
   }
 
+  /// Prefixo do registro que diz qual versão está INSTALADA em cada empresa.
+  ///
+  /// Fica na `bridge_config` (`app_client_<empresaId>`), mas não é publicação:
+  /// `PublicacaoVersao.daLinha` ignora esse id, então nenhum cliente tenta
+  /// baixar nada por causa dele. Quem lê é o painel da central
+  /// (`/central-servidor/`) para mostrar a versão de cada empresa.
+  static const String prefixoRegistroCliente = 'app_client_';
+
+  /// Registra na nuvem a versão instalada nesta máquina.
+  ///
+  /// Silencioso de propósito: relatório de versão nunca pode atrapalhar o boot
+  /// nem o login. Chamado depois do login, quando já se sabe a empresa.
+  /// [outrasEmpresas] são as demais empresas que esta MESMA máquina acessa.
+  /// A versão é da instalação, não da empresa: se um computador abre várias
+  /// empresas, todas rodam o mesmo binário e devem aparecer com a mesma versão
+  /// no painel (antes só a empresa aberta por último era registrada, e as
+  /// outras ficavam como "sem registro").
+  static Future<void> reportarVersaoInstalada(
+    String? empresaId, {
+    Iterable<String>? outrasEmpresas,
+  }) async {
+    if (kIsWeb) return;
+    if (!SupabaseService.isAvailable) return;
+
+    final ids = <String>{
+      if (empresaId != null && empresaId.isNotEmpty) empresaId,
+      ...?outrasEmpresas?.where((id) => id.trim().isNotEmpty),
+    };
+    if (ids.isEmpty) return;
+
+    final agora = DateTime.now().toUtc().toIso8601String();
+    for (final id in ids) {
+      try {
+        await SupabaseService.instance
+            .upsert('bridge_config', {
+              'id': '$prefixoRegistroCliente$id',
+              'version': currentAppVersion,
+              'download_url': '',
+              'ativo': true,
+              'updated_at': agora,
+            })
+            .timeout(const Duration(seconds: 6));
+      } catch (e) {
+        debugPrint('>>> [AppUpdateService] Falha ao registrar versão de $id: $e');
+      }
+    }
+  }
+
   /// Remove o prefixo de força '!' da versão, se presente
   static String _limparVersao(String v) =>
       v.startsWith('!') ? v.substring(1) : v;
@@ -257,10 +305,91 @@ class AppUpdateService {
   /// Retorna (ok, motivo): quando devolve `ok`, o programa já está sendo
   /// trocado e o app fecha em seguida — só um motivo diferente de vazio chega
   /// ao chamador. Um pacote recusado NUNCA é aplicado por cima da instalação.
+  /// Evita duas atualizações ao mesmo tempo (a checagem do boot e a da home
+  /// podem achar a mesma versão e as duas baixariam o mesmo arquivo).
+  static bool _aplicandoAtualizacao = false;
+
+  static bool get atualizacaoEmAndamento => _aplicandoAtualizacao;
+
+  /// Esta instalação é de DESENVOLVIMENTO (build Debug)?
+  ///
+  /// Um build Debug NÃO usa o `data/app.so`: o código dele vem do
+  /// `data/flutter_assets/kernel_blob.bin`, que o pacote de atualização não
+  /// leva. Aplicar um pacote aqui copia o `app.so` do Release — que o runner
+  /// Debug ignora — então a versão nunca muda e o programa entra em laço:
+  /// baixa, fecha, reabre na mesma versão e baixa de novo, sem parar.
+  static bool get instalacaoDeDesenvolvimento {
+    if (kIsWeb) return false;
+    try {
+      final exeDir = p.dirname(Platform.resolvedExecutable);
+      return File(
+        p.join(exeDir, 'data', 'flutter_assets', 'kernel_blob.bin'),
+      ).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Arquivo (ao lado do programa) que guarda a última atualização baixada.
+  static File _arquivoDaTentativa() => File(
+    p.join(p.dirname(Platform.resolvedExecutable), 'atualizacao_tentada.txt'),
+  );
+
+  /// Já baixei esta MESMA atualização e o programa continuou na mesma versão?
+  ///
+  /// É a trava contra o laço infinito em qualquer instalação: se o pacote foi
+  /// aplicado e a versão não mudou (pacote errado, arquivo travado, antivírus),
+  /// repetir só faria o programa abrir e fechar para sempre.
+  static bool _urlJaTentada(String downloadUrl) {
+    try {
+      final arquivo = _arquivoDaTentativa();
+      if (!arquivo.existsSync()) return false;
+      final linhas = arquivo.readAsLinesSync();
+      if (linhas.isEmpty) return false;
+      final url = linhas[0].trim();
+      final versao = linhas.length > 1 ? linhas[1].trim() : '';
+      return url == downloadUrl.trim() && versao == currentAppVersion;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> _registrarTentativa(String downloadUrl) async {
+    try {
+      await _arquivoDaTentativa().writeAsString(
+        '${downloadUrl.trim()}\r\n$currentAppVersion\r\n',
+      );
+    } catch (e) {
+      debugPrint('>>> [AppUpdateService] Não gravei a tentativa: $e');
+    }
+  }
+
   static Future<(bool, String)> baixarEAplicarAtualizacao(
     String downloadUrl,
     Function(double) onProgress,
   ) async {
+    if (_aplicandoAtualizacao) {
+      return (false, 'já existe uma atualização sendo aplicada');
+    }
+    if (instalacaoDeDesenvolvimento) {
+      return (
+        false,
+        'esta instalação é de DESENVOLVIMENTO (Debug): ela roda o código do '
+            'kernel_blob.bin, não o data/app.so que vem no pacote, então a '
+            'versão não mudaria e o programa ficaria abrindo e fechando. '
+            'Instale a versão Release para receber atualizações.',
+      );
+    }
+    if (_urlJaTentada(downloadUrl)) {
+      return (
+        false,
+        'esta atualização já foi aplicada nesta instalação e o programa '
+            'continuou na versão $currentAppVersion; não vou repetir para não '
+            'ficar abrindo e fechando. Se o pacote foi corrigido, apague o '
+            'arquivo atualizacao_tentada.txt ao lado do programa.',
+      );
+    }
+    _aplicandoAtualizacao = true;
     try {
       final currentExePath = Platform.resolvedExecutable;
       final exeDir = p.dirname(currentExePath);
@@ -320,6 +449,7 @@ class AppUpdateService {
           try {
             File(baixado).deleteSync();
           } catch (_) {}
+          _aplicandoAtualizacao = false;
           return (false, mensagem);
         }
         debugPrint('>>> [AppUpdateService] ✅ $mensagem');
@@ -345,6 +475,10 @@ class AppUpdateService {
       // O BAT precisa de CRLF de verdade — cmd.exe não entende '\n' sozinho.
       await File(batPath).writeAsString('${bat.join('\r\n')}\r\n');
 
+      // Antes de sair: anota o que foi tentado. Se ao voltar a versão não
+      // tiver mudado, a próxima checagem reconhece e não repete.
+      await _registrarTentativa(downloadUrl);
+
       debugPrint(
         '>>> [AppUpdateService] Executando script de troca e fechando...',
       );
@@ -359,6 +493,7 @@ class AppUpdateService {
         debugPrint(
           '>>> [AppUpdateService] ⚠️ Falha ao executar o BAT de atualização',
         );
+        _aplicandoAtualizacao = false;
         return (
           false,
           'não consegui iniciar o aplicativo que faz a troca dos arquivos',
@@ -368,6 +503,7 @@ class AppUpdateService {
       exit(0);
     } catch (e) {
       debugPrint('>>> [AppUpdateService] Erro ao aplicar atualização: $e');
+      _aplicandoAtualizacao = false;
       return (false, 'erro ao aplicar a atualização: $e');
     }
   }
@@ -544,6 +680,14 @@ class AppUpdateService {
               );
         } catch (e) {
           debugPrint('>>> [AppUpdateService] ⚠️ Erro no upload: $e');
+          // Se é cota excedida, não adianta criar bucket — o problema é de limite.
+          if (eQuotaExcedida(e)) {
+            return (
+              false,
+              'Erro ao enviar o pacote:\n${_curto(e)}'
+                  '${dicaDeQuotaExcedida(e, 'o bucket "$bucketName"')}',
+            );
+          }
           // Criar o bucket só ajuda se ele realmente não existir — e o app
           // (papel `anon`) não tem esse poder. Se a recusa foi de permissão, o
           // problema está na política do bucket, e é isso que a mensagem diz.
@@ -567,6 +711,14 @@ class AppUpdateService {
                   fileOptions: const FileOptions(upsert: true),
                 );
           } catch (e2) {
+            // Se der quota excedida na tentativa de retry, avisa o usuário.
+            if (eQuotaExcedida(e2)) {
+              return (
+                false,
+                'Erro ao enviar o pacote:\n${_curto(e2)}'
+                  '${dicaDeQuotaExcedida(e2, 'o bucket "$bucketName"')}',
+              );
+            }
             return (
               false,
               'Erro ao enviar o pacote:\n${_curto(e2)}'
@@ -1012,6 +1164,16 @@ class AppUpdateService {
         texto.contains('403');
   }
 
+  /// O erro é de **cota estourada** (HTTP 402 / QuotaExceeded)?
+  @visibleForTesting
+  static bool eQuotaExcedida(Object erro) {
+    final texto = erro.toString().toLowerCase();
+    return texto.contains('quotaexceeded') ||
+        texto.contains('402') ||
+        texto.contains('cota estourada') ||
+        texto.contains('quota exceeded');
+  }
+
   /// O que fazer quando a nuvem recusa por permissão.
   ///
   /// O erro cru do Supabase não diz onde mexer; esta frase diz. Vazio quando o
@@ -1023,6 +1185,19 @@ class AppUpdateService {
         'O app fala com a nuvem como "anon", que só grava onde existe política. '
         'Rode as migrações de supabase/migrations (a 006 libera os buckets de '
         'arquivos e a 007 a publicação de versões).';
+  }
+
+  /// O que fazer quando a cota estourada.
+  ///
+  /// Quando a cota do Neon Storage é excedida, a publicação de atualizações
+  /// falha. Esta sugestão orienta o usuário a usar o Supabase local (o mesmo
+  /// servidor do Funnel) ou aumentar a cota no painel do Neon.
+  @visibleForTesting
+  static String dicaDeQuotaExcedida(Object erro, String recurso) {
+    if (!eQuotaExcedida(erro)) return '';
+    return '\n\nA cota de armazenamento do $recurso foi excedida. '
+        'Sugestão: publique atualizações pelo Supabase local (o mesmo servidor'
+        ' do Tailscale Funnel) ou entre em contato para aumentar a cota no Neon.';
   }
 
   // ───────────────────────────────────────────────────────────────────────────

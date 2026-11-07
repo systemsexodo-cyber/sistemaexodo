@@ -67,6 +67,7 @@ import '../services/sincronizador_manager_service.dart';
 import 'motoristas_page.dart';
 import 'romaneios_page.dart';
 import 'nfe_page.dart';
+import 'central_nuvem_page.dart';
 import 'bloqueio_mensalidade_page.dart';
 import '../models/empresa.dart';
 // Import condicional para Web
@@ -313,6 +314,18 @@ class _HomePageState extends State<HomePage> {
         'color': Colors.blueAccent,
         'page': (BuildContext context) => const NfePage(),
       },
+      // A Central administrativa existe somente na versão web do portal.
+      // Não deve aparecer no aplicativo instalado nas lojas.
+      if (kIsWeb)
+        {
+          'id': 'central_nuvem',
+          'title': 'Central da Nuvem',
+          'subtitle': 'Monitoramento e recuperação automática',
+          'icon': Icons.cloud_sync_rounded,
+          'color': const Color(0xFFFFA726),
+          'adminOnly': true,
+          'page': (BuildContext context) => const CentralNuvemPage(),
+        },
     ];
   }
 
@@ -365,7 +378,15 @@ class _HomePageState extends State<HomePage> {
         ordered.add(item);
       }
     }
-    return ordered;
+    final usuario = Provider.of<AuthService>(
+      context,
+      listen: false,
+    ).usuarioAtual;
+    final podeAdministrarNuvem =
+        usuario?.isMaster == true || usuario?.email.toLowerCase() == 'user';
+    return ordered
+        .where((item) => item['adminOnly'] != true || podeAdministrarNuvem)
+        .toList();
   }
 
   /// Move um botão de [fromIndex] para [toIndex] e salva a nova ordem.
@@ -1547,10 +1568,113 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
+  bool _verificouAtualizacaoAuto = false;
+
+  /// Aplica sozinha a versão publicada (inclusive por empresa e downgrade com
+  /// `!`), sem exigir que o usuário clique em "BAIXAR E INSTALAR".
+  Future<void> _verificarAtualizacaoAutomatica() async {
+    if (kIsWeb || !Platform.isWindows) return;
+    if (_verificouAtualizacaoAuto) return;
+    _verificouAtualizacaoAuto = true;
+    if (AppUpdateService.atualizacaoEmAndamento) return;
+    // Instalação de desenvolvimento (Debug) roda o kernel_blob.bin, que o
+    // pacote não troca: atualizar aqui nunca muda a versão e vira laço.
+    if (AppUpdateService.instalacaoDeDesenvolvimento) {
+      debugPrint(
+        '>>> [HomePage] Instalação Debug: atualização automática desligada',
+      );
+      return;
+    }
+
+    try {
+      final dataService = Provider.of<DataService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final empresa = dataService.empresaAtual ?? authService.empresaAtual;
+      if (empresa == null) return;
+
+      final config = await AppUpdateService.verificarAtualizacao(
+        empresaId: empresa.id,
+        configsEmpresa: empresa.configuracoes,
+      ).timeout(const Duration(seconds: 5));
+      if (config == null || !mounted) return;
+
+      final String url = (config['download_url'] ?? '').toString();
+      final String versao = (config['version'] ?? '').toString();
+      if (url.isEmpty || versao.isEmpty) return;
+      if (AppUpdateService.atualizacaoEmAndamento) return;
+
+      final progresso = ValueNotifier<double>(0);
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _AtualizacaoAutomaticaDialog(
+          versao: versao,
+          progresso: progresso,
+        ),
+      );
+
+      final (ok, motivo) = await AppUpdateService.baixarEAplicarAtualizacao(
+        url,
+        (p) => progresso.value = p,
+      );
+      if (!ok) {
+        // Fecha o progresso e avisa; se deu certo o app já fechou para a troca.
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).maybePop();
+          _mostrarErroAtualizacao(motivo);
+        }
+        progresso.dispose();
+      } else {
+        progresso.dispose();
+      }
+    } catch (e) {
+      debugPrint('>>> [HomePage] Erro na atualização automática: $e');
+    }
+  }
+
+  void _mostrarErroAtualizacao(String motivo) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(
+          'Atualização não aplicada: '
+          '${motivo.isEmpty ? 'motivo desconhecido' : motivo}',
+        ),
+        backgroundColor: Colors.redAccent.shade200,
+        duration: const Duration(seconds: 8),
+      ),
+    );
+  }
+
   void initState() {
     super.initState();
     _inicializarMenu();
     _carregarOrdem();
+
+    // Registra na nuvem a versão instalada DESTA empresa: é o que o painel da
+    // central mostra na coluna "Instalada". Roda depois do login (é quando o
+    // banco já tem a empresa) e falha em silêncio.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        final dataService = Provider.of<DataService>(context, listen: false);
+        final authService = Provider.of<AuthService>(context, listen: false);
+        // A versão é da instalação: reporta para TODAS as empresas que este
+        // computador acessa, não só a que está aberta agora.
+        AppUpdateService.reportarVersaoInstalada(
+          dataService.empresaAtual?.id,
+          outrasEmpresas: authService.empresas.map((e) => e.id),
+        ).catchError((Object e) {
+          debugPrint('>>> [HomePage] Falha ao reportar versão: $e');
+        });
+
+        // Atualização automática: aqui a empresa JÁ é conhecida (o boot checa
+        // antes do login e, sem empresa, o direcionamento por empresa passava
+        // batido — por isso a versão só aparecia para baixar na mão).
+        _verificarAtualizacaoAutomatica();
+      } catch (e) {
+        debugPrint('>>> [HomePage] Falha ao reportar versão: $e');
+      }
+    });
 
     // Escutar alterações de conectividade no DataService para exibir alerta offline
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1783,6 +1907,19 @@ class _HomePageState extends State<HomePage> {
       case 'whatsapp':
         page = const WhatsAppGerenciamentoPage();
         urlPath = '/whatsapp';
+        break;
+      case 'central-nuvem':
+      case 'central_nuvem':
+        final usuario = Provider.of<AuthService>(
+          context,
+          listen: false,
+        ).usuarioAtual;
+        if (kIsWeb &&
+            (usuario?.isMaster == true ||
+                usuario?.email.toLowerCase() == 'user')) {
+          page = const CentralNuvemPage();
+          urlPath = '/central-nuvem';
+        }
         break;
     }
 
@@ -3311,6 +3448,87 @@ class _HomePageState extends State<HomePage> {
           ),
         );
       },
+    );
+  }
+}
+
+/// Aviso da atualização automática: só progresso, sem botão — o app aplica,
+/// fecha e reabre sozinho. Não dá para fechar no meio do download.
+class _AtualizacaoAutomaticaDialog extends StatelessWidget {
+  const _AtualizacaoAutomaticaDialog({
+    required this.versao,
+    required this.progresso,
+  });
+
+  final String versao;
+  final ValueNotifier<double> progresso;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Colors.blueAccent, width: 0.6),
+      ),
+      title: const Row(
+        children: [
+          Icon(Icons.system_update_alt, color: Colors.blueAccent, size: 22),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Atualizando o sistema',
+              style: TextStyle(
+                color: Color(0xFFE7E7F0),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Baixando a versão $versao. O programa fecha e reabre sozinho — '
+              'não desligue o computador agora.',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ValueListenableBuilder<double>(
+              valueListenable: progresso,
+              builder: (_, valor, __) => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(
+                    value: valor <= 0 ? null : valor,
+                    minHeight: 8,
+                    backgroundColor: Colors.white10,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    valor <= 0
+                        ? 'Conectando...'
+                        : '${(valor * 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

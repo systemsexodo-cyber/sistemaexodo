@@ -1,0 +1,1621 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Central da Nuvem - Sistema Exodo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    .header { background: #1e293b; border-bottom: 1px solid #334155; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+    .header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
+    .header .version { font-size: 0.75rem; color: #64748b; background: #0f172a; padding: 4px 8px; border-radius: 4px; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; }
+    .card-header { background: #0f172a; border-bottom: 1px solid #334155; padding: 16px 20px; font-weight: 600; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
+    .card-body { padding: 20px; }
+    .btn { padding: 10px 16px; border: none; border-radius: 8px; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 8px; }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-success { background: #22c55e; color: white; }
+    .btn-success:hover { background: #16a34a; }
+    .btn-secondary { background: #475569; color: #e2e8f0; }
+    .btn-secondary:hover { background: #334155; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-sm { padding: 5px 9px; font-size: 0.7rem; }
+    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .input { width: 100%; padding: 10px 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 0.875rem; font-family: monospace; }
+    .input:focus { outline: none; border-color: #3b82f6; }
+    .textarea { min-height: 120px; resize: vertical; font-family: 'Monaco', 'Menlo', monospace; font-size: 0.8rem; }
+    .label { display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 6px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+    .section { margin-bottom: 24px; }
+    .section:last-child { margin-bottom: 0; }
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #334155; }
+    th { background: #0f172a; font-weight: 600; color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; position: sticky; top: 0; }
+    tr:hover td { background: #1e293b; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; }
+    .badge-success { background: #052e16; color: #22c55e; }
+    .badge-warning { background: #422006; color: #fbbf24; }
+    .badge-danger { background: #450a0a; color: #ef4444; }
+    .badge-info { background: #1e1b4b; color: #818cf8; }
+    .badge-default { background: #334155; color: #94a3b8; }
+    .log-entry { font-family: monospace; font-size: 0.75rem; padding: 6px 10px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; margin-bottom: 6px; word-break: break-all; }
+    .log-entry.error { border-color: #ef4444; color: #fca5a5; }
+    .log-entry.success { border-color: #22c55e; color: #86efac; }
+    .log-entry.warning { border-color: #f59e0b; color: #fde047; }
+    .log-entry.info { border-color: #3b82f6; color: #bfdbfe; }
+    .loading { opacity: 0.6; pointer-events: none; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #334155; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .status-dot.online { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+    .status-dot.offline { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+    .status-dot.checking { background: #f59e0b; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .empresa-selector { min-width: 280px; }
+    .sql-result { max-height: 300px; overflow: auto; }
+    .sql-result table { font-size: 0.75rem; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #334155; padding-bottom: 4px; }
+    .tab { padding: 8px 16px; background: transparent; border: none; color: #94a3b8; font-size: 0.8rem; font-weight: 500; cursor: pointer; border-radius: 6px 6px 0 0; transition: all 0.15s; }
+    .tab.active { color: #f8fafc; background: #0f172a; }
+    .tab:hover:not(.active) { color: #cbd5e1; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .mono { font-family: monospace; font-size: 0.8rem; }
+    .key-value { display: grid; grid-template-columns: 160px 1fr; gap: 4px 16px; font-size: 0.85rem; }
+    .key-value .key { color: #94a3b8; }
+    .key-value .value { color: #e2e8f0; font-family: monospace; word-break: break-all; }
+    .divider { height: 1px; background: #334155; margin: 16px 0; }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 12px; }
+    .checkbox-item { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; }
+    .checkbox-item input { width: 16px; height: 16px; accent-color: #3b82f6; }
+    pre { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 0.75rem; max-height: 400px; overflow-y: auto; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <h1>☁️ Central da Nuvem</h1>
+    <span class="version" id="versionEl">v1.0.59</span>
+  </header>
+  <div class="container">
+    <!-- Status Bar -->
+    <div class="card" style="margin-bottom: 24px;">
+      <div class="card-body" style="padding: 16px 20px;">
+        <div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: center;">
+          <div class="status-indicator">
+            <span class="status-dot checking" id="statusDot"></span>
+            <span id="statusText">Verificando conexão...</span>
+          </div>
+          <div style="flex: 1;"></div>
+          <select class="input empresa-selector" id="empresaSelect" style="width: auto;">
+            <option value="">Selecione uma empresa...</option>
+          </select>
+          <button class="btn btn-secondary" onclick="refreshAll()">🔄 Atualizar Tudo</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid">
+      <!-- Empresa Info -->
+      <div class="card">
+        <div class="card-header">📋 Empresa Selecionada</div>
+        <div class="card-body">
+          <div class="key-value" id="empresaInfo">
+            <span class="key">ID:</span><span class="value">-</span>
+            <span class="key">Razão Social:</span><span class="value">-</span>
+            <span class="key">Nuvem Ativa:</span><span class="value">-</span>
+            <span class="key">Último Sync:</span><span class="value">-</span>
+            <span class="key">Perfis Tributários:</span><span class="value">-</span>
+            <span class="key">Departamentos:</span><span class="value">-</span>
+            <span class="key">Estoques:</span><span class="value">-</span>
+            <span class="key">Perfis de Preço:</span><span class="value">-</span>
+          </div>
+          <div class="btn-group" style="margin-top: 12px;">
+            <button class="btn btn-primary" onclick="publicarAtualizacaoApp()">🚀 Publicar Atualização do App</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sync Status -->
+      <div class="card">
+        <div class="card-header">🔄 Status de Sincronização</div>
+        <div class="card-body">
+          <div class="key-value" id="syncInfo">
+            <span class="key">Último Sync Sucesso:</span><span class="value" id="lastSyncOk">-</span>
+            <span class="key">Último Erro:</span><span class="value" id="lastSyncErr">-</span>
+            <span class="key">Operações Pendentes:</span><span class="value" id="pendingOps">-</span>
+            <span class="key">Modo:</span><span class="value" id="syncMode">-</span>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="triggerSync('full')">📥 Sync Completo (Puxar Nuvem)</button>
+            <button class="btn btn-secondary" onclick="triggerSync('delta')">⚡ Sync Delta</button>
+            <button class="btn btn-secondary" onclick="pushLocal()">📤 Enviar Local → Nuvem</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Publicar tudo: desktop + site -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">🚀 Publicar Versão (desktop + site de uma vez)</div>
+        <div class="card-body">
+          <div class="label">Destino</div>
+          <select class="input" id="pubDestino" style="margin-bottom:10px;">
+            <option value="global">TODAS as empresas (app_latest)</option>
+          </select>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:160px;">
+              <div class="label">Versão (já preenchida)</div>
+              <input class="input" id="pubVersao" placeholder="1.0.61" style="margin-bottom:10px;">
+            </div>
+            <div style="flex:2; min-width:220px;">
+              <div class="label">O que mudou (aparece no aviso do cliente)</div>
+              <input class="input" id="pubNotas" placeholder="corrige o caixa, ajusta a NFC-e..." style="margin-bottom:10px;">
+            </div>
+          </div>
+          <div class="checkbox-group" style="margin-bottom:10px;">
+            <label class="checkbox-item"><input type="checkbox" id="pubForce"> forçar com “!” (aplica também em downgrade)</label>
+            <label class="checkbox-item"><input type="checkbox" id="pubSemWindows"> pular build do Windows</label>
+            <label class="checkbox-item"><input type="checkbox" id="pubSemWeb"> pular build do site</label>
+            <label class="checkbox-item"><input type="checkbox" id="pubSimular"> simular (não envia nada)</label>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="publicarTudo()">🚀 Publicar agora</button>
+            <button class="btn btn-secondary" onclick="publicarTudo(true)">Simular</button>
+            <button class="btn btn-secondary" onclick="acompanharPublicacao()">🔄 Acompanhar</button>
+          </div>
+          <div class="label" id="pubStatus"></div>
+          <pre id="pubLog" style="max-height:260px; display:none;"></pre>
+        </div>
+      </div>
+
+      <!-- Versões do App por Empresa -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">📱 Versões do App (quem está em qual versão)</div>
+        <div class="card-body">
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="loadVersoesApp()">🔄 Recarregar</button>
+            <button class="btn btn-secondary" onclick="publicarVersaoGlobal()">🌐 Publicar para TODAS</button>
+          </div>
+          <div class="key-value" id="versoesResumo" style="margin-bottom: 12px;"></div>
+          <div class="table-container">
+            <table id="versoesTable">
+              <thead>
+                <tr><th>Empresa</th><th>Instalada</th><th>Publicada</th><th>Atualizada em</th><th>Ações</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="label" style="margin-top: 12px;">Voltar versão = publicação com prefixo <span class="mono">!</span> (o app aceita versão menor e aplica no próximo boot). “Seguir global” apaga o direcionamento da empresa.</div>
+        </div>
+      </div>
+
+      <!-- Perfis Tributários -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">💰 Perfis Tributários</div>
+        <div class="card-body">
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="loadPerfis()">🔄 Recarregar</button>
+            <button class="btn btn-success" onclick="recreateDefaultPerfis()">✨ Recriar Padrões</button>
+            <button class="btn btn-danger" onclick="fixPerfisCloud()">🔧 Reparar na Nuvem</button>
+            <button class="btn btn-danger" onclick="deleteExtraPerfis()">🗑️ Excluir Extras (vinhos, destilados...)</button>
+          </div>
+          <div class="table-container">
+            <table id="perfisTable">
+              <thead>
+                <tr>
+                  <th>ID</th><th>Nome</th><th>Regime</th><th>CFOP</th><th>CSOSN/CST</th><th>IBS%</th><th>CBS%</th><th>Padrão</th><th>Ações</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Departamentos -->
+      <div class="card">
+        <div class="card-header">🏭 Departamentos</div>
+        <div class="card-body">
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="loadDepartamentos()">🔄 Recarregar</button>
+            <button class="btn btn-success" onclick="recreateDefaultDepartamentos()">✨ Recriar Padrões</button>
+          </div>
+          <div class="table-container">
+            <table id="deptTable">
+              <thead><tr><th>ID</th><th>Nome</th><th>Cor</th><th>Ícone</th><th>Ordem</th><th>Ações</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Estoques -->
+      <div class="card">
+        <div class="card-header">📦 Estoques</div>
+        <div class="card-body">
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="loadEstoques()">🔄 Recarregar</button>
+            <button class="btn btn-success" onclick="recreateDefaultEstoques()">✨ Recriar Padrões</button>
+          </div>
+          <div class="table-container">
+            <table id="estoqueTable">
+              <thead><tr><th>ID</th><th>Nome</th><th>Principal</th><th>Ordem</th><th>Ações</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SQL Executor -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">🗃️ Executar SQL na Nuvem (PostgREST)</div>
+        <div class="card-body">
+          <div class="tabs">
+            <button class="tab active" onclick="showTab('sql-tab')">SQL Direto</button>
+            <button class="tab" onclick="showTab('rest-tab')">REST API</button>
+            <button class="tab" onclick="showTab('local-db-tab')">💾 Banco Local</button>
+            <button class="tab" onclick="showTab('repair-tab')">🔧 Reparos</button>
+          </div>
+          <div class="tab-panel active" id="sql-tab">
+            <div class="label">Query SQL (via PostgREST - use ?select=*&id=eq.xxx)</div>
+            <textarea class="input textarea" id="sqlInput" placeholder="Ex: select * from empresas where id='bd45d75b-fee4-4ac2-8975-0f36f61d01bf'"></textarea>
+            <div class="btn-group" style="margin-top: 12px;">
+              <button class="btn btn-primary" onclick="executeSQL()">▶️ Executar</button>
+              <button class="btn btn-secondary" onclick="clearSQL()">🗑️ Limpar</button>
+            </div>
+            <div class="sql-result" id="sqlResult" style="margin-top: 12px; display: none;"></div>
+          </div>
+          <div class="tab-panel" id="rest-tab">
+            <div class="label">Requisição REST Direta (proxy para Kong/PostgREST)</div>
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <select class="input" id="restMethod" style="width: 100px;"><option value="GET">GET</option><option value="POST">POST</option><option value="PATCH">PATCH</option><option value="DELETE">DELETE</option></select>
+              <input class="input" id="restPath" placeholder="/rest/v1/empresas?id=eq.bd45d75b..." style="flex: 1;">
+            </div>
+            <textarea class="input textarea" id="restBody" placeholder='Body JSON (para POST/PATCH): {"configuracoes": {...}}'></textarea>
+            <div class="btn-group" style="margin-top: 12px;">
+              <button class="btn btn-primary" onclick="executeREST()">▶️ Enviar</button>
+            </div>
+            <pre id="restResult" style="margin-top: 12px; display: none;"></pre>
+          </div>
+          <div class="tab-panel" id="local-db-tab">
+            <div class="label">Banco de Dados do Cliente (PostgreSQL)</div>
+            <div class="hint" style="font-size:0.8rem;color:#94a3b8;margin-bottom:8px;">
+              Deixe em branco para usar o banco local desta máquina. Preencha os dados para abrir
+              o banco de uma loja (é preciso que o PostgreSQL dela aceite conexão pela rede).
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 8px;">
+              <input class="input" id="dbHost" placeholder="Host / IP (ex: 192.168.0.10)">
+              <input class="input" id="dbPorta" placeholder="Porta (5432)">
+              <input class="input" id="dbBanco" placeholder="Banco (exodo_db)">
+              <input class="input" id="dbUsuario" placeholder="Usuário (exodo_user)">
+              <input class="input" id="dbSenha" type="password" placeholder="Senha">
+              <input class="input" id="dbNome" placeholder="Apelido (ex: Loja Centro)">
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" onclick="testLocalConnection()">🔌 Testar Conexão</button>
+              <button class="btn btn-success" onclick="saveDbConnection()">💾 Salvar Conexão</button>
+              <button class="btn btn-secondary" onclick="useLocalConnection()">🏠 Usar esta Máquina</button>
+              <button class="btn btn-secondary" onclick="loadDbConnections()">📚 Minhas Conexões</button>
+            </div>
+            <div class="divider"></div>
+            <div class="btn-group">
+              <button class="btn btn-primary" onclick="loadLocalDSN()">🔗 Ver DSN Local</button>
+              <button class="btn btn-primary" onclick="loadLocalTables()">📋 Listar Tabelas</button>
+              <button class="btn btn-secondary" onclick="loadTabelas()">☁️ Listar Tabelas (Local + Nuvem)</button>
+            </div>
+            <div class="divider"></div>
+            <div class="label">Estrutura de Tabela</div>
+            <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+              <input class="input" id="localTableName" placeholder="Nome da tabela (ex: perfis_tributarios)" style="flex: 1; min-width: 200px;">
+              <button class="btn btn-primary" onclick="loadLocalColumns()">📋 Ver Colunas</button>
+            </div>
+            <div class="divider"></div>
+            <div class="label">Executar Query (Somente SELECT por padrão)</div>
+            <textarea class="input textarea" id="localQueryInput" placeholder="SELECT * FROM perfis_tributarios LIMIT 10"></textarea>
+            <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+              <label class="checkbox-item"><input type="checkbox" id="localQueryReadOnly" checked> Somente leitura (SELECT)</label>
+              <input class="input" id="localQueryLimit" placeholder="Limite (padrão 1000)" style="width: 120px;">
+            </div>
+            <div class="btn-group" style="margin-top: 8px;">
+              <button class="btn btn-primary" onclick="executeLocalQuery()">▶️ Executar</button>
+              <button class="btn btn-secondary" onclick="verBancoLocalDaEmpresa()">🗄️ Ver banco local desta empresa</button>
+              <button class="btn btn-secondary" onclick="clearLocalQuery()">🗑️ Limpar</button>
+            </div>
+            <pre id="localDbResult" style="margin-top: 12px; display: none;"></pre>
+          </div>
+          <div class="tab-panel" id="repair-tab">
+            <div class="label">Ferramentas de Reparo Automático (chamam scripts Python no servidor)</div>
+            <div class="checkbox-group" style="margin-bottom: 16px;">
+              <label class="checkbox-item"><input type="checkbox" id="repairPerfis" checked> Perfis Tributários (merge por carimbo)</label>
+              <label class="checkbox-item"><input type="checkbox" id="repairPrecos"> Perfis de Preço</label>
+              <label class="checkbox-item"><input type="checkbox" id="repairDeptos"> Departamentos</label>
+              <label class="checkbox-item"><input type="checkbox" id="repairEstoques"> Estoques</label>
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" onclick="runRepair()">🔧 Executar Reparo (Dry-run)</button>
+              <button class="btn btn-danger" onclick="runRepair(true)">💾 Aplicar Reparo na Nuvem</button>
+            </div>
+            <pre id="repairResult" style="margin-top: 12px; display: none;"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">📜 Logs Recentes do Portal</div>
+        <div class="card-body">
+          <div class="btn-group">
+            <button class="btn btn-secondary" onclick="loadLogs()">🔄 Recarregar</button>
+            <button class="btn btn-primary" onclick="copiarLogs()">📋 Copiar</button>
+            <button class="btn btn-secondary" onclick="copiarLogs(10000)">📋 Copiar tudo (10 mil linhas)</button>
+            <button class="btn btn-secondary" onclick="baixarLogs()">⬇️ Baixar .txt</button>
+            <button class="btn btn-secondary" onclick="clearLogs()">🗑️ Limpar</button>
+            <label class="checkbox-item" style="margin-left: auto;"><input type="checkbox" id="autoRefreshLogs" checked> Auto (5s)</label>
+          </div>
+          <div class="label" id="logsResumo"></div>
+          <div id="logsContainer" style="max-height: 300px; overflow-y: auto;"></div>
+        </div>
+      </div>
+
+      <!-- Debug Info -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">🐛 Debug / Info do Sistema</div>
+        <div class="card-body">
+          <div class="btn-group">
+            <button class="btn btn-secondary" onclick="loadDebug()">🔄 Recarregar</button>
+          </div>
+          <pre id="debugOutput" style="margin-top: 12px;"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const API_BASE = '/rest/v1';
+let currentEmpresaId = '';
+let logPollTimer = null;
+
+// --- Utils ---
+async function api(path, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    ...options.headers
+  };
+  const res = await fetch(API_BASE + path, { ...options, headers });
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText);
+    throw new Error(`HTTP ${res.status}: ${err}`);
+  }
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) return res.json();
+  return res.text();
+}
+
+function showToast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `log-entry ${type}`;
+  el.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;max-width:400px;animation:slideIn 0.3s;';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.animation = 'slideOut 0.3s'; setTimeout(() => el.remove(), 300); }, 4000);
+}
+
+function setLoading(btn, loading) {
+  if (loading) { btn.classList.add('loading'); btn.disabled = true; }
+  else { btn.classList.remove('loading'); btn.disabled = false; }
+}
+
+// --- Tabs ---
+function showTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.tab[onclick*="${id}"]`)?.classList.add('active');
+  document.getElementById(id)?.classList.add('active');
+}
+
+// --- Status & Empresa ---
+async function checkStatus() {
+  try {
+    const res = await fetch('/rest/v1/empresas?select=id&limit=1', { method: 'HEAD' });
+    document.getElementById('statusDot').className = 'status-dot online';
+    document.getElementById('statusText').textContent = 'Conectado à nuvem';
+  } catch {
+    document.getElementById('statusDot').className = 'status-dot offline';
+    document.getElementById('statusText').textContent = 'Desconectado';
+  }
+}
+
+async function loadEmpresas() {
+  try {
+    const data = await api('/empresas?select=id,razao_social,configuracoes&order=razao_social.asc');
+    const select = document.getElementById('empresaSelect');
+    select.innerHTML = '<option value="">Selecione uma empresa...</option>';
+    data.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = e.razao_social || e.id;
+      select.appendChild(opt);
+    });
+    // Auto-select EMPORIO if exists
+    const emporio = data.find(e => e.razao_social?.includes('EMPORIO'));
+    if (emporio) {
+      select.value = emporio.id;
+      onEmpresaChange();
+    }
+  } catch (e) {
+    showToast('Erro ao carregar empresas: ' + e.message, 'error');
+  }
+}
+
+async function onEmpresaChange() {
+  currentEmpresaId = document.getElementById('empresaSelect').value;
+  if (currentEmpresaId) {
+    await loadEmpresaInfo();
+    await loadPerfis();
+    await loadDepartamentos();
+    await loadEstoques();
+    await loadSyncStatus();
+  } else {
+    clearEmpresaInfo();
+  }
+}
+
+async function loadEmpresaInfo() {
+  try {
+    const data = await api(`/empresas?select=*,configuracoes&id=eq.${currentEmpresaId}`);
+    if (!data.length) return;
+    const e = data[0];
+    const cfg = e.configuracoes || {};
+    document.getElementById('empresaInfo').innerHTML = `
+      <span class="key">ID:</span><span class="value mono">${e.id}</span>
+      <span class="key">Razão Social:</span><span class="value">${e.razao_social || '-'}</span>
+      <span class="key">Nuvem Ativa:</span><span class="value">${cfg.nuvem_ativa === true || cfg.nuvemAtiva === true ? '<span class="badge badge-success">SIM</span>' : '<span class="badge badge-danger">NÃO</span>'}</span>
+      <span class="key">Último Sync:</span><span class="value mono">${cfg.perfis_tributarios_atualizado_em || cfg.perfis_preco_atualizado_em || cfg.departamentos_atualizado_em || cfg.estoques_atualizado_em || 'nunca'}</span>
+      <span class="key">Perfis Tributários:</span><span class="value">${(cfg.perfis_tributarios || []).length}</span>
+      <span class="key">Departamentos:</span><span class="value">${(cfg.departamentos || []).length}</span>
+      <span class="key">Estoques:</span><span class="value">${(cfg.estoques || []).length}</span>
+      <span class="key">Perfis de Preço:</span><span class="value">${(cfg.perfis_preco || []).length}</span>
+    `;
+  } catch (e) {
+    showToast('Erro ao carregar info: ' + e.message, 'error');
+  }
+}
+
+function clearEmpresaInfo() {
+  document.getElementById('empresaInfo').innerHTML = `
+    <span class="key">ID:</span><span class="value">-</span>
+    <span class="key">Razão Social:</span><span class="value">-</span>
+    <span class="key">Nuvem Ativa:</span><span class="value">-</span>
+    <span class="key">Último Sync:</span><span class="value">-</span>
+    <span class="key">Perfis Tributários:</span><span class="value">-</span>
+    <span class="key">Departamentos:</span><span class="value">-</span>
+    <span class="key">Estoques:</span><span class="value">-</span>
+    <span class="key">Perfis de Preço:</span><span class="value">-</span>
+  `;
+}
+
+// --- Sync Status ---
+async function loadSyncStatus() {
+  try {
+    const data = await api(`/sync_status?select=*&empresa_id=eq.${currentEmpresaId}&order=created_at.desc&limit=1`);
+    if (data.length) {
+      const s = data[0];
+      document.getElementById('lastSyncOk').textContent = s.ultima_sincronizacao_sucesso ? new Date(s.ultima_sincronizacao_sucesso).toLocaleString('pt-BR') : 'nunca';
+      document.getElementById('lastSyncErr').innerHTML = s.ultimo_erro ? `<span class="badge badge-danger">${s.ultimo_erro}</span>` : 'nenhum';
+      document.getElementById('pendingOps').textContent = s.fila_pendente || 0;
+      document.getElementById('syncMode').textContent = s.modo || 'normal';
+    }
+  } catch (e) {
+    console.error('Sync status error:', e);
+  }
+}
+
+async function triggerSync(tipo) {
+  const btn = event.target;
+  setLoading(btn, true);
+  try {
+    if (tipo === 'full') {
+      // Trigger full sync by calling the app's sync endpoint or clearing timestamp
+      await api('/empresas?id=eq.' + currentEmpresaId, {
+        method: 'PATCH',
+        body: JSON.stringify({ configuracoes: { ultima_sincronizacao_sucesso: null } })
+      });
+      showToast('Sync completo solicitado (timestamp zerado) - o app fará carga completa no próximo pulso', 'success');
+    } else {
+      // Delta sync happens automatically every 10s
+      showToast('Sync delta acontece automaticamente a cada 10s', 'info');
+    }
+    await loadSyncStatus();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function pushLocal() {
+  const btn = event.target;
+  setLoading(btn, true);
+  try {
+    // Read local config and push to cloud
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    if (!data.length) throw new Error('Empresa não encontrada');
+    const cfg = data[0].configuracoes;
+    // The app handles push automatically, but we can trigger by updating updated_at
+    await api('/empresas?id=eq.' + currentEmpresaId, {
+      method: 'PATCH',
+      body: JSON.stringify({ updated_at: new Date().toISOString() })
+    });
+    showToast('Push solicitado - o app enviará as listas-vivas no próximo ciclo', 'success');
+    await loadSyncStatus();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// --- Perfis Tributários ---
+async function loadPerfis() {
+  if (!currentEmpresaId) return;
+  try {
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const perfis = data[0]?.configuracoes?.perfis_tributarios || [];
+    const tbody = document.querySelector('#perfisTable tbody');
+    tbody.innerHTML = perfis.map(p => `
+      <tr>
+        <td class="mono">${p.id}</td>
+        <td>${p.nome}</td>
+        <td>${p.csosn ? 'Simples' : 'Normal'}</td>
+        <td class="mono">${p.cfop || '-'}</td>
+        <td class="mono">${p.csosn || p.icmsCst || '-'}</td>
+        <td>${p.aliquota_ibs != null ? (p.aliquota_ibs * 100).toFixed(1) + '%' : '-'}</td>
+        <td>${p.aliquota_cbs != null ? (p.aliquota_cbs * 100).toFixed(1) + '%' : '-'}</td>
+        <td>${p.is_default ? '<span class="badge badge-success">PADRÃO</span>' : '<span class="badge badge-default">não</span>'}</td>
+        <td>
+          <button class="btn btn-danger" onclick="deletePerfil('${p.id}', '${p.nome.replace(/'/g, "\\'")}')" style="padding:4px 8px;font-size:0.75rem;">🗑️</button>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="9" style="text-align:center;color:#64748b;">Nenhum perfil</td></tr>';
+  } catch (e) {
+    showToast('Erro ao carregar perfis: ' + e.message, 'error');
+  }
+}
+
+async function deletePerfil(id, nome) {
+  if (!confirm(`Excluir perfil "${nome}" (${id})?`)) return;
+  try {
+    // The app uses a dedicated table, but we can also remove from empresa.configuracoes
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const cfg = data[0]?.configuracoes || {};
+    cfg.perfis_tributarios = (cfg.perfis_tributarios || []).filter(p => p.id !== id);
+    cfg.perfis_tributarios_atualizado_em = new Date().toISOString();
+    await api(`/empresas?id=eq.${currentEmpresaId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ configuracoes: cfg })
+    });
+    showToast('Perfil excluído', 'success');
+    await loadPerfis();
+    await loadEmpresaInfo();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  }
+}
+
+async function recreateDefaultPerfis() {
+  if (!confirm('Recriar os 6 perfis padrão do sistema? Isso NÃO apaga perfis personalizados existentes.')) return;
+  const btn = event.target;
+  setLoading(btn, true);
+  try {
+    const perfis = [
+      {id:'padrao_tributado_simples',nome:'Tributado (Simples Nacional)',cfop:'5102',csosn:'102',icms_cst:'',pis_cst:'99',cofins_cst:'000',cst_ibs:'000',aliquota_ibs:0.1,cst_cbs:'000',aliquota_cbs:0.9,c_class_trib:'000001',is_default:true},
+      {id:'padrao_nao_tributado_simples',nome:'Não Tributado (Simples Nacional)',cfop:'5102',csosn:'400',icms_cst:'',pis_cst:'99',cofins_cst:'000',cst_ibs:'000',aliquota_ibs:0.1,cst_cbs:'000',aliquota_cbs:0.9,c_class_trib:'000001',is_default:false},
+      {id:'padrao_substituicao_simples',nome:'Substituição Tributária (Simples Nacional)',cfop:'5405',csosn:'500',icms_cst:'',pis_cst:'49',cofins_cst:'49',cst_ibs:'000',aliquota_ibs:0.1,cst_cbs:'000',aliquota_cbs:0.9,c_class_trib:'000001',is_default:false},
+      {id:'padrao_tributado_normal',nome:'Tributado (Regime Normal)',cfop:'5102',csosn:null,icms_cst:'00',pis_cst:null,cofins_cst:null,cst_ibs:'000',aliquota_ibs:0.1,cst_cbs:'000',aliquota_cbs:0.9,c_class_trib:'000001',is_default:true},
+      {id:'padrao_nao_tributado_normal',nome:'Não Tributado (Regime Normal)',cfop:'5102',csosn:null,icms_cst:'41',pis_cst:null,cofins_cst:null,cst_ibs:'000',aliquota_ibs:0.1,cst_cbs:'000',aliquota_cbs:0.9,c_class_trib:'000001',is_default:false},
+      {id:'padrao_substituicao_normal',nome:'Substituição Tributária (Regime Normal)',cfop:'5405',csosn:null,icms_cst:'60',pis_cst:null,cofins_cst:null,cst_ibs:'000',aliquota_ibs:0.1,cst_cbs:'000',aliquota_cbs:0.9,c_class_trib:'000001',is_default:false}
+    ];
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const cfg = data[0]?.configuracoes || {};
+    // Merge: keep existing non-system profiles
+    const existing = (cfg.perfis_tributarios || []).filter(p => !p.id.startsWith('padrao_'));
+    cfg.perfis_tributarios = [...perfis, ...existing];
+    cfg.perfis_tributarios_atualizado_em = new Date().toISOString();
+    await api(`/empresas?id=eq.${currentEmpresaId}`, { method: 'PATCH', body: JSON.stringify({ configuracoes: cfg }) });
+    showToast('Perfis padrão recriados/atualizados', 'success');
+    await loadPerfis();
+    await loadEmpresaInfo();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function fixPerfisCloud() {
+  if (!confirm('Executar reparo dos perfis tributários na nuvem (merge por carimbo)?')) return;
+  const btn = event.target;
+  setLoading(btn, true);
+  try {
+    const res = await fetch('/admin/repair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listas: ['perfis_tributarios'], aplicar: true })
+    });
+    const result = await res.json();
+    showToast('Reparo executado: ' + (result.sucesso ? 'OK' : 'Falhou'), result.sucesso ? 'success' : 'error');
+    await loadPerfis();
+    await loadEmpresaInfo();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function deleteExtraPerfis() {
+  if (!confirm('Excluir os 5 perfis extras (vinhos, destilados, energéticos, águas e sucos, gelo e carvão)?')) return;
+  const btn = event.target;
+  setLoading(btn, true);
+  try {
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const cfg = data[0]?.configuracoes || {};
+    const idsParaRemover = ['1793656409936','1793656420997','1793656687460','1793656706777','1793656862226'];
+    cfg.perfis_tributarios = (cfg.perfis_tributarios || []).filter(p => !idsParaRemover.includes(p.id));
+    cfg.perfis_tributarios_atualizado_em = new Date().toISOString();
+    await api(`/empresas?id=eq.${currentEmpresaId}`, { method: 'PATCH', body: JSON.stringify({ configuracoes: cfg }) });
+    showToast('Perfis extras excluídos', 'success');
+    await loadPerfis();
+    await loadEmpresaInfo();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// --- Departamentos ---
+async function loadDepartamentos() {
+  if (!currentEmpresaId) return;
+  try {
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const depts = data[0]?.configuracoes?.departamentos || [];
+    const tbody = document.querySelector('#deptTable tbody');
+    tbody.innerHTML = depts.map(d => `
+      <tr>
+        <td class="mono">${d.id}</td>
+        <td>${d.nome}</td>
+        <td><span style="display:inline-block;width:20px;height:20px;border-radius:4px;background:${d.cor || '#3b82f6'};border:1px solid #334155;"></span> ${d.cor || '-'}</td>
+        <td>${d.icone || '-'}</td>
+        <td>${d.ordem ?? '-'}</td>
+        <td><button class="btn btn-danger" onclick="deleteDepto('${d.id}')" style="padding:4px 8px;font-size:0.75rem;">🗑️</button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748b;">Nenhum departamento</td></tr>';
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  }
+}
+
+async function deleteDepto(id) {
+  if (!confirm('Excluir departamento?')) return;
+  try {
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const cfg = data[0]?.configuracoes || {};
+    cfg.departamentos = (cfg.departamentos || []).filter(d => d.id !== id);
+    cfg.departamentos_atualizado_em = new Date().toISOString();
+    await api(`/empresas?id=eq.${currentEmpresaId}`, { method: 'PATCH', body: JSON.stringify({ configuracoes: cfg }) });
+    showToast('Departamento excluído', 'success');
+    await loadDepartamentos();
+  } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+}
+
+async function recreateDefaultDepartamentos() {
+  if (!confirm('Recriar Cozinha e Bar?')) return;
+  const btn = event.target; setLoading(btn, true);
+  try {
+    const depts = [
+      {id:'dep_cozinha',nome:'Cozinha',cor:'#FF5722',icone:'restaurant',ordem:0,impressora_producao:null,impressora_producao_extra:[]},
+      {id:'dep_bar',nome:'Bar',cor:'#2196F3',icone:'local_bar',ordem:1,impressora_producao:null,impressora_producao_extra:[]}
+    ];
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const cfg = data[0]?.configuracoes || {};
+    const existing = (cfg.departamentos || []).filter(d => !['dep_cozinha','dep_bar'].includes(d.id));
+    cfg.departamentos = [...depts, ...existing];
+    cfg.departamentos_atualizado_em = new Date().toISOString();
+    await api(`/empresas?id=eq.${currentEmpresaId}`, { method: 'PATCH', body: JSON.stringify({ configuracoes: cfg }) });
+    showToast('Departamentos padrão recriados', 'success');
+    await loadDepartamentos();
+  } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+  finally { setLoading(btn, false); }
+}
+
+// --- Estoques ---
+async function loadEstoques() {
+  if (!currentEmpresaId) return;
+  try {
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const estoques = data[0]?.configuracoes?.estoques || [];
+    const tbody = document.querySelector('#estoqueTable tbody');
+    tbody.innerHTML = estoques.map(e => `
+      <tr>
+        <td class="mono">${e.id}</td>
+        <td>${e.nome}</td>
+        <td>${e.principal ? '<span class="badge badge-success">SIM</span>' : '<span class="badge badge-default">não</span>'}</td>
+        <td>${e.ordem ?? '-'}</td>
+        <td><button class="btn btn-danger" onclick="deleteEstoque('${e.id}')" style="padding:4px 8px;font-size:0.75rem;">🗑️</button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" style="text-align:center;color:#64748b;">Nenhum estoque</td></tr>';
+  } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+}
+
+async function deleteEstoque(id) {
+  if (!confirm('Excluir estoque?')) return;
+  try {
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const cfg = data[0]?.configuracoes || {};
+    cfg.estoques = (cfg.estoques || []).filter(e => e.id !== id);
+    cfg.estoques_atualizado_em = new Date().toISOString();
+    await api(`/empresas?id=eq.${currentEmpresaId}`, { method: 'PATCH', body: JSON.stringify({ configuracoes: cfg }) });
+    showToast('Estoque excluído', 'success');
+    await loadEstoques();
+  } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+}
+
+async function recreateDefaultEstoques() {
+  if (!confirm('Recriar Loja e Depósito?')) return;
+  const btn = event.target; setLoading(btn, true);
+  try {
+    const estoques = [
+      {id:'estoque_loja',nome:'Loja',ordem:0,principal:true},
+      {id:'estoque_deposito',nome:'Depósito',ordem:1,principal:false}
+    ];
+    const data = await api(`/empresas?select=configuracoes&id=eq.${currentEmpresaId}`);
+    const cfg = data[0]?.configuracoes || {};
+    const existing = (cfg.estoques || []).filter(e => !['estoque_loja','estoque_deposito'].includes(e.id));
+    cfg.estoques = [...estoques, ...existing];
+    cfg.estoques_atualizado_em = new Date().toISOString();
+    await api(`/empresas?id=eq.${currentEmpresaId}`, { method: 'PATCH', body: JSON.stringify({ configuracoes: cfg }) });
+    showToast('Estoques padrão recriados', 'success');
+    await loadEstoques();
+  } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+  finally { setLoading(btn, false); }
+}
+
+// --- SQL Executor ---
+async function executeSQL() {
+  const sql = document.getElementById('sqlInput').value.trim();
+  if (!sql) return showToast('Digite uma query', 'warning');
+  const btn = event.target; setLoading(btn, true);
+  const resultDiv = document.getElementById('sqlResult');
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<div class="log-entry info">Executando...</div>';
+  try {
+    // Use PostgREST RPC or direct query - we'll use the empresas table as proxy
+    // For arbitrary SQL, we'd need a PostgREST function. For now, show how to use REST.
+    showToast('Use a aba "REST API" para queries diretas via PostgREST', 'info');
+    resultDiv.innerHTML = '<div class="log-entry warning">Para SQL arbitrário, crie uma function no Postgres e chame via RPC, ou use a aba REST API.</div>';
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="log-entry error">Erro: ${e.message}</div>`;
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function clearSQL() {
+  document.getElementById('sqlInput').value = '';
+  document.getElementById('sqlResult').style.display = 'none';
+}
+
+async function executeREST() {
+  const method = document.getElementById('restMethod').value;
+  const path = document.getElementById('restPath').value.trim();
+  const bodyText = document.getElementById('restBody').value.trim();
+  if (!path) return showToast('Digite o path', 'warning');
+  const btn = event.target; setLoading(btn, true);
+  const resultDiv = document.getElementById('restResult');
+  resultDiv.style.display = 'block';
+  resultDiv.textContent = 'Executando...';
+  try {
+    let body = undefined;
+    if (bodyText && (method === 'POST' || method === 'PATCH')) {
+      try { body = JSON.parse(bodyText); } catch { throw new Error('JSON inválido no body'); }
+    }
+    const res = await fetch(API_BASE + path, {
+      method, headers: { 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    resultDiv.textContent = `${res.status} ${res.statusText}\n\n${text ? JSON.stringify(JSON.parse(text), null, 2) : '(vazio)'}`;
+    showToast(`HTTP ${res.status}`, res.ok ? 'success' : 'error');
+  } catch (e) {
+    resultDiv.textContent = 'Erro: ' + e.message;
+    showToast('Erro: ' + e.message, 'error');
+  } finally { setLoading(btn, false); }
+}
+
+// --- Banco de Dados (local do servidor ou de um cliente) ---
+function _localResult(html) {
+  const el = document.getElementById('localDbResult');
+  el.style.display = 'block';
+  el.innerHTML = html;
+}
+
+function _dbConn() {
+  const host = document.getElementById('dbHost').value.trim();
+  const porta = document.getElementById('dbPorta').value.trim();
+  const banco = document.getElementById('dbBanco').value.trim();
+  const usuario = document.getElementById('dbUsuario').value.trim();
+  const senha = document.getElementById('dbSenha').value;
+  const nome = document.getElementById('dbNome').value.trim();
+  if (!host && !porta && !banco && !usuario && !senha && !nome) return null;
+  return { host: host || 'localhost', porta: porta || '5432', banco: banco || 'exodo_db',
+           usuario: usuario || 'exodo_user', senha, nome };
+}
+
+function _dbOrigem() {
+  const c = _dbConn();
+  return c && c.host !== 'localhost' ? c.host : 'esta máquina (local)';
+}
+
+function _preencherDb(c) {
+  document.getElementById('dbHost').value = c.host || '';
+  document.getElementById('dbPorta').value = c.porta || '';
+  document.getElementById('dbBanco').value = c.banco || '';
+  document.getElementById('dbUsuario').value = c.usuario || '';
+  document.getElementById('dbSenha').value = c.senha || '';
+  document.getElementById('dbNome').value = c.nome || '';
+}
+
+function useLocalConnection() {
+  ['dbHost','dbPorta','dbBanco','dbUsuario','dbSenha','dbNome'].forEach(id => document.getElementById(id).value = '');
+  showToast('Usando o banco desta máquina', 'info');
+}
+
+async function saveDbConnection() {
+  const c = _dbConn();
+  if (!c) return showToast('Preencha os dados da conexão', 'warning');
+  if (!c.nome) return showToast('Informe um apelido para a conexão', 'warning');
+  try {
+    const r = await fetch('/admin/local/connections', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c)
+    });
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    showToast('Conexão salva: ' + d.conexao.nome, 'success');
+  } catch (e) { showToast('Erro ao salvar: ' + e.message, 'error'); }
+}
+
+async function loadDbConnections() {
+  try {
+    const r = await fetch('/admin/local/connections');
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    const lista = d.conexoes || [];
+    if (!lista.length) return _localResult('<div class="log-entry info">Nenhuma conexão salva ainda.</div>');
+    _localResult('<div class="log-entry info">Clique para usar uma conexão salva:</div>' +
+      lista.map((c, i) => `<div class="log-entry">
+        <a href="#" onclick="escolherConexao(${i});return false;">${c.nome}</a>
+        — ${c.host}:${c.porta}/${c.banco} (${c.usuario})
+        <button class="btn btn-danger" style="padding:2px 8px;font-size:0.7rem;" onclick="excluirConexao('${c.nome.replace(/'/g, "\\'")}')">excluir</button>
+      </div>`).join(''));
+    window._conexoesSalvas = lista;
+  } catch (e) { _localResult(`<div class="log-entry error">Erro: ${e.message}</div>`); }
+}
+
+async function escolherConexao(i) {
+  const c = (window._conexoesSalvas || [])[i];
+  if (!c) return;
+  _preencherDb({ ...c, senha: c.senha === '****' ? '' : c.senha });
+  try {
+    const r = await fetch('/admin/local/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conn: c })
+    });
+    const d = await r.json();
+    if (d.conectado) {
+      showToast('Conectado a ' + c.nome, 'success');
+      _localResult(`<div class="log-entry success">Conectado a ${c.nome} (${d.origem})</div><pre>${JSON.stringify(d.info, null, 2)}</pre>`);
+    } else {
+      showToast('Falha: ' + (d.erro || 'sem conexão'), 'error');
+      _localResult(`<div class="log-entry error">Falha ao conectar em ${c.nome}: ${d.erro || ''}</div>`);
+    }
+  } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+}
+
+async function excluirConexao(nome) {
+  if (!confirm('Excluir a conexão "' + nome + '"?')) return;
+  try {
+    await fetch('/admin/local/connections?nome=' + encodeURIComponent(nome), { method: 'DELETE' });
+    showToast('Conexão removida', 'success');
+    loadDbConnections();
+  } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+}
+
+async function loadLocalDSN() {
+  try {
+    const r = await fetch('/admin/local/dsn');
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    _localResult(`<div class="log-entry success">DSN local: ${d.dsn || '(vazio)'}</div>
+      <div class="log-entry ${d.conectado ? 'success' : 'error'}">Conectado: ${d.conectado ? 'SIM' : 'NAO'}</div>`);
+  } catch (e) { _localResult(`<div class="log-entry error">Erro: ${e.message}</div>`); }
+}
+
+async function testLocalConnection() {
+  try {
+    const r = await fetch('/admin/local/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conn: _dbConn() })
+    });
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    if (!d.conectado) throw new Error(d.erro || 'não conectou');
+    _localResult(`<div class="log-entry success">Conectado em ${d.origem}</div><pre>${JSON.stringify(d.info, null, 2)}</pre>`);
+    showToast('Conexão OK', 'success');
+  } catch (e) {
+    _localResult(`<div class="log-entry error">Erro: ${e.message}</div>`);
+    showToast('Falha na conexão', 'error');
+  }
+}
+
+function _dbQueryString() {
+  const c = _dbConn();
+  if (!c) return '';
+  const p = new URLSearchParams({ host: c.host, porta: c.porta, banco: c.banco, usuario: c.usuario, senha: c.senha });
+  return '&' + p.toString();
+}
+
+async function loadLocalTables() {
+  try {
+    const r = await fetch('/admin/local/tables?schema=public' + _dbQueryString());
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    const tabelas = (d.tables || []).map(t => t.table_name);
+    _localResult(`<div class="log-entry info">${tabelas.length} tabelas em ${d.origem} (schema ${d.schema})</div>
+      <pre>${tabelas.join('\n')}</pre>`);
+  } catch (e) { _localResult(`<div class="log-entry error">Erro: ${e.message}</div>`); }
+}
+
+async function loadTabelas() {
+  const el = document.getElementById('localDbResult');
+  el.style.display = 'block';
+  let html = '<div class="log-entry info">Consultando tabelas...</div>';
+  try {
+    const r = await fetch('/admin/local/tables?schema=public' + _dbQueryString());
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    const tabelas = (d.tables || []).map(t => t.table_name);
+    html += `<div class="log-entry success">LOCAL — ${d.origem}: ${tabelas.length} tabela(s)<pre>${tabelas.join('\n')}</pre></div>`;
+  } catch (e) { html += `<div class="log-entry error">LOCAL — Erro: ${e.message}</div>`; }
+  try {
+    const r2 = await fetch('/admin/tabelas');
+    const d2 = await r2.json();
+    if (d2.erro) throw new Error(d2.erro);
+    html += `<div class="log-entry success">NUVEM — ${d2.origem}: ${d2.tabelas.length} tabela(s)<pre>${d2.tabelas.join('\n')}</pre></div>`;
+  } catch (e) { html += `<div class="log-entry error">NUVEM — Erro: ${e.message}</div>`; }
+  el.innerHTML = html;
+}
+
+async function loadLocalColumns() {
+  const tabela = document.getElementById('localTableName').value.trim();
+  if (!tabela) return showToast('Digite o nome da tabela', 'warning');
+  try {
+    const r = await fetch('/admin/local/columns?table=' + encodeURIComponent(tabela) + _dbQueryString());
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    const linhas = (d.columns || []).map(c =>
+      `${c.column_name}  |  ${c.data_type}  |  null: ${c.is_nullable}  |  default: ${c.column_default || '-'}`);
+    _localResult(`<div class="log-entry info">${d.schema}.${d.table} — ${linhas.length} colunas</div>
+      <pre>${linhas.join('\n')}</pre>`);
+  } catch (e) { _localResult(`<div class="log-entry error">Erro: ${e.message}</div>`); }
+}
+
+async function executeLocalQuery() {
+  const sql = document.getElementById('localQueryInput').value.trim();
+  if (!sql) return showToast('Digite uma query', 'warning');
+  const readOnly = document.getElementById('localQueryReadOnly').checked;
+  const limite = parseInt(document.getElementById('localQueryLimit').value || '1000', 10);
+  if (!readOnly && !confirm('Executar comando de ESCRITA no banco (' + _dbOrigem() + ')? Isso pode alterar dados.')) return;
+  _localResult('<div class="log-entry info">Executando em ' + _dbOrigem() + '...</div>');
+  try {
+    const r = await fetch('/admin/local/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, read_only: readOnly, limit: limite, conn: _dbConn() })
+    });
+    const d = await r.json();
+    if (d.erro) throw new Error(d.erro);
+    if (d.rows) {
+      let html = `<div class="log-entry success">${d.count} linha(s) retornada(s) de ${d.origem}</div>`;
+      if (d.rows.length) {
+        const cols = Object.keys(d.rows[0]);
+        html += '<div class="table-container"><table><thead><tr>' +
+          cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>' +
+          d.rows.map(row => '<tr>' + cols.map(c => `<td>${row[c] === null ? '<i>null</i>' : String(row[c])}</td>`).join('') + '</tr>').join('') +
+          '</tbody></table></div>';
+      }
+      _localResult(html);
+    } else {
+      _localResult(`<div class="log-entry success">Executado em ${d.origem}. Linhas afetadas: ${d.affected_rows}</div>`);
+    }
+    showToast('Query executada', 'success');
+  } catch (e) {
+    _localResult(`<div class="log-entry error">Erro: ${e.message}</div>`);
+    showToast('Erro na query', 'error');
+  }
+}
+
+function clearLocalQuery() {
+  document.getElementById('localQueryInput').value = '';
+  document.getElementById('localDbResult').style.display = 'none';
+}
+
+// --- Versões do app por empresa ---
+// `app_client_<empresa>`: versão INSTALADA na empresa (o próprio app grava ao
+// abrir). `app_update_<empresa>`: versão publicada só para ela. `app_latest`:
+// versão publicada para todas.
+const APP_CLIENT_PREFIX = 'app_client_';
+const APP_UPDATE_PREFIX = 'app_update_';
+// Última lista de pacotes que o painel viu (só para mostrar dica ao usuário).
+let versoesConhecidas = [];
+
+function escHtml(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Um pacote por versão no bucket `atualizacoes`.
+function urlDoPacote(versao) {
+  const limpa = String(versao).replace(/^!+/, '').trim().replace(/[^0-9A-Za-z._-]/g, '_');
+  return location.origin + '/storage/v1/object/public/atualizacoes/sistema_exodo_novo_' + limpa + '.zip';
+}
+
+// O painel usa a chave anônima, que não tem permissão de LISTAR o bucket:
+// quem lista é o portal (`/admin/pacotes`, com a chave de serviço no servidor).
+async function versoesNaNuvem() {
+  try {
+    const r = await fetch('/admin/pacotes').then(x => x.json());
+    if (!r || !r.sucesso) return [];
+    return (r.versoes || []).map(v => v.versao);
+  } catch (e) { return []; }
+}
+
+// O pacote é público: um HEAD na URL confirma que a versão existe.
+async function pacoteExiste(url) {
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    return res.ok;
+  } catch (e) { return false; }
+}
+
+function compararVersoes(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+function maiorVersao() {
+  if (!versoesConhecidas.length) return '';
+  return versoesConhecidas.slice().sort(compararVersoes).pop();
+}
+
+// Próxima correção a partir da maior versão do Storage (1.0.60 -> 1.0.61).
+function proximaVersao() {
+  const base = maiorVersao();
+  if (!base) return '';
+  const partes = base.split('.');
+  const ultima = parseInt(partes[partes.length - 1], 10) || 0;
+  partes[partes.length - 1] = String(ultima + 1);
+  return partes.join('.');
+}
+
+// Versão anterior à instalada (o "voltar para" natural).
+function versaoAnterior(instalada) {
+  if (!versoesConhecidas.length) return '';
+  const menores = versoesConhecidas
+    .filter(v => !instalada || compararVersoes(v, instalada) < 0)
+    .sort(compararVersoes);
+  return menores.length ? menores[menores.length - 1] : '';
+}
+
+// Grava o destino na `bridge_config` criando a linha se ela ainda não existir.
+// PATCH sozinho devolvia 200 sem gravar nada quando a empresa não tinha
+// registro `app_update_<id>` — era por isso que só a empresa já configurada
+// recebia publicação.
+async function gravarDestino(configId, versao, url) {
+  const res = await fetch(API_BASE + '/bridge_config?on_conflict=id', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Prefer': 'resolution=merge-duplicates,return=representation'
+    },
+    body: JSON.stringify({ id: configId, version: versao, download_url: url, ativo: true })
+  });
+  const texto = await res.text();
+  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + texto.slice(0, 300));
+  return texto;
+}
+
+function versaoValida(v) {
+  return /^\d+(\.\d+)*$/.test(String(v).trim().replace(/^!+/, ''));
+}
+
+// --- Publicar tudo (publicar_tudo.py) ---
+async function popularDestinosPublicacao() {
+  const select = document.getElementById('pubDestino');
+  if (!select || select.options.length > 1) return;
+  try {
+    const empresas = await api('/empresas?select=id,razao_social&order=razao_social.asc');
+    (empresas || []).forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = 'só: ' + (e.razao_social || e.id);
+      select.appendChild(opt);
+    });
+  } catch (e) { /* silencioso: a lista de empresas do topo já carregou */ }
+}
+
+async function publicarTudo(simular) {
+  const destino = document.getElementById('pubDestino').value || 'global';
+  const versao = document.getElementById('pubVersao').value.trim();
+  const corpo = {
+    destino: destino,
+    versao: versao,
+    force: document.getElementById('pubForce').checked,
+    notas: document.getElementById('pubNotas').value.trim(),
+    sem_build_windows: document.getElementById('pubSemWindows').checked,
+    sem_build_web: document.getElementById('pubSemWeb').checked,
+    simular: simular === true || document.getElementById('pubSimular').checked
+  };
+  const alvo = destino === 'global' ? 'TODAS as empresas' : 'a empresa selecionada';
+  if (!corpo.simular && !confirm('Publicar ' + (versao || '(versão do código)') +
+      ' para ' + alvo + '?\n\nIsso compila o Windows e o site, sobe o pacote e grava na nuvem.')) return;
+  try {
+    const res = await fetch('/admin/publicar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(corpo)
+    });
+    const d = await res.json();
+    if (!d.iniciado) return showToast('Não iniciou: ' + (d.erro || 'motivo desconhecido'), 'error');
+    showToast('Publicação iniciada (PID ' + d.pid + ')', 'success');
+    document.getElementById('pubLog').style.display = 'block';
+    acompanharPublicacao();
+  } catch (e) {
+    showToast('Falha ao publicar: ' + e.message, 'error');
+  }
+}
+
+let timerPublicacao = null;
+
+async function acompanharPublicacao() {
+  const status = document.getElementById('pubStatus');
+  const area = document.getElementById('pubLog');
+  try {
+    const d = await fetch('/admin/publicar/status').then(r => r.json());
+    area.style.display = 'block';
+    area.textContent = (d.linhas || []).join('\n') || '(sem saída ainda)';
+    area.scrollTop = area.scrollHeight;
+    if (d.rodando) {
+      status.textContent = '⏳ publicando... (PID ' + (d.pid || '?') + ')';
+      if (timerPublicacao) clearTimeout(timerPublicacao);
+      timerPublicacao = setTimeout(acompanharPublicacao, 3000);
+    } else {
+      const codigo = d.codigo_saida;
+      status.textContent = codigo === 0
+        ? '✅ última publicação terminou com sucesso'
+        : (codigo === null || codigo === undefined
+            ? 'nenhuma publicação rodou ainda'
+            : '❌ última publicação falhou (código ' + codigo + ')');
+      if (codigo === 0) { loadVersoesApp(); }
+    }
+  } catch (e) {
+    status.textContent = 'Erro ao consultar: ' + e.message;
+  }
+}
+
+async function loadVersoesApp() {
+  const resumo = document.getElementById('versoesResumo');
+  const tbody = document.querySelector('#versoesTable tbody');
+  if (!tbody) return;
+  resumo.textContent = 'Carregando...';
+  try {
+    const [empresas, linhas, pacotes] = await Promise.all([
+      api('/empresas?select=id,razao_social&order=razao_social.asc'),
+      api('/bridge_config?select=id,version,download_url,updated_at&or=(id.eq.app_latest,id.like.app_update_*,id.like.app_client_*)'),
+      versoesNaNuvem()
+    ]);
+    versoesConhecidas = pacotes;
+    const campoVersao = document.getElementById('pubVersao');
+    if (campoVersao && !campoVersao.value.trim()) campoVersao.value = proximaVersao();
+    const porId = {};
+    (linhas || []).forEach(l => { porId[l.id] = l; });
+    const global = porId['app_latest'];
+
+    resumo.innerHTML =
+      '<span class="key">Global (app_latest):</span><span class="value">' +
+        (global ? escHtml(global.version) : 'nenhuma') + '</span>' +
+      '<span class="key">Pacotes no Storage:</span><span class="value">' +
+        (versoesConhecidas.length ? versoesConhecidas.map(escHtml).join(', ') : '(não consegui listar)') + '</span>';
+
+    tbody.innerHTML = (empresas || []).map(e => {
+      const inst = porId[APP_CLIENT_PREFIX + e.id];
+      const alvo = porId[APP_UPDATE_PREFIX + e.id];
+      const publicada = alvo ? alvo.version : (global ? global.version + ' (global)' : '-');
+      const quando = (alvo || inst || {}).updated_at || '';
+      const instTxt = inst && inst.version
+        ? escHtml(inst.version)
+        : '<span class="badge badge-danger">sem registro</span>';
+      return '<tr>' +
+        '<td>' + escHtml(e.razao_social || e.id) + '</td>' +
+        '<td class="mono">' + instTxt + '</td>' +
+        '<td class="mono">' + escHtml(publicada) + '</td>' +
+        '<td class="mono" style="font-size:0.7rem;">' + escHtml(String(quando).replace('T', ' ').slice(0, 19)) + '</td>' +
+        '<td><div class="btn-group" style="margin:0;">' +
+          '<button class="btn btn-primary btn-sm" onclick="publicarParaEmpresa(\'' + e.id + '\')">Atualizar</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="voltarVersaoEmpresa(\'' + e.id + '\',\'' + escHtml(inst && inst.version ? inst.version : '') + '\')">Voltar versão</button>' +
+          (alvo ? '<button class="btn btn-danger btn-sm" onclick="removerDirecionamento(\'' + e.id + '\')">Seguir global</button>' : '') +
+        '</div></td>' +
+        '</tr>';
+    }).join('') || '<tr><td colspan="5">Nenhuma empresa cadastrada.</td></tr>';
+  } catch (e) {
+    resumo.innerHTML = '<span class="key">Erro:</span><span class="value">' + escHtml(e.message) + '</span>';
+  }
+}
+
+function dicaVersoes() {
+  return versoesConhecidas.length ? '\n\nJá vistas: ' + versoesConhecidas.join(', ') : '';
+}
+
+// Confere no Storage (HEAD público) antes de publicar: publicar uma versão que
+// não subiu faz o cliente falhar o download e ficar sem atualizar.
+async function confirmarPacote(versao, url) {
+  const existe = await pacoteExiste(url);
+  if (!existe) {
+    return confirm('O pacote desta versão NÃO respondeu no Storage:\n' + url +
+      '\n\nSe publicar assim, os clientes não conseguem baixar. Publicar mesmo assim?');
+  }
+  if (!versoesConhecidas.includes(versao)) versoesConhecidas.push(versao);
+  return true;
+}
+
+async function publicarParaEmpresa(empresaId) {
+  try {
+    // O número já vem preenchido com a versão mais nova que está no Storage.
+    const bruta = prompt('Versão a publicar para ESTA empresa (já preenchida, é só confirmar):' + dicaVersoes(), maiorVersao());
+    if (!bruta) return showToast('Publicação cancelada', 'info');
+    if (!versaoValida(bruta)) return showToast('Versão inválida: ' + bruta, 'error');
+    const versao = bruta.trim().replace(/^!+/, '');
+    const url = urlDoPacote(versao);
+    if (!(await confirmarPacote(versao, url))) return showToast('Publicação cancelada', 'info');
+    if (!confirm('Publicar ' + versao + ' para esta empresa?\n\n' + url)) return;
+    await gravarDestino(APP_UPDATE_PREFIX + empresaId, versao, url);
+    showToast('Publicado ' + versao + ' para a empresa', 'success');
+    await loadVersoesApp();
+  } catch (e) { showToast('Falha ao publicar: ' + e.message, 'error'); }
+}
+
+// Downgrade: publica com o prefixo '!', que o app trata como "diferente da
+// instalada → aplica", inclusive versão MENOR.
+async function voltarVersaoEmpresa(empresaId, instalada) {
+  try {
+    const atual = instalada || 'sem registro';
+    // Já vem preenchido com a versão imediatamente anterior à instalada.
+    const bruta = prompt('Voltar ESTA empresa para qual versão?\nInstalada agora: ' + atual +
+      '\n(já preenchida com a anterior; é só confirmar)' + dicaVersoes(), versaoAnterior(instalada));
+    if (!bruta) return showToast('Downgrade cancelado', 'info');
+    if (!versaoValida(bruta)) return showToast('Versão inválida: ' + bruta, 'error');
+    const versao = bruta.trim().replace(/^!+/, '');
+    const url = urlDoPacote(versao);
+    if (!(await confirmarPacote(versao, url))) return showToast('Downgrade cancelado', 'info');
+    if (!confirm('Voltar esta empresa para ' + versao + '?\n(publicação forçada com "!")\n\n' + url)) return;
+    await gravarDestino(APP_UPDATE_PREFIX + empresaId, '!' + versao, url);
+    showToast('Downgrade agendado: ' + versao, 'success');
+    await loadVersoesApp();
+  } catch (e) { showToast('Falha no downgrade: ' + e.message, 'error'); }
+}
+
+async function publicarVersaoGlobal() {
+  try {
+    const bruta = prompt('Versão GLOBAL (todas as empresas sem direcionamento, já preenchida):' + dicaVersoes(), maiorVersao());
+    if (!bruta) return showToast('Publicação cancelada', 'info');
+    if (!versaoValida(bruta)) return showToast('Versão inválida: ' + bruta, 'error');
+    const versao = bruta.trim().replace(/^!+/, '');
+    const url = urlDoPacote(versao);
+    if (!(await confirmarPacote(versao, url))) return showToast('Publicação cancelada', 'info');
+    if (!confirm('Publicar ' + versao + ' para TODAS as empresas?\n\n' + url)) return;
+    await gravarDestino('app_latest', versao, url);
+    showToast('Global publicado: ' + versao, 'success');
+    await loadVersoesApp();
+  } catch (e) { showToast('Falha ao publicar global: ' + e.message, 'error'); }
+}
+
+async function removerDirecionamento(empresaId) {
+  if (!confirm('Remover o direcionamento desta empresa?\nEla passa a seguir a versão global (app_latest).')) return;
+  try {
+    const res = await fetch(API_BASE + '/bridge_config?id=eq.' + APP_UPDATE_PREFIX + encodeURIComponent(empresaId), { method: 'DELETE' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    showToast('Direcionamento removido', 'success');
+    await loadVersoesApp();
+  } catch (e) { showToast('Falha ao remover: ' + e.message, 'error'); }
+}
+
+async function publicarAtualizacaoApp() {
+  const emp = document.getElementById('empresaSelect');
+  const empresaId = (emp.value || '').trim();
+  const id = empresaId ? 'app_update_' + empresaId : 'app_latest';
+
+  // Mostra versões atuais antes de publicar
+  try {
+    const cur = await fetch(API_BASE + '/bridge_config?id=eq.' + encodeURIComponent(id), {
+      method: 'GET', headers: { 'Accept': 'application/json' }
+    }).then(r => r.json());
+    const currentVersion = cur?.[0]?.version || ' (sem versão publicada)';
+    const confirmVersao = prompt(`Versão a publicar (ex: 1.0.60)\nVersão atual do ${id}: ${currentVersion}\nDigite a nova versão:`);
+    if (!confirmVersao) return showToast('Publicação cancelada', 'info');
+    // A URL é montada pelo painel: <origem do painel>/storage/v1/object/public/
+    // atualizacoes/sistema_exodo_novo_<versao>.zip. Digitar à mão já gerou
+    // registros com o bucket duplicado e o cliente recebia HTTP 400.
+    const versaoArquivo = confirmVersao.replace(/^!+/, '').replace(/[^0-9A-Za-z._-]/g, '_');
+    const urlPadrao = location.origin + '/storage/v1/object/public/atualizacoes/sistema_exodo_novo_' + versaoArquivo + '.zip';
+    const confirmUrl = prompt('URL pública do pacote (.zip) no Storage:', urlPadrao);
+    if (!confirmUrl) return showToast('Publicação cancelada', 'info');
+    // Upsert (POST + merge-duplicates): PATCH só altera linha existente e
+    // devolvia 200 sem gravar nada nas empresas ainda sem registro.
+    await gravarDestino(id, confirmVersao, confirmUrl);
+    showToast('Atualização publicada: ' + confirmVersao + ' (' + id + ')', 'success');
+    await loadVersoesApp();
+    return true;
+  } catch (e) { showToast('Falha ao publicar: ' + e.message, 'error'); return null; }
+}
+
+// --- Nova funcionalidade: Disparar build GitHub Actions ---
+async function triggerGitHubWorkflow() {
+  if (!confirm('Disparar build GitHub Actions para gerar o .zip e upload no Storage?\nIsso roda na nuvem GitHub e pode alguns minutos.\nCertifique-se de que o workflow flutter_web.yml foi adicionado e os secrets SUPABASE_PROJECT_REF e SUPABASE_ANON_KEY estão configurados.')) return;
+  
+  try {
+    const res = await fetch('/admin/github/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow: 'flutter_web', ref: 'main' })
+    });
+    const d = await res.json();
+    if (d.status === 'queued') {
+      showToast('Build GitHub Actions disparado! Status: ' + d.message, 'success');
+    } else {
+      showToast('Erro: ' + (d.message || 'sem detalhes'), 'error');
+    }
+  } catch (e) {
+    showToast('Falha ao disparar workflow: ' + e.message, 'error');
+  }
+}
+
+async function verBancoLocalDaEmpresa() {
+  const emp = document.getElementById('empresaSelect');
+  const empresaId = (emp.value || '').trim();
+  if (!empresaId) return showToast('Selecione uma empresa primeiro', 'warning');
+  const sql = "SELECT * FROM perfis_tributarios WHERE empresa_id = '" + empresaId.replace(/'/g, "''") + "' ORDER BY nome";
+  document.getElementById('localQueryInput').value = sql;
+  document.getElementById('localQueryReadOnly').checked = true;
+  document.getElementById('localQueryLimit').value = '1000';
+  showToast('Consultando banco local da empresa selecionada...', 'info');
+  await executeLocalQuery();
+}
+
+// --- Repair ---
+async function runRepair(aplicar = false) {
+  const btn = event.target; setLoading(btn, true);
+  const resultDiv = document.getElementById('repairResult');
+  resultDiv.style.display = 'block';
+  resultDiv.textContent = 'Executando...';
+  const listas = [];
+  if (document.getElementById('repairPerfis').checked) listas.push('perfis_tributarios');
+  if (document.getElementById('repairPrecos').checked) listas.push('perfis_preco');
+  if (document.getElementById('repairDeptos').checked) listas.push('departamentos');
+  if (document.getElementById('repairEstoques').checked) listas.push('estoques');
+  try {
+    const res = await fetch('/admin/repair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listas, aplicar })
+    });
+    const result = await res.json();
+    resultDiv.textContent = JSON.stringify(result, null, 2);
+    showToast(aplicar ? 'Reparo aplicado na nuvem' : 'Dry-run concluído', result.sucesso ? 'success' : 'error');
+    await loadPerfis(); await loadDepartamentos(); await loadEstoques(); await loadEmpresaInfo();
+  } catch (e) {
+    resultDiv.textContent = 'Erro: ' + e.message;
+    showToast('Erro: ' + e.message, 'error');
+  } finally { setLoading(btn, false); }
+}
+
+// --- Logs ---
+// São linhas de ACESSO HTTP do portal ("GET /rest/v1/... 200"), não erros.
+// Verdes = 2xx/3xx, amarelas = 4xx, vermelhas = 5xx.
+let logsAtuais = [];
+
+async function buscarLogs(quantas) {
+  const res = await fetch('/admin/logs?linhas=' + (quantas || 200));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+function textoDosLogs(lista) {
+  return (lista || []).map(l => (l.time ? l.time + ' ' : '') + l.msg).join('\n');
+}
+
+async function loadLogs(quantas) {
+  const container = document.getElementById('logsContainer');
+  const resumo = document.getElementById('logsResumo');
+  try {
+    const logs = await buscarLogs(quantas || 200);
+    logsAtuais = logs;
+    const problemas = logs.filter(l => l.level === 'error' || l.level === 'warning');
+    const erros5xx = logs.filter(l => l.level === 'error').length;
+    resumo.textContent = logs.length + ' linha(s) — ' + problemas.length +
+      ' com HTTP >= 400 (' + erros5xx + ' erro(s) 5xx)';
+    container.innerHTML = logs.slice().reverse().map(l =>
+      '<div class="log-entry ' + (l.level || 'info') + '">' +
+        escHtml((l.time ? l.time + ' ' : '') + l.msg) + '</div>'
+    ).join('') || '<div class="log-entry info">(sem linhas)</div>';
+  } catch (e) {
+    container.innerHTML = '<div class="log-entry error">Erro ao carregar logs: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function copiarLogs(quantas) {
+  try {
+    const lista = quantas ? await buscarLogs(quantas) : logsAtuais;
+    const texto = textoDosLogs(lista);
+    if (!texto) return showToast('Nada para copiar', 'warning');
+    try {
+      await navigator.clipboard.writeText(texto);
+    } catch (erroClip) {
+      const area = document.createElement('textarea');
+      area.value = texto;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+    }
+    showToast('Copiado: ' + lista.length + ' linha(s)', 'success');
+  } catch (e) {
+    showToast('Falha ao copiar: ' + e.message, 'error');
+  }
+}
+
+async function baixarLogs() {
+  try {
+    const lista = await buscarLogs(10000);
+    const blob = new Blob([textoDosLogs(lista)], { type: 'text/plain;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'portal_nuvem_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.txt';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+    showToast('Arquivo gerado com ' + lista.length + ' linha(s)', 'success');
+  } catch (e) {
+    showToast('Falha ao baixar: ' + e.message, 'error');
+  }
+}
+
+function clearLogs() {
+  document.getElementById('logsContainer').innerHTML = '';
+}
+
+function startLogPoll() {
+  if (document.getElementById('autoRefreshLogs').checked) {
+    loadLogs();
+    logPollTimer = setInterval(loadLogs, 5000);
+  } else if (logPollTimer) {
+    clearInterval(logPollTimer);
+  }
+}
+
+document.getElementById('autoRefreshLogs').addEventListener('change', startLogPoll);
+
+// --- Debug ---
+async function loadDebug() {
+  try {
+    const [empresas, sync, config] = await Promise.all([
+      api('/empresas?select=id,razao_social,updated_at'),
+      api('/sync_status?select=*'),
+      api('/exodo_config?select=*')
+    ]);
+    document.getElementById('debugOutput').textContent = JSON.stringify({
+      empresas: empresas.length,
+      empresasList: empresas,
+      syncStatus: sync,
+      config
+    }, null, 2);
+  } catch (e) {
+    document.getElementById('debugOutput').textContent = 'Erro: ' + e.message;
+  }
+}
+
+// --- Init ---
+async function refreshAll() {
+  await loadEmpresas();
+  await loadSyncStatus();
+  await loadVersoesApp();
+  await popularDestinosPublicacao();
+  await loadLogs();
+  await loadDebug();
+}
+
+document.getElementById('empresaSelect').addEventListener('change', onEmpresaChange);
+
+// Start
+refreshAll();
+setInterval(checkStatus, 30000);
+checkStatus();
+
+// Add slide animations
+const style = document.createElement('style');
+style.textContent = `
+@keyframes slideIn { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes slideOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
+`;
+document.head.appendChild(style);
+</script>
+
+
+// Migration System
+async function listMigrations() {
+  const res = await fetch('/admin/migrations/list', {method: 'GET', headers: {'Accept': 'application/json'}});
+  const data = await res.json();
+  let html = '<h4>Migrations de Schema (' + data.migrations.length + ' total)</h4><ul>';
+  data.migrations.forEach(m => {
+    const cls = m.aplicada ? 'success' : 'warning';
+    html += '<li><span class="' + cls + '">' + m.versao + '</span> - ' + m.arquivo + ' ' +
+      (m.aplicada ? '(aplicada)' : '(pendente)') + '</li>';
+  });
+  html += '</ul><div id="migracaoResultado"></div>';
+  showToast('Lista carregada', 'info');
+  document.getElementById('migracaoInfo').innerHTML = html;
+}
+
+async function runMigration() {
+  const versao = prompt('Versao da migration (ex: 001):');
+  if (!versao) return;
+  showToast('Aplicando migration ' + versao + '...', 'info');
+  const res = await fetch('/admin/migrations/run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({versao: versao, descricao: 'Admin'})
+  });
+  const d = await res.json();
+  if (d.sucesso) {
+    showToast('Migration ' + versao + ' aplicada!', 'success');
+    listMigrations();
+  } else {
+    showToast('Erro: ' + (d.erro || ''), 'error');
+  }
+}
+
+// Auto-inicializar ao carregar
+document.addEventListener('DOMContentLoaded', () => {
+  const md = document.createElement('div');
+  md.innerHTML = '<div class="key-value" id="migracaoInfo"><span class="key">Versao Schema:</span><span class="value">-</span><span class="key">Pending:</span><span class="value">-</span></div><div class="btn-group" style="margin-top:12px;"><button class="btn btn-secondary" onclick="listMigrations()">Listar</button><button class="btn btn-primary" onclick="runMigration()">Aplicar</button></div>';
+  const card = document.querySelector('.card:first-child');
+  if (card) card.querySelector('.card-body').insertBefore(md, card.firstChild);
+  listMigrations();
+});
+</body>
+</html>
