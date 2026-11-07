@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from urllib.parse import urlparse
 
 # O console do Windows abre em cp1252 e explode com acento/emoji.
 try:
@@ -233,7 +234,31 @@ def devolver_extras_do_site(temporario, guardadas):
     return guardadas
 
 
-def enviar_pacote(supabase_url, chave, caminho_zip, nome_arquivo):
+HOST_PUBLICO_PADRAO = "https://servidorsupabase.tail9b4943.ts.net"
+
+
+def url_publica_base(env, supabase_url):
+    """Endereço que o CLIENTE alcança para baixar o pacote.
+
+    O `.env` aponta para o Kong local (`http://localhost:8001`); gravar essa URL
+    na `bridge_config` faz o cliente do outro computador tentar baixar de si
+    mesmo e falhar com "conexão recusada" (erro 1225).
+    """
+    for nome in (
+        "SUPABASE_PUBLIC_URL",
+        "SUPABASE_FUNNEL_URL",
+        "SUPABASE_URL_PUBLICA",
+    ):
+        valor = (env.get(nome) or "").strip().rstrip("/")
+        if valor.startswith("http"):
+            return valor
+    host = (urlparse(supabase_url).hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return HOST_PUBLICO_PADRAO
+    return supabase_url
+
+
+def enviar_pacote(supabase_url, chave, caminho_zip, nome_arquivo, base_publica=None):
     """Sobe o .zip no bucket. Devolve a URL pública."""
     import requests
 
@@ -251,7 +276,7 @@ def enviar_pacote(supabase_url, chave, caminho_zip, nome_arquivo):
         raise RuntimeError(
             f"upload falhou: HTTP {resposta.status_code} - {resposta.text[:200]}"
         )
-    return f"{supabase_url}/storage/v1/object/public/{BUCKET}/{nome_arquivo}"
+    return f"{base_publica or supabase_url}/storage/v1/object/public/{BUCKET}/{nome_arquivo}"
 
 
 def gravar_publicacao(supabase_url, chave, config_id, versao, url):
@@ -313,6 +338,7 @@ def main():
         or ""
     )
 
+    base_publica = url_publica_base(env, supabase_url)
     destino = (args.destino or "global").strip()
     eh_global = destino.lower() == "global"
     config_id = "app_latest" if eh_global else f"app_update_{destino}"
@@ -330,6 +356,8 @@ def main():
     log(f"  Versão no código {versao_codigo}")
     log(f"  Notas .......... {args.notas.strip() or '(nenhuma)'}")
     log(f"  Simulação ...... {'SIM (nada é enviado)' if args.simular else 'não'}")
+    if base_publica != supabase_url:
+        log(f"  Link p/ cliente  {base_publica} (o .env aponta para o Kong local)")
     log()
 
     if not supabase_url or not chave:
@@ -385,12 +413,14 @@ def main():
     # 5. Upload + registro ----------------------------------------------
     if args.simular:
         log("▶ Simulação: upload e gravação na nuvem NÃO foram feitos.")
-        log(f"   (seria {supabase_url}/storage/v1/object/public/{BUCKET}/{nome_arquivo})")
+        log(f"   (seria {base_publica}/storage/v1/object/public/{BUCKET}/{nome_arquivo})")
         log(f"   (seria bridge_config {config_id} = {versao_publicada})")
         return 0
 
     try:
-        url_publica = enviar_pacote(supabase_url, chave, caminho_zip, nome_arquivo)
+        url_publica = enviar_pacote(
+            supabase_url, chave, caminho_zip, nome_arquivo, base_publica
+        )
         log(f"📤 Pacote no ar: {url_publica}")
         if enviar_notas(
             supabase_url,

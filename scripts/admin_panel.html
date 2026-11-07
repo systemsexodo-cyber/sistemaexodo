@@ -1073,10 +1073,20 @@ function escHtml(v) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Endereço que o CLIENTE alcança. Abrindo o painel por localhost, o
+// `location.origin` é o Kong da própria máquina e o cliente do outro
+// computador recebia "conexão recusada" (erro 1225) ao baixar.
+const ORIGEM_PUBLICA = 'https://servidorsupabase.tail9b4943.ts.net';
+function origemPublica() {
+  const origem = location.origin;
+  if (/\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|$)/.test(origem)) return ORIGEM_PUBLICA;
+  return origem;
+}
+
 // Um pacote por versão no bucket `atualizacoes`.
 function urlDoPacote(versao) {
   const limpa = String(versao).replace(/^!+/, '').trim().replace(/[^0-9A-Za-z._-]/g, '_');
-  return location.origin + '/storage/v1/object/public/atualizacoes/sistema_exodo_novo_' + limpa + '.zip';
+  return origemPublica() + '/storage/v1/object/public/atualizacoes/sistema_exodo_novo_' + limpa + '.zip';
 }
 
 // O painel usa a chave anônima, que não tem permissão de LISTAR o bucket:
@@ -1371,7 +1381,7 @@ async function publicarAtualizacaoApp() {
     // atualizacoes/sistema_exodo_novo_<versao>.zip. Digitar à mão já gerou
     // registros com o bucket duplicado e o cliente recebia HTTP 400.
     const versaoArquivo = confirmVersao.replace(/^!+/, '').replace(/[^0-9A-Za-z._-]/g, '_');
-    const urlPadrao = location.origin + '/storage/v1/object/public/atualizacoes/sistema_exodo_novo_' + versaoArquivo + '.zip';
+    const urlPadrao = origemPublica() + '/storage/v1/object/public/atualizacoes/sistema_exodo_novo_' + versaoArquivo + '.zip';
     const confirmUrl = prompt('URL pública do pacote (.zip) no Storage:', urlPadrao);
     if (!confirmUrl) return showToast('Publicação cancelada', 'info');
     // Upsert (POST + merge-duplicates): PATCH só altera linha existente e
