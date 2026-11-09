@@ -14,6 +14,9 @@ import 'package:intl/intl.dart';
 import '../services/google_drive_service.dart';
 import '../services/auth_service.dart';
 import '../widgets/sync_status_widget.dart';
+import '../widgets/dialog_busca_notas_online.dart';
+import '../widgets/dropdown_fornecedor_entrada.dart';
+// import '../services/nfce_backend_service.dart'; // unused at the moment
 
 class EntradaMercadoriasPage extends StatefulWidget {
   const EntradaMercadoriasPage({super.key});
@@ -44,6 +47,11 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
   String? _filtroStatus; // 'rascunho', 'processada', 'cancelada', null = todos
   DateTime? _filtroDataInicio;
   DateTime? _filtroDataFim;
+  
+  /// Fornecedores únicos já usados nas notas de entrada (para o filtro de seleção).
+  /// Atualizado antes de montar a aba de notas e filtrado por período quando houver.
+  List<String> _fornecedoresDaLista = const [];
+  String? _fornecedorSelecionado;
   // Informações adicionais do XML
   
   // Função para extrair grupo do XML baseado no NCM ou categoria
@@ -717,6 +725,208 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
         return null;
       }
     }
+  }
+
+  /// Abre diálogo para buscar notas fiscais online (SEFAZ) ou locais
+  Future<void> _abrirBuscaNotas() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    
+    if (authService.empresaAtual == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nenhuma empresa selecionada. Por favor, selecione uma empresa primeiro.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final service = Provider.of<DataService>(context, listen: false);
+    final notasEntradaLocais = service.notasEntrada.where((n) => !n.isCancelada).toList();
+
+    // Abrir diálogo de busca de notas
+    await showDialog(
+      context: context,
+      builder: (context) => DialogBuscaNotasOnline(
+        empresa: authService.empresaAtual,
+        notasEntradaLocais: notasEntradaLocais,
+        onImportarXML: (xmlContent) async {
+          // Processar XML importado da SEFAZ
+          setState(() => _carregando = true);
+          
+          try {
+            String xmlString = xmlContent;
+            xml.XmlDocument document;
+            try {
+              document = xml.XmlDocument.parse(xmlString);
+            } catch (e) {
+              setState(() => _carregando = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Erro ao processar XML importado: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+
+            // Extrair número real da nota
+            String? numeroNotaReal;
+            final ideElements = document.findAllElements('ide');
+            if (ideElements.isNotEmpty) {
+              final nNF = ideElements.first.findElements('nNF');
+              if (nNF.isNotEmpty) {
+                numeroNotaReal = nNF.first.text;
+              }
+            }
+
+            // Extrair chave de acesso
+            String? chaveNFe;
+            final infNFeElements = document.findAllElements('infNFe');
+            if (infNFeElements.isNotEmpty) {
+              final chaveAttr = infNFeElements.first.getAttribute('Id');
+              if (chaveAttr != null && chaveAttr.startsWith('NFe')) {
+                chaveNFe = chaveAttr.substring(3);
+              }
+            }
+
+            // Extrair fornecedor
+            String? fornecedorNome, fornecedorCNPJ;
+            final emitElements = document.findAllElements('emit');
+            if (emitElements.isNotEmpty) {
+              final emit = emitElements.first;
+              final xNome = emit.findElements('xNome');
+              if (xNome.isNotEmpty) {
+                fornecedorNome = xNome.first.text;
+              }
+              final cnpj = emit.findElements('CNPJ');
+              if (cnpj.isNotEmpty) {
+                fornecedorCNPJ = cnpj.first.text;
+              } else {
+                final cpf = emit.findElements('CPF');
+                if (cpf.isNotEmpty) {
+                  fornecedorCNPJ = cpf.first.text;
+                }
+              }
+            }
+
+            // Extrair valor total
+            double? valorTotal;
+            final totalElements = document.findAllElements('total');
+            if (totalElements.isNotEmpty) {
+              final icmTot = totalElements.first.findElements('ICMSTot');
+              if (icmTot.isNotEmpty) {
+                final vNF = icmTot.first.findElements('vNF');
+                if (vNF.isNotEmpty) {
+                  valorTotal = double.tryParse(vNF.first.text.replaceAll(',', '.'));
+                }
+              }
+            }
+
+            // Extrair data de emissão
+            DateTime? dataEmissao;
+            final ide2 = document.findAllElements('ide');
+            if (ide2.isNotEmpty) {
+              final dhEmi = ide2.first.findElements('dhEmi');
+              if (dhEmi.isNotEmpty) {
+                try {
+                  dataEmissao = DateTime.parse(dhEmi.first.text);
+                } catch (_) {
+                  // Tentar formato simples
+                  final dEmi = ide2.first.findElements('dEmi');
+                  if (dEmi.isNotEmpty && dEmi.first.text.length == 8) {
+                    dataEmissao = DateTime.parse('${dEmi.first.text.substring(0, 4)}-${dEmi.first.text.substring(4, 6)}-${dEmi.first.text.substring(6, 8)}');
+                  }
+                }
+              }
+            }
+
+            // Extrair itens do XML
+            _itens.clear();
+            int itensProcessados = 0;
+            final detElements = document.findAllElements('det');
+            
+            for (var det in detElements) {
+              try {
+                final prod = det.findElements('prod');
+                if (prod.isEmpty) {
+                  print('>>> Elemento <det> sem <prod> encontrado, pulando...');
+                  continue;
+                }
+                
+                final codigo = prod.first.findElements('cProd').isEmpty
+                    ? '' 
+                    : prod.first.findElements('cProd').first.text;
+                final nome = prod.first.findElements('xProd').isEmpty
+                    ? '' 
+                    : prod.first.findElements('xProd').first.text;
+                
+                if (nome.isEmpty) {
+                  print('>>> Item sem nome encontrado, pulando...');
+                  continue;                }
+                
+                final quantidade = prod.first.findElements('qCom').isEmpty
+                    ? 0.0
+                    : (double.tryParse(
+                        prod.first.findElements('qCom').first.text.replaceAll(',', '.')                      ) ?? 0.0);
+                final valorUnitario = prod.first.findElements('vUnCom').isEmpty
+                    ? 0.0
+                    : (double.tryParse(                        prod.first.findElements('vUnCom').first.text.replaceAll(',', '.')                      ) ?? 0.0);
+                
+                String? codigoBarras;
+                try {
+                  final cEAN = prod.first.findElements('cEAN');
+                  if (cEAN.isNotEmpty) {
+                    final codigoBarrasText = cEAN.first.text;
+                    if (codigoBarrasText.isNotEmpty && codigoBarrasText != 'SEM GTIN') {
+                      codigoBarras = codigoBarrasText;                    }                  }                } catch (_) {}
+                
+                String unidade = 'UN';
+                try {
+                  final uCom = prod.first.findElements('uCom');
+                  if (uCom.isNotEmpty) {
+                    unidade = uCom.first.text;                  }                } catch (_) {}
+                
+                String codigoFinal = codigo;
+                                // Extrair grupo do XML                String grupo = _extrairGrupoDoXML(prod.first);                // Cadastrar grupo se não existir                _cadastrarGrupoSeNaoExistir(grupo);                                // Calcular preço de venda (se não houver no XML, usar margem padrão de 50% sobre o custo)                double precoVendaCalculado = valorUnitario > 0                    ? valorUnitario * 1.5  // Margem de 50% sobre o custo                    : 0.0;
+                                // Se produto existe, usar o preço atual dele e manter o grupo existente                final produtoExistente = _buscarProdutoPorCodigo(codigoFinal);                if (produtoExistente != null) {                  precoVendaCalculado = produtoExistente.preco;                // Se o produto já existe, usar o grupo dele em vez do extraído do XML                  grupo = produtoExistente.grupo;                }
+
+                print('>>> Item processado: $nome - Qtd: $quantidade - Código: $codigoFinal - Custo: $valorUnitario - Venda: $precoVendaCalculado - Grupo: $grupo');                _itens.add(_ItemEntrada(                  codigo: codigoFinal,                  codigoBarras: codigoBarras,                  nome: nome,                  quantidade: quantidade,                  quantidadeEmbalagens: quantidade,                  quantidadePorEmbalagem: 1,                  precoCusto: valorUnitario,                  precoVenda: precoVendaCalculado,                  unidade: unidade,                  grupo: grupo,                  produtoExistente: produtoExistente,                ));                itensProcessados++;              } catch (e, stackTrace) {                print('>>> Erro ao processar item: $e');                print('>>> Stack trace: $stackTrace');              }            }
+            
+            setState(() {              _carregando = false;
+              _modo = 'xml';
+              _xmlRawContent = xmlString;
+            });
+                        print('>>> Total de itens processados do XML importado: $itensProcessados');                        if (_itens.isEmpty) {              print('>>> AVISO: Nenhum item foi adicionado ao importar XML da SEFAZ');              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Nenhum item encontrado no XML importado. Verifique o console para mais detalhes.'),
+                  backgroundColor: Colors.orange,
+                  duration: Duration(seconds: 5),
+                ),
+              );            } else {              print('>>> SUCESSO: $itensProcessados item(ns) carregado(s) do XML da SEFAZ');                            // Ir para aba de itens imediatamente              setState(() {                _abaAtiva = 0;
+              });              // Forçar atualização do TabController              if (mounted) {                _tabController.animateTo(0);              }                            ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${_itens.length} item(ns) carregado(s) do XML da SEFAZ com sucesso!'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
+                ),
+              );            }
+          } catch (e) {
+            setState(() => _carregando = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Erro ao importar XML da SEFAZ: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        },
+        onCarregarNotaEntrada: (nota) {
+          // Carregar nota de entrada existente (rascunho ou processada)
+          _carregarRascunho(nota);
+        },
+      ),
+    );
   }
 
   void _adicionarItemManual() {
@@ -1717,6 +1927,11 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               tooltip: 'Adicionar Manual',
               onPressed: _adicionarItemManual,
             ),
+            IconButton(
+              icon: Icon(Icons.search, color: Colors.white),
+              tooltip: 'Buscar Notas SEFAZ',
+              onPressed: _abrirBuscaNotas,
+            ),
           ],
           bottom: TabBar(
             controller: _tabController,
@@ -2045,12 +2260,20 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
         if (_filtroStatus == 'cancelada' && !nota.isCancelada) return false;
       }
       
-      // Filtro por fornecedor
-      String filtroFornecedor = _filtroFornecedorController.text.trim();
-      if (filtroFornecedor.isNotEmpty) {
-        if (nota.fornecedorNome == null || 
-            !nota.fornecedorNome!.toLowerCase().contains(filtroFornecedor.toLowerCase())) {
+      // Filtro por fornecedor (seleção isolada da lista)
+      if (_fornecedorSelecionado != null) {
+        if (nota.fornecedorNome == null ||
+            !nota.fornecedorNome!.contains(_fornecedorSelecionado!)) {
           return false;
+        }
+      } else {
+        // Filtro textual de fornecedor (busca parcial no nome)
+        final filtroFornecedor = _filtroFornecedorController.text.trim();
+        if (filtroFornecedor.isNotEmpty) {
+          if (nota.fornecedorNome == null ||
+              !nota.fornecedorNome!.toLowerCase().contains(filtroFornecedor.toLowerCase())) {
+            return false;
+          }
         }
       }
       
@@ -2091,11 +2314,28 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
   Widget _buildAbaNotas() {
     return Consumer<DataService>(
       builder: (context, service, _) {
+        // Fornecedores únicos da lista (do período, se houver filtro de data)
+        // Chamada secundária para não atrapalhar o primeiro paint da aba.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _atualizarFornecedoresDaLista(service);
+        });
+
         final todasNotas = service.notasEntrada
           ..sort((a, b) => b.dataCriacao.compareTo(a.dataCriacao));
-        
-        // Aplicar filtros
+
+        // Aplicar filtros (textual, fornecedor selecionado, período, status)
         final notasFiltradas = _filtrarNotas(todasNotas);
+
+        // Ajustar o fornecedor selecionado caso ele não esteja mais na lista filtrada
+        if (        _fornecedorSelecionado != null && mounted &&
+        !notasFiltradas.any((n) => n.fornecedorNome == _fornecedorSelecionado)) {
+      setState(() => _fornecedorSelecionado = null);
+    }
+
+    // Se o fornecedor selecionado mudou, recarrega os itens da aba (se aplicável).
+    if (_fornecedorSelecionado != null) {
+      // evitamos reexecutar lógica pesada aqui; o filtro já está ativo na lista.
+    }
         
         final notasRascunho = notasFiltradas.where((n) => n.isRascunho).toList();
         final notasProcessadas = notasFiltradas.where((n) => n.isProcessada).toList();
@@ -2310,41 +2550,20 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               ),
               const SizedBox(width: 8),
               
-              // Filtro de Fornecedor
+              // Filtro de Fornecedor (seleção)
               Expanded(
-                child: TextField(
-                  controller: _filtroFornecedorController,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                  onChanged: (value) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'Fornecedor...',
-                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 12),
-                    prefixIcon: Icon(Icons.business, color: Colors.white.withOpacity(0.7), size: 20),
-                    suffixIcon: _filtroFornecedorController.text.isNotEmpty
-                        ? IconButton(
-                            icon: Icon(Icons.clear, color: Colors.white.withOpacity(0.7), size: 18),
-                            onPressed: () {
-                              setState(() {
-                                _filtroFornecedorController.clear();
-                              });
-                            },
-                          )
-                        : null,
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.1),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                  ),
+                  child: DropdownFornecedor(
+                    fornecedores: _fornecedoresDaLista,
+                    selecionado: _fornecedorSelecionado,
+                    onChanged: (v) {
+                      setState(() => _fornecedorSelecionado = v);
+                    },
                   ),
                 ),
               ),
@@ -2378,6 +2597,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
               // Botão limpar filtros
               if (_filtroStatus != null ||
                   _filtroFornecedorController.text.isNotEmpty ||
+                  _fornecedorSelecionado != null ||
                   _filtroDataInicio != null ||
                   _filtroDataFim != null ||
                   _buscaNotasController.text.isNotEmpty)
@@ -2394,6 +2614,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
                       setState(() {
                         _buscaNotasController.clear();
                         _filtroFornecedorController.clear();
+                        _fornecedorSelecionado = null;
                         _filtroStatus = null;
                         _filtroDataInicio = null;
                         _filtroDataFim = null;
@@ -2407,6 +2628,7 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
           // Chips de filtros ativos
           if (_filtroStatus != null ||
               _filtroFornecedorController.text.isNotEmpty ||
+              _fornecedorSelecionado != null ||
               _filtroDataInicio != null ||
               _filtroDataFim != null)
             Padding(
@@ -2445,6 +2667,18 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
                       },
                       backgroundColor: Colors.purpleAccent.withOpacity(0.3),
                       side: BorderSide(color: Colors.purpleAccent.withOpacity(0.5)),
+                    ),
+                  if (_fornecedorSelecionado != null)
+                    Chip(
+                      label: Text('Fornecedor: $_fornecedorSelecionado', style: const TextStyle(fontSize: 12, color: Colors.white)),
+                      deleteIcon: Icon(Icons.close, size: 16, color: Colors.white.withOpacity(0.7)),
+                      onDeleted: () {
+                        setState(() {
+                          _fornecedorSelecionado = null;
+                        });
+                      },
+                      backgroundColor: Colors.tealAccent.withOpacity(0.3),
+                      side: BorderSide(color: Colors.tealAccent.withOpacity(0.5)),
                     ),
                   if (_filtroDataInicio != null || _filtroDataFim != null)
                     Chip(
@@ -2627,6 +2861,50 @@ class _EntradaMercadoriasPageState extends State<EntradaMercadoriasPage> with Si
         ),
       ),
     );
+  }
+
+  bool _fornecedoresDaListaModificados(List<String> novaLista) {
+    if (identical(_fornecedoresDaLista, novaLista)) return false;
+    if (_fornecedoresDaLista.length != novaLista.length) return true;
+    for (var i = 0; i < _fornecedoresDaLista.length; i++) {
+      if (_fornecedoresDaLista[i] != novaLista[i]) return true;
+    }
+    return false;
+  }
+
+  void _atualizarFornecedoresDaLista(DataService service) {
+    final notas = service.notasEntrada;
+    // Se houver filtro de período, só considera notas dentro dele (já filtrado).
+    final inicio = _filtroDataInicio;
+    final fim = _filtroDataFim;
+    Iterable<NotaEntrada> candidatas = notas;
+    if (inicio != null || fim != null) {
+      final dataInicio = inicio ?? DateTime(2020);
+      final dataFim = fim ?? DateTime.now();
+      final fimComHora = DateTime(dataFim.year, dataFim.month, dataFim.day, 23, 59, 59);
+      candidatas = notas.where((n) {
+        final d = n.dataCriacao;
+        return d.isAfter(dataInicio) && d.isBefore(fimComHora);
+      });
+    }
+
+    final lista = candidatas
+        .map((n) => n.fornecedorNome)
+        .where((nome) => nome != null && nome.isNotEmpty)
+        .cast<String>()
+        .toSet()
+        .toList()
+      ..sort();
+
+    if (_fornecedoresDaListaModificados(lista)) {
+      setState(() {
+        _fornecedoresDaLista = lista;
+        // Mantém a seleção se ainda estiver na lista; senão limpa.
+        if (_fornecedorSelecionado != null && !lista.contains(_fornecedorSelecionado)) {
+          _fornecedorSelecionado = null;
+        }
+      });
+    }
   }
 
   void _mostrarDetalhesNota(NotaEntrada nota) {

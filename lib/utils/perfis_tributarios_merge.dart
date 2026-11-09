@@ -56,22 +56,28 @@ List<dynamic>? configListaVencedora({
 }) {
   final local = configLocal[chave];
   final remota = configRemota[chave];
-
-  final listaLocal = local is List && local.isNotEmpty ? local : null;
-  final listaRemota = remota is List && remota.isNotEmpty ? remota : null;
-
-  if (listaLocal == null && listaRemota == null) return null;
-  if (listaLocal == null) return listaRemota;
-  if (listaRemota == null) return listaLocal;
+  final temLocal = local is List;
+  final temRemota = remota is List;
+  if (!temLocal && !temRemota) return null;
 
   final carimboLocal = configAtualizadaEm(configLocal, chaveCarimbo);
   final carimboRemoto = configAtualizadaEm(configRemota, chaveCarimbo);
 
+  // Quando existe carimbo, quem salvou por último manda — INCLUSIVE quando a
+  // lista está vazia. Antes a regra "lista vazia perde" fazia o último perfil
+  // excluído (ou todos) voltar da nuvem no próximo sync.
   if (carimboLocal != null && carimboRemoto != null) {
-    return carimboRemoto.isAfter(carimboLocal) ? listaRemota : listaLocal;
+    return carimboRemoto.isAfter(carimboLocal) ? remota : local;
   }
-  if (carimboRemoto != null) return listaRemota;
-  if (carimboLocal != null) return listaLocal;
+  if (carimboLocal != null) return local;
+  if (carimboRemoto != null) return remota;
+
+  // Dados de versões antigas (sem carimbo): mantém a regra anterior.
+  final listaLocal = local is List && local.isNotEmpty ? local : null;
+  final listaRemota = remota is List && remota.isNotEmpty ? remota : null;
+  if (listaLocal == null && listaRemota == null) return null;
+  if (listaLocal == null) return listaRemota;
+  if (listaRemota == null) return listaLocal;
 
   return updatedAtRemota.isAfter(updatedAtLocal) ? listaRemota : listaLocal;
 }
@@ -98,12 +104,17 @@ void aplicarConfigListaMaisRecente(
   );
   if (vencedores == null) return;
 
-  final venceuLocal = identical(vencedores, configLocal[chave]);
   destino[chave] = vencedores;
-  final carimbo = configAtualizadaEm(
-    venceuLocal ? configLocal : configRemota,
-    chaveCarimbo,
-  );
+  // Copia o carimbo da cópia que venceu (o mais recente), para a próxima
+  // comparação ser feita contra a versão correta.
+  final carimboLocal = configAtualizadaEm(configLocal, chaveCarimbo);
+  final carimboRemoto = configAtualizadaEm(configRemota, chaveCarimbo);
+  final DateTime? carimbo;
+  if (carimboLocal != null && carimboRemoto != null) {
+    carimbo = carimboRemoto.isAfter(carimboLocal) ? carimboRemoto : carimboLocal;
+  } else {
+    carimbo = carimboRemoto ?? carimboLocal;
+  }
   if (carimbo != null) {
     destino[chaveCarimbo] = carimbo.toIso8601String();
   }

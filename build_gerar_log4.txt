@@ -1,0 +1,453 @@
+===========================================
+      GERANDO EXECUTAVEL DO EMISSOR
+===========================================
+
+[1/3] Preparando ambiente...
+Versao detectada: 3.5.8
+
+[2/3] Criando executavel unico (EXE)...
+Isso pode levar alguns minutos...
+
+141 INFO: PyInstaller: 6.21.0, contrib hooks: 2026.6
+141 INFO: Python: 3.12.4
+171 INFO: Platform: Windows-11-10.0.26200-SP0
+171 INFO: Python environment: C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\venv
+175 INFO: Removing temporary files and cleaning cache in C:\Users\charles\AppData\Local\pyinstaller
+2742 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\postgresql\\pgsql\\pgAdmin '
+ '4\\python\\python312.zip',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\postgresql\\pgsql\\pgAdmin '
+ '4\\python',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\win32',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\win32\\lib',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\pythonwin',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026']
+3047 INFO: Appending 'datas' from .spec
+3069 INFO: checking Analysis
+3069 INFO: Building Analysis because Analysis-00.toc is non existent
+3069 INFO: Looking for Python shared library...
+3069 INFO: Using Python shared library: C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\postgresql\pgsql\pgAdmin 4\python\python312.dll
+3069 INFO: Running Analysis Analysis-00.toc
+3069 INFO: Target bytecode optimization level: 0
+3069 INFO: Initializing module dependency graph...
+3069 INFO: Initializing module graph hook caches...
+3086 INFO: Analyzing modules for base_library.zip ...
+4312 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+4669 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+5482 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+6179 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+6432 INFO: Caching module dependency graph...
+6472 INFO: Analyzing C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\main.py
+6553 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+6642 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+6779 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+6812 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+6817 INFO: Processing standard module hook 'hook-uvicorn.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+7836 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+7837 INFO: SetuptoolsInfo: initializing cached setuptools info...
+8827 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+8922 INFO: Processing standard module hook 'hook-webbrowser.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9140 INFO: Processing standard module hook 'hook-cryptography.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+10503 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+10821 INFO: Processing standard module hook 'hook-lxml.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+11225 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+11281 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11291 INFO: Processing standard module hook 'hook-certifi.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+11339 INFO: Processing standard module hook 'hook-pystray.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+11713 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+11786 INFO: Processing pre-safe-import-module hook 'hook-gi.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+11804 INFO: Processing standard module hook 'hook-PIL.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12010 INFO: Processing standard module hook 'hook-anyio.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+12860 INFO: Processing standard module hook 'hook-pydantic.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+13618 INFO: Processing standard module hook 'hook-zoneinfo.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+13632 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+15167 INFO: Processing standard module hook 'hook-urllib3.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+15264 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+15265 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+15270 INFO: Processing standard module hook 'hook-setuptools.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+15282 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+15307 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+15308 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+15320 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+15322 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+15543 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+15731 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+15732 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+16258 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+16258 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+16723 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+16723 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+17375 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+19542 INFO: Processing standard module hook 'hook-grpc.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+19882 INFO: Processing standard module hook 'hook-google.api_core.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+20815 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+21294 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+21572 INFO: Analyzing hidden import '_tempfile'
+21573 ERROR: Hidden import '_tempfile' not found
+21573 INFO: Analyzing hidden import 'firebase_admin._auth_client'
+21821 INFO: Analyzing hidden import 'firebase_admin._messaging_encoder'
+21879 INFO: Analyzing hidden import 'firebase_admin._sseclient'
+21884 INFO: Analyzing hidden import 'firebase_admin.app_check'
+21889 INFO: Analyzing hidden import 'firebase_admin.auth'
+21897 INFO: Analyzing hidden import 'firebase_admin.db'
+21919 INFO: Analyzing hidden import 'firebase_admin.firestore_async'
+21921 INFO: Analyzing hidden import 'firebase_admin.functions'
+21934 INFO: Analyzing hidden import 'firebase_admin.instance_id'
+21936 INFO: Analyzing hidden import 'firebase_admin.messaging'
+21954 INFO: Analyzing hidden import 'firebase_admin.ml'
+21977 INFO: Processing standard module hook 'hook-google.cloud.storage.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+22308 INFO: Processing pre-safe-import-module hook 'hook-tensorflow.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\pre_safe_import_module'
+22312 INFO: Analyzing hidden import 'firebase_admin.phone_number_verification'
+22318 INFO: Analyzing hidden import 'firebase_admin.project_management'
+22332 INFO: Analyzing hidden import 'firebase_admin.remote_config'
+22355 INFO: Analyzing hidden import 'firebase_admin.tenant_mgt'
+22365 INFO: Analyzing hidden import 'pynfe.processamento.resposta'
+22367 INFO: Analyzing hidden import 'pynfe.utils.bar_code_128'
+22387 INFO: Analyzing hidden import 'pynfe.utils.descompactar'
+22388 INFO: Analyzing hidden import 'pynfe.utils.nfse'
+22389 INFO: Analyzing hidden import 'pynfe.utils.nfse.betha'
+22391 INFO: Analyzing hidden import 'pynfe.utils.nfse.betha._dsig'
+22490 INFO: Analyzing hidden import 'pynfe.utils.nfse.betha.nfse_v202'
+22841 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes'
+22842 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes._dsig'
+22932 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes._tipos'
+23135 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.cabecalho_v03'
+23140 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_cancelar_nfse_envio_v03'
+23145 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_cancelar_nfse_resposta_v03'
+23150 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_lote_rps_envio_v03'
+23157 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_lote_rps_resposta_v03'
+23163 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_envio_v03'
+23175 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_resposta_v03'
+23182 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_rps_envio_v03'
+23189 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_rps_resposta_v03'
+23193 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_situacao_lote_rps_envio_v03'
+23199 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_situacao_lote_rps_resposta_v03'
+23205 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_enviar_lote_rps_envio_v03'
+23210 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_enviar_lote_rps_resposta_v03'
+23216 INFO: Analyzing hidden import 'pystray._info'
+23217 INFO: Analyzing hidden import 'PIL.AvifImagePlugin'
+23226 INFO: Analyzing hidden import 'PIL.BdfFontFile'
+23234 INFO: Analyzing hidden import 'PIL.BlpImagePlugin'
+23251 INFO: Analyzing hidden import 'PIL.BufrStubImagePlugin'
+23253 INFO: Analyzing hidden import 'PIL.ContainerIO'
+23257 INFO: Analyzing hidden import 'PIL.CurImagePlugin'
+23260 INFO: Analyzing hidden import 'PIL.DcxImagePlugin'
+23269 INFO: Analyzing hidden import 'PIL.DdsImagePlugin'
+23286 INFO: Analyzing hidden import 'PIL.EpsImagePlugin'
+23298 INFO: Analyzing hidden import 'PIL.FitsImagePlugin'
+23304 INFO: Analyzing hidden import 'PIL.FliImagePlugin'
+23311 INFO: Analyzing hidden import 'PIL.FpxImagePlugin'
+23319 INFO: Analyzing hidden import 'PIL.FtexImagePlugin'
+23323 INFO: Analyzing hidden import 'PIL.GbrImagePlugin'
+23327 INFO: Analyzing hidden import 'PIL.GdImageFile'
+23329 INFO: Analyzing hidden import 'PIL.GribStubImagePlugin'
+23332 INFO: Analyzing hidden import 'PIL.Hdf5StubImagePlugin'
+23334 INFO: Analyzing hidden import 'PIL.IcnsImagePlugin'
+23372 INFO: Analyzing hidden import 'PIL.IcoImagePlugin'
+23384 INFO: Analyzing hidden import 'PIL.ImImagePlugin'
+23395 INFO: Analyzing hidden import 'PIL.ImageEnhance'
+23403 INFO: Analyzing hidden import 'PIL.ImageGrab'
+23409 INFO: Analyzing hidden import 'PIL.ImageMorph'
+23417 INFO: Analyzing hidden import 'PIL.ImageTk'
+23423 INFO: Analyzing hidden import 'PIL.ImageTransform'
+23424 INFO: Analyzing hidden import 'PIL.ImtImagePlugin'
+23428 INFO: Analyzing hidden import 'PIL.IptcImagePlugin'
+23433 INFO: Analyzing hidden import 'PIL.McIdasImagePlugin'
+23435 INFO: Analyzing hidden import 'PIL.MicImagePlugin'
+23437 INFO: Analyzing hidden import 'PIL.MpegImagePlugin'
+23440 INFO: Analyzing hidden import 'PIL.MspImagePlugin'
+23446 INFO: Analyzing hidden import 'PIL.PSDraw'
+23450 INFO: Analyzing hidden import 'PIL.PalmImagePlugin'
+23458 INFO: Analyzing hidden import 'PIL.PcdImagePlugin'
+23460 INFO: Analyzing hidden import 'PIL.PcfFontFile'
+23468 INFO: Analyzing hidden import 'PIL.PdfImagePlugin'
+23511 INFO: Analyzing hidden import 'PIL.PixarImagePlugin'
+23513 INFO: Analyzing hidden import 'PIL.PsdImagePlugin'
+23522 INFO: Analyzing hidden import 'PIL.QoiImagePlugin'
+23532 INFO: Analyzing hidden import 'PIL.SgiImagePlugin'
+23539 INFO: Analyzing hidden import 'PIL.SpiderImagePlugin'
+23548 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+23549 INFO: Analyzing hidden import 'PIL.SunImagePlugin'
+23553 INFO: Analyzing hidden import 'PIL.TarIO'
+23554 INFO: Analyzing hidden import 'PIL.TgaImagePlugin'
+23562 INFO: Analyzing hidden import 'PIL.WalImageFile'
+23565 INFO: Analyzing hidden import 'PIL.WebPImagePlugin'
+23577 INFO: Analyzing hidden import 'PIL.WmfImagePlugin'
+23581 INFO: Analyzing hidden import 'PIL.XVThumbImagePlugin'
+23584 INFO: Analyzing hidden import 'PIL.XbmImagePlugin'
+23587 INFO: Analyzing hidden import 'PIL.XpmImagePlugin'
+23592 INFO: Analyzing hidden import 'PIL.__main__'
+23592 INFO: Analyzing hidden import 'PIL._tkinter_finder'
+23594 INFO: Analyzing hidden import 'PIL.report'
+23595 INFO: Processing module hooks (post-graph stage)...
+23768 WARNING: Hidden import "ada92cb5d92a588d1b93__mypyc" not found!
+24225 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+24556 WARNING: Hidden import "tzdata" not found!
+24696 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+24711 INFO: Performing binary vs. data reclassification (307 entries)
+24738 INFO: Looking for ctypes DLLs
+24782 INFO: Analyzing run-time hooks ...
+24790 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+24792 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+24794 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+24795 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+24797 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+24827 INFO: Creating base_library.zip...
+24850 INFO: Looking for dynamic libraries
+C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\venv\Lib\site-packages\google_crc32c\__init__.py:29: RuntimeWarning: As the c extension couldn't be imported, `google-crc32c` is using a pure python implementation that is significantly slower. If possible, please configure a c build environment and compile the extension
+  warnings.warn(_SLOW_CRC32C_WARNING, RuntimeWarning)
+26219 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\google_crc32c\\extra-dll']
+26219 INFO: Extra DLL search directories (PATH): []
+26855 INFO: Warnings written to C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\warn-ExodoNfceBridge.txt
+27024 INFO: Graph cross-reference written to C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\xref-ExodoNfceBridge.html
+27088 INFO: checking PYZ
+27088 INFO: Building PYZ because PYZ-00.toc is non existent
+27088 INFO: Building PYZ (ZlibArchive) C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\PYZ-00.pyz
+28153 INFO: Building PYZ (ZlibArchive) C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\PYZ-00.pyz completed successfully.
+28187 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\postgresql\\pgsql\\pgAdmin '
+ '4\\python\\python312.zip',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\postgresql\\pgsql\\pgAdmin '
+ '4\\python',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\win32',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\win32\\lib',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\pythonwin',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce',
+ 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026']
+28507 INFO: Appending 'datas' from .spec
+28527 INFO: checking Analysis
+28528 INFO: Building Analysis because Analysis-01.toc is non existent
+28528 INFO: Looking for Python shared library...
+28528 INFO: Using Python shared library: C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\postgresql\pgsql\pgAdmin 4\python\python312.dll
+28528 INFO: Running Analysis Analysis-01.toc
+28528 INFO: Target bytecode optimization level: 0
+28528 INFO: Reusing cached module dependency graph...
+28547 INFO: Initializing module graph hook caches...
+28567 INFO: Analyzing C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\watchdog.py
+28744 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+28764 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+28854 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+28896 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+28984 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+29118 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+29226 INFO: Processing standard module hook 'hook-cryptography.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+30050 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+30358 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+30718 INFO: Processing standard module hook 'hook-urllib3.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+30811 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+30812 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+30825 INFO: Processing standard module hook 'hook-setuptools.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+30838 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+30879 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+30882 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+30882 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+30893 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+30893 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+31011 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+31191 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+31379 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+31380 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+31895 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+31896 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+32367 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+32368 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+33077 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+33419 INFO: Processing standard module hook 'hook-certifi.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+33458 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+34168 INFO: Processing standard module hook 'hook-anyio.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+35557 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+35694 INFO: Processing standard module hook 'hook-webbrowser.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+36463 INFO: Processing standard module hook 'hook-grpc.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+36868 INFO: Processing standard module hook 'hook-google.api_core.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+37639 INFO: Analyzing hidden import 'uvicorn'
+37640 INFO: Processing standard module hook 'hook-uvicorn.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+38604 INFO: Analyzing hidden import 'pynfe'
+38605 INFO: Analyzing hidden import '_tempfile'
+38605 ERROR: Hidden import '_tempfile' not found
+38605 INFO: Analyzing hidden import 'pystray'
+38608 INFO: Processing standard module hook 'hook-pystray.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+38938 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+39014 INFO: Processing pre-safe-import-module hook 'hook-gi.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+39033 INFO: Processing standard module hook 'hook-PIL.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+39066 INFO: Analyzing hidden import 'PIL.Image'
+39171 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+39542 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+39768 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+39977 INFO: Analyzing hidden import 'PIL.ImageDraw'
+40044 INFO: Analyzing hidden import 'firebase_admin._auth_client'
+40281 INFO: Analyzing hidden import 'firebase_admin._messaging_encoder'
+40310 INFO: Analyzing hidden import 'firebase_admin._sseclient'
+40315 INFO: Analyzing hidden import 'firebase_admin.app_check'
+40320 INFO: Analyzing hidden import 'firebase_admin.auth'
+40327 INFO: Analyzing hidden import 'firebase_admin.db'
+40347 INFO: Analyzing hidden import 'firebase_admin.firestore_async'
+40350 INFO: Analyzing hidden import 'firebase_admin.functions'
+40361 INFO: Analyzing hidden import 'firebase_admin.instance_id'
+40363 INFO: Analyzing hidden import 'firebase_admin.messaging'
+40379 INFO: Analyzing hidden import 'firebase_admin.ml'
+40403 INFO: Processing standard module hook 'hook-google.cloud.storage.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+40736 INFO: Processing pre-safe-import-module hook 'hook-tensorflow.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\pre_safe_import_module'
+40739 INFO: Analyzing hidden import 'firebase_admin.phone_number_verification'
+40746 INFO: Analyzing hidden import 'firebase_admin.project_management'
+40760 INFO: Analyzing hidden import 'firebase_admin.remote_config'
+40779 INFO: Analyzing hidden import 'firebase_admin.tenant_mgt'
+40788 INFO: Analyzing hidden import 'pynfe.entidades'
+40822 INFO: Processing standard module hook 'hook-lxml.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+41157 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+41260 INFO: Analyzing hidden import 'pynfe.processamento'
+41417 INFO: Analyzing hidden import 'pynfe.processamento.resposta'
+41418 INFO: Analyzing hidden import 'pynfe.utils.bar_code_128'
+41433 INFO: Analyzing hidden import 'pynfe.utils.descompactar'
+41434 INFO: Analyzing hidden import 'pynfe.utils.nfse'
+41434 INFO: Analyzing hidden import 'pynfe.utils.nfse.betha'
+41435 INFO: Analyzing hidden import 'pynfe.utils.nfse.betha._dsig'
+41527 INFO: Analyzing hidden import 'pynfe.utils.nfse.betha.nfse_v202'
+41918 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes'
+41919 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes._dsig'
+42010 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes._tipos'
+42219 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.cabecalho_v03'
+42224 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_cancelar_nfse_envio_v03'
+42229 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_cancelar_nfse_resposta_v03'
+42235 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_lote_rps_envio_v03'
+42240 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_lote_rps_resposta_v03'
+42248 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_envio_v03'
+42261 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_resposta_v03'
+42267 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_rps_envio_v03'
+42273 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_nfse_rps_resposta_v03'
+42280 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_situacao_lote_rps_envio_v03'
+42287 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_consultar_situacao_lote_rps_resposta_v03'
+42337 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_enviar_lote_rps_envio_v03'
+42344 INFO: Analyzing hidden import 'pynfe.utils.nfse.ginfes.servico_enviar_lote_rps_resposta_v03'
+42351 INFO: Analyzing hidden import 'pystray._info'
+42351 INFO: Analyzing hidden import 'PIL.AvifImagePlugin'
+42362 INFO: Analyzing hidden import 'PIL.BdfFontFile'
+42370 INFO: Analyzing hidden import 'PIL.BlpImagePlugin'
+42389 INFO: Analyzing hidden import 'PIL.BufrStubImagePlugin'
+42393 INFO: Analyzing hidden import 'PIL.ContainerIO'
+42397 INFO: Analyzing hidden import 'PIL.CurImagePlugin'
+42400 INFO: Analyzing hidden import 'PIL.DcxImagePlugin'
+42410 INFO: Analyzing hidden import 'PIL.DdsImagePlugin'
+42427 INFO: Analyzing hidden import 'PIL.EpsImagePlugin'
+42443 INFO: Analyzing hidden import 'PIL.FitsImagePlugin'
+42450 INFO: Analyzing hidden import 'PIL.FliImagePlugin'
+42458 INFO: Analyzing hidden import 'PIL.FpxImagePlugin'
+42466 INFO: Analyzing hidden import 'PIL.FtexImagePlugin'
+42469 INFO: Analyzing hidden import 'PIL.GbrImagePlugin'
+42472 INFO: Analyzing hidden import 'PIL.GdImageFile'
+42475 INFO: Analyzing hidden import 'PIL.GribStubImagePlugin'
+42479 INFO: Analyzing hidden import 'PIL.Hdf5StubImagePlugin'
+42480 INFO: Analyzing hidden import 'PIL.IcnsImagePlugin'
+42525 INFO: Analyzing hidden import 'PIL.IcoImagePlugin'
+42538 INFO: Analyzing hidden import 'PIL.ImImagePlugin'
+42551 INFO: Analyzing hidden import 'PIL.ImageEnhance'
+42560 INFO: Analyzing hidden import 'PIL.ImageGrab'
+42566 INFO: Analyzing hidden import 'PIL.ImageMorph'
+42574 INFO: Analyzing hidden import 'PIL.ImageTk'
+42580 INFO: Analyzing hidden import 'PIL.ImageTransform'
+42582 INFO: Analyzing hidden import 'PIL.ImtImagePlugin'
+42584 INFO: Analyzing hidden import 'PIL.IptcImagePlugin'
+42590 INFO: Analyzing hidden import 'PIL.McIdasImagePlugin'
+42594 INFO: Analyzing hidden import 'PIL.MicImagePlugin'
+42596 INFO: Analyzing hidden import 'PIL.MpegImagePlugin'
+42599 INFO: Analyzing hidden import 'PIL.MspImagePlugin'
+42603 INFO: Analyzing hidden import 'PIL.PSDraw'
+42607 INFO: Analyzing hidden import 'PIL.PalmImagePlugin'
+42618 INFO: Analyzing hidden import 'PIL.PcdImagePlugin'
+42620 INFO: Analyzing hidden import 'PIL.PcfFontFile'
+42628 INFO: Analyzing hidden import 'PIL.PdfImagePlugin'
+42674 INFO: Analyzing hidden import 'PIL.PixarImagePlugin'
+42676 INFO: Analyzing hidden import 'PIL.PsdImagePlugin'
+42685 INFO: Analyzing hidden import 'PIL.QoiImagePlugin'
+42694 INFO: Analyzing hidden import 'PIL.SgiImagePlugin'
+42700 INFO: Analyzing hidden import 'PIL.SpiderImagePlugin'
+42708 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+42709 INFO: Analyzing hidden import 'PIL.SunImagePlugin'
+42712 INFO: Analyzing hidden import 'PIL.TarIO'
+42714 INFO: Analyzing hidden import 'PIL.TgaImagePlugin'
+42721 INFO: Analyzing hidden import 'PIL.WalImageFile'
+42723 INFO: Analyzing hidden import 'PIL.WebPImagePlugin'
+42735 INFO: Analyzing hidden import 'PIL.WmfImagePlugin'
+42738 INFO: Analyzing hidden import 'PIL.XVThumbImagePlugin'
+42741 INFO: Analyzing hidden import 'PIL.XbmImagePlugin'
+42744 INFO: Analyzing hidden import 'PIL.XpmImagePlugin'
+42749 INFO: Analyzing hidden import 'PIL.__main__'
+42750 INFO: Analyzing hidden import 'PIL._tkinter_finder'
+42751 INFO: Analyzing hidden import 'PIL.report'
+42752 INFO: Processing module hooks (post-graph stage)...
+42911 WARNING: Hidden import "ada92cb5d92a588d1b93__mypyc" not found!
+43388 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+43576 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+43589 INFO: Performing binary vs. data reclassification (307 entries)
+43615 INFO: Looking for ctypes DLLs
+43644 INFO: Analyzing run-time hooks ...
+43650 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+43653 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+43655 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+43656 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+43657 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+43688 INFO: Creating base_library.zip...
+43709 INFO: Looking for dynamic libraries
+C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\venv\Lib\site-packages\google_crc32c\__init__.py:29: RuntimeWarning: As the c extension couldn't be imported, `google-crc32c` is using a pure python implementation that is significantly slower. If possible, please configure a c build environment and compile the extension
+  warnings.warn(_SLOW_CRC32C_WARNING, RuntimeWarning)
+44858 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\charles\\.antigravity\\sistema_exodo_15-04-2026\\backend_nfce\\venv\\Lib\\site-packages\\google_crc32c\\extra-dll']
+44858 INFO: Extra DLL search directories (PATH): []
+45818 INFO: Warnings written to C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\warn-ExodoNfceBridge.txt
+46046 INFO: Graph cross-reference written to C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\xref-ExodoNfceBridge.html
+46109 INFO: checking PYZ
+46109 INFO: Building PYZ because PYZ-01.toc is non existent
+46109 INFO: Building PYZ (ZlibArchive) C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\PYZ-01.pyz
+47101 INFO: Building PYZ (ZlibArchive) C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\build\ExodoNfceBridge\PYZ-01.pyz completed successfully.
+47138 INFO: checking PKG
+47138 INFO: Building PKG because PKG-00.toc is non existent
+47139 INFO: Building PKG (CArchive) ExodoNfceBridge_v358.pkg
+55092 INFO: Building PKG (CArchive) ExodoNfceBridge_v358.pkg completed successfully.
+55101 INFO: Bootloader C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+55101 INFO: checking EXE
+55102 INFO: Building EXE because EXE-00.toc is non existent
+55102 INFO: Building EXE from EXE-00.toc
+55106 INFO: Copying bootloader EXE to C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\dist\ExodoNfceBridge_v358.exe
+55109 INFO: Copying icon to EXE
+55111 INFO: Copying 0 resources to EXE
+55111 INFO: Embedding manifest in EXE
+55114 INFO: Appending PKG archive to EXE
+55139 INFO: Fixing EXE headers
+55383 INFO: Building EXE from EXE-00.toc completed successfully.
+55402 INFO: checking PKG
+55403 INFO: Building PKG because PKG-01.toc is non existent
+55403 INFO: Building PKG (CArchive) ExodoNfceBridgeWatchdog_v358.pkg
+62742 INFO: Building PKG (CArchive) ExodoNfceBridgeWatchdog_v358.pkg completed successfully.
+62753 INFO: Bootloader C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+62753 INFO: checking EXE
+62753 INFO: Building EXE because EXE-01.toc is non existent
+62753 INFO: Building EXE from EXE-01.toc
+62758 INFO: Copying bootloader EXE to C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\dist\ExodoNfceBridgeWatchdog_v358.exe
+62761 INFO: Copying icon to EXE
+62763 INFO: Copying 0 resources to EXE
+62763 INFO: Embedding manifest in EXE
+62765 INFO: Appending PKG archive to EXE
+62788 INFO: Fixing EXE headers
+63012 INFO: Building EXE from EXE-01.toc completed successfully.
+63024 INFO: Build complete! The results are available in: C:\Users\charles\.antigravity\sistema_exodo_15-04-2026\backend_nfce\dist
+
+[3/3] Finalizado!
+
+
+Copiando para a raiz...
+        1 arquivo(s) copiado(s).
+        1 arquivo(s) copiado(s).
+        1 arquivo(s) copiado(s).
+        1 arquivo(s) copiado(s).
+
+EXECUTAVEL v3.5.8 GERADO COM SUCESSO!
+Arquivos disponiveis em:
+- backend_nfce\dist\ExodoNfceBridge_v358.exe
+- ExodoNfceBridge.exe (na raiz)
+
+Pressione qualquer tecla para continuar. . . 

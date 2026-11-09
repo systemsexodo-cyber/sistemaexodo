@@ -297,12 +297,15 @@ class Pedido {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? senha,
+    /// Permite APAGAR o nome do cliente: `clienteNome: null` sozinho não limpa
+    /// nada (null significa "mantém o atual").
+    bool limparClienteNome = false,
   }) {
     return Pedido(
       id: id ?? this.id,
       numero: numero ?? this.numero,
       clienteId: clienteId ?? this.clienteId,
-      clienteNome: clienteNome ?? this.clienteNome,
+      clienteNome: limparClienteNome ? null : (clienteNome ?? this.clienteNome),
       clienteTelefone: clienteTelefone ?? this.clienteTelefone,
       clienteEndereco: clienteEndereco ?? this.clienteEndereco,
       clienteCpfCnpj: clienteCpfCnpj ?? this.clienteCpfCnpj,

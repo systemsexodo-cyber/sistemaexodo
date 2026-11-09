@@ -96,7 +96,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM --- 3b) Portal + API na MESMA origem (porta %PORTA_PORTAL%) -------------
+REM --- 3b) Limpa credenciais do bundle web antes de publicar ----------------
+REM O portal serve build\web diretamente. Sem esta limpeza, o app.env vai
+REM para a internet com DB_PASSWORD, chaves S3 e outros segredos.
+if exist "%~dp0build\web\assets\assets\app.env" (
+  call :log "Limpando credenciais do bundle web (app.env)..."
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tool\limpa_segredos_web.ps1" >> "%LOG%" 2>&1
+)
+
+REM --- 3c) Portal + API na MESMA origem (porta %PORTA_PORTAL%) -------------
 call :log "Verificando o portal na porta %PORTA_PORTAL%..."
 powershell -NoProfile -Command "try { (New-Object System.Net.Sockets.TcpClient('127.0.0.1',%PORTA_PORTAL%)).Close(); exit 0 } catch { exit 1 }" >nul 2>&1
 if not errorlevel 1 goto portal_pronto
@@ -116,7 +124,7 @@ goto espera_portal
 :portal_pronto
 call :log "Portal ok (http://127.0.0.1:%PORTA_PORTAL% -> build\web + /rest/v1)."
 
-REM --- 3c) Funnel HTTPS: site e API no mesmo host --------------------------
+REM --- 3d) Funnel HTTPS: site e API no mesmo host --------------------------
 call :log "Aplicando o Funnel HTTPS para o portal (mesma origem da API)..."
 "%TAILSCALE%" funnel --bg http://127.0.0.1:%PORTA_PORTAL% >> "%LOG%" 2>&1
 if errorlevel 1 (

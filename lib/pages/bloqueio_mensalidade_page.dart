@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/historico_mensalidade.dart';
 import 'package:sistema_exodo_novo/services/mercado_pago_mensalidade_service.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
 import 'package:sistema_exodo_novo/pages/selecionar_empresa_page.dart';
@@ -53,6 +54,103 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
     );
   }
 
+  static final _emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+
+  String? _emailValido(String? valor) {
+    final email = (valor ?? '').trim();
+    if (email.isEmpty || !_emailRegex.hasMatch(email)) return null;
+    return email;
+  }
+
+  Future<String?> _resolverEmailPagador(Empresa empresa) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final configs = empresa.configuracoes ?? const <String, dynamic>{};
+    final candidatos = <String?>[
+      authService.usuarioAtual?.email,
+      empresa.email,
+      configs['email_pagador']?.toString(),
+      configs['email']?.toString(),
+      empresa.emailContabilidade,
+    ];
+    for (final candidato in candidatos) {
+      final email = _emailValido(candidato);
+      if (email != null) return email;
+    }
+    return _solicitarEmailPagador();
+  }
+
+  Future<String?> _solicitarEmailPagador() async {
+    final controller = TextEditingController();
+    String? erro;
+    final email = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text(
+            'E-mail para a cobrança',
+            style: TextStyle(color: Colors.white, fontSize: 16),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Não encontrei um e-mail cadastrado. Informe um e-mail '
+                'para gerar o Pix da mensalidade.',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'E-mail',
+                  hintText: 'seuemail@exemplo.com',
+                  errorText: erro,
+                ),
+                onSubmitted: (_) {
+                  final valor = controller.text.trim();
+                  if (!_emailRegex.hasMatch(valor)) {
+                    setDialogState(() => erro = 'Informe um e-mail válido.');
+                    return;
+                  }
+                  Navigator.pop(dialogContext, valor);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text(
+                'CANCELAR',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                final valor = controller.text.trim();
+                if (!_emailRegex.hasMatch(valor)) {
+                  setDialogState(() => erro = 'Informe um e-mail válido.');
+                  return;
+                }
+                Navigator.pop(dialogContext, valor);
+              },
+              child: const Text(
+                'GERAR PIX',
+                style: TextStyle(color: Colors.greenAccent),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return email;
+  }
+
   Future<void> _gerarPixMensalidade() async {
     setState(() {
       _criandoPix = true;
@@ -66,10 +164,10 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
       if (empresa == null) {
         throw Exception('Não encontrei a empresa desta cobrança.');
       }
-      final emailUsuario = authService.usuarioAtual?.email.trim() ?? '';
-      final email = emailUsuario.contains('@')
-          ? emailUsuario
-          : empresa.email ?? '';
+      final email = await _resolverEmailPagador(empresa);
+      if (email == null) {
+        throw Exception('Informe um e-mail válido para gerar a cobrança.');
+      }
       final pix = await _mercadoPago.criarPix(
         empresaId: empresa.id,
         emailPagador: email,
@@ -137,13 +235,20 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
       _mensagemSync = 'Pagamento confirmado. Liberando o sistema...';
     });
     try {
-      final configs = Map<String, dynamic>.from(empresa.configuracoes ?? {})
-        ..['status_pagamento'] = 'pago'
-        ..['bloqueado'] = false
-        ..['ultimo_mes_pago'] = pix.mesReferencia
-        ..['mercado_pago_payment_id'] = pix.pagamentoId
-        ..['mercado_pago_pago_em'] =
-            pagoEm ?? DateTime.now().toUtc().toIso8601String();
+      final configs =
+          HistoricoMensalidade.registrar(
+              Map<String, dynamic>.from(empresa.configuracoes ?? {}),
+              competencia: pix.mesReferencia,
+              valor: pix.valor,
+              pagamentoId: pix.pagamentoId,
+              pagoEm: DateTime.tryParse(pagoEm ?? ''),
+            )
+            ..['status_pagamento'] = 'pago'
+            ..['bloqueado'] = false
+            ..['ultimo_mes_pago'] = pix.mesReferencia
+            ..['mercado_pago_payment_id'] = pix.pagamentoId
+            ..['mercado_pago_pago_em'] =
+                pagoEm ?? DateTime.now().toUtc().toIso8601String();
       final atualizada = empresa.copyWith(configuracoes: configs);
       await authService.atualizarEmpresa(atualizada);
       dataService.setEmpresaAtual(atualizada);
@@ -216,9 +321,19 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
         final mesAtualStr =
             '${agora.year}-${agora.month.toString().padLeft(2, '0')}';
 
-        final Map<String, dynamic> novasConfigs = Map<String, dynamic>.from(
-          emp.configuracoes ?? {},
-        );
+        final Map<String, dynamic> novasConfigs =
+            HistoricoMensalidade.registrar(
+              Map<String, dynamic>.from(emp.configuracoes ?? {}),
+              competencia: mesAtualStr,
+              valor: double.tryParse(
+                (emp.configuracoes?['valor_mensalidade'] ??
+                        emp.configuracoes?['valorMensalidade'] ??
+                        '')
+                    .toString()
+                    .replaceAll(',', '.'),
+              ),
+              origem: 'manual',
+            );
         novasConfigs['status_pagamento'] = 'pago';
         novasConfigs['bloqueado'] = false;
         novasConfigs['ultimo_mes_pago'] = mesAtualStr;
@@ -442,6 +557,36 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
     }
   }
 
+  /// Extrai o DIA do vencimento mensal a partir de `data_cobranca`.
+  ///
+  /// Aceita tanto a data ISO completa (`'2026-07-05'` → 5) quanto o número do
+  /// dia puro (`'5'` → 5), do mesmo jeito que `Empresa.isInadimplenteRecorrente`.
+  static int? _diaVencimentoDe(Object? dataCobranca) {
+    final bruto = dataCobranca?.toString().trim();
+    if (bruto == null || bruto.isEmpty) return null;
+    final data = DateTime.tryParse(bruto);
+    return data?.day ?? int.tryParse(bruto);
+  }
+
+  /// Vencimento da competência que está sendo cobrada AGORA.
+  ///
+  /// Mesma regra de `Empresa.isInadimplenteRecorrente`:
+  ///   * hoje >= dia de vencimento → a competência exigida é o mês ATUAL;
+  ///   * hoje <  dia de vencimento → a competência exigida é o mês ANTERIOR
+  ///     (a tela de bloqueio só aparece depois que a competência anterior
+  ///     venceu e não foi paga).
+  static DateTime _vencimentoDaCompetenciaCobrada(int diaVencimento) {
+    final agora = DateTime.now();
+    final hoje = DateTime(agora.year, agora.month, agora.day);
+    final base = hoje.day < diaVencimento
+        ? DateTime(hoje.year, hoje.month - 1, 1)
+        : hoje;
+    // Vencimento 31 em meses de 30 dias: usa o último dia do mês.
+    final ultimoDia = DateTime(base.year, base.month + 1, 0).day;
+    final dia = diaVencimento > ultimoDia ? ultimoDia : diaVencimento;
+    return DateTime(base.year, base.month, dia);
+  }
+
   @override
   void dispose() {
     _timerConfirmacaoPix?.cancel();
@@ -460,14 +605,20 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
         usuarioAtual != null &&
         (email == 'user' || email == 'admin' || email == 'suporte');
 
+    // O que está gravado em `data_cobranca` é o PRIMEIRO vencimento do
+    // contrato (ex.: 2026-07-05) e ele não anda sozinha — o bloqueio usa só o
+    // DIA do mês. Exibir a data crua faz a tela mostrar uma data velha do
+    // início do contrato para sempre, então aqui recalculamos o vencimento da
+    // competência que está sendo cobrada agora, com a mesma regra de
+    // `Empresa.isInadimplenteRecorrente`.
     final dataCobrancaStr =
         widget.configs['data_cobranca'] ?? widget.configs['dataCobranca'];
     String vencimentoFormatado = 'Não Informado';
-    if (dataCobrancaStr != null) {
-      final date = DateTime.tryParse(dataCobrancaStr.toString());
-      if (date != null) {
-        vencimentoFormatado = DateFormat('dd/MM/yyyy').format(date);
-      }
+    final diaVencimento = _diaVencimentoDe(dataCobrancaStr);
+    if (diaVencimento != null) {
+      vencimentoFormatado = DateFormat('dd/MM/yyyy').format(
+        _vencimentoDaCompetenciaCobrada(diaVencimento),
+      );
     }
 
     final valorMensalidade = double.tryParse(
@@ -745,7 +896,8 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
                             const SizedBox(height: 10),
                             Text(
                               'Aguardando confirmação automática • '
-                              'competência ${_pixMensalidade!.mesReferencia}',
+                              'competência '
+                              '${HistoricoMensalidade.rotuloCompetencia(_pixMensalidade!.mesReferencia)}',
                               textAlign: TextAlign.center,
                               style: const TextStyle(
                                 color: Colors.white60,

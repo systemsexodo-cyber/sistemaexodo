@@ -19,7 +19,12 @@ if exist "venv\Scripts\python.exe" (
 )
 
 :: Extrair versao do main.py
-for /f "tokens=3" %%V in ('findstr "BRIDGE_VERSION =" main.py') do set VERSION=%%~V
+:: ATENCAO: usar /B (inicio da linha) para casar SOMENTE a atribuicao
+:: "BRIDGE_VERSION = ...". Sem /B o findstr tambem casava as linhas de
+:: menu/bandeja (f"...{BRIDGE_VERSION}...") e o %%V final virava lixo
+:: (ex.: "setup_tray()"), fazendo o script copiar um dist\ExodoNfceBridge.exe
+:: ANTIGO para a raiz — era isso que fazia o EXE corrigido nunca ser gerado.
+for /f "tokens=3" %%V in ('findstr /B /C:"BRIDGE_VERSION" main.py') do set VERSION=%%~V
 set VERSION=%VERSION:"=%
 echo Versao detectada: %VERSION%
 
@@ -40,15 +45,38 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo [3/3] Finalizado!
 echo.
-echo Renomeando para incluir versao...
 set VER_CLEAN=%VERSION:.=%
-copy /Y "dist\ExodoNfceBridge.exe" "dist\ExodoNfceBridge_v%VER_CLEAN%.exe"
-copy /Y "dist\ExodoNfceBridgeWatchdog.exe" "dist\ExodoNfceBridgeWatchdog_v%VER_CLEAN%.exe"
+
+:: O .spec ja gera o nome com a versao (ExodoNfceBridge_v358.exe).
+:: Antes este script copiava "dist\ExodoNfceBridge.exe", que e um arquivo
+:: ANTIGO deixado no dist por builds anteriores — ou seja, a raiz recebia
+:: sempre o EXE velho (com bugs ja corrigidos no fonte).
+if not exist "dist\ExodoNfceBridge_v%VER_CLEAN%.exe" (
+    echo.
+    echo ERRO: dist\ExodoNfceBridge_v%VER_CLEAN%.exe nao foi gerado!
+    echo Verifique o nome do EXE no ExodoNfceBridge.spec.
+    pause
+    exit /b 1
+)
 
 echo.
 echo Copiando para a raiz...
 copy /Y "dist\ExodoNfceBridge_v%VER_CLEAN%.exe" "..\ExodoNfceBridge_v%VER_CLEAN%.exe"
+if errorlevel 1 (
+    echo ERRO ao copiar o EXE para a raiz!
+    pause
+    exit /b 1
+)
 copy /Y "dist\ExodoNfceBridge_v%VER_CLEAN%.exe" "..\ExodoNfceBridge.exe"
+if errorlevel 1 (
+    echo ERRO ao copiar o EXE para a raiz!
+    pause
+    exit /b 1
+)
+if exist "dist\ExodoNfceBridgeWatchdog_v%VER_CLEAN%.exe" (
+    copy /Y "dist\ExodoNfceBridgeWatchdog_v%VER_CLEAN%.exe" "..\ExodoNfceBridgeWatchdog.exe"
+    copy /Y "dist\ExodoNfceBridgeWatchdog_v%VER_CLEAN%.exe" "..\ExodoNfceBridgeWatchdog_v%VER_CLEAN%.exe"
+)
 
 echo.
 echo EXECUTAVEL v%VERSION% GERADO COM SUCESSO!

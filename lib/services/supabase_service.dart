@@ -1174,6 +1174,36 @@ class SupabaseService {
     }
   }
 
+  /// Empresa dona da linha [id] de [tabela] na nuvem.
+  ///
+  /// `null` quando a linha não existe, quando a tabela não tem `empresa_id` ou
+  /// quando a consulta falha (offline) — nesses casos o chamador segue o
+  /// caminho normal de gravação.
+  ///
+  /// Existe para os registros de id COMPARTILHADO entre empresas (os padrões do
+  /// sistema usam id fixo — `padrao_substituicao_normal`, `dep_cozinha`…). A
+  /// nuvem guarda uma linha por id e o gatilho `trg_exodo_empresa_imutavel`
+  /// recusa trocar o dono (23514), então a segunda empresa que salvasse o seu
+  /// padrão tomava erro em vez de simplesmente manter a própria cópia na
+  /// configuração da empresa.
+  Future<String?> empresaDonaDaLinha(String tabela, String id) async {
+    if (!isAvailable || servidorIndisponivel) return null;
+    if (id.trim().isEmpty) return null;
+    try {
+      final linhas = await _client
+          .from(tabela)
+          .select('empresa_id')
+          .eq('id', id)
+          .limit(1)
+          .timeout(const Duration(seconds: 8));
+      if (linhas.isEmpty) return null;
+      return linhas.first['empresa_id']?.toString();
+    } catch (e) {
+      debugPrint('>>> [Supabase] ⚠️ Não consegui ver o dono de $tabela/$id: $e');
+      return null;
+    }
+  }
+
   /// Cache das colunas reais da tabela 'usuarios' no Supabase. Detectadas uma
   /// única vez via OpenAPI (/rest/v1/) e reutilizadas em todos os salvamentos.
   Set<String>? _colunasUsuariosCache;

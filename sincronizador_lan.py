@@ -393,6 +393,184 @@ def _aplicar_apagados(conn, tabela, registros, bloqueados, empresa_ativa):
     return apagados, protegidos
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Código A: Push de túmulos (DELETEs) locais para o par via LAN
+# ─────────────────────────────────────────────────────────────────────────────
+# Faz o outro PC receber os DELETEs que aconteceram aqui localmente.
+# Sem isto, um DELETE em um PC fica só na nuvem (túmulo id 2353) e o outro
+# PC continua com a linha viva — gera números duplicados VND-XXXX e vendas
+# que "ressurgem".
+#
+# A função usa cursor `lan_del_{tabela}__{par}` em _sync_controle.
+#   - Primeiro contato (cursor = None): usa epoch (1970-01-01), busca todos.
+#   - Por túmulo: pular se id ainda vivo localmente.
+#   - Pular se cópia no par é mais nova que deletado_em (já foi aplicado ou é mais recente).
+#   - Senão: DELETE no par com SET LOCAL sync_mode='on' + inserir túmulo no
+#     _exodo_deletados do par (ON CONFLICT IGNORE) + pg_notify(no par).
+#   - Atualiza cursor local com o deletado_em mais recente.
+# ----------------------------------------------------------------
+
+def _push_tombstones_para_par(conn_local, conn_par, cfg, tabelas, bloqueados, resumo):
+    """Empurra os DELETEs locais para o outro PC pela LAN.
+
+    Para cada tabela, lê os tombstones do _exodo_sync_log que ainda nao foram
+    enviados ao par e os aplica lá, com cursor por tabela em _sync_controle.
+    """
+    par_nome = cfg['nome']
+    aplicados_total = 0
+    empresa_ativa = S.obter_empresa_ativa(conn_local)
+
+    for tabela in tabelas:
+        # Pula tabelas proibidas
+        if tabela in S.TABELAS_PROIBIDAS or _tabela_proibida(tabela):
+            continue
+
+        # Busca tombstones locais (DELETEs) desta tabela.
+        # Usamos cursor lan_del_{tabela}___{par} para saber onde paramos.
+        chave = _chave_cursor(tabela, par_nome, apagados=True)
+        cursor_atual = _ler_cursor(conn_local, chave)
+        # Se cursor for None (1º contato), começamos do epoch.
+        desde = cursor_atual if cursor_atual and str(cursor_atual) != _EPOCH else _EPOCH
+
+        try:
+            with conn_local.cursor() as cur:
+                cur.execute("""
+                    SELECT record_id, empresa_id, deleted_at
+                    FROM _exodo_sync_log
+                    WHERE table_name = %s
+                      AND operation = 'DELETE'
+                      AND deleted_at > %s::timestamptz
+                    ORDER BY deleted_at ASC
+                """, (tabela, desde))
+                tombstones = cur.fetchall()
+        except Exception as e:
+            S.print_log(f'[LAN] Erro ao buscar tombstones de {tabela}: {e}', S.Colors.YELLOW)
+            continue
+
+        if not tombstones:
+            # Ainda assim avançar o cursor para o epoch se era 1º contato
+            if cursor_atual is None:
+                _salvar_cursor(conn_local, chave, _EPOCH)
+            continue
+
+        # Garantir que a tabela de apagados existe no par
+        if not tabela_tem_apagados(conn_par):
+            S.print_log(f'[LAN] Tabela _exodo_deletados nao existe no par {par_nome}, pulando {tabela}.', S.Colors.YELLOW)
+            # Ainda assim marcar cursor como processado para não voltar aqui
+            _salvar_cursor(conn_local, chave, str(tombstones[-1][2]))
+            continue
+
+        # Processar cada túmulo
+        for registro_id, empresa_id, deletado_em in tombstones:
+            id_str = str(registro_id)
+
+            # --- Guard 1: id ainda vivo localmente?
+            # Verificar se o registro ainda existe no banco local
+            try:
+                with conn_local.cursor() as cur:
+                    # Tentamos selecionar pela primary key
+                    colunas = _colunas_do_par(conn_local, tabela)
+                    if not colunas:
+                        continue
+                    pk_col = 'id' if 'id' in colunas else None
+                    if not pk_col:
+                        continue
+                    cur.execute(f'SELECT "{pk_col}" FROM "{tabela}" WHERE "{pk_col}" = %s', (id_str,))
+                    row = cur.fetchone()
+                if row:
+                    # Registro ainda existe localmente → pular este tombstone
+                    # (provavelmente foi recriado depois do delete, ou é uma edição local mais recente)
+                    S.print_log(f'[LAN] Tombstone {id_str}/{tabela}: id ainda vivo localmente, pulando.',
+                                S.Colors.CYAN)
+                    # Atualizar cursor para este deletado_em para não tentar novamente
+                    _salvar_cursor(conn_local, chave, str(deletado_em))
+                    continue
+            except Exception:
+                pass
+
+            # --- Guard 2: cópia no par é mais nova que deletado_em?
+            # Verificamos no par se a linha ja foi recriada com data mais recente
+            try:
+                with conn_par.cursor() as cur:
+                    colunas_par = _colunas_do_par(conn_par, tabela)
+                    pk_col_par = 'id' if 'id' in colunas_par else None
+                    if not pk_col_par:
+                        # Sem chave primaria conhecida, tenta de qualquer jeito
+                        cur.execute(f'SELECT "updated_at" FROM "{tabela}" WHERE "id" = %s', (id_str,))
+                    else:
+                        cur.execute(f'SELECT "updated_at" FROM "{tabela}" WHERE "{pk_col_par}" = %s', (id_str,))
+                    row_par = cur.fetchone()
+                if row_par and row_par[0] is not None:
+                    # Se o updated_at no par for mais recente que o deletado_em, pula
+                    deletado_ts = str(deletado_em) if deletado_em else ''
+                    if str(row_par[0]) > deletado_ts:
+                        S.print_log(f'[LAN] Tombstone {id_str}/{tabela}: copia no par mais nova ({row_par[0]} > {deletado_ts}), pulando.',
+                                    S.Colors.CYAN)
+                        # Atualizar cursor para este deletado_em para não tentar novamente
+                        _salvar_cursor(conn_local, chave, str(deletado_em))
+                        continue
+            except Exception as e:
+                S.print_log(f'[LAN] Erro ao verificar versão no par para {id_str}: {e}', S.Colors.YELLOW)
+
+            # --- Aplicar DELETE no par com sync_mode='on'
+            try:
+                with conn_par.cursor() as cur:
+                    cur.execute("SET LOCAL exodo.sync_mode = 'on'")
+                    # Usar _ident para casar o nome da tabela corretamente
+                    cur.execute(f'DELETE FROM {_ident(tabela)} WHERE id = %s', (id_str,))
+                    linhas_apagadas = cur.rowcount
+                # Inserir túmulo no _exodo_deletados do par (ON CONFLICT IGNORE)
+                try:
+                    with conn_par.cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO "_exodo_deletados" (registro_id, tabela, empresa_id, deletado_em)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (registro_id, tabela) DO NOTHING
+                        """, (id_str, tabela, empresa_id, deletado_em))
+                except Exception:
+                    pass  # Se a tabela _exodo_deletados tiver schema diferente, ignora
+                # Notificar UI no par (pg_notify)
+                try:
+                    with conn_par.cursor() as cur:
+                        cur.execute('SELECT pg_notify(%s, %s)', ('exodo_sync_event', str(tabela)))
+                    conn_par.commit()
+                except Exception:
+                    pass
+                aplicados_total += 1
+                S.print_log(f'[LAN] Tombstone push: DELETE {id_str}/{tabela} aplicado no par {par_nome}.',
+                            S.Colors.CYAN)
+            except Exception as e:
+                S.print_log(f'[LAN] Erro ao aplicar tombstone {id_str}/{tabela} no par {par_nome}: {e}', S.Colors.RED)
+                continue
+
+        # Atualizar cursor após processar todos os túmulos desta tabela
+        if tombstones:
+            ultimo_deletado = str(tombstones[-1][2])
+            _salvar_cursor(conn_local, chave, ultimo_deletado)
+            S.print_log(f'[LAN] Cursor atualizado para {chave} = {ultimo_deletado}', S.Colors.CYAN)
+
+    return aplicados_total
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Código A: Push de túmulos (DELETEs) do par para o outro PC via LAN
+# ─────────────────────────────────────────────────────────────────────────────
+# Este módulo faz o outro PC receber os DELETEs que aconteceram aqui localmente.
+# Sem isto, um DELETE em um PC fica só na nuvem (túmulo) e o outro PC continua
+# com a linha viva — gera números duplicados VND-XXXX e vendas que "ressurgem".
+#
+# A função lan_pushdel_{tabela}__{par} em _sync_controle:
+#   - Primeiro contato: cursor = epoch (1970-01-01), puxa tudo.
+#   - Por túmulo: pular se id ainda vivo localmente.
+#   - Pular se cópia no par é mais nova que deletado_em (já foi aplicado ou é mais recente).
+#   - Senão: DELETE no par com SET LOCAL sync_mode='on' + inserir túmulo no _exodo_deletados
+#     do par (ON CONFLICT IGNORE) + pg_notify(no par) para acordar o app/outros ciclos.
+#   - Atualiza cursor local com o deletado_em mais recente.
+# ----------------------------------------------------------------
+
+
+
+
 # Canal que o APP (Flutter) escuta para recarregar a tela na hora. É separado
 # do `exodo_sync_event` (que acorda o ciclo da nuvem) de propósito: assim o app
 # só é acordado quando a REDE LOCAL traz dado novo — as gravações do próprio
@@ -666,6 +844,17 @@ def sincronizar_com_par(conn, cfg=None, tabelas=None):
                     pass
                 S.print_log(f'[LAN] {tabela}: falha ao puxar do par — {e}',
                             S.Colors.YELLOW)
+
+        # Código A: Push de túmulos (DELETEs) locais para o par
+        # Empurra os DELETEs que aconteceram neste PC para o outro PC,
+        # para que os apagados se propaguem e não fiquem só na nuvem.
+        try:
+            aplicados = _push_tombstones_para_par(
+                conn, conn_par, cfg, tabelas, bloqueados, resumo)
+            resumo['tombstones'] = aplicados
+        except Exception as e:
+            S.print_log(f'[LAN] Erro no push de túmulos para o par {par}: {e}',
+                        S.Colors.YELLOW')
 
         resumo['tombstones'] = purgar_tombstones_antigos(conn, cfg['dias_tombstone'])
 

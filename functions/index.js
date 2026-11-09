@@ -161,7 +161,8 @@ app.get('/health', (req, res) => {
 });
 
 // Exportar a cloud function
-exports.api = functions.region('us-central1').https.onRequest(app);
+// Exportar a cloud function
+exports.mercadoPagoApi = functions.region('us-central1').https.onRequest(app);
 
 const mercadoPagoAccessToken = defineSecret('MERCADO_PAGO_ACCESS_TOKEN');
 const mercadoPagoWebhookSecret = defineSecret('MERCADO_PAGO_WEBHOOK_SECRET');
@@ -182,31 +183,17 @@ function obterPoolMensalidade() {
     return mensalidadePool;
 }
 
-function mesCompetencia(configuracoes) {
+// A competência é sempre o mês corrente (America/Sao_Paulo): antes do dia do
+// vencimento a cobrança já antecipa o mês do vencimento exibido na tela
+// (ex.: vencimento 05/11 pago em 04/11 libera a competência '2026-11').
+function mesCompetencia() {
         const partes = new Intl.DateTimeFormat('en-CA', {
             timeZone: 'America/Sao_Paulo',
             year: 'numeric',
             month: '2-digit',
-            day: '2-digit',
         }).formatToParts(new Date());
         const data = Object.fromEntries(partes.map((parte) => [parte.type, parte.value]));
-        const hoje = new Date(Number(data.year), Number(data.month) - 1, Number(data.day));
-        const cobranca = configuracoes?.data_cobranca ?? configuracoes?.dataCobranca;
-        let diaVencimento;
-        if (cobranca != null && String(cobranca).trim()) {
-            const texto = String(cobranca).trim();
-            const dataCompleta = /^(\d{4})-(\d{2})-(\d{2})/.exec(texto);
-            diaVencimento = dataCompleta
-                ? Number(dataCompleta[3])
-                : Number.parseInt(texto, 10);
-        }
-        if (!Number.isInteger(diaVencimento) || diaVencimento < 1 || diaVencimento > 31) {
-            return `${data.year}-${data.month}`;
-        }
-        const competencia = hoje.getDate() < diaVencimento
-            ? new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)
-            : hoje;
-        return `${competencia.getFullYear()}-${String(competencia.getMonth() + 1).padStart(2, '0')}`;
+        return `${data.year}-${data.month}`;
 }
 
 function valorMensalidade(configuracoes) {
@@ -267,7 +254,7 @@ pagamentosApp.post('/create-pix', async (req, res) => {
                 erro: 'A mensalidade ainda não foi configurada. Fale com o suporte.',
             });
         }
-        const mes = mesCompetencia(config);
+        const mes = mesCompetencia();
         const ultimoMesPago = String(config.ultimo_mes_pago || '');
         if (ultimoMesPago >= mes && config.bloqueado !== true) {
             return res.status(409).json({
@@ -327,6 +314,19 @@ pagamentosApp.post('/create-pix', async (req, res) => {
     }
 });
 
+// Acrescenta o pagamento aprovado ao histórico da empresa sem duplicar
+// (a chave é o id do pagamento do Mercado Pago), mantendo os 36 mais recentes.
+function historicoComPagamento(configuracoes, entrada) {
+    const atual = Array.isArray(configuracoes?.historico_pagamentos)
+        ? configuracoes.historico_pagamentos
+        : [];
+    const id = String(entrada.pagamento_id || '');
+    const registros = atual
+        .filter((item) => String(item?.pagamento_id || '') !== id)
+        .concat([entrada]);
+    return registros.slice(-36);
+}
+
 async function liberarMensalidadeAprovada(pagamento) {
     if (pagamento.status !== 'approved' || pagamento.payment_method_id !== 'pix') {
         return { aprovado: false, liberado: false };
@@ -356,12 +356,20 @@ async function liberarMensalidadeAprovada(pagamento) {
         return { aprovado: true, liberado: true };
     }
 
+    const pagoEm = pagamento.date_approved || new Date().toISOString();
     const novosDados = {
         status_pagamento: 'pago',
         bloqueado: false,
         ultimo_mes_pago: mes,
         mercado_pago_payment_id: String(pagamento.id),
-        mercado_pago_pago_em: pagamento.date_approved || new Date().toISOString(),
+        mercado_pago_pago_em: pagoEm,
+        historico_pagamentos: historicoComPagamento(config, {
+            competencia: mes,
+            valor: Number(pagamento.transaction_amount),
+            pagamento_id: String(pagamento.id),
+            pago_em: pagoEm,
+            origem: 'mercado_pago',
+        }),
     };
     const atualizacao = await db.query(
         `UPDATE empresas
@@ -433,3 +441,5 @@ pagamentosApp.post('/webhook', async (req, res) => {
         return res.status(500).json({ erro: 'Erro ao processar o pagamento.' });
     }
 });
+
+app.use('/mercadoPagoApi', pagamentosApp);

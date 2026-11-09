@@ -30,6 +30,14 @@ class NeonStorage {
 
   static final NeonStorage instance = NeonStorage._();
 
+  /// A nuvem é o Supabase (local, publicado pelo Tailscale Funnel)?
+  ///
+  /// Nesse modo — o mesmo em que a Data API fala com o Supabase pela chave
+  /// estática ([NeonConfig.dataApiKey]) — os arquivos vão pela API REST do
+  /// Storage do Supabase. O S3 do Neon é outro serviço, com outra cota: foi
+  /// ele que recusou a publicação de versão com `QuotaExceeded`.
+  static bool get usandoSupabase => NeonConfig.storageSupabaseDisponivel;
+
   /// Operações de arquivo dentro de um bucket: mesmos nomes/assinaturas do
   /// antigo `storage.from(bucket)`.
   NeonBucket from(String bucketId) => NeonBucket(bucketId);
@@ -42,6 +50,28 @@ class NeonStorage {
     String id, [
     BucketOptions bucketOptions = const BucketOptions(public: false),
   ]) async {
+    if (usandoSupabase) {
+      final resp = await _requisicaoSupabase(
+        method: 'POST',
+        caminho: '/bucket',
+        json: {
+          'id': id,
+          'name': id,
+          'public': bucketOptions.public,
+          if (bucketOptions.fileSizeLimit != null)
+            'file_size_limit': bucketOptions.fileSizeLimit,
+          if (bucketOptions.allowedMimeTypes != null)
+            'allowed_mime_types': bucketOptions.allowedMimeTypes,
+        },
+      );
+      // 409 = bucket já existe; para o app é sucesso (a operação é idempotente).
+      if (resp.statusCode != 200 &&
+          resp.statusCode != 201 &&
+          resp.statusCode != 409) {
+        throw _erro('criar o bucket "$id"', resp);
+      }
+      return id;
+    }
     await _requisicao(method: 'PUT', bucket: id);
     if (bucketOptions.public) {
       print(
@@ -54,6 +84,23 @@ class NeonStorage {
 
   /// Lista os buckets existentes (mesma forma do antigo `listBuckets()`).
   Future<List<Bucket>> listBuckets() async {
+    if (usandoSupabase) {
+      final resp = await _requisicaoSupabase(method: 'GET', caminho: '/bucket');
+      if (resp.statusCode != 200) throw _erro('listar buckets', resp);
+      final lista = jsonDecode(resp.body);
+      if (lista is! List) return const [];
+      return lista.whereType<Map>().map((item) {
+        final id = (item['id'] ?? item['name'] ?? '').toString();
+        return Bucket(
+          id: id,
+          name: (item['name'] ?? id).toString(),
+          owner: (item['owner'] ?? '').toString(),
+          createdAt: (item['created_at'] ?? '').toString(),
+          updatedAt: (item['updated_at'] ?? '').toString(),
+          public: item['public'] == true,
+        );
+      }).toList();
+    }
     final resp = await _requisicao(method: 'GET');
     if (resp.statusCode != 200) {
       throw _erro('listar buckets', resp);
@@ -76,14 +123,88 @@ class NeonStorage {
 
   /// Existe um bucket com este nome?
   Future<bool> bucketExiste(String id) async {
+    if (usandoSupabase) {
+      final resp = await _requisicaoSupabase(
+        method: 'GET',
+        caminho: '/bucket/${_uriEncode(id)}',
+      );
+      return resp.statusCode == 200;
+    }
     final resp = await _requisicao(method: 'HEAD', bucket: id);
     return resp.statusCode == 200;
   }
 
   /// Remove um bucket (vazio).
   Future<String> deleteBucket(String id) async {
+    if (usandoSupabase) {
+      final resp = await _requisicaoSupabase(
+        method: 'DELETE',
+        caminho: '/bucket/${_uriEncode(id)}',
+      );
+      if (resp.statusCode != 200 && resp.statusCode != 204) {
+        throw _erro('remover o bucket "$id"', resp);
+      }
+      return '';
+    }
     await _requisicao(method: 'DELETE', bucket: id);
     return '';
+  }
+
+  // --------------------------------------------------------------------------
+  // Storage do SUPABASE (API REST) — usado quando [usandoSupabase]
+  // --------------------------------------------------------------------------
+
+  static Map<String, String> get _cabecalhosSupabase => {
+        'apikey': NeonConfig.storageSupabaseKey,
+        'Authorization': 'Bearer ${NeonConfig.storageSupabaseKey}',
+      };
+
+  static Uri _urlSupabase(String caminho, [Map<String, String>? query]) {
+    final base = '${NeonConfig.storageSupabaseUrl}/storage/v1$caminho';
+    final uri = Uri.parse(base);
+    return query == null || query.isEmpty
+        ? uri
+        : uri.replace(queryParameters: query);
+  }
+
+  /// `bucket/chave/do/arquivo` com cada segmento URI-encoded.
+  static String _caminhoObjeto(String bucket, String key) => [
+        bucket,
+        ...key.split('/'),
+      ].where((segmento) => segmento.isNotEmpty).map(_uriEncode).join('/');
+
+  static Future<http.Response> _requisicaoSupabase({
+    required String method,
+    required String caminho,
+    Map<String, String> query = const {},
+    List<int> body = const [],
+    String? contentType,
+    Map<String, dynamic>? json,
+    Map<String, String> extraHeaders = const {},
+  }) {
+    final uri = _urlSupabase(caminho, query);
+    final corpo = json != null ? utf8.encode(jsonEncode(json)) : body;
+    final headers = <String, String>{
+      ..._cabecalhosSupabase,
+      ...extraHeaders,
+      if (json != null) 'Content-Type': 'application/json',
+      if (json == null && contentType != null) 'Content-Type': contentType,
+    };
+
+    switch (method) {
+      case 'GET':
+        return http.get(uri, headers: headers);
+      case 'POST':
+        return http.post(uri, headers: headers, body: corpo);
+      case 'PUT':
+        return http.put(uri, headers: headers, body: corpo);
+      case 'DELETE':
+        return http.delete(uri, headers: headers, body: corpo);
+      case 'HEAD':
+        return http.head(uri, headers: headers);
+      default:
+        throw ArgumentError('Método HTTP não suportado: $method');
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -255,6 +376,22 @@ class NeonBucket {
     Uint8List data, {
     FileOptions fileOptions = const FileOptions(),
   }) async {
+    if (NeonStorage.usandoSupabase) {
+      // Supabase REST: PUT /storage/v1/object/<bucket>/<path>
+      final uri = NeonStorage._urlSupabase('/object/${NeonStorage._caminhoObjeto(bucketId, path)}',
+          {'upsert': fileOptions.upsert.toString()});
+      final headers = <String, String>{
+        ...NeonStorage._cabecalhosSupabase,
+        'Content-Type': fileOptions.contentType ?? 'application/octet-stream',
+      };
+      final corpo = data;
+      final resp = await http.put(uri, headers: headers, body: corpo);
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        throw NeonStorage._erro('enviar "$bucketId/$path" via Supabase', resp);
+      }
+      print('>>> [Neon Storage] ✅ Upload (Supabase): $bucketId/$path');
+      return path;
+    }
     final resp = await NeonStorage._requisicao(
       method: 'PUT',
       bucket: bucketId,
@@ -270,11 +407,27 @@ class NeonBucket {
   }
 
   /// Baixa o conteúdo do arquivo.
+  ///
+  /// Quando [usandoSupabase] usa a URL autenticada do Supabase REST;
+  /// caso contrário usa o download assinado S3 direto.
   Future<Uint8List> download(
     String path, {
     Object? transform,
     Map<String, String>? queryParams,
   }) async {
+    if (NeonStorage.usandoSupabase) {
+      // URL autenticada de tempo limitado via Supabase REST:
+      // GET /storage/v1/object/authenticated/<bucket>/<path>?expires_in=<segundos>
+      final base = NeonConfig.storageSupabaseUrl;
+      if (base.isEmpty) throw Exception('Neon Storage: download (Supabase) — URL vazio, configure storageSupabaseUrl');
+      final chave = NeonStorage._caminhoObjeto(bucketId, path);
+      final uri = Uri.parse('$base/storage/v1/object/authenticated/$chave');
+      final resp = await http.get(uri, headers: NeonStorage._cabecalhosSupabase);
+      if (resp.statusCode != 200) {
+        throw NeonStorage._erro('baixar via Supabase', resp);
+      }
+      return resp.bodyBytes;
+    }
     final resp = await NeonStorage._requisicao(
       method: 'GET',
       bucket: bucketId,
@@ -288,7 +441,16 @@ class NeonBucket {
 
   /// URL pública do arquivo. Só funciona para buckets declarados com
   /// `access: "public_read"` em `neon.ts`.
+  ///
+  /// Quando [usandoSupabase] a URL vem da API REST do Supabase:
+  ///   <origin>/storage/v1/object/public/<bucket>/<path>
   String getPublicUrl(String path, {Object? transform}) {
+    if (NeonStorage.usandoSupabase) {
+      final base = NeonConfig.storageSupabaseUrl;
+      if (base.isEmpty) throw Exception('Neon Storage: URL pública — configure storageSupabaseUrl no .env.neon');
+      final chave = NeonStorage._caminhoObjeto(bucketId, path);
+      return '$base/storage/v1/object/public/$chave';
+    }
     final endpoint = NeonConfig.storageEndpoint.replaceAll(RegExp(r'/+$'), '');
     final chave = path.split('/').map(NeonStorage._uriEncode).join('/');
     return '$endpoint/$bucketId/$chave';

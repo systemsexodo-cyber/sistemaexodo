@@ -442,7 +442,11 @@ class _PedidosPageState extends State<PedidosPage> {
     final confirma =
         tecla == LogicalKeyboardKey.enter ||
         tecla == LogicalKeyboardKey.numpadEnter;
-    if (!desce && !sobe && !confirma) return KeyEventResult.ignored;
+    final excluir = tecla == LogicalKeyboardKey.delete ||
+        tecla == LogicalKeyboardKey.numpadDecimal;
+    if (!desce && !sobe && !confirma && !excluir) {
+      return KeyEventResult.ignored;
+    }
     if (!mounted || ModalRoute.of(context)?.isCurrent != true) {
       return KeyEventResult.ignored;
     }
@@ -455,6 +459,17 @@ class _PedidosPageState extends State<PedidosPage> {
       dataService,
     );
     if (pedidos.isEmpty) return KeyEventResult.ignored;
+
+    if (excluir) {
+      final indice = _pedidoDestaqueId == null
+          ? 0
+          : pedidos.indexWhere((p) => p.id == _pedidoDestaqueId);
+      if (indice < 0 || indice >= pedidos.length) {
+        return KeyEventResult.ignored;
+      }
+      _confirmarExclusaoPedido(pedidos[indice], dataService);
+      return KeyEventResult.handled;
+    }
 
     if (confirma) {
       // Se ainda não houve navegação por setas, considera selecionado o
@@ -471,6 +486,47 @@ class _PedidosPageState extends State<PedidosPage> {
 
     _moverDestaque(pedidos, desce ? 1 : -1);
     return KeyEventResult.handled;
+  }
+
+  /// Exclui o pedido que está com a borda de destaque após confirmação.
+  Future<void> _confirmarExclusaoPedido(
+    Pedido pedido,
+    DataService dataService,
+  ) async {
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Excluir pedido?'),
+        content: Text(
+          'Deseja realmente excluir o pedido ${pedido.numero.isNotEmpty ? pedido.numero : pedido.id}? Esta ação não poderá ser desfeita.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado != true || !mounted) return;
+    dataService.deletePedido(pedido.id);
+    setState(() {
+      _pedidoDestaqueId = null;
+      _selecionadosIds.remove(pedido.id);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Pedido ${pedido.numero} excluído.')),
+    );
   }
 
   /// Move a borda de destaque pela lista de pedidos já filtrada.

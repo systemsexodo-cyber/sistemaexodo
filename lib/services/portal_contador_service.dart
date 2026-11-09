@@ -187,7 +187,13 @@ class PortalContadorService {
 
   /// Produtos da empresa (NCM, código e unidade usados nos relatórios).
   Future<List<Produto>> carregarProdutos(String empresaId) async {
-    final linhas = await _consultarPeriodo('produtos', empresaId, null, null, const []);
+    final linhas = await _consultarPeriodo(
+      'produtos',
+      empresaId,
+      null,
+      null,
+      const [],
+    );
     return _converterLista(linhas, Produto.fromMap);
   }
 
@@ -208,8 +214,9 @@ class PortalContadorService {
       final coluna = await _colunaData(tabela, candidatosData);
 
       PostgrestFilterBuilder<PostgrestList> montarFiltro() {
-        var filtro =
-            _client.from(tabela).select('*').inFilter('empresa_id', [empresaId]);
+        var filtro = _client.from(tabela).select('*').inFilter('empresa_id', [
+          empresaId,
+        ]);
         if (coluna != null) {
           if (inicio != null) filtro = filtro.gte(coluna, _isoInicio(inicio));
           if (fim != null) filtro = filtro.lte(coluna, _isoFim(fim));
@@ -223,7 +230,9 @@ class PortalContadorService {
         final filtro = montarFiltro();
         final ate = deslocamento + _tamanhoPagina - 1;
         final lote = coluna != null
-            ? await filtro.order(coluna, ascending: false).range(deslocamento, ate)
+            ? await filtro
+                  .order(coluna, ascending: false)
+                  .range(deslocamento, ate)
             : await filtro.range(deslocamento, ate);
 
         for (final linha in lote) {
@@ -327,11 +336,14 @@ class PortalContadorService {
 
     // Registra o último acesso (best-effort: não impede o login).
     try {
-      await _client.from(_tabelaAcessos).update({
-        'ultimo_acesso': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', acesso['id'].toString());
+      await _client
+          .from(_tabelaAcessos)
+          .update({'ultimo_acesso': DateTime.now().toUtc().toIso8601String()})
+          .eq('id', acesso['id'].toString());
     } catch (e) {
-      debugPrint('>>> [PortalContador] Não foi possível registrar último acesso: $e');
+      debugPrint(
+        '>>> [PortalContador] Não foi possível registrar último acesso: $e',
+      );
     }
 
     return PortalContadorSessao(
@@ -342,22 +354,24 @@ class PortalContadorService {
   }
 
   /// Busca as empresas cujo CNPJ (com ou sem máscara) casa com o informado.
-  Future<List<EmpresaPortalContador>> _buscarEmpresasPorCnpj(String cnpj) async {
+  Future<List<EmpresaPortalContador>> _buscarEmpresasPorCnpj(
+    String cnpj,
+  ) async {
     final resultado = <EmpresaPortalContador>[];
     try {
       final linhas = await _client.from(_tabelaEmpresas).select('*');
       for (final linha in linhas) {
         final registro = Map<String, dynamic>.from(linha);
-        final cnpjEmpresa = somenteDigitos(
-          registro['cnpj']?.toString() ?? '',
-        );
+        final cnpjEmpresa = somenteDigitos(registro['cnpj']?.toString() ?? '');
         if (cnpjEmpresa != cnpj) continue;
 
-        resultado.add(EmpresaPortalContador(
-          id: registro['id']?.toString() ?? '',
-          nome: _nomeEmpresa(registro),
-          cnpj: cnpjEmpresa,
-        ));
+        resultado.add(
+          EmpresaPortalContador(
+            id: registro['id']?.toString() ?? '',
+            nome: _nomeEmpresa(registro),
+            cnpj: cnpjEmpresa,
+          ),
+        );
       }
     } catch (e) {
       debugPrint('>>> [PortalContador] Erro ao buscar empresas: $e');
@@ -398,7 +412,8 @@ class PortalContadorService {
     final porNumero = <String, int>{};
 
     void adicionar(DocumentoFiscalPortal documento) {
-      if (documento.chave.isNotEmpty && !vistos.add('chave:${documento.chave}')) {
+      if (documento.chave.isNotEmpty &&
+          !vistos.add('chave:${documento.chave}')) {
         return;
       }
 
@@ -501,7 +516,9 @@ class PortalContadorService {
       try {
         var deslocamento = 0;
         while (true) {
-          final arquivos = await _client.storage.from(_bucketXmls).list(
+          final arquivos = await _client.storage
+              .from(_bucketXmls)
+              .list(
                 path: empresaId,
                 searchOptions: SearchOptions(
                   limit: _tamanhoPagina,
@@ -519,7 +536,9 @@ class PortalContadorService {
           if (deslocamento >= 200000) break;
         }
       } catch (e) {
-        debugPrint('>>> [PortalContador] Storage indisponível ($empresaId): $e');
+        debugPrint(
+          '>>> [PortalContador] Storage indisponível ($empresaId): $e',
+        );
       }
     }
     debugPrint('>>> [PortalContador] ${chaves.length} XML(s) no Storage');
@@ -537,13 +556,16 @@ class PortalContadorService {
     }
 
     try {
-      final bytes =
-          await _client.storage.from(_bucketXmls).download(documento.caminhoStorage);
+      final bytes = await _client.storage
+          .from(_bucketXmls)
+          .download(documento.caminhoStorage);
       final xml = utf8.decode(bytes, allowMalformed: true);
       _cacheXml[documento.caminhoStorage] = xml;
       return xml;
     } catch (e) {
-      debugPrint('>>> [PortalContador] Falha ao baixar ${documento.caminhoStorage}: $e');
+      debugPrint(
+        '>>> [PortalContador] Falha ao baixar ${documento.caminhoStorage}: $e',
+      );
       return '';
     }
   }
@@ -559,13 +581,15 @@ class PortalContadorService {
     try {
       final registros = <Map<String, dynamic>>[];
       for (final empresaId in empresaIds) {
-        registros.addAll(await _consultarPeriodo(
-          tabela,
-          empresaId,
-          inicio,
-          fim,
-          _colunasDataFiscais,
-        ));
+        registros.addAll(
+          await _consultarPeriodo(
+            tabela,
+            empresaId,
+            inicio,
+            fim,
+            _colunasDataFiscais,
+          ),
+        );
       }
 
       final documentos = <DocumentoFiscalPortal>[];
@@ -581,11 +605,21 @@ class PortalContadorService {
           continue;
         }
 
-        final data = _dataDoRegistro(registro);
+        var data = _dataDoRegistro(registro);
+        // Em muitos registros a coluna do banco guarda somente a data (00:00).
+        // Nesse caso, recupera dhEmi do XML autorizado no Storage para exibir
+        // também o horário real da emissão, sem alterar os dados fiscais.
+        if (data == null ||
+            (data.hour == 0 && data.minute == 0 && data.second == 0)) {
+          final dataXmlStorage = await _dataHoraDoStorage(registro);
+          if (dataXmlStorage != null) data = dataXmlStorage;
+        }
 
         // Filtro de segurança no cliente: garante o período mesmo quando a
         // tabela não tem uma coluna de data reconhecida.
-        if (inicio != null && data != null && data.isBefore(_inicioDoDia(inicio))) {
+        if (inicio != null &&
+            data != null &&
+            data.isBefore(_inicioDoDia(inicio))) {
           continue;
         }
         if (fim != null && data != null && data.isAfter(_fimDoDia(fim))) {
@@ -600,12 +634,60 @@ class PortalContadorService {
           '>>> [PortalContador] ${tipo.titulo}: $rascunhos rascunho(s) ignorado(s)',
         );
       }
-      debugPrint('>>> [PortalContador] ${tipo.titulo}: ${documentos.length} documento(s)');
+      debugPrint(
+        '>>> [PortalContador] ${tipo.titulo}: ${documentos.length} documento(s)',
+      );
       return documentos;
     } catch (e) {
       debugPrint('>>> [PortalContador] Erro ao ler $tabela: $e');
       return [];
     }
+  }
+
+  /// Busca dhEmi no XML do Storage quando a tabela só possui a data.
+  Future<DateTime?> _dataHoraDoStorage(Map<String, dynamic> registro) async {
+    final xmlInline = _xmlDoRegistro(registro);
+    final empresaId =
+        registro['empresa_id']?.toString() ??
+        registro['empresaId']?.toString() ??
+        '';
+    final chave = somenteDigitos(
+      _primeiroTexto(registro, [
+        'chave_acesso',
+        'chaveAcesso',
+        'chaveNFe',
+        'chave_nfe',
+      ]),
+    );
+    if (chave.isEmpty) return null;
+
+    var xml = xmlInline;
+    if (xml.isEmpty && empresaId.isNotEmpty) {
+      final caminho = '$empresaId/$chave.xml';
+      xml = _cacheXml[caminho] ?? '';
+      if (xml.isEmpty) {
+        try {
+          final bytes = await _client.storage
+              .from(_bucketXmls)
+              .download(caminho);
+          xml = utf8.decode(bytes, allowMalformed: true);
+          _cacheXml[caminho] = xml;
+        } catch (e) {
+          debugPrint(
+            '>>> [PortalContador] Não foi possível ler dhEmi de $chave: $e',
+          );
+          return null;
+        }
+      }
+    }
+
+    if (xml.isEmpty) return null;
+    final emissao = RegExp(
+      r'<(?:\w+:)?dhEmi\b[^>]*>\s*([^<]+)\s*</(?:\w+:)?dhEmi\s*>',
+      caseSensitive: false,
+    ).firstMatch(xml)?.group(1)?.trim();
+    final data = emissao == null ? null : DateTime.tryParse(emissao);
+    return data?.toLocal();
   }
 
   /// Rascunho de emissão do app (ainda não é documento fiscal).
@@ -623,7 +705,8 @@ class PortalContadorService {
     DateTime? data,
     Set<String> chavesNaNuvem,
   ) {
-    final empresaId = registro['empresa_id']?.toString() ??
+    final empresaId =
+        registro['empresa_id']?.toString() ??
         registro['empresaId']?.toString() ??
         '';
     final chave = somenteDigitos(
@@ -639,7 +722,11 @@ class PortalContadorService {
       tipo: tipo,
       empresaId: empresaId,
       id: registro['id']?.toString() ?? '',
-      numero: _primeiroTexto(registro, ['numero', 'numeroNotaReal', 'numero_nota_real']),
+      numero: _primeiroTexto(registro, [
+        'numero',
+        'numeroNotaReal',
+        'numero_nota_real',
+      ]),
       serie: _primeiroTexto(registro, ['serie']),
       chave: chave,
       status: _primeiroTexto(registro, ['status']).toLowerCase(),
@@ -696,7 +783,9 @@ class PortalContadorService {
         }
       }
     } catch (e) {
-      debugPrint('>>> [PortalContador] Não foi possível inspecionar $tabela: $e');
+      debugPrint(
+        '>>> [PortalContador] Não foi possível inspecionar $tabela: $e',
+      );
     }
 
     _cacheColunaData[tabela] = encontrada;
@@ -723,14 +812,23 @@ class PortalContadorService {
       valor.replaceAll(RegExp(r'[^0-9]'), '');
 
   static String _nomeEmpresa(Map<String, dynamic> registro) {
-    for (final chave in ['nomeFantasia', 'nome_fantasia', 'razaoSocial', 'razao_social', 'nome']) {
+    for (final chave in [
+      'nomeFantasia',
+      'nome_fantasia',
+      'razaoSocial',
+      'razao_social',
+      'nome',
+    ]) {
       final valor = registro[chave]?.toString().trim() ?? '';
       if (valor.isNotEmpty) return valor;
     }
     return 'Empresa';
   }
 
-  static String _primeiroTexto(Map<String, dynamic> registro, List<String> chaves) {
+  static String _primeiroTexto(
+    Map<String, dynamic> registro,
+    List<String> chaves,
+  ) {
     for (final chave in chaves) {
       final valor = registro[chave]?.toString().trim() ?? '';
       if (valor.isNotEmpty) return valor;
@@ -738,7 +836,10 @@ class PortalContadorService {
     return '';
   }
 
-  static double _primeiroNumero(Map<String, dynamic> registro, List<String> chaves) {
+  static double _primeiroNumero(
+    Map<String, dynamic> registro,
+    List<String> chaves,
+  ) {
     for (final chave in chaves) {
       final valor = registro[chave];
       if (valor == null) continue;
@@ -750,7 +851,25 @@ class PortalContadorService {
   }
 
   static DateTime? _dataDoRegistro(Map<String, dynamic> registro) {
-    for (final chave in ['data_emissao', 'dataEmissao', 'data_entrada', 'created_at', 'createdAt']) {
+    // O XML autorizado é a fonte mais precisa: dhEmi contém data, hora e fuso
+    // informados no documento fiscal. A coluna do banco fica como fallback.
+    final xml = _xmlDoRegistro(registro);
+    if (xml.isNotEmpty) {
+      final emissao = RegExp(
+        r'<(?:\w+:)?dhEmi\b[^>]*>\s*([^<]+)\s*</(?:\w+:)?dhEmi\s*>',
+        caseSensitive: false,
+      ).firstMatch(xml)?.group(1)?.trim();
+      final dataXml = emissao == null ? null : DateTime.tryParse(emissao);
+      if (dataXml != null) return dataXml.toLocal();
+    }
+
+    for (final chave in [
+      'data_emissao',
+      'dataEmissao',
+      'data_entrada',
+      'created_at',
+      'createdAt',
+    ]) {
       final valor = registro[chave];
       if (valor == null) continue;
       final data = DateTime.tryParse(valor.toString());
@@ -768,5 +887,6 @@ class PortalContadorService {
   static String _isoInicio(DateTime data) =>
       _inicioDoDia(data).toUtc().toIso8601String();
 
-  static String _isoFim(DateTime data) => _fimDoDia(data).toUtc().toIso8601String();
+  static String _isoFim(DateTime data) =>
+      _fimDoDia(data).toUtc().toIso8601String();
 }

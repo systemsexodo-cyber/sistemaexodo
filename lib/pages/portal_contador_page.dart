@@ -9,7 +9,8 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:sistema_exodo_novo/pages/html_helper_stub.dart'
-    if (dart.library.html) 'package:sistema_exodo_novo/pages/html_helper_web.dart' as html_helper;
+    if (dart.library.html) 'package:sistema_exodo_novo/pages/html_helper_web.dart'
+    as html_helper;
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/models/nfce.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
@@ -223,17 +224,27 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
         ..writeln('XMLs - ${_sessao?.nome ?? ''}')
         ..writeln('Período: ${_formatarData(_inicio)} a ${_formatarData(_fim)}')
         ..writeln('Arquivos incluídos: $incluidos')
-        ..writeln('Notas sem XML na nuvem: ${documentos.length - comXml.length}')
-        ..writeln('Gerado em: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}');
+        ..writeln(
+          'Notas sem XML na nuvem: ${documentos.length - comXml.length}',
+        )
+        ..writeln(
+          'Gerado em: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
+        );
       final resumoBytes = utf8.encode(resumo.toString());
-      archive.addFile(ArchiveFile('LEIA-ME.txt', resumoBytes.length, resumoBytes));
+      archive.addFile(
+        ArchiveFile('LEIA-ME.txt', resumoBytes.length, resumoBytes),
+      );
 
       final zip = ZipEncoder().encode(archive);
       if (zip == null || zip.isEmpty) {
         throw Exception('Falha ao gerar o arquivo ZIP.');
       }
 
-      await _salvarBytes(Uint8List.fromList(zip), nomeArquivo, 'application/zip');
+      await _salvarBytes(
+        Uint8List.fromList(zip),
+        nomeArquivo,
+        'application/zip',
+      );
     } catch (e) {
       _avisar('Erro ao gerar o ZIP: $e');
     } finally {
@@ -255,7 +266,9 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
       } catch (_) {
         destino = Directory.current;
       }
-      final pasta = Directory('${destino.path}${Platform.pathSeparator}XMLs_Portal_Contador');
+      final pasta = Directory(
+        '${destino.path}${Platform.pathSeparator}XMLs_Portal_Contador',
+      );
       if (!pasta.existsSync()) pasta.createSync(recursive: true);
 
       final arquivo = File('${pasta.path}${Platform.pathSeparator}$nome');
@@ -440,7 +453,9 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
             ),
             Expanded(
               child: _carregando
-                  ? const Center(child: CircularProgressIndicator(color: _destaque))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: _destaque),
+                    )
                   : TabBarView(
                       children: TipoDocumentoPortal.values
                           .map((tipo) => _construirAba(tipo))
@@ -469,7 +484,11 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const ExodoLogo(fontSize: 44, showSubtitle: true, showPhoenix: true),
+                const ExodoLogo(
+                  fontSize: 44,
+                  showSubtitle: true,
+                  showPhoenix: true,
+                ),
                 const SizedBox(height: 28),
                 const Text(
                   'PORTAL DO CONTADOR',
@@ -509,11 +528,16 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
                     decoration: BoxDecoration(
                       color: Colors.redAccent.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+                      border: Border.all(
+                        color: Colors.redAccent.withOpacity(0.4),
+                      ),
                     ),
                     child: Text(
                       _erro,
-                      style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ],
@@ -541,7 +565,10 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
                           )
                         : const Text(
                             'ENTRAR',
-                            style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                            ),
                           ),
                   ),
                 ),
@@ -585,7 +612,11 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
         children: [
           const Text(
             'Portal do Contador',
-            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
           ),
           Text(
             _empresaSelecionadaNome(sessao),
@@ -604,10 +635,12 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
                 underline: const SizedBox.shrink(),
                 style: const TextStyle(color: Colors.white, fontSize: 13),
                 items: sessao.empresas
-                    .map((e) => DropdownMenuItem<String>(
-                          value: e.id,
-                          child: Text(e.nome),
-                        ))
+                    .map(
+                      (e) => DropdownMenuItem<String>(
+                        value: e.id,
+                        child: Text(e.nome),
+                      ),
+                    )
                     .toList(),
                 onChanged: (valor) async {
                   if (valor == null) return;
@@ -627,7 +660,9 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
   }
 
   String _empresaSelecionadaNome(PortalContadorSessao sessao) {
-    final encontrada = sessao.empresas.where((e) => e.id == _empresaId).toList();
+    final encontrada = sessao.empresas
+        .where((e) => e.id == _empresaId)
+        .toList();
     if (encontrada.isNotEmpty) return encontrada.first.nome;
     return sessao.empresas.first.nome;
   }
@@ -657,10 +692,10 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
             onPressed: _carregando
                 ? null
                 : () => _baixarZip(
-                      documentos: _documentos,
-                      nomeArquivo: 'xml_contabilidade_${_tagPeriodo()}.zip',
-                      separarPorTipo: true,
-                    ),
+                    documentos: _documentos,
+                    nomeArquivo: 'xml_contabilidade_${_tagPeriodo()}.zip',
+                    separarPorTipo: true,
+                  ),
             style: ElevatedButton.styleFrom(
               backgroundColor: _superficie,
               foregroundColor: _destaque,
@@ -753,9 +788,9 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
                 onPressed: _carregando
                     ? null
                     : () => _baixarZip(
-                          documentos: documentos,
-                          nomeArquivo: '${tipo.name}_${_tagPeriodo()}.zip',
-                        ),
+                        documentos: documentos,
+                        nomeArquivo: '${tipo.name}_${_tagPeriodo()}.zip',
+                      ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _superficie,
                   foregroundColor: _destaque,
@@ -827,7 +862,9 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
           Tooltip(
             message: documento.temXml ? 'Baixar XML' : 'XML não disponível',
             child: IconButton(
-              onPressed: documento.temXml ? () => _baixarDocumento(documento) : null,
+              onPressed: documento.temXml
+                  ? () => _baixarDocumento(documento)
+                  : null,
               icon: Icon(
                 documento.temXml ? Icons.download : Icons.cloud_off,
                 color: documento.temXml ? _destaque : Colors.white24,
@@ -861,8 +898,13 @@ class _PortalContadorPageState extends State<PortalContadorPage> {
     );
   }
 
-  String _formatarData(DateTime? data) =>
-      data == null ? '--/--/----' : DateFormat('dd/MM/yyyy').format(data);
+  String _formatarData(DateTime? data) {
+    if (data == null) return '--/--/----';
+    final formato = data.hour == 0 && data.minute == 0
+        ? 'dd/MM/yyyy'
+        : 'dd/MM/yyyy  HH:mm';
+    return DateFormat(formato).format(data);
+  }
 
   String _tagPeriodo() =>
       '${DateFormat('yyyyMMdd').format(_inicio)}_${DateFormat('yyyyMMdd').format(_fim)}';

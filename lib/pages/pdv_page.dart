@@ -8438,12 +8438,7 @@ class _PdvPageState extends State<PdvPage> {
         ),
         backgroundColor: Colors.green,
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(
-          top: 50,
-          left: 20,
-          right: 20,
-          bottom: 20,
-        ),
+        margin: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 20),
       ),
     );
   }
@@ -8642,7 +8637,8 @@ class _PdvPageState extends State<PdvPage> {
 
     // Sem destaque navegado, o primeiro card já aparece com a borda
     // (mesmo comportamento da tela "Pedidos").
-    final destaqueExibicao = _destaqueTecladoId ??
+    final destaqueExibicao =
+        _destaqueTecladoId ??
         (itensLista.isNotEmpty ? _idItemLista(itensLista.first) : null);
 
     return Focus(
@@ -8798,8 +8794,8 @@ class _PdvPageState extends State<PdvPage> {
         }
       }
       if (vizinho == null) return;
-      final ctxVizinho = _listaCardKeys[_idItemLista(itens[vizinho])]
-          ?.currentContext;
+      final ctxVizinho =
+          _listaCardKeys[_idItemLista(itens[vizinho])]?.currentContext;
       if (ctxVizinho == null) return;
       Scrollable.ensureVisible(
         ctxVizinho,
@@ -9237,10 +9233,7 @@ class _PdvPageState extends State<PdvPage> {
     }
   }
 
-  Widget _buildCardPedido(
-    Pedido pedido, {
-    bool destacadoTeclado = false,
-  }) {
+  Widget _buildCardPedido(Pedido pedido, {bool destacadoTeclado = false}) {
     final dataService = Provider.of<DataService>(context, listen: false);
     // CRITICAL FIX: Só mostra badge PAGO se o status for explicitly 'Pago' ou se estiver totalmente recebido
     // E não for um status de pendência (Pendente/Aguardando/Em Rota etc)
@@ -15003,6 +14996,169 @@ class _PdvPageState extends State<PdvPage> {
     }
   }
 
+  Future<void> _abrirDialogSangriaNoPagamento(DataService dataService) async {
+    final abertura = dataService.aberturaCaixaAtual;
+    if (abertura == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Abra o caixa antes de registrar uma sangria.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final valorController = TextEditingController();
+    final motivoController = TextEditingController(text: 'Retirada de valores');
+    final observacaoController = TextEditingController();
+
+    try {
+      final confirmar = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Row(
+            children: [
+              Icon(Icons.output, color: Colors.orangeAccent),
+              SizedBox(width: 10),
+              Text('Sangria / retirada', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: valorController,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 20),
+                  decoration: const InputDecoration(
+                    labelText: 'Valor da retirada',
+                    prefixText: 'R\$ ',
+                    labelStyle: TextStyle(color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: motivoController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Motivo',
+                    labelStyle: TextStyle(color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: observacaoController,
+                  maxLines: 2,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Observação (opcional)',
+                    labelStyle: TextStyle(color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Caixa: ${abertura.numero}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                final valorTexto = valorController.text
+                    .trim()
+                    .replaceAll('.', '')
+                    .replaceAll(',', '.');
+                final valor = double.tryParse(valorTexto);
+                if (valor == null || valor <= 0) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('Informe um valor válido maior que zero.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                if (motivoController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('Informe o motivo da retirada.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                Navigator.pop(dialogContext, true);
+              },
+              icon: const Icon(Icons.check),
+              label: const Text('Confirmar retirada'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.deepOrange,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmar != true || !mounted) return;
+
+      final valorTexto = valorController.text
+          .trim()
+          .replaceAll('.', '')
+          .replaceAll(',', '.');
+      final valor = double.parse(valorTexto);
+      final usuario =
+          Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ??
+          'PDV';
+
+      await dataService.registrarSangria(
+        valor: valor,
+        motivo: motivoController.text.trim(),
+        observacao: observacaoController.text.trim().isEmpty
+            ? null
+            : observacaoController.text.trim(),
+        responsavel: usuario,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Sangria de R\$ ${valor.toStringAsFixed(2)} registrada no caixa.',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Não foi possível registrar a sangria: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      valorController.dispose();
+      motivoController.dispose();
+      observacaoController.dispose();
+    }
+  }
+
   void _abrirDialogPagamento(Pedido pedido, DataService dataService) {
     void atualizarPagamentos(
       List<PagamentoPedido> novosPagamentos, {
@@ -15067,19 +15223,52 @@ class _PdvPageState extends State<PdvPage> {
           color: Color(0xFF1E1E2E),
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: PagamentoWidget(
-          totalPedido: pedido.totalGeral,
-          pagamentos: pedido.pagamentos,
-          clienteId: pedido
-              .clienteId, // Passa o clienteId para validação de crediário/fiado
-          clienteNome: pedido.clienteNome,
-          onPagamentosChanged: (novosPagamentos) =>
-              atualizarPagamentos(novosPagamentos, fecharDialog: true),
-          onPagamentoEditado: (novosPagamentos) => atualizarPagamentos(
-            novosPagamentos,
-            fecharDialog: false,
-            pagamentoEditado: true,
-          ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Pagamento do pedido',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        _abrirDialogSangriaNoPagamento(dataService),
+                    icon: const Icon(Icons.output, size: 17),
+                    label: const Text('Sangria / Retirada'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orangeAccent,
+                      side: const BorderSide(color: Colors.orangeAccent),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: PagamentoWidget(
+                totalPedido: pedido.totalGeral,
+                pagamentos: pedido.pagamentos,
+                clienteId: pedido
+                    .clienteId, // Passa o clienteId para validação de crediário/fiado
+                clienteNome: pedido.clienteNome,
+                onPagamentosChanged: (novosPagamentos) =>
+                    atualizarPagamentos(novosPagamentos, fecharDialog: true),
+                onPagamentoEditado: (novosPagamentos) => atualizarPagamentos(
+                  novosPagamentos,
+                  fecharDialog: false,
+                  pagamentoEditado: true,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -80,7 +80,7 @@ class MercadoPagoMensalidadeService {
     }
     final email = emailPagador.trim();
     if (!email.contains('@')) {
-      throw ArgumentError('Não encontrei um e-mail válido para a cobrança.');
+      throw Exception('Informe um e-mail válido para gerar a cobrança.');
     }
 
     final response = await _client

@@ -51,6 +51,29 @@ $permitidas = @(
     'NEON_AWS_REGION'
 )
 
+function Test-ChaveDataApi {
+    # A chave da Data API nao pode ser service_role no site publico.
+    # service_role ignora RLS e da acesso total ao banco; qualquer visitante
+    # pode ler/gravar tudo. O correto no navegador e anon + politicas RLS.
+    $linhaChave = $saida | Where-Object { $_ -match '^\s*NEON_DATA_API_KEY\s*=' } | Select-Object -First 1
+    if (-not $linhaChave) { return }
+    try {
+        $token = ($linhaChave -split '=', 2)[1].Trim()
+        $partes = $token.Split('.')
+        if ($partes.Count -ge 2) {
+            $payload = $partes[1].Replace('-', '+').Replace('_', '/')
+            while ($payload.Length % 4) { $payload += '=' }
+            $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
+            if ($json.role -eq 'service_role') {
+                Write-Host "[BLOQUEADO] NEON_DATA_API_KEY e service_role. Deploy cancelado; use anon + RLS." -ForegroundColor Red
+                exit 1
+            }
+        }
+    } catch {
+        Write-Host "[AVISO] Nao consegui verificar o papel da NEON_DATA_API_KEY." -ForegroundColor Yellow
+    }
+}
+
 if (-not (Test-Path $alvo)) {
     Write-Host "[ERRO] nao encontrei o arquivo de config do site:" -ForegroundColor Red
     Write-Host "       $alvo" -ForegroundColor Yellow
@@ -77,6 +100,7 @@ foreach ($linha in $linhas) {
 
 if ($removidas.Count -eq 0) {
     Write-Host "[OK] o pacote web ja estava limpo ($($mantidas.Count) chaves publicas)." -ForegroundColor Green
+    Test-ChaveDataApi
     exit 0
 }
 
@@ -101,4 +125,7 @@ if ($sobraram.Count -gt 0) {
     exit 1
 }
 Write-Host "[OK] verificacao final: nenhum segredo no arquivo publicado." -ForegroundColor Green
+
+Test-ChaveDataApi
+
 exit 0

@@ -46,23 +46,47 @@ TABELA = "portal_contador_acessos"
 SENHA_PADRAO = "Exodo@2026"
 
 
-def carregar_env():
-    """Le as credenciais do Supabase a partir do arquivo .env do projeto."""
-    env_vars = {}
-    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(caminho):
-        with open(caminho, "r", encoding="utf-8") as arquivo:
-            for linha in arquivo:
-                linha = linha.strip()
-                if not linha or linha.startswith("#") or "=" not in linha:
-                    continue
-                chave, valor = linha.split("=", 1)
-                env_vars[chave.strip()] = valor.strip().strip('"').strip("'")
+def _ler_env(caminho):
+    """Le um arquivo KEY=VALOR (ignora comentarios e remove aspas)."""
+    valores = {}
+    if not os.path.exists(caminho):
+        return valores
+    with open(caminho, "r", encoding="utf-8") as arquivo:
+        for linha in arquivo:
+            linha = linha.strip()
+            if not linha or linha.startswith("#") or "=" not in linha:
+                continue
+            chave, valor = linha.split("=", 1)
+            valores[chave.strip()] = valor.strip().strip('"').strip("'")
+    return valores
 
+
+def carregar_env():
+    """Le as credenciais do banco que o PORTAL usa.
+
+    Ordem: (1) `assets/app.env` — o build publicado do site, com a Data API e a
+    chave de SERVICO (service_role), que e a unica que passa pela RLS desta
+    tabela; (2) `.env` (SUPABASE_URL/SUPABASE_ANON_KEY) como fallback antigo.
+    """
+    raiz = os.path.dirname(os.path.abspath(__file__))
+
+    site = _ler_env(os.path.join(raiz, "assets", "app.env"))
+    url = (site.get("NEON_DATA_API_URL") or "").rstrip("/")
+    key = site.get("NEON_DATA_API_KEY") or ""
+    if url.endswith("/rest/v1"):
+        url = url[: -len("/rest/v1")]
+    if url and key:
+        return url, key
+
+    env_vars = _ler_env(os.path.join(raiz, ".env"))
     url = env_vars.get("SUPABASE_URL")
     key = env_vars.get("SUPABASE_ANON_KEY")
     if not url or not key:
-        print("[ERRO] Defina SUPABASE_URL e SUPABASE_ANON_KEY no arquivo .env da raiz do projeto.")
+        print(
+            "[ERRO] Sem credenciais: preencha NEON_DATA_API_URL e "
+            "NEON_DATA_API_KEY em assets/app.env (o build do site) ou "
+            "SUPABASE_URL e SUPABASE_ANON_KEY no .env da raiz."
+        )
         sys.exit(1)
     return url.rstrip("/"), key
 
@@ -120,7 +144,14 @@ def criar_ou_atualizar(url, key, cnpj, senha, nome, email):
 
     if resposta.status_code not in (200, 201):
         print(f"[ERRO] Falha ao gravar o acesso: {resposta.status_code} - {resposta.text}")
-        print("       Verifique se o script CRIAR_PORTAL_CONTADOR_SUPABASE.sql foi executado.")
+        if resposta.status_code in (401, 403) or "42501" in resposta.text:
+            print(
+                "       A tabela portal_contador_acessos so aceita a chave de SERVICO\n"
+                "       (RLS). Rode com o assets/app.env do site publicado (service_role)\n"
+                "       — a chave anon do .env antigo nao grava nesta tabela."
+            )
+        else:
+            print("       Verifique se o script CRIAR_PORTAL_CONTADOR_SUPABASE.sql foi executado.")
         sys.exit(1)
 
     print("[OK] Acesso do contador cadastrado/atualizado com sucesso!")

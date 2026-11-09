@@ -625,7 +625,15 @@ class DatabaseService {
 
     final dir = localizarPastaMigracoes();
     if (dir == null) {
-      log('ℹ️ Pasta scripts/migrations não encontrada — nada a migrar.');
+      // AVISO, não "nada a migrar": na instalação do cliente a pasta
+      // `scripts/migrations` não existe (o instalador copia só o
+      // `init_db.sql`), então isto significa SCHEMA CONGELADO — colunas novas
+      // nunca são criadas e a gravação descarta o que não existe no banco.
+      log(
+        '⚠️ Pasta scripts/migrations não encontrada — o schema deste banco '
+        'não será atualizado por migração. As colunas essenciais continuam '
+        'sendo garantidas no boot (ver _inicializarColunas).',
+      );
       _migracoesAplicadas = true;
       return (true, logs);
     }
@@ -1151,6 +1159,41 @@ class DatabaseService {
         await conn.execute(
           'ALTER TABLE fechamentos_caixa ADD COLUMN IF NOT EXISTS numero VARCHAR;',
         );
+        // COLUNAS QUE SÓ EXISTIAM NO ARQUIVO DE MIGRAÇÃO (014 e 015).
+        //
+        // O aplicador de migrações lê `scripts/migrations/*.sql`, e o cliente
+        // INSTALADO não recebe essa pasta (o instalador copia apenas
+        // `init_db.sql` e `abrir_pgadmin.bat`). Sem a pasta ele registra
+        // "nada a migrar" e o schema do cliente congela — então estas colunas
+        // nunca eram criadas fora da máquina de desenvolvimento. Como a
+        // gravação descarta coluna inexistente, a taxa da entrega nunca
+        // chegava ao banco (comissão do motoboy saía R$ 0,00) e configuração
+        // de NFC-e da empresa não era gravada (voltava ao valor antigo na
+        // próxima leitura). Aqui elas passam a ser garantidas no boot, sem
+        // depender de arquivo nem do `psql`.
+        try {
+          await conn.execute(
+            'ALTER TABLE entregas ADD COLUMN IF NOT EXISTS "valorFrete" NUMERIC(15,2);',
+          );
+          await conn.execute(
+            'ALTER TABLE entregas ADD COLUMN IF NOT EXISTS valor_frete NUMERIC(15,2);',
+          );
+          await conn.execute(
+            'ALTER TABLE entregas ADD COLUMN IF NOT EXISTS taxa_entrega NUMERIC(15,2);',
+          );
+        } catch (e) {
+          debugPrint('>>> [Colunas] ⚠️ entregas: $e');
+        }
+        try {
+          await conn.execute(
+            'ALTER TABLE empresas ADD COLUMN IF NOT EXISTS "incluirServicoGarcomNfce" BOOLEAN DEFAULT TRUE;',
+          );
+          await conn.execute(
+            'ALTER TABLE empresas ADD COLUMN IF NOT EXISTS "incluirTaxaEntregaNfce" BOOLEAN DEFAULT TRUE;',
+          );
+        } catch (e) {
+          debugPrint('>>> [Colunas] ⚠️ empresas (NFC-e): $e');
+        }
         // COLUNAS DE COMISSÃO DO MOTOBOY.
         //
         // A tabela `motoristas` nasceu só com id/empresa_id/nome/telefone/

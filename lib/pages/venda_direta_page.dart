@@ -110,6 +110,9 @@ class ItemCarrinho {
   // Preço de tabela SEM o desconto do perfil de preços (usado para exibir o
   // desconto da tabela no cupom não fiscal e na NFC-e). null = sem desconto de tabela.
   double? precoTabela;
+  // Vendedor responsável por ESTE item (lançado no momento da adição ao carrinho)
+  String? vendedorId; // ID do vendedor (funcionário)
+  String? vendedorNome; // Nome do vendedor
 
   ItemCarrinho({
     required this.id,
@@ -123,6 +126,8 @@ class ItemCarrinho {
     this.fornecedorNome,
     this.fornecedorId,
     this.observacao,
+    this.vendedorId,
+    this.vendedorNome,
     List<AdicionalProduto>? adicionais,
     List<OpcaoPerguntaSelecao>? opcoesCombo,
     List<VariacaoProduto>? variacoesSelecionadas,
@@ -206,6 +211,8 @@ class ItemCarrinho {
       'desconto': desconto,
       'fornecedorNome': fornecedorNome,
       'fornecedorId': fornecedorId,
+      'vendedorId': vendedorId,
+      'vendedorNome': vendedorNome,
       'observacao': observacao,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
       'opcoesCombo': opcoesCombo.map((o) => o.toMap()).toList(),
@@ -236,6 +243,8 @@ class ItemCarrinho {
       desconto: (map['desconto'] ?? 0.0).toDouble(),
       fornecedorNome: map['fornecedorNome'],
       fornecedorId: map['fornecedorId'],
+      vendedorId: map['vendedorId'],
+      vendedorNome: map['vendedorNome'],
       observacao: map['observacao'],
       adicionais:
           (map['adicionais'] as List<dynamic>?)
@@ -313,6 +322,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
   // Cache de performance para evitar rebuilds pesados (6k+ itens)
   bool _estaComPopupAberto = false;
+  bool _registrandoSangria = false;
   List<dynamic>? _cachedItens;
   List<String>? _cachedCategorias;
   List<Produto>? _cachedProdutosCategoria;
@@ -440,6 +450,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   double _limiteGavetaValor = 1000.0;
   bool _mostrarBarraLegenda =
       false; // Controle de visibilidade da legenda (hover)
+  int _cardHoverIndex = -1; // Card do produto sob o mouse (hover manual)
   Timer?
   _debounce; // Timer para suavizar a busca e evitar lag na digitação do PDV
   bool _habilitarMesasComandas = true;
@@ -866,6 +877,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   void _carregarPedidoParaEditar(Pedido pedido) {
     _pedidoOriginal = pedido;
 
+    // Preserva o vendedor principal ao reabrir uma venda salva ou delivery.
+    final dataService = Provider.of<DataService>(context, listen: false);
+    if (pedido.vendedorId != null) {
+      _vendedorSelecionado = dataService.funcionarios
+          .where((f) => f.id == pedido.vendedorId)
+          .firstOrNull;
+    }
+
     // Carregar pagamentos salvos
     _pagamentosSalvos = List.from(pedido.pagamentos);
 
@@ -881,6 +900,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           preco: produto.preco,
           quantidade: produto.quantidade,
           isServico: false,
+          vendedorId: produto.vendedorId,
+          vendedorNome: produto.vendedorNome,
           observacao: produto.observacao,
         ),
       );
@@ -933,6 +954,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (pedido.clienteId != null) {
         final dataService = Provider.of<DataService>(context, listen: false);
+        final vendedorPedido = pedido.vendedorId == null
+            ? null
+            : dataService.funcionarios
+                  .where((f) => f.id == pedido.vendedorId)
+                  .firstOrNull;
+        if (vendedorPedido != null) {
+          setState(() => _vendedorSelecionado = vendedorPedido);
+        }
         final cliente = dataService.clientes
             .where((c) => c.id == pedido.clienteId)
             .firstOrNull;
@@ -1217,6 +1246,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _cacheTotalProdutosAtivosPDV = 0;
 
       _clienteSelecionado = null;
+      _vendedorSelecionado = null;
       _tabelaPrecoAtiva = null;
       _descontoTotal = 0.0;
       _observacoesVenda = null;
@@ -1566,6 +1596,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         quantidade: _quantidadeDigitada,
                         fornecedorNome:
                             fornecedorPreSelecionado ?? produto.fornecedorNome,
+                        vendedorId: _vendedorSelecionado?.id,
+                        vendedorNome: _vendedorSelecionado?.nome,
                         observacao: produto.observacaoPadrao,
                         adicionais: List<AdicionalProduto>.from(selecionados),
                         precoSemPromocao: (precoItem < produto.preco - 0.001)
@@ -1677,6 +1709,272 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         },
       ),
     );
+  }
+
+  Future<void> _lancarConsumoProprioPdv(DataService dataService) async {
+    final produtos = List<Produto>.from(dataService.produtos)
+      ..sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
+    if (produtos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não há produtos cadastrados para consumo.'),
+        ),
+      );
+      return;
+    }
+    Produto? produtoSelecionado;
+    List<Produto> produtosFiltrados = produtos;
+    final pesquisaProdutoController = TextEditingController();
+    final quantidadeController = TextEditingController(text: '1');
+    final observacaoController = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final quantidadeInformada =
+              double.tryParse(
+                quantidadeController.text.trim().replaceAll(',', '.'),
+              ) ??
+              0.0;
+          final custoUnitario = produtoSelecionado?.precoCusto ?? 0.0;
+          final custoTotal = quantidadeInformada * custoUnitario;
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            title: const Row(
+              children: [
+                Icon(Icons.inventory_2, color: Colors.tealAccent),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Consumo próprio da loja',
+                    style: TextStyle(color: Colors.white, fontSize: 18),
+                  ),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: pesquisaProdutoController,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Pesquisar produto',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      hintText: 'Digite o nome do item...',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        color: Colors.tealAccent,
+                      ),
+                      suffixIcon: pesquisaProdutoController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'Limpar pesquisa',
+                              icon: const Icon(
+                                Icons.close,
+                                color: Colors.white70,
+                              ),
+                              onPressed: () {
+                                pesquisaProdutoController.clear();
+                                setDialogState(
+                                  () => produtosFiltrados = produtos,
+                                );
+                              },
+                            ),
+                      filled: true,
+                      fillColor: const Color(0xFF263449),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onChanged: (termo) {
+                      final busca = termo.trim().toLowerCase();
+                      setDialogState(() {
+                        produtosFiltrados = produtos
+                            .where(
+                              (produto) =>
+                                  produto.nome.toLowerCase().contains(busca),
+                            )
+                            .toList();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 170,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF263449),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: produtosFiltrados.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Nenhum produto encontrado.',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: produtosFiltrados.length,
+                            itemBuilder: (context, index) {
+                              final produto = produtosFiltrados[index];
+                              final selecionado =
+                                  produtoSelecionado?.id == produto.id;
+                              return ListTile(
+                                dense: true,
+                                selected: selecionado,
+                                selectedTileColor: Colors.teal.withOpacity(
+                                  0.18,
+                                ),
+                                leading: Icon(
+                                  selecionado
+                                      ? Icons.check_circle
+                                      : Icons.inventory_2_outlined,
+                                  color: selecionado
+                                      ? Colors.tealAccent
+                                      : Colors.white54,
+                                  size: 20,
+                                ),
+                                title: Text(
+                                  produto.nome,
+                                  style: TextStyle(
+                                    color: selecionado
+                                        ? Colors.tealAccent
+                                        : Colors.white,
+                                    fontWeight: selecionado
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onTap: () => setDialogState(
+                                  () => produtoSelecionado = produto,
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  if (produtoSelecionado != null) ...[
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Selecionado: ${produtoSelecionado!.nome}',
+                        style: const TextStyle(
+                          color: Colors.tealAccent,
+                          fontSize: 12,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: quantidadeController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Quantidade para baixar do estoque',
+                      labelStyle: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: observacaoController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Observação (opcional)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      hintText: 'Ex.: uso interno da equipe',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Custo do consumo: R\$ ${custoTotal.toStringAsFixed(2)} • Custo unitário: R\$ ${custoUnitario.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        color: Colors.tealAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('CANCELAR'),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.check),
+                label: const Text('LANÇAR CONSUMO'),
+                onPressed: () async {
+                  final quantidade = double.tryParse(
+                    quantidadeController.text.trim().replaceAll(',', '.'),
+                  );
+                  if (produtoSelecionado == null ||
+                      quantidade == null ||
+                      quantidade <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Selecione um produto e informe uma quantidade válida.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                  final usuario =
+                      Provider.of<AuthService>(
+                        context,
+                        listen: false,
+                      ).usuarioAtual?.nome ??
+                      'PDV';
+                  try {
+                    await dataService.registrarConsumoInterno(
+                      produtoId: produtoSelecionado!.id,
+                      quantidade: quantidade,
+                      observacao: observacaoController.text.trim().isEmpty
+                          ? 'Consumo próprio lançado pelo PDV'
+                          : observacaoController.text.trim(),
+                      usuario: usuario,
+                    );
+                    if (!mounted || !dialogContext.mounted) return;
+                    final nomeProdutoConsumido = produtoSelecionado!.nome;
+                    Navigator.pop(dialogContext);
+                    _mostrarNotificacaoSucesso(
+                      icone: Icons.inventory_2,
+                      titulo: 'Consumo próprio registrado',
+                      subtitulo:
+                          '$nomeProdutoConsumido: $quantidade un. • Custo: R\$ ${(quantidade * (produtoSelecionado!.precoCusto ?? 0.0)).toStringAsFixed(2)}',
+                      cor: Colors.tealAccent,
+                    );
+                  } catch (e) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      SnackBar(
+                        content: Text('Não foi possível lançar o consumo: $e'),
+                      ),
+                    );
+                  }
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    pesquisaProdutoController.dispose();
+    quantidadeController.dispose();
+    observacaoController.dispose();
   }
 
   void _exibirSelecaoFornecedor(Produto produto, {bool manterFoco = false}) {
@@ -2028,8 +2326,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     List<OpcaoPerguntaSelecao>? opcoesCombo,
     List<VariacaoProduto>? variacoesSelecionadas,
     double quantidade = 1,
+    String? vendedorId,
+    String? vendedorNome,
   }) {
     final isServico = item is Servico;
+    final vendedorEfetivoId = vendedorId ?? _vendedorSelecionado?.id;
+    final vendedorEfetivoNome = vendedorNome ?? _vendedorSelecionado?.nome;
     final id = item.id;
     final nome = item.nome;
     final empresaAtual = Provider.of<DataService>(
@@ -2163,7 +2465,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 c.adicionais.isEmpty &&
                 c.opcoesCombo.isEmpty &&
                 (c.variacoesSelecionadas ?? []).isEmpty &&
-                c.fornecedorNome == fNome,
+                c.fornecedorNome == fNome &&
+                c.vendedorId == vendedorEfetivoId &&
+                c.vendedorNome == vendedorEfetivoNome,
           );
     final bool jaExistia = index >= 0;
 
@@ -2189,6 +2493,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             quantidade: _quantidadeDigitada,
             fornecedorNome: fNome,
             fornecedorId: fornecedorId,
+            vendedorId: vendedorEfetivoId,
+            vendedorNome: vendedorEfetivoNome,
             observacao: observacao,
             opcoesCombo: finalOpcoesCombo,
             variacoesSelecionadas: variacoesSelecionadas,
@@ -2211,6 +2517,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       index,
       manterFoco,
     );
+
+    // Cada novo lançamento começa com quantidade padrão 1.
+    // Isso evita que a quantidade do item anterior faça o diálogo de
+    // quantidade ser pulado no próximo item, inclusive após selecionar vendedor.
+    _quantidadeDigitada = 1.0;
   }
 
   void _posAdicaoAoCarrinho(
@@ -2479,8 +2790,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     ).then((formaSelecionada) {
       if (!mounted || formaSelecionada == null) return;
       _formaVendaPendente = formaSelecionada;
-      // Continua o fluxo normal de adição (fornecedor, adicionais, quantidade)
-      _adicionarAoCarrinho(produto, manterFoco: manterFoco);
+      // O vendedor já foi escolhido antes da forma de venda.
+      // Continua o fluxo normal sem abrir o seletor novamente.
+      _adicionarAoCarrinho(
+        produto,
+        manterFoco: manterFoco,
+        vendedorJaSelecionado: true,
+      );
     });
   }
 
@@ -2497,9 +2813,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
   }
 
-  void _adicionarAoCarrinho(dynamic item, {bool manterFoco = false}) {
+  Future<void> _adicionarAoCarrinho(
+    dynamic item, {
+    bool manterFoco = false,
+    bool vendedorJaSelecionado = false,
+  }) async {
     if (item is! Produto) {
-      _efetivarAdicaoAoCarrinho(item, manterFoco: manterFoco);
+      _efetivarAdicaoAoCarrinho(
+        item,
+        manterFoco: manterFoco,
+        vendedorId: _vendedorSelecionado?.id,
+        vendedorNome: _vendedorSelecionado?.nome,
+      );
       return;
     }
 
@@ -2610,6 +2935,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     }
 
     final isServico = item is Servico;
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final empresa = dataService.empresaAtual;
+    final config = empresa?.configuracoes ?? {};
+
+    // Quando habilitado, o vendedor é escolhido para CADA item.
+    // A seleção acontece antes de combos, variações, fornecedor e quantidade,
+    // para que nenhum desses fluxos consiga salvar o item sem vendedor.
+    if (config['selecionarVendedorItemPDV'] == true && !vendedorJaSelecionado) {
+      final vendedor = await _selecionarVendedor(dataService);
+      if (!mounted || vendedor == null) return;
+    }
 
     // INTERCEPTADOR DE COMBOS / PERGUNTAS DE SELEÇÃO
     if (produto.perguntasSelecao.isNotEmpty) {
@@ -2646,10 +2982,6 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _exibirSelecaoFormaVenda(produto, manterFoco: manterFoco);
       return;
     }
-    final dataService = Provider.of<DataService>(context, listen: false);
-    final empresa = dataService.empresaAtual;
-
-    final config = empresa?.configuracoes ?? {};
     final ativarSelecaoFornecedor = config['selecionarFornecedorPDV'] == true;
 
     // SnackBar temporário para ajudar o usuário a entender por que não aparece
@@ -2741,7 +3073,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       return;
     }
 
-    _efetivarAdicaoAoCarrinho(item, manterFoco: manterFoco);
+    _efetivarAdicaoAoCarrinho(
+      item,
+      manterFoco: manterFoco,
+      vendedorId: _vendedorSelecionado?.id,
+      vendedorNome: _vendedorSelecionado?.nome,
+    );
   }
 
   /// Formata a quantidade de baixa de um produto (unidades por embalagem/item vendido)
@@ -2793,10 +3130,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
     final focusNode = FocusNode();
 
-    // Carregar configurações locais da balança
+    // Produto comum: não precisa consultar a configuração da balança antes
+    // de abrir o popup. Isso elimina a espera do primeiro lançamento.
+    // Só consultamos a balança quando o produto realmente é fracionável.
     final balancaService = BalancaService();
-    final config = await balancaService.obterConfiguracao();
-    final bool balancaAtiva = usarBalanca && config['ativo'] == true;
+    final bool balancaAtiva = usarBalanca
+        ? (await balancaService.obterConfiguracao())['ativo'] == true
+        : false;
 
     if (!mounted) return;
 
@@ -3230,6 +3570,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                           desconto: itemAtual.desconto,
                           fornecedorNome: itemAtual.fornecedorNome,
                           fornecedorId: itemAtual.fornecedorId,
+                          vendedorId: itemAtual.vendedorId,
+                          vendedorNome: itemAtual.vendedorNome,
                           observacao: itemAtual.observacao,
                           adicionais: itemAtual.adicionais,
                           opcoesCombo: itemAtual.opcoesCombo,
@@ -5395,117 +5737,327 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _selecionarVendedor(DataService dataService) {
-    showModalBottomSheet(
+  Future<Funcionario?> _selecionarVendedor(DataService dataService) async {
+    final vendedor = await showModalBottomSheet<Funcionario>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _buildSeletorVendedor(dataService),
     );
+    if (mounted && vendedor != null) {
+      // Não reconstruir a tela inteira entre o popup de vendedor e o popup
+      // de quantidade. O valor fica em memória e a próxima atualização visual
+      // acontece junto com a inclusão do item no carrinho.
+      _vendedorSelecionado = vendedor;
+    }
+    return vendedor;
   }
 
   Widget _buildSeletorVendedor(DataService dataService) {
     final vendedores = dataService.funcionarios.where((f) => f.ativo).toList();
+    int vendedorIndex = vendedores.isEmpty
+        ? 0
+        : vendedores.indexWhere((v) => v.id == _vendedorSelecionado?.id);
+    if (vendedorIndex < 0) vendedorIndex = 0;
+    final focusNode = FocusNode();
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.7,
-      decoration: const BoxDecoration(
-        color: Color(0xFF1E1E2E),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    Color corVendedor(int index) {
+      const cores = [
+        Colors.orangeAccent,
+        Colors.blueAccent,
+        Colors.greenAccent,
+        Colors.pinkAccent,
+        Colors.amber,
+        Colors.cyanAccent,
+        Colors.deepPurpleAccent,
+        Colors.tealAccent,
+      ];
+      return cores[index % cores.length];
+    }
+
+    return StatefulBuilder(
+      builder: (sheetContext, setSheetState) {
+        void selecionarAtual() {
+          if (vendedores.isEmpty) return;
+          Navigator.pop(sheetContext, vendedores[vendedorIndex]);
+        }
+
+        return KeyboardListener(
+          focusNode: focusNode,
+          autofocus: true,
+          onKeyEvent: (event) {
+            if (event is KeyDownEvent && vendedores.isNotEmpty) {
+              if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                setSheetState(() {
+                  vendedorIndex = (vendedorIndex + 1) % vendedores.length;
+                });
+              } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                setSheetState(() {
+                  vendedorIndex =
+                      (vendedorIndex - 1 + vendedores.length) %
+                      vendedores.length;
+                });
+              } else if (event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                selecionarAtual();
+              }
+            }
+          },
+          child: Container(
+            height: MediaQuery.of(sheetContext).size.height * 0.7,
+            decoration: const BoxDecoration(
+              color: Color(0xFF1E1E2E),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(
               children: [
-                const Text(
-                  'Selecionar Vendedor',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Selecionar Vendedor',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
+                if (_vendedorSelecionado != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        setState(() => _vendedorSelecionado = null);
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.clear),
+                      label: const Text('Remover Vendedor Atual'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(double.infinity, 48),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: vendedores.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'Nenhum vendedor encontrado.',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: ScrollController(
+                            initialScrollOffset: vendedorIndex > 2
+                                ? (vendedorIndex - 2) * 72.0
+                                : 0,
+                          ),
+                          itemCount: vendedores.length,
+                          itemBuilder: (context, index) {
+                            final func = vendedores[index];
+                            final isKeyboardSelected = vendedorIndex == index;
+                            final isSavedSelected =
+                                _vendedorSelecionado?.id == func.id;
+                            final cor = corVendedor(index);
+
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 120),
+                                decoration: BoxDecoration(
+                                  color: isKeyboardSelected
+                                      ? cor.withOpacity(0.16)
+                                      : Colors.white.withOpacity(0.025),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: isKeyboardSelected
+                                        ? cor
+                                        : isSavedSelected
+                                        ? cor.withOpacity(0.65)
+                                        : Colors.transparent,
+                                    width: isKeyboardSelected ? 2 : 1,
+                                  ),
+                                ),
+                                child: ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: cor.withOpacity(0.22),
+                                    child: Icon(Icons.person, color: cor),
+                                  ),
+                                  title: Text(
+                                    func.nome,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: isKeyboardSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    func.porcentagemComissao > 0
+                                        ? 'Comissão: ${func.porcentagemComissao}%'
+                                        : 'Sem comissão definida',
+                                    style: const TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isKeyboardSelected)
+                                        Icon(Icons.keyboard_return, color: cor),
+                                      if (isSavedSelected)
+                                        Icon(Icons.check_circle, color: cor),
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    setSheetState(() => vendedorIndex = index);
+                                    selecionarAtual();
+                                  },
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                 ),
               ],
             ),
           ),
-          if (_vendedorSelecionado != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  setState(() => _vendedorSelecionado = null);
-                  Navigator.pop(context);
-                },
-                icon: const Icon(Icons.clear),
-                label: const Text('Remover Vendedor Atual'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-              ),
-            ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: vendedores.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Nenhum vendedor encontrado.',
-                      style: TextStyle(color: Colors.white54),
-                    ),
-                  )
-                : ListView.builder(
-                    itemCount: vendedores.length,
-                    itemBuilder: (context, index) {
-                      final func = vendedores[index];
-                      final isSelected = _vendedorSelecionado?.id == func.id;
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: isSelected
-                              ? Colors.purpleAccent
-                              : Colors.grey[800],
-                          child: Icon(
-                            Icons.person,
-                            color: isSelected ? Colors.white : Colors.white54,
-                          ),
-                        ),
-                        title: Text(
-                          func.nome,
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        subtitle: Text(
-                          func.porcentagemComissao > 0
-                              ? 'Comissão: ${func.porcentagemComissao}%'
-                              : 'Sem comissão definida',
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-                        trailing: isSelected
-                            ? const Icon(
-                                Icons.check,
-                                color: Colors.purpleAccent,
-                              )
-                            : null,
-                        onTap: () {
-                          setState(() => _vendedorSelecionado = func);
-                          Navigator.pop(context);
-                        },
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
+        );
+      },
     );
+  }
+
+  Future<void> _abrirSangriaDiretaPdv() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    if (!dataService.caixaAberto) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Abra o caixa antes de registrar uma sangria.'),
+        ),
+      );
+      return;
+    }
+
+    if (_registrandoSangria) return;
+    _registrandoSangria = true;
+    final valorController = TextEditingController();
+    final motivoController = TextEditingController();
+    final observacaoController = TextEditingController();
+    try {
+      final confirmar = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          title: const Text(
+            'Sangria / Retirada',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: valorController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Valor da retirada (R\$)',
+                  ),
+                ),
+                TextField(
+                  controller: motivoController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Motivo da retirada',
+                  ),
+                ),
+                TextField(
+                  controller: observacaoController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Observação (opcional)',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Registrar sangria'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmar != true) return;
+      final valorTexto = valorController.text
+          .trim()
+          .replaceAll('.', '')
+          .replaceAll(',', '.');
+      final valor = double.tryParse(valorTexto);
+      if (valor == null || valor <= 0 || motivoController.text.trim().isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Informe um valor válido e o motivo da retirada.'),
+            ),
+          );
+        }
+        return;
+      }
+
+      final usuario =
+          Provider.of<AuthService>(context, listen: false).usuarioAtual?.nome ??
+          'PDV';
+      await dataService.registrarSangria(
+        valor: valor,
+        motivo: motivoController.text.trim(),
+        observacao: observacaoController.text.trim().isEmpty
+            ? null
+            : observacaoController.text.trim(),
+        responsavel: usuario,
+        aberturaParam: dataService.aberturaCaixaAtual,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sangria registrada com sucesso!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao registrar sangria: $e')),
+        );
+      }
+    } finally {
+      valorController.dispose();
+      motivoController.dispose();
+      observacaoController.dispose();
+      _registrandoSangria = false;
+    }
   }
 
   void _abrirLancamentoDespesa() {
@@ -8058,6 +8610,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               quantidade: item.quantidade,
               isServico: item.isServico,
               fornecedorNome: item.fornecedorNome,
+              vendedorId: item.vendedorId,
+              vendedorNome: item.vendedorNome,
               observacao: item.isBrinde
                   ? (item.observacao != null && item.observacao!.isNotEmpty
                         ? '[BRINDE] ${item.observacao}'
@@ -8167,10 +8721,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         }
       }
 
-      // Se for Delivery agora gerado, não criar VendaBalcao ainda (será criada quando paga no PDV)
-      if (!isDeliveryCapturado) {
-        await dataService.addVendaBalcao(vendaBalcao);
-      }
+      // O pedido original não deve ser excluído ao receber uma venda salva.
+      // addOrUpdatePedido abaixo atualiza o mesmo ID e preserva o registro
+      // no Supabase; DELETE seguido de UPSERT podia remover o pedido pago
+      // por causa da ordem assíncrona dos eventos.
+
+      // Toda venda finalizada deve ser persistida no histórico.
+      // A gravação local/memória acontece primeiro dentro do DataService;
+      // a sincronização com Supabase pode continuar em segundo plano para
+      // não travar o PDV esperando rede/Realtime.
+      unawaited(dataService.addVendaBalcao(vendaBalcao));
 
       // Impressão automática (configurável em Configurações da Empresa):
       //  * imprimirProducaoAoSalvar -> vias de produção (cozinha/bar)
@@ -8197,6 +8757,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 quantidade: item.quantidade,
                 observacao: item.observacao,
                 fornecedorNome: item.fornecedorNome,
+                vendedorId: item.vendedorId,
+                vendedorNome: item.vendedorNome,
                 adicionais: item.adicionais,
                 unidadeVenda: item.unidadeVenda,
                 quantidadeBaixa: item.quantidadeBaixa,
@@ -8225,21 +8787,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           vendedorNome: vendedorSelecionadoCapturado?.nome,
           operador: vendaBalcao.operador,
         );
-        await _imprimirTicketsProducaoVendaDireta(pedidoParaImpressao);
+        // Impressão não deve bloquear a finalização da venda.
+        unawaited(_imprimirTicketsProducaoVendaDireta(pedidoParaImpressao));
       }
 
-      final temPagamentosPendentes = pagamentosAtualizados.any(
-        (p) => !p.recebido,
-      );
-      final temFiadoOuCrediario = pagamentosAtualizados.any(
-        (p) =>
-            p.tipo == TipoPagamento.fiado || p.tipo == TipoPagamento.crediario,
-      );
-
-      if (mesaParaLimparId != null ||
-          temFiadoOuCrediario ||
-          temPagamentosPendentes ||
-          isDeliveryCapturado) {
+      // Toda venda finalizada também precisa existir em Pedidos, inclusive
+      // quando foi paga integralmente. Assim aparece em "Pedidos Pagos" e
+      // o histórico mescla VendaBalcao + Pedido pelo mesmo ID, sem duplicar.
+      if (statusPedido == 'Pago' || statusPedido == 'Pendente') {
         final produtosPedido = <ItemPedido>[];
         final servicosPedido = <ItemServico>[];
 
@@ -8264,6 +8819,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 quantidade: item.quantidade,
                 observacao: item.observacao,
                 fornecedorNome: item.fornecedorNome,
+                vendedorId: item.vendedorId,
+                vendedorNome: item.vendedorNome,
                 adicionais: item.adicionais,
                 unidadeVenda: item.unidadeVenda,
                 quantidadeBaixa: item.quantidadeBaixa,
@@ -8667,6 +9224,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             quantidade: item.quantidade,
             isServico: item.isServico,
             fornecedorNome: item.fornecedorNome,
+            vendedorId: item.vendedorId,
+            vendedorNome: item.vendedorNome,
             observacao: item.observacao,
             adicionais: item.adicionais,
             opcoesCombo: item.opcoesCombo,
@@ -8783,6 +9342,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             quantidade: item.quantidade,
             observacao: item.observacao,
             fornecedorNome: item.fornecedorNome,
+            vendedorId: item.vendedorId,
+            vendedorNome: item.vendedorNome,
             adicionais: item.adicionais,
             unidadeVenda: item.unidadeVenda,
             quantidadeBaixa: item.quantidadeBaixa,
@@ -9641,6 +10202,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                       quantidade: item.quantidade,
                                       isServico: item.isServico,
                                       fornecedorNome: item.fornecedorNome,
+                                      vendedorId: item.vendedorId,
+                                      vendedorNome: item.vendedorNome,
                                       observacao: item.observacao,
                                       adicionais: item.adicionais,
                                       opcoesCombo: item.opcoesCombo,
@@ -9675,6 +10238,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                       quantidade: item.quantidade,
                                       isServico: item.isServico,
                                       fornecedorNome: item.fornecedorNome,
+                                      vendedorId: item.vendedorId,
+                                      vendedorNome: item.vendedorNome,
                                       observacao: item.observacao,
                                       adicionais: item.adicionais,
                                       opcoesCombo: item.opcoesCombo,
@@ -10042,6 +10607,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
             quantidade: qty,
             observacao: item.observacao,
             fornecedorNome: item.fornecedorNome,
+            vendedorId: item.vendedorId,
+            vendedorNome: item.vendedorNome,
             adicionais: item.adicionais,
             unidadeVenda: item.unidadeVenda,
             quantidadeBaixa: item.quantidadeBaixa,
@@ -10300,6 +10867,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           quantidade: qty,
           isServico: item.isServico,
           fornecedorNome: item.fornecedorNome,
+          vendedorId: item.vendedorId,
+          vendedorNome: item.vendedorNome,
           observacao: item.observacao,
           adicionais: item.adicionais,
           opcoesCombo: item.opcoesCombo,
@@ -10372,6 +10941,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               quantidade: item.quantidade,
               isServico: item.isServico,
               fornecedorNome: item.fornecedorNome,
+              vendedorId: item.vendedorId,
+              vendedorNome: item.vendedorNome,
               observacao: item.observacao,
               adicionais: item.adicionais,
               opcoesCombo: item.opcoesCombo,
@@ -10455,6 +11026,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                 quantidade: item.quantidade,
                 observacao: item.observacao,
                 fornecedorNome: item.fornecedorNome,
+                vendedorId: item.vendedorId,
+                vendedorNome: item.vendedorNome,
                 unidadeVenda: item.unidadeVenda,
                 quantidadeBaixa: item.quantidadeBaixa,
                 precoSemPromocao: item.precoSemPromocao,
@@ -12252,6 +12825,8 @@ recusando a emissão de NFC-e (erro 403).
               quantidade: item.quantidade,
               isServico: item.isServico,
               fornecedorNome: item.fornecedorNome,
+              vendedorId: item.vendedorId,
+              vendedorNome: item.vendedorNome,
               observacao: item.observacao,
               adicionais: item.adicionais,
               opcoesCombo: item.opcoesCombo,
@@ -12331,6 +12906,8 @@ recusando a emissão de NFC-e (erro 403).
               adicionais: item.adicionais,
               observacao: item.observacao,
               fornecedorNome: item.fornecedorNome,
+              vendedorId: item.vendedorId,
+              vendedorNome: item.vendedorNome,
               unidadeVenda: item.unidadeVenda,
               quantidadeBaixa: item.quantidadeBaixa,
               precoSemPromocao: item.precoSemPromocao,
@@ -12511,6 +13088,8 @@ recusando a emissão de NFC-e (erro 403).
     // Estado local para resposta instantânea
     bool selecionarFornecedorLocal =
         empresa.configuracoes?['selecionarFornecedorPDV'] == true;
+    bool selecionarVendedorItemLocal =
+        empresa.configuracoes?['selecionarVendedorItemPDV'] == true;
     bool solicitarQuantidadeAoAdicionarLocal =
         empresa.configuracoes?['solicitarQuantidadeAoAdicionarPDV'] == true;
     bool habilitarMesasComandasLocal =
@@ -12646,6 +13225,42 @@ recusando a emissão de NFC-e (erro 403).
                         onChanged: (value) {
                           setDialogState(() {
                             selecionarFornecedorLocal = value;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: selecionarVendedorItemLocal
+                              ? Colors.purpleAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        title: const Text(
+                          'Selecionar Vendedor ao lançar item',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Ao adicionar um item ao carrinho, abre a seleção do vendedor responsável por aquele item.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                        value: selecionarVendedorItemLocal,
+                        activeColor: Colors.purpleAccent,
+                        activeTrackColor: Colors.purpleAccent.withOpacity(0.3),
+                        inactiveThumbColor: Colors.grey,
+                        inactiveTrackColor: Colors.white10,
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selecionarVendedorItemLocal = value;
                           });
                         },
                       ),
@@ -13642,6 +14257,8 @@ recusando a emissão de NFC-e (erro 403).
                     empresa.configuracoes ?? {},
                   );
                   config['selecionarFornecedorPDV'] = selecionarFornecedorLocal;
+                  config['selecionarVendedorItemPDV'] =
+                      selecionarVendedorItemLocal;
                   config['solicitarQuantidadeAoAdicionarPDV'] =
                       solicitarQuantidadeAoAdicionarLocal;
                   config['venda_direta_view_mode'] = _viewMode == ViewMode.list
@@ -17605,13 +18222,28 @@ recusando a emissão de NFC-e (erro 403).
             ),
             const SizedBox(width: 8),
           ],
-          if (mostrarDespesa)
+          _buildCompactHeaderButton(
+            icon: Icons.inventory_2,
+            label: 'Consumo próprio',
+            color: Colors.tealAccent,
+            onTap: () => _lancarConsumoProprioPdv(dataService),
+          ),
+          const SizedBox(width: 8),
+          if (mostrarDespesa) ...[
             _buildCompactHeaderButton(
               icon: Icons.money_off,
               label: 'Despesa',
               color: Colors.redAccent,
               onTap: () => _abrirLancamentoDespesa(),
             ),
+            const SizedBox(width: 8),
+            _buildCompactHeaderButton(
+              icon: Icons.output_rounded,
+              label: 'Sangria',
+              color: Colors.orangeAccent,
+              onTap: _abrirSangriaDiretaPdv,
+            ),
+          ],
         ],
       ),
     );
@@ -18798,7 +19430,10 @@ recusando a emissão de NFC-e (erro 403).
       color: destacado
           ? Colors.cyanAccent.withOpacity(0.16)
           : Colors.transparent,
-      child: InkWell(
+      // Sem InkWell: o brilho/hover do InkWell órfão ao fechar o diálogo
+      // (Esc, clique fora, Enter) derrubava a tela com 'referenceBox.attached'.
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () => Navigator.pop(ctx, {'pedido': pedido}),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -19446,6 +20081,8 @@ recusando a emissão de NFC-e (erro 403).
             preco: preco,
             quantidade: _quantidadeDigitada,
             isServico: false,
+            vendedorId: _vendedorSelecionado?.id,
+            vendedorNome: _vendedorSelecionado?.nome,
           ),
         );
       });
@@ -19869,27 +20506,47 @@ recusando a emissão de NFC-e (erro 403).
         !_focoNoCarrinho && _gridSelectedIndex == index && index != -1;
 
     return RepaintBoundary(
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _focoNoCarrinho = false;
-            _gridSelectedIndex = index;
-          });
-          final isDiversos = isProduto && codigo == '9999';
-          if (isDiversos) {
-            final valorDigitado = double.tryParse(
-              _termoBusca.replaceAll(',', '.').trim(),
-            );
-            _lancarDiversosRapido(precoInicial: valorDigitado);
-          } else {
-            _adicionarAoCarrinho(item, manterFoco: true);
+      // Hover/click sem InkWell: o brilho do InkWell "orfanava" ao abrir/fechar
+      // dialogos com o mouse sobre o card e derrubava a tela com
+      // 'referenceBox.attached' (falha de pintura do Flutter).
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) {
+          if (_cardHoverIndex != index) {
+            setState(() => _cardHoverIndex = index);
           }
         },
-        hoverColor: Colors.blueAccent.withOpacity(0.1),
-        splashColor: Colors.blueAccent.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
-        child: Container(
-          decoration: BoxDecoration(
+        onExit: (_) {
+          if (_cardHoverIndex == index) {
+            setState(() => _cardHoverIndex = -1);
+          }
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            setState(() {
+              _focoNoCarrinho = false;
+              _gridSelectedIndex = index;
+            });
+            final isDiversos = isProduto && codigo == '9999';
+            if (isDiversos) {
+              final valorDigitado = double.tryParse(
+                _termoBusca.replaceAll(',', '.').trim(),
+              );
+              _lancarDiversosRapido(precoInicial: valorDigitado);
+            } else {
+              _adicionarAoCarrinho(item, manterFoco: true);
+            }
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            foregroundDecoration: BoxDecoration(
+              color: _cardHoverIndex == index
+                  ? Colors.blueAccent.withOpacity(0.10)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
+            ),
+            decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: isDesativado
                   ? (isDark
@@ -20160,6 +20817,7 @@ recusando a emissão de NFC-e (erro 403).
               ],
             ),
           ),
+        ),
         ),
       ),
     );
@@ -24935,6 +25593,143 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       case TipoPagamento.mercado_pago:
         return Icons.qr_code;
     }
+  }
+
+  Future<void> _abrirSangriaNoPagamento() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    if (!dataService.caixaAberto) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Abra o caixa antes de registrar uma sangria.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    final valorController = TextEditingController();
+    final motivoController = TextEditingController();
+    final observacaoController = TextEditingController();
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Row(
+          children: [
+            Icon(Icons.money_off, color: Colors.orangeAccent),
+            SizedBox(width: 10),
+            Text('Sangria / Retirada', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: valorController,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Valor da retirada (R\$)',
+                  labelStyle: TextStyle(color: Colors.white70),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: motivoController,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Motivo da retirada',
+                  labelStyle: TextStyle(color: Colors.white70),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: observacaoController,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Observação (opcional)',
+                  labelStyle: TextStyle(color: Colors.white70),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange.shade800,
+            ),
+            onPressed: () {
+              final texto = valorController.text
+                  .trim()
+                  .replaceAll('.', '')
+                  .replaceAll(',', '.');
+              final valor = double.tryParse(texto) ?? 0;
+              if (valor <= 0 || motivoController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(
+                    content: Text('Informe um valor válido e o motivo.'),
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(dialogContext, true);
+            },
+            icon: const Icon(Icons.check),
+            label: const Text('Registrar retirada'),
+          ),
+        ],
+      ),
+    );
+    if (confirmado == true && mounted) {
+      final texto = valorController.text
+          .trim()
+          .replaceAll('.', '')
+          .replaceAll(',', '.');
+      final valor = double.tryParse(texto) ?? 0;
+      try {
+        final usuario =
+            Provider.of<AuthService>(
+              context,
+              listen: false,
+            ).usuarioAtual?.nome ??
+            'PDV';
+        await dataService.registrarSangria(
+          valor: valor,
+          motivo: motivoController.text.trim(),
+          observacao: observacaoController.text.trim().isEmpty
+              ? null
+              : observacaoController.text.trim(),
+          responsavel: usuario,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Sangria de R\$ ${valor.toStringAsFixed(2)} registrada no caixa.',
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Não foi possível registrar a sangria: $e')),
+          );
+      }
+    }
+    valorController.dispose();
+    motivoController.dispose();
+    observacaoController.dispose();
   }
 
   @override

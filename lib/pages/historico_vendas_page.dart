@@ -167,6 +167,8 @@ class ItemHistorico {
     final nomes = <String>{};
 
     if (vendaBalcao != null) {
+      final vendedorVenda = (vendaBalcao!.vendedorNome ?? '').trim();
+      if (vendedorVenda.isNotEmpty) nomes.add(vendedorVenda);
       for (final item in vendaBalcao!.itens) {
         final nome = (item.vendedorNome ?? '').trim();
         if (nome.isNotEmpty) nomes.add(nome);
@@ -2152,79 +2154,6 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               ),
                             ),
                           ],
-                          // Badge do número do caixa (fechamento/sangria/suprimento)
-                          if (item.caixaNumero != null &&
-                              item.caixaNumero!.isNotEmpty) ...[
-                            const SizedBox(width: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.teal.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: Colors.teal.withOpacity(0.3),
-                                ),
-                              ),
-                              child: Text(
-                                'CAIXA: ${item.caixaNumero}',
-                                style: const TextStyle(
-                                  color: Colors.tealAccent,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                          ],
-                          // Responsável pela ABERTURA do caixa desta venda.
-                          if (item.responsavel != null &&
-                              item.responsavel!.isNotEmpty &&
-                              (item.vendaBalcao != null ||
-                                  item.pedido != null ||
-                                  item.fechamentoCaixa != null)) ...[
-                            const SizedBox(width: 4),
-                            Container(
-                              constraints: const BoxConstraints(maxWidth: 220),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.deepPurple.withOpacity(0.10),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: Colors.deepPurple.withOpacity(0.30),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.lock_open_rounded,
-                                    color: Colors.deepPurpleAccent,
-                                    size: 11,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Flexible(
-                                    child: Text(
-                                      'RESP. ABERTURA: ${item.responsavel}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.deepPurpleAccent,
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 0.3,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
                           if (formaPagamentoStr.isNotEmpty)
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -2323,7 +2252,8 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               fontSize: 12,
                             ),
                           ),
-                          if (item.caixaNumero != null) ...[
+                          if (item.caixaNumero != null &&
+                              item.caixaNumero!.isNotEmpty) ...[
                             Text(
                               ' • ',
                               style: TextStyle(
@@ -2331,26 +2261,11 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                               ),
                             ),
                             Text(
-                              'Caixa ${item.caixaNumero}',
+                              'Abertura ${item.caixaNumero}',
                               style: TextStyle(
                                 color: Colors.blueAccent.withOpacity(0.8),
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                          if (item.responsavel != null) ...[
-                            Text(
-                              ' • ',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.2),
-                              ),
-                            ),
-                            Text(
-                              'Resp. abertura: ${item.responsavel}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.4),
-                                fontSize: 12,
                               ),
                             ),
                           ],

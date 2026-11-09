@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import select
+import shutil
 import subprocess
 import sys
 import threading
@@ -280,7 +281,7 @@ if sys.stderr is None:
         def flush(self, *args, **kwargs): pass
     sys.stderr = DummyWriter()
 
-VERSION = "1.0.14"
+VERSION = "1.0.18"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -850,12 +851,76 @@ def _ler_arquivo_env(caminho):
     return valores
 
 
-def carregar_arquivos_env(base_dir=None):
-    """Carrega o `.env` e o `.env.neon` (o `.env` vence em nomes repetidos).
+def _aplicar_env_neon(valores):
+    """Aplica no ambiente as chaves do `.env.neon` (o `.env` vence).
 
-    O `.env.neon` traz as credenciais do Neon. A chave DATABASE_URL de la e
-    copiada para NEON_DATABASE_URL, para NAO sobrescrever a DATABASE_URL do
-    `.env` (que aponta para o banco LOCAL).
+    A chave DATABASE_URL de la e copiada para NEON_DATABASE_URL, para NAO
+    sobrescrever a DATABASE_URL do `.env` (que aponta para o banco LOCAL).
+
+    Valores VAZIOS sao ignorados de proposito: o `.env.neon` entregue pelo
+    instalador vem so com as chaves (template), e gravar ``NEON_DATA_API_URL=''``
+    no ambiente impediria a reserva (app empacotado) de preencher depois.
+    """
+    for chave, valor in valores.items():
+        if not (valor or '').strip():
+            continue
+        if chave == 'DATABASE_URL':
+            os.environ.setdefault('NEON_DATABASE_URL', valor)
+        elif chave == 'DATABASE_URL_UNPOOLED':
+            os.environ.setdefault('NEON_DATABASE_URL_UNPOOLED', valor)
+        else:
+            os.environ.setdefault(chave, valor)
+
+
+# O app empacota a MESMA configuracao da nuvem em `assets/app.env` (asset do
+# Flutter, lido no boot por EnvConfig/NeonConfig). No PC instalado ele fica em
+# `data\flutter_assets\assets\app.env`; na arvore do projeto, em
+# `assets\app.env`.
+#
+# Isto e a RESERVA do `.env.neon`: o instalador entrega o `.env.neon` vazio numa
+# instalacao nova, e sem esta reserva o sincronizador nao encontrava
+# NEON_DATA_API_URL/NEON_AUTH_BASE_URL, caia para o Supabase antigo (ou ficava
+# sem nuvem) -- era o motivo do caixa novo nunca sincronizar com a nuvem.
+_CAMINHOS_APP_ENV = (
+    os.path.join('data', 'flutter_assets', 'assets', 'app.env'),
+    os.path.join('assets', 'app.env'),
+)
+
+
+def _carregar_nuvem_do_app_env(pastas):
+    """Pega as credenciais da nuvem do app empacotado. Devolve o caminho ou None.
+
+    So aproveita chaves de NUVEM (NEON_*/AWS_*): o `app.env` tambem carrega a
+    conexao do banco local de quem compilou o app, que NAO pode ser aplicada no
+    PC do cliente.
+    """
+    for pasta in pastas:
+        for relativo in _CAMINHOS_APP_ENV:
+            caminho = os.path.join(pasta, relativo)
+            if not os.path.exists(caminho):
+                continue
+            bruto = _ler_arquivo_env(caminho)
+            valores = {
+                chave: valor for chave, valor in bruto.items()
+                if chave.startswith(('NEON_', 'AWS_'))
+            }
+            if not (valores.get('NEON_DATA_API_URL') or '').strip():
+                continue
+            # No app o Object Storage aparece como NEON_AWS_*; o .env.neon usa
+            # AWS_*. Mantem as duas formas disponiveis.
+            for chave, valor in list(valores.items()):
+                if chave.startswith('NEON_AWS_'):
+                    valores.setdefault(chave[len('NEON_'):], valor)
+            _aplicar_env_neon(valores)
+            return caminho
+    return None
+
+
+def carregar_arquivos_env(base_dir=None):
+    """Carrega o `.env`, o `.env.neon` e, na falta dele, a nuvem do app.
+
+    Ordem: `.env` (vence em nomes repetidos) -> `.env.neon` -> nuvem empacotada
+    no app (`assets/app.env`), usada quando o `.env.neon` esta vazio/ausente.
     """
     pastas = []
     if base_dir:
@@ -876,15 +941,19 @@ def carregar_arquivos_env(base_dir=None):
         caminho = os.path.join(pasta, '.env.neon')
         if not os.path.exists(caminho):
             continue
-        valores = _ler_arquivo_env(caminho)
-        for chave, valor in valores.items():
-            if chave == 'DATABASE_URL':
-                os.environ.setdefault('NEON_DATABASE_URL', valor)
-            elif chave == 'DATABASE_URL_UNPOOLED':
-                os.environ.setdefault('NEON_DATABASE_URL_UNPOOLED', valor)
-            else:
-                os.environ.setdefault(chave, valor)
+        _aplicar_env_neon(_ler_arquivo_env(caminho))
         break
+
+    if not (os.getenv('NEON_DATA_API_URL') or '').strip():
+        origem = _carregar_nuvem_do_app_env(pastas)
+        if origem:
+            try:
+                print_log(
+                    f'[INIT] Nuvem carregada do app empacotado: {origem} '
+                    '(o .env.neon estava vazio/ausente).',
+                    Colors.CYAN)
+            except Exception:
+                pass
 
 
 def _exp_do_jwt(token):
@@ -2391,6 +2460,69 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
         return (' WHERE ' + ' AND '.join(condicoes)) if condicoes else ''
 
     guarda_conflito = _condicoes_do_conflito()
+
+    # 🔢 Código B: guarda de `numero` para TABELAS_COM_NUMERACAO
+    # Quando baixamos registros do Supabase/par, se o número ja estiver ocupado
+    # por OUTRO registro (mesma empresa, inclusive dentro do mesmo lote), renumeramos
+    # a copia RECEBIDA para max local+1 do prefixo, bumpamos a coluna de versao e
+    # registramos explicitamente em _exodo_sync_log (operation UPDATE) para republicar
+    # com o trigger silenciado por sync_mode='on'.
+    if table_name in TABELAS_COM_NUMERACAO and 'numero' in colunas_local:
+        # Cache de {numero: id} ja gravado localmente para esta tabela/neste lote
+        numeros_ocupados_local = {}
+
+        def _obter_max_numero_prefixo(prefixo):
+            """Retorna o maior numero sequencial com este prefixo no banco local."""
+            try:
+                with conn.cursor() as cur:
+                    # Busca todos os números com este prefixo e pega o maior
+                    cur.execute(f"""
+                        SELECT numero FROM "{table_name}"
+                        WHERE numero LIKE %s
+                        ORDER BY (
+                            CASE WHEN numero LIKE '{prefixo}-%'
+                                THEN CAST(RIGHT(numero, LENGTH(numero) - CHAR_LENGTH('{prefixo}-')) AS INTEGER)
+                            END
+                        ) DESC
+                        LIMIT 1
+                    """, (f'{prefixo}-%',))
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        import re as _re
+                        m = _re.match(r'^{}-(\d+)$'.format(_re.escape(prefixo)), str(row[0]), _re.IGNORECASE)
+                        if m:
+                            return int(m.group(1))
+                    return 0
+            except Exception:
+                return 0
+
+        def _analisar_numero(texto):
+            """'VND-0003' -> ('VND', 3) ou None."""
+            m = re.match(r'^([A-Z][A-Z0-9]{0,7})-(\d+)$', str(texto or '').strip().upper())
+            if not m:
+                return None
+            return m.group(1), int(m.group(2))
+
+        def _formatar_numero(prefixo, numero):
+            return f"{prefixo}-{int(numero):04d}"
+
+        # Pré-processamento: mapear quais números ja estao ocupados no local
+        # (somente para as tabelas de numeracao sequencial)
+        try:
+            with conn.cursor() as cur:
+                # Pega todos os ids e numeros da tabela para detectar conflitos
+                cur.execute(f'SELECT id, numero FROM "{table_name}"')
+                for row in cur.fetchall():
+                    rid = str(row[0]) if row[0] else None
+                    num = row[1]
+                    if rid and num:
+                        analisado = _analisar_numero(num)
+                        if analisado:
+                            prefixo, num_valor = analisado
+                            numeros_ocupados_local[str(rid)] = (prefixo, num_valor)
+        except Exception:
+            pass
+
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL exodo.sync_mode = 'on'")
@@ -2416,6 +2548,92 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
                         rejeitados_empresa += 1
                         continue
 
+                # 🔢 Código B: verifica e resolve conflito de numero sequencial
+                # Apenas para TABELAS_COM_NUMERACAO (vendas_balcao, pedidos)
+                if table_name in TABELAS_COM_NUMERACAO and 'numero' in row_filtrado:
+                    numero_recebido = str(row_filtrado.get('numero', '') or '')
+                    id_recebido = str(row_filtrado.get('id'))
+
+                    # Se o numero ja foi visto neste lote, use o mapa pre-build
+                    if id_recebido in numeros_ocupados_local:
+                        prefixo_ocupado, valor_ocupado = numeros_ocupados_local[id_recebido]
+                        # Ja existe este id com esse numero localmente -> nao ha conflito de outro id
+                        # mas verificamos se o numero recebido e diferente do que ja e dele mesmo
+                        if prefixo_ocupado and str(numero_recebido).upper().startswith(prefixo_ocupado.upper() + '-'):
+                            # Mesmo id, mesmo numero -> nao ha conflito, keep as is
+                            pass
+                        else:
+                            # Este numero e de OUTRO id (mesma empresa ou lote) -> renumerar
+                            # Encontrar o proximo numero livre para este prefixo
+                            proximo = _obter_max_numero_prefixo(prefixo_ocupado) + 1 if prefixo_ocupado else 1
+                            # Evitar colisao com numeros ja existentes no local
+                            while formatar_numero(prefixo_ocupado, proximo) in [
+                                n for n in numeros_ocupados_local.values()
+                            ] or any(
+                                _analisar_numero(r[1]) and _analisar_numero(r[1])[0] == prefixo_ocupado
+                                and _analisar_numero(r[1])[1] == proximo
+                                for r in numeros_ocupados_local.values()
+                            ]:
+                                proximo += 1
+                            novo_numero = formatar_numero(prefixo_ocupado, proximo)
+                            row_filtrado['numero'] = novo_numero
+                            S.print_log(
+                                f"[NUMERACAO] '{table_name}' id {id_recebido}: numero '{numero_recebido}' "
+                                f"ja de OUTRO registro, renumerado para '{novo_numero}'.",
+                                Colors.YELLOW,
+                            )
+
+                    # Se nao estava no cache pre-build, fazer busca no banco
+                    elif numero_recebido:
+                        analisado = _analisar_numero(numero_recebido)
+                        if analisado:
+                            prefixo, num_valor = analisado
+                            # Verificar se este numero ja pertence a OUTRO id no banco local
+                            try:
+                                with conn.cursor() as cur2:
+                                    cur2.execute(f"""
+                                        SELECT id, numero FROM "{table_name}"
+                                        WHERE numero = %s AND id != %s
+                                    """, (numero_recebido, id_recebido))
+                                    conflitos = cur2.fetchall()
+                                    if conflitos:
+                                        # numero ja pertence a outro id -> renumerar
+                                        # encontrar max local + 1 do prefixo
+                                        max_local = _obter_max_numero_prefixo(prefixo)
+                                        novo = max_local + 1
+                                        # loop para garantir que nao colida
+                                        while True:
+                                            candidato = formatar_numero(prefixo, novo)
+                                            # verifica se candidato ja existe
+                                            with conn.cursor() as cur3:
+                                                cur3.execute(f'SELECT 1 FROM "{table_name}" WHERE numero = %s', (candidato,))
+                                                if cur3.fetchone():
+                                                    novo += 1
+                                                else:
+                                                    break
+                                        row_filtrado['numero'] = formatar_numero(prefixo, novo)
+                                        S.print_log(
+                                            f"[NUMERACAO] '{table_name}' id {id_recebido}: numero '{numero_recebido}' "
+                                            f"ja de OUTRO registro (id {conflitos[0][0]}), renumerado para '{row_filtrado['numero']}'.",
+                                            Colors.YELLOW,
+                                        )
+                            except Exception:
+                                pass
+
+                # --- Código B extensão: bump da coluna de versao e registro em _exodo_sync_log ---
+                # Se a tabela tem coluna de versao, garantimos que o registro recebido
+                # tenha o valor bumpado para disparar o trigger de republicacao adequado.
+                # O trigger log_sync_event jÃ? ignora quando sync_mode='on', por isso
+                # explicitamente registramos na tabela de log com sync_mode OFF para
+                # que a republicacao ocorra.
+                if table_name in TABELAS_COM_NUMERACAO and col_versao:
+                    # Verificar se o registro ja tem uma versao distinta do que a nuvem enviou
+                    coluna_ver = col_versao
+                    valor_atual_linha = row_filtrado.get(coluna_ver)
+                    # Se a versao vier None ou vazia, definir como NOW() para forçar update
+                    if not valor_atual_linha:
+                        row_filtrado[coluna_ver] = datetime.now(timezone.utc).isoformat()
+
                 colunas = list(row_filtrado.keys())
                 valores = [_serializar_valor_com_tipo(row_filtrado[k], colunas_e_tipos.get(k, 'TEXT')) for k in colunas]
                 cols_sql = ', '.join([f'"{c}"' for c in colunas])
@@ -2437,6 +2655,23 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
                 if cur.rowcount:
                     importados += 1
                     aplicados.append(str(row_filtrado.get('id')))
+                    
+                    # 🔢 Código B: registar explicitamente em _exodo_sync_log
+                    # quando houve renumeracao de numero sequencial.
+                    # O trigger log_sync_event ignora quando sync_mode='on',
+                    # por isso definimos 'off' para que o registro seja
+                    # republicado para a nuvem com o novo numero.
+                    if table_name in TABELAS_COM_NUMERACAO and 'numero' in row_filtrado:
+                        try:
+                            with conn.cursor() as log_cur:
+                                log_cur.execute("SET LOCAL exodo.sync_mode = 'off'")
+                                log_cur.execute("""
+                                    INSERT INTO "_exodo_sync_log" (table_name, record_id, operation)
+                                    VALUES (%s, %s, 'UPDATE')
+                                """, (table_name, str(row_filtrado.get('id'))))
+                                log_cur.execute("SET LOCAL exodo.sync_mode = 'on'")
+                        except Exception as e_log:
+                            S.print_log(f"[NUMERACAO] Nao foi possivel registrar log_sync_log: {e_log}", Colors.YELLOW)
                 else:
                     ignorados_mais_antigos += 1
         conn.commit()
@@ -2928,139 +3163,221 @@ def _marcar_versao_aplicada_local(conn, cfg_id, versao):
             pass
 
 
+COMPONENTES_ATUALIZAVEIS = {
+    # id na bridge_config -> (arquivo local, tipo de pacote)
+    "latest": ("ExodoNfceBridge.exe", "exe"),
+    "sync_latest": ("SincronizadorNuvem.exe", "pasta"),
+}
+
+
+def _parece_executavel(caminho):
+    """O arquivo baixado é mesmo um .exe? (MZ no começo).
+
+    O código antigo escrevia o que viesse no lugar do executável: publicar um
+    `.zip` com o id `app_latest` jogava o pacote inteiro por cima do
+    `sistema_exodo_novo.exe` e deixava o cliente sem sistema.
+    """
+    try:
+        with open(caminho, "rb") as arquivo:
+            return arquivo.read(2) == b"MZ"
+    except OSError:
+        return False
+
+
+def _apagar_silencioso(caminho):
+    try:
+        if os.path.isdir(caminho):
+            shutil.rmtree(caminho, ignore_errors=True)
+        elif os.path.exists(caminho):
+            os.remove(caminho)
+    except OSError:
+        pass
+
+
 def executar_atualizacao_completa(supabase_url, api_key, conn=None):
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "apikey": api_key
-    }
-    
+    """Baixa e aplica o bridge e o sincronizador publicados na `bridge_config`.
+
+    São canais separados do app: `latest` = bridge (PyInstaller onefile, vem
+    como .exe) e `sync_latest` = sincronizador (onedir, vem como .zip com o
+    `_internal`). O `app_latest` NÃO é tratado aqui — o app baixa o próprio
+    pacote (`app.so` + `flutter_assets`) pela tela de atualização.
+    """
+    import zipfile
+
+    headers = {"Authorization": f"Bearer {api_key}", "apikey": api_key}
     url = f"{supabase_url.rstrip('/')}/rest/v1/bridge_config"
     try:
-        r = requests.get(url, headers=headers, timeout=20)
-        if r.status_code != 200:
-            return False, f"Erro ao consultar bridge_config: {r.status_code}"
-            
-        configs = r.json()
-        downloads = {}
-        for item in configs:
-            cfg_id = item.get("id")
-            download_url = item.get("download_url")
-            version = item.get("version")
-            if download_url:
-                downloads[cfg_id] = (download_url, version)
-                
-        if not downloads:
-            return False, "Nenhuma URL de download encontrada na tabela bridge_config."
-            
-        base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-        
-        # Mapeamento do id da config para o nome do executável local
-        file_map = {
-            "app_latest": "sistema_exodo_novo.exe",
-            "latest": "ExodoNfceBridge.exe",
-            "sync_latest": "SincronizadorNuvem.exe"
-        }
-        
-        baixados = []
-        aplicadas = []   # [(cfg_id, ver)] efetivamente baixados
-        pulados = []     # arquivos que já estavam na versão pedida
-        for cfg_id, (url_dl, ver) in downloads.items():
-            local_filename = file_map.get(cfg_id)
-            if not local_filename:
-                continue
-                
-            local_path = os.path.join(base_dir, local_filename)
+        resposta = requests.get(url, headers=headers, timeout=20)
+        if resposta.status_code != 200:
+            return False, f"Erro ao consultar bridge_config: {resposta.status_code}"
 
-            # Nada a fazer quando ESTA máquina já está na versão pedida. Sem
-            # esta trava, um comando emitido para todos matava e relançava o
-            # app numa máquina já atualizada — a janela "abria e fechava".
-            if (ver and os.path.exists(local_path)
-                    and _versao_aplicada_local(conn, cfg_id) == str(ver)):
+        base_dir = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+                    else os.path.dirname(os.path.abspath(__file__)))
+
+        baixados = []    # [(arquivo local, tipo, caminho do pacote/staging)]
+        aplicadas = []   # [(cfg_id, versao)]
+        pulados = []
+
+        for item in resposta.json() or []:
+            cfg_id = str(item.get("id") or "")
+            if cfg_id not in COMPONENTES_ATUALIZAVEIS:
+                continue  # app_latest e direcionamentos por empresa ficam fora
+
+            url_dl = item.get("download_url")
+            ver = item.get("version")
+            if not url_dl:
+                continue
+            local_filename, tipo = COMPONENTES_ATUALIZAVEIS[cfg_id]
+
+            # Nada a fazer quando ESTA máquina já aplicou esta versão. Sem esta
+            # trava, o mesmo aviso matava e relançava os programas a cada ciclo.
+            if ver and _versao_aplicada_local(conn, cfg_id) == str(ver):
                 pulados.append(f'{local_filename} v{ver}')
                 print_log(f"[CMD] {local_filename} já está na versão {ver}; pulando.",
                           Colors.CYAN)
                 continue
 
-            new_path = local_path + ".new"
-            
-            print_log(f"[CMD] Baixando {local_filename} versao {ver} de: {url_dl}", Colors.BLUE)
-            r_dl = requests.get(url_dl, stream=True, timeout=120)
-            if r_dl.status_code == 200:
-                with open(new_path, "wb") as f:
-                    for chunk in r_dl.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                baixados.append(local_filename)
+            print_log(f"[CMD] Baixando {cfg_id} v{ver} de: {url_dl}", Colors.BLUE)
+            temporario = os.path.join(base_dir, f"_novo_{cfg_id}.bin")
+            try:
+                r_dl = requests.get(url_dl, stream=True, timeout=300)
+                if r_dl.status_code != 200:
+                    print_log(f"[CMD] Falha ao baixar {cfg_id}: HTTP {r_dl.status_code}",
+                              Colors.RED)
+                    continue
+                with open(temporario, "wb") as arquivo:
+                    for pedaco in r_dl.iter_content(chunk_size=65536):
+                        if pedaco:
+                            arquivo.write(pedaco)
+            except Exception as e:
+                print_log(f"[CMD] Download interrompido de {cfg_id}: {e}", Colors.RED)
+                _apagar_silencioso(temporario)
+                continue
+
+            if tipo == "exe":
+                if not _parece_executavel(temporario):
+                    print_log(f"[CMD] {cfg_id}: o arquivo baixado não é um .exe — "
+                              "descartado (link publicado errado).", Colors.RED)
+                    _apagar_silencioso(temporario)
+                    continue
+                destino = os.path.join(base_dir, local_filename + ".new")
+                _apagar_silencioso(destino)
+                os.replace(temporario, destino)
+                baixados.append((local_filename, "exe", destino))
                 aplicadas.append((cfg_id, ver))
-            else:
-                print_log(f"[CMD] Falha ao baixar {local_filename}: {r_dl.status_code}", Colors.RED)
-                
+                continue
+
+            # Pacote do sincronizador: .zip com o exe e a pasta `_internal`.
+            if not zipfile.is_zipfile(temporario):
+                print_log(f"[CMD] {cfg_id}: o pacote não é um .zip válido — "
+                          "descartado.", Colors.RED)
+                _apagar_silencioso(temporario)
+                continue
+            staging = os.path.join(base_dir, f"_novo_{cfg_id}")
+            _apagar_silencioso(staging)
+            try:
+                with zipfile.ZipFile(temporario) as pacote:
+                    pacote.extractall(staging)
+            except Exception as e:
+                print_log(f"[CMD] Não consegui extrair {cfg_id}: {e}", Colors.RED)
+                _apagar_silencioso(staging)
+                _apagar_silencioso(temporario)
+                continue
+            _apagar_silencioso(temporario)
+            if not os.path.exists(os.path.join(staging, local_filename)):
+                print_log(f"[CMD] {cfg_id}: o .zip não tem {local_filename} — "
+                          "descartado.", Colors.RED)
+                _apagar_silencioso(staging)
+                continue
+            baixados.append((local_filename, "pasta", staging))
+            aplicadas.append((cfg_id, ver))
+
         if not baixados:
             if pulados:
                 return True, ("Já estava atualizado — nada a fazer ("
                               + ', '.join(pulados) + ").")
-            return False, "Nenhum executavel foi baixado com sucesso."
-            
-        # Gravar o BAT de substituição
-        # Usar VBScript em vez de .bat para NÃO abrir janela CMD visível.
-        # O .bat com 'start ""' cria uma janela preta no cliente.
+            return False, "Nenhum componente foi baixado com sucesso."
+
+        # Troca feita por VBScript, sem janela de CMD. As cópias são feitas pelo
+        # próprio FileSystemObject: `cmd /c copy` com caminho contendo espaço
+        # (ex.: "C:\Arquivos de Programas") quebrava a linha do script.
         vbs_path = os.path.join(base_dir, "update_exodo_system.vbs")
-        
         vbs_lines = [
             'Set sh = CreateObject("WScript.Shell")',
+            'Set fso = CreateObject("Scripting.FileSystemObject")',
+            'base = fso.GetParentFolderName(WScript.ScriptFullName)',
+            'sh.CurrentDirectory = base',
             'WScript.Sleep 3000',
         ]
-        
-        # Matar processos antigos
-        for proc in ['sistema_exodo_novo.exe', 'ExodoNfceBridge.exe', 
-                      'ExodoNfceBridgeWatchdog.exe', 'SincronizadorNuvem.exe', 'python.exe']:
+        for proc in ['sistema_exodo_novo.exe', 'ExodoNfceBridge.exe',
+                     'ExodoNfceBridgeWatchdog.exe', 'SincronizadorNuvem.exe',
+                     'python.exe']:
             vbs_lines.append(f'sh.Run "cmd /c taskkill /F /IM {proc}", 0, False')
-        
         vbs_lines.append('WScript.Sleep 1500')
-        
-        # Mover arquivos baixados
-        for filename in baixados:
-            vbs_lines.append(f'sh.Run "cmd /c if exist \"{filename}.new\" move /Y \"{filename}.new\" \"{filename}\"", 0, True')
-        
-        # Reiniciar serviços (2º arg = 0 → sem janela)
-        if 'ExodoNfceBridgeWatchdog.exe' in baixados:
-            vbs_lines.append('sh.Run "cmd /c if exist \"ExodoNfceBridgeWatchdog.exe\" start /b \"\" \"ExodoNfceBridgeWatchdog.exe\"", 0, False')
-        elif 'ExodoNfceBridge.exe' in baixados:
-            vbs_lines.append('sh.Run "cmd /c if exist \"ExodoNfceBridge.exe\" start /b \"\" \"ExodoNfceBridge.exe\" --silent", 0, False')
-        if 'SincronizadorNuvem.exe' in baixados:
-            vbs_lines.append('sh.Run "cmd /c if exist \"SincronizadorNuvem.exe\" start /b \"\" \"SincronizadorNuvem.exe\"", 0, False')
-        if 'sistema_exodo_novo.exe' in baixados:
-            vbs_lines.append('sh.Run "cmd /c if exist \"sistema_exodo_novo.exe\" start /b \"\" \"sistema_exodo_novo.exe\"", 0, False')
-        
-        # Auto-deletar
+        vbs_lines.append('On Error Resume Next')
+
+        nomes_trocados = []
+        for local_filename, tipo, origem in baixados:
+            nomes_trocados.append(local_filename)
+            if tipo == "exe":
+                vbs_lines.append(
+                    f'fso.CopyFile "{origem}", base & "\\{local_filename}", True')
+                continue
+            for raiz_pasta, _, arquivos in os.walk(origem):
+                relativo = os.path.relpath(raiz_pasta, origem)
+                if relativo not in (".", ""):
+                    vbs_lines.append(
+                        f'fso.CreateFolder base & "\\{relativo}"')
+                for nome_arquivo in arquivos:
+                    origem_arq = os.path.join(raiz_pasta, nome_arquivo)
+                    if relativo in (".", ""):
+                        destino_rel = nome_arquivo
+                    else:
+                        destino_rel = os.path.join(relativo, nome_arquivo)
+                    vbs_lines.append(
+                        f'fso.CopyFile "{origem_arq}", base & "\\{destino_rel}", True')
+
+        vbs_lines.append('On Error GoTo 0')
+        limite_para_apagar = [
+            origem for _, tipo, origem in baixados
+            if tipo == "pasta"
+        ]
+        for pasta in limite_para_apagar:
+            vbs_lines.append(f'fso.DeleteFolder "{pasta}", True')
         vbs_lines.append('WScript.Sleep 500')
-        vbs_lines.append('Set fso = CreateObject("Scripting.FileSystemObject")')
+        if 'ExodoNfceBridge.exe' in nomes_trocados:
+            vbs_lines.append('sh.Run "ExodoNfceBridge.exe --silent", 0, False')
+        if 'SincronizadorNuvem.exe' in nomes_trocados:
+            vbs_lines.append('sh.Run "SincronizadorNuvem.exe", 0, False')
+        vbs_lines.append('WScript.Sleep 500')
         vbs_lines.append('fso.DeleteFile WScript.ScriptFullName')
-        
-        with open(vbs_path, "w", encoding="utf-8") as f:
-            f.write("\r\n".join(vbs_lines))
-            
-        # Marcar as versões baixadas ANTES de disparar a troca: é o que evita
-        # re-baixar/relançar a mesma versão no próximo comando.
+
+        with open(vbs_path, "w", encoding="utf-8") as arquivo:
+            arquivo.write("\r\n".join(vbs_lines))
+
+        # Marcar as versões ANTES de disparar a troca: é o que evita rebaixar
+        # tudo de novo no próximo ciclo.
         for cfg_id, ver in aplicadas:
             _marcar_versao_aplicada_local(conn, cfg_id, ver)
 
-        # Disparar VBScript (roda tudo escondido, sem janela CMD)
-        print_log(f"[CMD] Executando script de swap (VBScript) e fechando: {vbs_path}", Colors.BLUE)
+        print_log(f"[CMD] Executando script de troca (VBScript) e fechando: {vbs_path}",
+                  Colors.BLUE)
         subprocess.Popen(['wscript.exe', vbs_path],
                          creationflags=0x08000000 if os.name == 'nt' else 0,
                          close_fds=True)
-        
-        # Usar um thread separado para fechar o synchronizador após o delay do BAT
+
         def self_exit():
             time.sleep(1)
             os._exit(0)
-            
+
         import threading
         threading.Thread(target=self_exit).start()
-        
-        return True, f"Arquivos baixados: {', '.join(baixados)}. Aplicando swap e reiniciando."
+
+        trocados = ', '.join(nomes_trocados)
+        return True, f"Baixados: {trocados}. Aplicando a troca e reiniciando."
     except Exception as e:
         return False, f"Erro durante atualizacao: {e}"
+
 
 def executar_resolucao_conflito_remota(conn, extra):
     """Aplica no PC a decisão feita pelo Portal Êxodo."""

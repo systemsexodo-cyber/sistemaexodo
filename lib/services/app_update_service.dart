@@ -869,10 +869,48 @@ class AppUpdateService {
     ].map((c) => p.normalize(c)).toList();
   }
 
+  /// Pasta de onde saem os `.sql` que vão dentro do pacote de atualização.
+  ///
+  /// O pacote leva `scripts/migrations/*.sql` para o cliente migrar o schema
+  /// sozinho no próximo boot, sem depender de alcançar a pasta do servidor pela
+  /// LAN. Entre as candidatas (projeto e instalação), fica com a que tem a
+  /// migração mais nova — publicar de uma instalação antiga não volta o schema.
+  static String? pastaMigracoesParaPacote([String? origem]) {
+    final candidatas = <String>{
+      p.join(Directory.current.path, 'scripts', 'migrations'),
+      p.join(p.dirname(Platform.resolvedExecutable), 'scripts', 'migrations'),
+      if (origem != null) p.join(origem, 'scripts', 'migrations'),
+    };
+    String? melhor;
+    var melhorVersao = -1;
+    for (final caminho in candidatas) {
+      try {
+        final dir = Directory(caminho);
+        if (!dir.existsSync()) continue;
+        var maior = -1;
+        for (final e in dir.listSync()) {
+          if (e is! File || !e.path.toLowerCase().endsWith('.sql')) continue;
+          final m = RegExp(r'^(\d+)').firstMatch(p.basename(e.path));
+          if (m == null) continue;
+          final v = int.tryParse(m.group(1)!) ?? -1;
+          if (v > maior) maior = v;
+        }
+        if (maior >= 0 && maior > melhorVersao) {
+          melhor = dir.path;
+          melhorVersao = maior;
+        }
+      } catch (_) {}
+    }
+    return melhor;
+  }
+
   /// Monta o pacote `.zip` com o programa que será publicado.
   ///
   /// Leva o que REALMENTE muda o programa: `data/app.so` (o código compilado),
   /// `data/flutter_assets` (telas, fontes, imagens) e o `sistema_exodo_novo.exe`.
+  /// Leva também `scripts/migrations/*.sql`: o `self_update_app.bat` copia a
+  /// árvore inteira para a pasta do app e o boot aplica o que faltar, então o
+  /// cliente migra sem depender da LAN.
   /// Só o `.exe` (como era antes) não atualiza nada: ele é o runner do Flutter,
   /// igualzinho em todas as versões.
   static Future<PacoteAtualizacao?> empacotarAtualizacao({
@@ -920,6 +958,28 @@ class AppUpdateService {
           await encoder.addFile(item, 'data/flutter_assets/$rel');
         }
         conteudo.add('data/flutter_assets');
+      }
+
+      // Migrações de schema: vão no pacote para o cliente migrar no boot, sem
+      // depender da LAN. O self_update copia esta árvore para
+      // {app}\scripts\migrations, que é o primeiro lugar que o boot procura.
+      final pastaMigracoes = pastaMigracoesParaPacote(origem.path);
+      if (pastaMigracoes != null) {
+        for (final item in Directory(pastaMigracoes).listSync()) {
+          if (item is! File || !item.path.toLowerCase().endsWith('.sql')) {
+            continue;
+          }
+          await encoder.addFile(
+            item,
+            'scripts/migrations/${p.basename(item.path)}',
+          );
+        }
+        conteudo.add('scripts/migrations');
+      } else {
+        debugPrint(
+          '>>> [AppUpdateService] ⚠️ scripts/migrations não encontrada: '
+          'o pacote vai sem migrações de schema.',
+        );
       }
 
       await encoder.addFile(

@@ -80,8 +80,14 @@ Write-Passo "Gerando dump do banco e empacotando na VM..."
 $remoto = @"
 set -euo pipefail
 cd $PastaVm
+# Os arquivos do bucket saem do container com permissao 600 (root) e derrubavam
+# o tar com "Permission denied", abortando o backup e deixando a pasta vazia.
+# O chmod roda como root dentro do container (o usuario nao tem sudo).
+docker exec -u root supabase-storage sh -c 'chmod -R a+rX /var/lib/storage' >/dev/null 2>&1 || true
 docker exec supabase-db pg_dump -U supabase_admin -d postgres -Fc > /tmp/exodo_nuvem.dump
-tar czf $tarRemoto -C /tmp exodo_nuvem.dump -C $PastaVm docker-compose.yml .env volumes/storage
+# --ignore-failed-read precisa vir DEPOIS do cluster "czf": antes dele o GNU tar
+# 1.35 engole "czf" como argumento e aborta com "You must specify one of...".
+tar -c -z -f $tarRemoto --ignore-failed-read -C /tmp exodo_nuvem.dump -C $PastaVm docker-compose.yml .env volumes/storage
 rm -f /tmp/exodo_nuvem.dump
 stat -c '%s' $tarRemoto
 "@

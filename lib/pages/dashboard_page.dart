@@ -37,6 +37,8 @@ class _DashboardPageState extends State<DashboardPage> {
   String _periodoSelecionado = 'mês'; // 'hoje', 'semana', 'mês', 'personalizado'
   DateTime? _dataInicioCustomizada;
   DateTime? _dataFimCustomizada;
+  DateTime? _comprasDataInicio;
+  DateTime? _comprasDataFim;
 
   /// No card de horários de pico: ver o pico pelo dinheiro (padrão) ou pela
   /// quantidade de vendas. São leituras diferentes de propósito.
@@ -191,6 +193,14 @@ class _DashboardPageState extends State<DashboardPage> {
             final statsFiscalPeriodo = _calcularEstatisticasFiscal(dataService, inicioPeriodo, fimPeriodo);
             final statsFiscalDia = _calcularEstatisticasFiscal(dataService, inicioDia, fimDia);
 
+            final statsComprasPeriodo = _calcularEstatisticasCompras(dataService, inicioPeriodo, fimPeriodo);
+            final statsComprasDia = _calcularEstatisticasCompras(dataService, inicioDia, fimDia);
+            // Filtro interno do card de Compras: se houver intervalo definido,
+            // usa-o; senão, usa o período selecionado no dashboard.
+            final statsComprasCard = (_comprasDataInicio != null && _comprasDataFim != null)
+                ? _calcularEstatisticasCompras(dataService, _comprasDataInicio!, _comprasDataFim!)
+                : statsComprasPeriodo;
+
             // Lucro / DRE: receita - custo das mercadorias vendidas no período
             final vendasLucro =
                 LucroCalculator.vendasDoPeriodo(dataService, inicioPeriodo, fimPeriodo);
@@ -271,6 +281,11 @@ class _DashboardPageState extends State<DashboardPage> {
                     _buildCardVendasFiscais(statsFiscalPeriodo, statsFiscalDia),
                   if (podeVerTotais) const SizedBox(height: 16),
 
+                  // Compras / Notas de Entrada
+                  if (podeVerTotais)
+                    _buildCardCompras(statsComprasCard),
+                  if (podeVerTotais) const SizedBox(height: 16),
+
                   // Lucro / DRE do período (receita vs custo dos produtos vendidos)
                   if (podeVerTotais)
                     _buildCardLucroDre(totaisLucro),
@@ -278,6 +293,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
                   // Status do Caixa (saldo fica visível para operação)
                   _buildCardCaixa(statsCaixa),
+                  const SizedBox(height: 16),
+
+                  // Compras de hoje (notas de entrada processadas hoje)
+                  if (podeVerTotais)
+                    _buildCardComprasDia(statsComprasDia),
                   const SizedBox(height: 16),
 
                   if (lotesValidadeCritica.isNotEmpty) ...[
@@ -913,9 +933,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final totalNfceDia = statsDia['totalNfce'] as double? ?? 0.0;
     final qtdNfceDia = statsDia['qtdNfce'] as int? ?? 0;
     final totalNfeDia = statsDia['totalNfe'] as double? ?? 0.0;
-    final qtdNfeDia = statsDia['qtdNfe'] as int? ?? 0;
-
-    final tituloPeriodo = _periodoSelecionado == 'hoje'
+    final qtdNfeDia = statsDia['qtdNfe'] as int? ?? 0;            final tituloPeriodo = _periodoSelecionado == 'hoje'
         ? 'Hoje'
         : _periodoSelecionado == 'semana'
             ? 'Esta Semana'
@@ -1461,6 +1479,29 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ),
     );
+  }
+
+  Map<String, dynamic> _calcularEstatisticasCompras(
+    DataService dataService,
+    DateTime inicio,
+    DateTime fim,
+  ) {
+    // Notas de entrada processadas no período: só conta as nota processadas
+    // (não rascunhos nem canceladas), pois só nessas há valor real registrado.
+    final notas = dataService.notasEntrada.where((n) {
+      if (n.isRascunho || n.isCancelada) return false;
+      if (n.valorTotal == null) return false;
+      return n.dataProcessamento != null &&
+          n.dataProcessamento!.isAfter(inicio) &&
+          n.dataProcessamento!.isBefore(fim);
+    }).toList();
+
+    final total = notas.fold(0.0, (s, n) => s + (n.valorTotal ?? 0.0));
+
+    return {
+      'total': total,
+      'quantidade': notas.length,
+    };
   }
 
   Widget _buildMetricCard(
@@ -2506,6 +2547,187 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       );
     }
+  }
+
+  Future<void> _abrirFiltroDataCompras() async {
+    final DateTime? inicio = await showDatePicker(
+      context: context,
+      initialDate: _comprasDataInicio ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (inicio == null) return;
+    final DateTime? fim = await showDatePicker(
+      context: context,
+      initialDate: _comprasDataFim ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (fim == null) return;
+    setState(() {
+      _comprasDataInicio = DateTime(inicio.year, inicio.month, inicio.day);
+      _comprasDataFim = DateTime(fim.year, fim.month, fim.day).add(const Duration(days: 1));
+    });
+  }
+
+  Widget _buildCardCompras(Map<String, dynamic> statsCompras) {
+    final formato = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final total = (statsCompras['total'] as num?)?.toDouble() ?? 0.0;
+    final qtd = (statsCompras['quantidade'] as num?)?.toInt() ?? 0;
+
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Filtro interno por data (card de Compras / Notas de Entrada)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _abrirFiltroDataCompras,
+                icon: const Icon(Icons.date_range, size: 14, color: Colors.indigoAccent),
+                label: const Text(
+                  'Filtrar por data',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
+              ),
+            ),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.shopping_cart, color: Colors.indigoAccent, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Compras / Notas de Entrada',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (total > 0)
+                  Text(
+                    formato.format(total),
+                    style: const TextStyle(
+                      color: Colors.indigoAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (total > 0) ...[
+              _buildStatItem(
+                'Valor',
+                formato.format(total),
+                Colors.indigo,
+              ),
+              const SizedBox(width: 12),
+              _buildStatItem(
+                'Notas',
+                qtd.toInt().toString(),
+                Colors.purple,
+              ),
+            ],
+            if (total <= 0)
+              const Text(
+                'Nenhuma compra encontrada no período.',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardComprasDia(
+    Map<String, dynamic> statsDia,
+  ) {
+    final formato = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final total = (statsDia['total'] as num?)?.toDouble() ?? 0.0;
+    final qtd = (statsDia['quantidade'] as num?)?.toInt() ?? 0;
+
+    return Card(
+      color: const Color(0xFF1E1E2E).withOpacity(0.8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.shopping_cart, color: Colors.indigoAccent, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Compras Hoje',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (total > 0)
+                  Text(
+                    formato.format(total),
+                    style: const TextStyle(
+                      color: Colors.indigoAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (total > 0) ...[
+              _buildStatItem(
+                'Valor',
+                formato.format(total),
+                Colors.indigo,
+              ),
+              const SizedBox(width: 12),
+              _buildStatItem(
+                'Notas',
+                qtd.toInt().toString(),
+                Colors.purple,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildCardBackup(DataService dataService) {

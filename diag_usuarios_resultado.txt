@@ -1,0 +1,53 @@
+======================================================================
+1) BANCO LOCAL
+======================================================================
+  tabela `usuarios` (local): 9 linha(s)
+  colunas dessa tabela: id, email, nome, telefone, perfil, email_confirmado, ultimo_acesso, criado_em, atualizado_em, dados_usuario, dados_app, ativo, created_at, updated_at, last_sign_in_at, email_confirmed_at, sync, empresa_id, senha
+  cache_dados['usuarios']: 12 usuario(s), atualizado em 2026-10-28T09:10:43.799136
+    - user | empresa_id: bd45d75b-fee4-4ac2-8975-0f36f61d01bf | senha: tem | tipo: administrador | permissoes: (nenhuma)
+    - user | empresa_id: 6bb61873-768f-4162-8b36-e3ef41fbb34f | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - user | empresa_id: EMPRESA-TESTE-PRODUCAO | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - user | empresa_id: 6bb61873-768f-4162-8b36-e3ef41fbb34f | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - user | empresa_id: 1 | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - user | empresa_id: 66a880c8-51c7-496f-826b-d2ff9ab8ed2d | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - user | empresa_id: 22ae2c16-a730-43f3-a4f9-19f105eb0d13 | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - silvio | empresa_id: EMPRESA-TESTE-PRODUCAO | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - elrey | empresa_id: bd45d75b-fee4-4ac2-8975-0f36f61d01bf | senha: tem | tipo: administrador | permissoes: (nenhuma)
+    - carlos | empresa_id: EMPRESA-TESTE-PRODUCAO | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - operador@empresa.com | empresa_id: E1 | senha: tem | tipo: operador | permissoes: (nenhuma)
+    - user | empresa_id: (vazio) | senha: tem | tipo: administrador | permissoes: (nenhuma)
+    * carlos | perfil: operador | ativo: True | empresa_id: 1 | tem permissao em dados_usuario/app: nao
+    * carlos@gmail.com | perfil: operador | ativo: True | empresa_id: 22ae2c16-a730-43f3-a4f9-19f105eb0d13 | tem permissao em dados_usuario/app: nao
+    * silva@gmail.com | perfil: administrador | ativo: True | empresa_id: (vazio) | tem permissao em dados_usuario/app: nao
+    * silvio | perfil: operador | ativo: True | empresa_id: 22ae2c16-a730-43f3-a4f9-19f105eb0d13 | tem permissao em dados_usuario/app: nao
+    * user | perfil: operador | ativo: True | empresa_id: 66a880c8-51c7-496f-826b-d2ff9ab8ed2d | tem permissao em dados_usuario/app: nao
+    * user | perfil: operador | ativo: True | empresa_id: 6bb61873-768f-4162-8b36-e3ef41fbb34f | tem permissao em dados_usuario/app: nao
+    * user | perfil: operador | ativo: True | empresa_id: 1 | tem permissao em dados_usuario/app: nao
+    * user | perfil: operador | ativo: True | empresa_id: 22ae2c16-a730-43f3-a4f9-19f105eb0d13 | tem permissao em dados_usuario/app: nao
+    * user | perfil: operador | ativo: True | empresa_id: 6bb61873-768f-4162-8b36-e3ef41fbb34f | tem permissao em dados_usuario/app: nao
+  erros_sync_usuarios: (nenhum)
+
+======================================================================
+2) NUVEM (Supabase REST)
+======================================================================
+  chave usada: variavel SUPABASE_ANON_KEY (valor nao exibido)
+  papel da chave (role): anon | ref: supabase-demo
+  contagem `usuarios`: HTTP 200 | content-range: */0
+  contagem `empresas`: HTTP 200 | content-range: */0
+  contagem `clientes`: HTTP 200 | content-range: */0
+  contagem `produtos`: HTTP 200 | content-range: */0
+  contagem `exodo_config`: HTTP 400 | content-range: (nenhum)
+    corpo: {"code":"42703","details":null,"hint":null,"message":"column exodo_config.id does not exist"}
+  contagem `sync_logs`: HTTP 200 | content-range: */0
+  contagem `sync_status`: HTTP 400 | content-range: (nenhum)
+    corpo: {"code":"42703","details":null,"hint":null,"message":"column sync_status.id does not exist"}
+  contagem `vendas_balcao`: HTTP 200 | content-range: */0
+  contagem `estoque_historico`: HTTP 200 | content-range: */0
+  contagem `aberturas_caixa`: HTTP 200 | content-range: */0
+  GET /rest/v1/usuarios -> HTTP 200
+  colunas visiveis: (0 linhas)
+  usuarios na nuvem: 0
+  coluna `permissoes_personalizadas`: NAO EXISTE/bloqueada (HTTP 400): {"code":"42703","details":null,"hint":null,"message":"column usuarios.permissoes_personalizadas does not exist"}
+  coluna `permissoes_negadas`: NAO EXISTE/bloqueada (HTTP 400): {"code":"42703","details":null,"hint":null,"message":"column usuarios.permissoes_negadas does not exist"}
+  coluna `telas_ocultas`: NAO EXISTE/bloqueada (HTTP 400): {"code":"42703","details":null,"hint":null,"message":"column usuarios.telas_ocultas does not exist"}
+  coluna `senha`: EXISTE (HTTP 200)

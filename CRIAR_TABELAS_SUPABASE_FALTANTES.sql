@@ -1,6 +1,6 @@
 -- ============================================================
 -- CRIAR TABELAS QUE EXISTEM LOCAIS MAS NÃO NO SUPABASE
--- Execute este script no SQL Editor do Supabase Dashboard
+-- Execute este script no editor SQL do banco em nuvem (Neon/Supabase)
 -- ============================================================
 
 -- 1. perfis_tributarios (impostos/perfis fiscais)
@@ -9,6 +9,27 @@ CREATE TABLE IF NOT EXISTS public.perfis_tributarios (
   empresa_id TEXT NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
   nome TEXT NOT NULL,
   descricao TEXT,
+  cfop TEXT DEFAULT '',
+  icms_cst TEXT DEFAULT '',
+  csosn TEXT DEFAULT '',
+  aliquota_icms NUMERIC DEFAULT 0,
+  pis_cst TEXT DEFAULT '',
+  aliquota_pis NUMERIC DEFAULT 0,
+  cofins_cst TEXT DEFAULT '',
+  aliquota_cofins NUMERIC DEFAULT 0,
+  cst_ibs TEXT DEFAULT '',
+  aliquota_ibs NUMERIC DEFAULT 0,
+  cst_cbs TEXT DEFAULT '',
+  aliquota_cbs NUMERIC DEFAULT 0,
+  c_class_trib TEXT DEFAULT '',
+  ipi_cst TEXT DEFAULT '',
+  aliquota_ipi NUMERIC DEFAULT 0,
+  mva NUMERIC DEFAULT 0,
+  reducao_base_icms NUMERIC DEFAULT 0,
+  aliquota_fcp NUMERIC DEFAULT 0,
+  aliquota_icms_interestadual NUMERIC DEFAULT 0,
+  ncm TEXT DEFAULT '',
+  is_default BOOLEAN DEFAULT false,
   icms DECIMAL(10,2) DEFAULT 0,
   pis DECIMAL(10,2) DEFAULT 0,
   cofins DECIMAL(10,2) DEFAULT 0,
@@ -24,6 +45,29 @@ CREATE TABLE IF NOT EXISTS public.perfis_tributarios (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Compatibilidade com tabelas criadas por versões anteriores do script.
+ALTER TABLE public.perfis_tributarios
+  ADD COLUMN IF NOT EXISTS cfop TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS icms_cst TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS csosn TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS aliquota_icms NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS pis_cst TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS aliquota_pis NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS cofins_cst TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS aliquota_cofins NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS cst_ibs TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS aliquota_ibs NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS cst_cbs TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS aliquota_cbs NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS c_class_trib TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS ipi_cst TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS aliquota_ipi NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reducao_base_icms NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS aliquota_fcp NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS aliquota_icms_interestadual NUMERIC DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS ncm TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;
+
 -- 2. departamentos (cozinha, bar, etc.)
 CREATE TABLE IF NOT EXISTS public.departamentos (
   id TEXT PRIMARY KEY,
@@ -32,10 +76,18 @@ CREATE TABLE IF NOT EXISTS public.departamentos (
   descricao TEXT,
   cor TEXT,
   icone TEXT,
+  impressora_producao TEXT DEFAULT '',
+  impressora_producao_extra JSONB DEFAULT '[]'::jsonb,
+  ordem INTEGER DEFAULT 0,
   ativo BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+ALTER TABLE public.departamentos
+  ADD COLUMN IF NOT EXISTS impressora_producao TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS impressora_producao_extra JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS ordem INTEGER DEFAULT 0;
 
 -- 3. Dar permissões
 ALTER TABLE public.perfis_tributarios ENABLE ROW LEVEL SECURITY;

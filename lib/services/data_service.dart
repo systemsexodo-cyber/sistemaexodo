@@ -1,4 +1,6 @@
 import 'package:sistema_exodo_novo/models/cliente.dart';
+import 'dart:async';
+
 import 'package:sistema_exodo_novo/models/usuario.dart';
 
 import 'package:sistema_exodo_novo/models/pedido.dart';
@@ -1083,6 +1085,55 @@ class DataService extends ChangeNotifier {
   final Set<String> _pedidosEnviadosEstaSessao = {};
   final Set<String> _vendasBalcaoEnviadasEstaSessao = {};
 
+  /// Tabelas em que o `id` do registro NÃO é único por empresa: os "padrões do
+  /// sistema" nascem com id fixo (`padrao_substituicao_normal`, `dep_cozinha`…),
+  /// então toda empresa usa o MESMO id.
+  ///
+  /// A nuvem guarda UMA linha por id e o gatilho `trg_exodo_empresa_imutavel`
+  /// recusa trocar o dono (erro 23514 "TROCA DE EMPRESA BLOQUEADA"). Sem esta
+  /// trava, a segunda empresa que salvasse um perfil/departamento padrão ficava
+  /// presa em "ERRO SYNC": o item entrava na fila, falhava e voltava a tentar
+  /// para sempre. Aqui a linha que já pertence a OUTRA empresa é simplesmente
+  /// ignorada — a lista oficial de cada empresa vive em `empresas.configuracoes`
+  /// (é de lá que os perfis e departamentos são carregados).
+  static const Set<String> _tabelasComIdCompartilhadoEntreEmpresas = {
+    'perfis_tributarios',
+    'departamentos',
+  };
+
+  /// `true` quando o registro pode ser gravado na nuvem: ou a tabela tem id
+  /// único por empresa, ou a linha ainda não existe / já é desta empresa.
+  Future<bool> _registroPodeIrParaNuvem(
+    String tabela,
+    String? id,
+    String empresa,
+  ) async {
+    if (id == null || id.isEmpty) return true;
+    if (!_tabelasComIdCompartilhadoEntreEmpresas.contains(tabela)) return true;
+    final dono = await _supabaseService.empresaDonaDaLinha(tabela, id);
+    if (dono == null || dono.isEmpty || dono == empresa) return true;
+    debugPrint(
+      '>>> [Supabase] 🔒 $tabela/$id já pertence à empresa $dono na nuvem. '
+      'Não envio a cópia da empresa $empresa (registro nunca troca de dono).',
+    );
+    return false;
+  }
+
+  /// Marca o status da empresa como sincronizado, zerando o último erro.
+  ///
+  /// Usado quando o envio é descartado de propósito (registro de id fixo que já
+  /// pertence a outra empresa): sem isso o seletor de empresas continuaria
+  /// exibindo "ERRO SYNC" para uma situação que já está resolvida.
+  void _marcarSyncSaudavel(String empresa) {
+    if (empresa.isEmpty) return;
+    SyncMonitorService.instance
+        .atualizarStatusSucesso(
+          empresaId: empresa,
+          filaPendente: _dirtyCollections.length,
+        )
+        .catchError((_) {});
+  }
+
   /// Helper para realizar upsert no Supabase com empresa_id automático
   /// [empresaId] permite gravar em nome da empresa da OPERAÇÃO, e não da empresa
   /// aberta agora. Isso é essencial na fila de sincronização (persistida entre
@@ -1247,6 +1298,20 @@ class DataService extends ChangeNotifier {
       debugPrint('>>> [Supabase]    ID: ${map['id']}');
       debugPrint('>>> [Supabase]    Empresa: $currentEmpresaId');
 
+      // Id compartilhado entre empresas (padrões do sistema): se a linha já é
+      // de outra empresa, não tento tomá-la — a nuvem recusaria (23514) e a
+      // operação ficaria reenviando para sempre.
+      if (!await _registroPodeIrParaNuvem(
+        table,
+        map['id']?.toString(),
+        empresaEfetiva,
+      )) {
+        // Nada pendente desta empresa neste registro: limpa o "ERRO SYNC" que
+        // o envio antigo deixou gravado no status da empresa.
+        _marcarSyncSaudavel(empresaEfetiva);
+        return;
+      }
+
       await _supabaseService.upsert(table, map);
       debugPrint('>>> [Supabase] ✅ Upsert OK em $table: ${map['id']}');
 
@@ -1275,6 +1340,20 @@ class DataService extends ChangeNotifier {
     } catch (e) {
       final errorStr = e.toString();
       debugPrint('>>> [Supabase] ❌ Erro no upsert em $table: $e');
+
+      // Dono imutável: o registro com este id já é de OUTRA empresa na nuvem.
+      // Reenviar nunca vai funcionar (o gatilho recusa a troca de dono), então
+      // a operação NÃO volta para a fila — era ela que deixava a empresa em
+      // "ERRO SYNC" para sempre. A cópia desta empresa continua na configuração
+      // da empresa, que é onde os perfis/departamentos são lidos.
+      if (errorStr.contains('TROCA DE EMPRESA BLOQUEADA')) {
+        debugPrint(
+          '>>> [Supabase] 🔒 $table/${data['id']} pertence a outra empresa na '
+          'nuvem; mantendo a cópia local e saindo da fila.',
+        );
+        _marcarSyncSaudavel(empresaEfetiva);
+        return;
+      }
 
       // PROTEÇÃO CONTRA LOOP INFINITO: Se o erro for de coluna inexistente ou RLS, NÃO adicionar na fila
       // porque ele vai falhar para sempre e travar o app em um loop de retry.
@@ -1312,6 +1391,7 @@ class DataService extends ChangeNotifier {
     String table,
     String id, {
     bool enfileirarSeOffline = true,
+    String? empresaId,
   }) async {
     if (!nuvemHabilitada) {
       debugPrint(
@@ -1342,7 +1422,17 @@ class DataService extends ChangeNotifier {
       // REGRA "LOCAL PRIMEIRO": a exclusão já existe no banco local antes de
       // pedir a mesma exclusão na nuvem (mesma garantia do upsert).
       await _garantirGravacaoLocalPendente();
-      await _supabaseService.delete(table, id);
+      final empresa = empresaId ?? _currentEmpresaId;
+      if (_tabelasComIdCompartilhadoEntreEmpresas.contains(table) &&
+          empresa != null &&
+          empresa.isNotEmpty) {
+        // Mesmo id em várias empresas (padrões do sistema): apagar só pelo id
+        // levaria junto a linha da OUTRA empresa. O filtro de empresa garante
+        // que só a cópia desta empresa sai da nuvem.
+        await _supabaseService.delete(table, {'id': id, 'empresa_id': empresa});
+      } else {
+        await _supabaseService.delete(table, id);
+      }
 
       // Auto-reconexão ativa: se a deleção funcionou, com certeza estamos online
       if (_isOffline) {
@@ -3080,6 +3170,11 @@ class DataService extends ChangeNotifier {
     final empresaComTimestamp = empresa.copyWith(updatedAt: DateTime.now());
 
     _empresaAtual = empresaComTimestamp;
+    // Garante que _currentEmpresaId acompanha a empresa em memória — evita
+    // o bug onde o app iniciava com a empresa "1" (fallback) mas carregava
+    // a empresa real (ex.: EMPORIO), e na hora de subir pra nuvem o check
+    // `empresa.id != _currentEmpresaId` bloqueava o push silenciosamente.
+    _currentEmpresaId = empresaComTimestamp.id;
     _carregarPerfisTributariosDaEmpresa();
     _carregarDepartamentosDaEmpresa();
     _carregarEstoquesDaEmpresa();
@@ -3273,7 +3368,10 @@ class DataService extends ChangeNotifier {
       return carimboLocal.isAfter(carimboRemoto);
     }
 
-    return localMaisNovo('perfis_tributarios', chavePerfisTributariosAtualizadoEm) ||
+    return localMaisNovo(
+          'perfis_tributarios',
+          chavePerfisTributariosAtualizadoEm,
+        ) ||
         localMaisNovo('perfis_preco', chavePerfisPrecoAtualizadoEm) ||
         localMaisNovo('departamentos', chaveDepartamentosAtualizadoEm) ||
         localMaisNovo('estoques', chaveEstoquesAtualizadoEm);
@@ -3834,6 +3932,12 @@ class DataService extends ChangeNotifier {
     _ultimaSincronizacao =
         null; // Resetar para que a nova empresa tenha sua própria sincronização
     _ultimaSincronizacaoSucesso = null;
+    // O limite de 1×/6h do FULL SYNC automático do catálogo é POR EMPRESA: a
+    // troca zera as coleções em memória (clear acima), então a primeira carga
+    // da empresa nova precisa ser COMPLETA. Sem este reset ela herdava o
+    // carimbo da empresa anterior e ficava só no delta — abria com tudo vazio
+    // (era o caso da EL REI numa guia anônima, onde não existe cache local).
+    _ultimaFullSyncCatalogoAutomatico = null;
 
     // Controles de backup são POR EMPRESA: zerar e recarregar para a nova empresa,
     // senão ela herdaria o horário do último backup da empresa anterior e ficaria
@@ -4949,7 +5053,7 @@ class DataService extends ChangeNotifier {
     }
 
     final sangria = SangriaCaixa(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
       aberturaCaixaId: abertura.id,
       data: DateTime.now(),
       valor: valor,
@@ -10677,8 +10781,104 @@ class DataService extends ChangeNotifier {
         }
       }
     } else {
-      debugPrint('>>> ERRO: Pedido não encontrado para atualizar!');
+      // O pedido NÃO está na lista em memória (o card pode vir de uma lista
+      // derivada: contas a receber, caixa ou histórico). Antes a edição era
+      // descartada aqui, em silêncio: a tela avisava "atualizado" e, ao
+      // reabrir, o dado antigo voltava. Agora a linha é gravada direto — local
+      // primeiro, depois nuvem — sem inserir o pedido na lista da sessão.
+      debugPrint(
+        '>>> DataService.updatePedido: ${pedido.numero} (id=${pedido.id}) '
+        'não está na lista em memória — gravando a linha direto.',
+      );
+      notifyListeners();
+      await _salvarLinhaLocalAntesDaNuvem(
+        LocalStorageService.keyPedidos,
+        pedido.toMap(),
+      );
+      await enviarMudancaParaSupabase(
+        SupabaseService.tablePedidos,
+        pedido.toMap(),
+      );
+      await garantirEnvioEConfirmacao(
+        tabela: SupabaseService.tablePedidos,
+        dados: pedido.toMap(),
+      );
     }
+  }
+
+  /// Atualiza o NOME DO CLIENTE de um documento exibido na lista "Pedidos".
+  ///
+  /// A lista mistura PEDIDOS e VENDAS DE BALCÃO: o card de uma venda é um
+  /// [Pedido] temporário montado na tela (ver `_buscarPedidos` no PDV). Gravar
+  /// sempre em `pedidos` fazia a edição de uma venda cair no vazio — nada era
+  /// salvo e o nome antigo continuava na tela. Aqui o documento é localizado
+  /// pelo id e, se preciso, pelo número, e a gravação vai para a tabela certa.
+  ///
+  /// [nome] vazio/`null` remove o nome do cliente. Retorna o documento já
+  /// atualizado (para a tela refletir na hora) ou `null` quando não existe nem
+  /// pedido nem venda com esse id/número.
+  Future<Pedido?> atualizarNomeClienteDocumento(
+    Pedido documento, {
+    required String? nome,
+  }) async {
+    final nomeLimpo = (nome ?? '').trim();
+    final pedido = _encontrarPedidoEmMemoria(documento);
+    if (pedido != null) {
+      final atualizado = pedido.copyWith(
+        clienteNome: nomeLimpo.isEmpty ? null : nomeLimpo,
+        limparClienteNome: nomeLimpo.isEmpty,
+        updatedAt: DateTime.now(),
+      );
+      await updatePedido(atualizado);
+      await _garantirGravacaoLocalPendente();
+      return atualizado;
+    }
+
+    final venda = _encontrarVendaBalcaoEmMemoria(documento);
+    if (venda != null) {
+      final atualizada = venda.copyWith(
+        clienteNome: nomeLimpo.isEmpty ? null : nomeLimpo,
+        limparClienteNome: nomeLimpo.isEmpty,
+        updatedAt: DateTime.now(),
+      );
+      await updateVendaBalcao(atualizada);
+      await _garantirGravacaoLocalPendente();
+      return documento.copyWith(
+        clienteNome: atualizada.clienteNome,
+        limparClienteNome: atualizada.clienteNome == null,
+        updatedAt: atualizada.updatedAt,
+      );
+    }
+
+    debugPrint(
+      '>>> atualizarNomeClienteDocumento: ${documento.numero} '
+      '(id=${documento.id}) não encontrado em pedidos nem em vendas de balcão.',
+    );
+    return null;
+  }
+
+  Pedido? _encontrarPedidoEmMemoria(Pedido documento) {
+    for (final pedido in _pedidos) {
+      if (pedido.id == documento.id) return pedido;
+    }
+    if (documento.numero.isNotEmpty) {
+      for (final pedido in _pedidos) {
+        if (pedido.numero == documento.numero) return pedido;
+      }
+    }
+    return null;
+  }
+
+  VendaBalcao? _encontrarVendaBalcaoEmMemoria(Pedido documento) {
+    for (final venda in _vendasBalcao) {
+      if (venda.id == documento.id) return venda;
+    }
+    if (documento.numero.isNotEmpty) {
+      for (final venda in _vendasBalcao) {
+        if (venda.numero == documento.numero) return venda;
+      }
+    }
+    return null;
   }
 
   /// Salva um pedido de forma idempotente: se já existir um pedido com o mesmo
@@ -11475,8 +11675,9 @@ class DataService extends ChangeNotifier {
       }
     }
     _vendasBalcao.add(venda);
-    // Trava o contador da empresa no número já emitido (ver o método).
-    await _elevarMinimoNumeracaoPeloNumero(venda.numero);
+    // Atualiza o contador em segundo plano. Isso não pode bloquear a gravação
+    // local da venda nem a resposta do botão FINALIZAR.
+    unawaited(_elevarMinimoNumeracaoPeloNumero(venda.numero));
     print(
       '✓ Venda ${venda.numero} (ID: ${venda.id}) salva em memória @ ${DateTime.now()}',
     );
@@ -12592,10 +12793,7 @@ class DataService extends ChangeNotifier {
     // O cálculo do menor livre só é necessário para validar um número MANUAL
     // (o automático usa a sequência logo abaixo).
     final base = numeroForcado != null && numeroForcado > 0
-        ? getProximoNumeroNfce(
-            serie: serieNorm,
-            numeroInicial: numeroInicial,
-          )
+        ? getProximoNumeroNfce(serie: serieNorm, numeroInicial: numeroInicial)
         : numeroInicialNorm;
     final piso = base < 1 ? 1 : base;
 
@@ -12678,7 +12876,8 @@ class DataService extends ChangeNotifier {
           faixa.esgotada ||
           (numeroForcado != null && numeroForcado > faixa.fim)) {
         if (SupabaseService.instance.servidorIndisponivel) return null;
-        final inicioFaixa = numeroForcado != null && numeroForcado > pisoSequencia
+        final inicioFaixa =
+            numeroForcado != null && numeroForcado > pisoSequencia
             ? numeroForcado
             : numeroForcado != null &&
                   await _numeroTemReservaCompartilhada(
@@ -12703,9 +12902,7 @@ class DataService extends ChangeNotifier {
           // então a próxima nota usa o número seguinte. Se outro caixa estiver
           // no mesmo número, a SEFAZ responde 539 e o reenvio resolve.
           final numeroLocal = pisoSequencia;
-          unawaited(
-            _salvarCursorProximoNumeroNfce(serieNorm, numeroLocal + 1),
-          );
+          unawaited(_salvarCursorProximoNumeroNfce(serieNorm, numeroLocal + 1));
           debugPrint(
             '>>> [DataService] ⚠️ Bloco NFC-e sem nuvem: emitindo com a '
             'sequência local (número $numeroLocal)',
@@ -12721,7 +12918,9 @@ class DataService extends ChangeNotifier {
         faixa = nova;
       }
 
-      var numero = faixa.proximo < pisoSequencia ? pisoSequencia : faixa.proximo;
+      var numero = faixa.proximo < pisoSequencia
+          ? pisoSequencia
+          : faixa.proximo;
       if (numeroForcado != null && numeroForcado > 0) {
         if (numeroForcado < numero &&
             !await _numeroTemReservaCompartilhada(
@@ -12792,10 +12991,7 @@ class DataService extends ChangeNotifier {
           numeroForcado >= pisoSequencia &&
           (tetoPiso == null || numeroForcado <= tetoPiso)) {
         await _elevarPisoNfce(tipo, empresaId, numeroForcado);
-        await _salvarCursorProximoNumeroNfce(
-          serieNorm,
-          numeroForcado + 1,
-        );
+        await _salvarCursorProximoNumeroNfce(serieNorm, numeroForcado + 1);
       }
       return numero;
     } on StateError {
@@ -12865,7 +13061,9 @@ class DataService extends ChangeNotifier {
     required String empresaId,
     required int numero,
   }) async {
-    final serie = tipo.startsWith('nfce_s') ? tipo.substring('nfce_s'.length) : '1';
+    final serie = tipo.startsWith('nfce_s')
+        ? tipo.substring('nfce_s'.length)
+        : '1';
     try {
       final faixa =
           _faixasNfceAtual[serie] ?? await _faixas.lerLocal(tipo, empresaId);
@@ -12890,10 +13088,7 @@ class DataService extends ChangeNotifier {
     if (proximoNumero <= atual) return;
     configuracoes[chave] = proximoNumero;
     await atualizarDadosEmpresa(
-      empresa.copyWith(
-        configuracoes: configuracoes,
-        updatedAt: DateTime.now(),
-      ),
+      empresa.copyWith(configuracoes: configuracoes, updatedAt: DateTime.now()),
     );
   }
 
@@ -13928,6 +14123,32 @@ class DataService extends ChangeNotifier {
         // Puxada pontual não mexe no watermark: as outras tabelas não foram
         // consultadas nesta rodada.
         if (!isPontual) {
+          // Delta vazio com base local VAZIA não é "sincronizado". Numa guia
+          // anônima/instalação nova o watermark vem gravado (de outro aparelho
+          // ou de uma tentativa anterior que voltou vazia), então o delta só
+          // traz o que mudou desde ele: nada. Marcar sucesso aqui prendia o
+          // app no delta para sempre e a empresa abria sem produtos/clientes.
+          // Deixando o watermark nulo, a próxima rodada faz carga COMPLETA.
+          final baseLocalVazia =
+              _produtos.isEmpty && _clientes.isEmpty && _pedidos.isEmpty;
+          if (isDeltaSync && baseLocalVazia) {
+            debugPrint(
+              '>>> [Sync] ⚠️ Delta vazio com base local vazia — NÃO marcando '
+              'sucesso (o próximo ciclo fará carga COMPLETA).',
+            );
+            _ultimaSincronizacaoSucesso = null;
+            if (_currentEmpresaId != null) {
+              await _storage.remover(
+                _getEmpresaKey('exodo_ultima_sincronizacao_sucesso'),
+              );
+            }
+            addSyncLog(
+              'Nenhum dado local ainda: a próxima sincronização fará carga '
+              'completa.',
+            );
+            return;
+          }
+
           _ultimaSincronizacaoSucesso = DateTime.now();
           // Persistir timestamp de sucesso
           if (_currentEmpresaId != null) {
@@ -16173,6 +16394,36 @@ class DataService extends ChangeNotifier {
 
     addSyncLog("Enviando dados locais para a nuvem...");
 
+    // A empresa inteira também sobe neste lote (é o que garante a FK das
+    // demais tabelas). Antes de enviar, mescla as listas-vivas pelo carimbo:
+    // sem isso um "Enviar dados" desta máquina empurrava a cópia velha de
+    // impostos/preços/departamentos por cima da edição mais nova feita no
+    // site ou em outra máquina — o sintoma de "edito e volta ao recarregar".
+    var empresaParaNuvem = _empresaAtual;
+    if (empresaParaNuvem != null) {
+      try {
+        final remota = await _lerConfigEmpresaNuvem(empresaParaNuvem.id);
+        final configRemota = remota.$1;
+        final updatedAtRemota = remota.$2;
+        if (configRemota != null && updatedAtRemota != null) {
+          final mescla = _mesclarListasVivasComNuvem(
+            configLocal: empresaParaNuvem.configuracoes ?? <String, dynamic>{},
+            configRemota: configRemota,
+            updatedAtLocal: empresaParaNuvem.updatedAt,
+            updatedAtRemota: updatedAtRemota,
+          );
+          empresaParaNuvem = empresaParaNuvem.copyWith(
+            configuracoes: mescla.$1,
+          );
+        }
+      } catch (e) {
+        debugPrint(
+          '>>> [Sync] Mescla das listas vivas antes do envio falhou '
+          '(enviando cópia local): $e',
+        );
+      }
+    }
+
     try {
       // Timeout de 60 segundos para evitar travamentos
       await _supabaseService
@@ -16207,7 +16458,7 @@ class DataService extends ChangeNotifier {
             comissoesVendedores: _comissoesVendedores,
             mesasComandas: _mesasComandas,
             movimentosCashBack: _movimentosCashBack,
-            empresa: _empresaAtual,
+            empresa: empresaParaNuvem,
           )
           .timeout(
             const Duration(
@@ -16457,9 +16708,30 @@ class DataService extends ChangeNotifier {
     if (!nuvemHabilitada || _currentEmpresaId == null || _empresaAtual == null)
       return;
     try {
-      final config = Map<String, dynamic>.from(
+      var config = Map<String, dynamic>.from(
         _empresaAtual!.configuracoes ?? {},
       );
+      // Mescla as listas-vivas com a nuvem antes de gravar o blob: este upsert
+      // manda `configuracoes` inteiro e, sem a mescla, apagaria a edição mais
+      // nova de impostos/preços feita no site ou em outra máquina.
+      try {
+        final remota = await _lerConfigEmpresaNuvem(_currentEmpresaId!);
+        final configRemota = remota.$1;
+        final updatedAtRemota = remota.$2;
+        if (configRemota != null && updatedAtRemota != null) {
+          config = _mesclarListasVivasComNuvem(
+            configLocal: config,
+            configRemota: configRemota,
+            updatedAtLocal: _empresaAtual!.updatedAt,
+            updatedAtRemota: updatedAtRemota,
+          ).$1;
+        }
+      } catch (e) {
+        debugPrint(
+          '>>> [Sync] Mescla das listas vivas ao incrementar sync_version '
+          'falhou (mantendo cópia local): $e',
+        );
+      }
       final rawCV = config['sync_version'];
       final currentVersion = rawCV is int
           ? rawCV
@@ -16534,7 +16806,9 @@ class DataService extends ChangeNotifier {
           }
         }
       } catch (e) {
-        debugPrint('>>> [Sync] Erro ao mesclar listas-vivas (perfis) no pulso: $e');
+        debugPrint(
+          '>>> [Sync] Erro ao mesclar listas-vivas (perfis) no pulso: $e',
+        );
       }
 
       // sync_version pode vir como int OU String do Supabase
@@ -17068,6 +17342,7 @@ class DataService extends ChangeNotifier {
                 table,
                 data['id'] as String,
                 enfileirarSeOffline: false,
+                empresaId: empresaDaOperacao,
               );
             } else {
               await _upsertNoSupabase(
@@ -20195,6 +20470,7 @@ class DataService extends ChangeNotifier {
       return; // Sem empresa definida, não há perfis a carregar
     _perfisTributarios.clear();
     final raw = _empresaAtual?.configuracoes?['perfis_tributarios'];
+    final chaveExiste = raw is List; // presente (mesmo que vazia = usuário apagou)
     final temConfigValida = raw is List && raw.isNotEmpty;
     if (temConfigValida) {
       for (final item in raw) {
@@ -20206,18 +20482,22 @@ class DataService extends ChangeNotifier {
       }
     }
     if (temConfigValida && _perfisTributarios.isNotEmpty) {
-      // Config tem perfis válidos: garante que os padrões do sistema também
-      // existam (mesclando por nome, sem duplicar) e persiste se algo foi adicionado.
+      // A configuração da empresa é a fonte da verdade. NÃO migrar do cache
+      // local aqui: o cache é por máquina e guarda perfis que podem ter sido
+      // excluídos em outro PC/site. Readicioná-los fazia a exclusão "voltar"
+      // (o perfil apagado reaparecia ao reabrir a tela).
       final adicionouPadrao = _criarPerfisTributariosPadrao();
-      // Sempre confere o cache local (última edição do usuário) por cima da
-      // configuração — assim um perfil salvo nunca some ao reiniciar, mesmo
-      // que a config do banco esteja desatualizada ou vazia.
-      unawaited(
-        _migrarPerfisTributariosDoCache(forcarPersistencia: adicionouPadrao),
-      );
+      if (adicionouPadrao) {
+        unawaited(_persistirPerfisTributariosNaEmpresa());
+      }
+    } else if (chaveExiste) {
+      // Lista existe, mas está vazia: o usuário excluiu TODOS os perfis de
+      // propósito. Não recriar os padrões (era o que fazia "excluir" não
+      // funcionar quando sobrava nenhum).
+      debugPrint('>>> [Perfis] Lista vazia de propósito — nada a recriar.');
     } else {
-      // Sem perfis válidos na config: garante os padrões IMEDIATAMENTE (síncrono)
-      // para o dropdown nunca abrir vazio, e busca perfis antigos do cache em background.
+      // Chave nunca existiu (empresa nova/versão antiga): cria os padrões e
+      // tenta recuperar perfis antigos que só estavam no cache local.
       _criarPerfisTributariosPadrao();
       unawaited(_migrarPerfisTributariosDoCache(forcarPersistencia: true));
     }
@@ -20293,6 +20573,12 @@ class DataService extends ChangeNotifier {
   /// substituição — para Simples Nacional e Regime Normal).
   bool _criarPerfisTributariosPadrao() {
     var mudou = false;
+    // A lista JÁ tem perfis? Então o usuário é o dono dela e os padrões que ele
+    // excluiu NÃO podem voltar. Antes esta rotina recriava os seis perfis do
+    // sistema em toda abertura da tela — por isso excluir "Tributado" ou
+    // "Substituição" não funcionava: o perfil reaparecia no recarregamento.
+    // Agora os padrões só nascem quando a empresa ainda não tem NENHUM perfil.
+    final listaEstavaVazia = _perfisTributarios.isEmpty;
     // ── MIGRAÇÃO DE CÓDIGOS ANTIGOS (corrige dados persistidos) ──────────────
     // Perfis criados em versões antigas podem ter o código errado de
     // "Não Tributado (Simples)" com CSOSN 500 (500 é "ICMS cobrado anteriormente
@@ -20323,6 +20609,9 @@ class DataService extends ChangeNotifier {
         aliquotaIbs: p.aliquotaIbs,
         cstCbs: p.cstCbs,
         aliquotaCbs: p.aliquotaCbs,
+        // cClassTrib não estava sendo copiado: a correção 500 → 400 apagava a
+        // classificação tributária que o usuário tinha escolhido.
+        classTrib: p.classTrib,
         ipiCst: p.ipiCst,
         aliquotaIpi: p.aliquotaIpi,
         mva: p.mva,
@@ -20343,22 +20632,30 @@ class DataService extends ChangeNotifier {
       for (int i = 0; i < _perfisTributarios.length; i++) {
         final p = _perfisTributarios[i];
         if (p.id == padrao.id || p.nome == padrao.nome) {
-          // Corrige apenas os CÓDIGOS do padrão (CFOP/CSOSN/CST persistidos
-          // errados em versões antigas). `isDefault` NÃO é tocado aqui: quem
-          // escolhe o perfil PADRÃO é o usuário, no switch "Definir como
-          // Perfil Padrão". Antes esta rotina forçava isDefault=true no
-          // Tributado em TODO carregamento — a escolha do usuário voltava
-          // para o Tributado ao reabrir a tela (o selo PADRÃO "não mudava") e
-          // o regime ficava com dois padrões ao mesmo tempo.
-          if (p.cfop != padrao.cfop ||
-              p.csosn != padrao.csosn ||
-              p.icmsCst != padrao.icmsCst) {
+          // PREENCHE somente código AUSENTE. `isDefault` NÃO é tocado aqui:
+          // quem escolhe o perfil PADRÃO é o usuário, no switch "Definir como
+          // Perfil Padrão".
+          //
+          // Antes esta rotina reimplantava o CFOP/CSOSN/CST do sistema SEMPRE
+          // que o perfil divergisse. Como `atualizarDadosEmpresa` recarrega os
+          // perfis logo depois de salvar, a edição do usuário era desfeita na
+          // mesma hora — o sintoma "mudo o imposto, salvo e volta" (e, pior,
+          // a lista revertida ainda era regravada na configuração da empresa).
+          // Os códigos gravados errados por versões antigas continuam sendo
+          // corrigidos pela migração de CSOSN 500 → 400 acima, que é específica
+          // e não sobrescreve uma escolha do usuário.
+          final cfop = p.cfop.trim().isEmpty ? padrao.cfop : p.cfop;
+          final csosn = (p.csosn ?? '').trim().isEmpty ? padrao.csosn : p.csosn;
+          final icmsCst = (p.icmsCst ?? '').trim().isEmpty
+              ? padrao.icmsCst
+              : p.icmsCst;
+          if (cfop != p.cfop || csosn != p.csosn || icmsCst != p.icmsCst) {
             _perfisTributarios[i] = PerfilTributario(
               id: p.id, // Preserva o ID existente (vínculo com produtos)
               nome: p.nome,
-              cfop: padrao.cfop,
-              icmsCst: padrao.icmsCst,
-              csosn: padrao.csosn,
+              cfop: cfop,
+              icmsCst: icmsCst,
+              csosn: csosn,
               // Preserva customizações do usuário no perfil existente
               aliquotaIcms: p.aliquotaIcms,
               pisCst: p.pisCst,
@@ -20369,6 +20666,10 @@ class DataService extends ChangeNotifier {
               aliquotaIbs: p.aliquotaIbs,
               cstCbs: p.cstCbs,
               aliquotaCbs: p.aliquotaCbs,
+              // Preserva a classificação tributária escolhida pelo usuário
+              // (sem isto, preencher um CFOP/CSOSN ausente apagava o
+              // cClassTrib e ele voltava para 000001 ao reabrir a tela).
+              classTrib: p.classTrib,
               ipiCst: p.ipiCst,
               aliquotaIpi: p.aliquotaIpi,
               mva: p.mva,
@@ -20383,9 +20684,10 @@ class DataService extends ChangeNotifier {
           return;
         }
       }
-      // O padrão do sistema ainda não existe nesta empresa: cria agora. Se ele
-      // nascer marcado como PADRÃO num regime que já tem um, o ajuste de
-      // `padroesUnicosPorRegime` logo abaixo mantém a escolha do usuário.
+      // O padrão do sistema ainda não existe nesta empresa. Só cria quando a
+      // lista está vazia (empresa nova): se o usuário excluiu este perfil de
+      // propósito, respeitamos a exclusão.
+      if (!listaEstavaVazia) return;
       _perfisTributarios.add(padrao);
       mudou = true;
     }
@@ -20519,7 +20821,12 @@ class DataService extends ChangeNotifier {
 
   /// Persiste a lista de perfis tributários na configuração da empresa atual
   /// (PostgreSQL local + Supabase), onde o backend NFC-e os busca.
-  Future<void> _persistirPerfisTributariosNaEmpresa() async {
+  Future<void> _persistirPerfisTributariosNaEmpresa({
+    /// `true` quando a chamada vem de uma AÇÃO DO USUÁRIO (salvar/excluir): aí
+    /// a falha do banco local precisa chegar na tela em vez de ficar só no log —
+    /// antes o app dizia "salvo com sucesso" mesmo sem ter gravado nada.
+    bool propagarErro = false,
+  }) async {
     final empresa = _empresaAtual;
     if (empresa == null) return;
     // Trava de isolamento: nunca gravar os perfis na empresa "errada" (ex.:
@@ -20529,6 +20836,11 @@ class DataService extends ChangeNotifier {
         '>>> [Perfis] Persistência ignorada: empresa aberta ($_currentEmpresaId) '
         'difere da empresa em memória (${empresa.id}).',
       );
+      if (propagarErro) {
+        throw StateError(
+          'A empresa aberta mudou durante o salvamento. Abra o perfil de novo.',
+        );
+      }
       return;
     }
     if (_persistindoPerfisTributarios) return;
@@ -20554,6 +20866,7 @@ class DataService extends ChangeNotifier {
       debugPrint(
         '>>> [DataService] ⚠️ Erro ao persistir perfis tributários na empresa: $e',
       );
+      if (propagarErro) rethrow;
     } finally {
       _persistindoPerfisTributarios = false;
     }
@@ -20593,17 +20906,14 @@ class DataService extends ChangeNotifier {
     );
 
     // PERSISTÊNCIA NO BANCO: gravar na configuração da empresa (PostgreSQL local + Supabase)
-    await _persistirPerfisTributariosNaEmpresa();
+    // `propagarErro`: se o banco local recusar a gravação, a tela avisa — em
+    // vez de fechar o formulário como se o imposto tivesse sido salvo.
+    await _persistirPerfisTributariosNaEmpresa(propagarErro: true);
     // A tabela dedicada é usada pelos fluxos de sincronização e relatórios.
     // Atualiza todos os perfis porque salvar um padrão também desmarca os
     // demais perfis do mesmo regime.
-    for (final perfilAtual in List<PerfilTributario>.from(
-      _perfisTributarios,
-    )) {
-      await _upsertNoSupabase(
-        'perfis_tributarios',
-        perfilAtual.toMap(),
-      );
+    for (final perfilAtual in List<PerfilTributario>.from(_perfisTributarios)) {
+      await _upsertNoSupabase('perfis_tributarios', perfilAtual.toMap());
     }
     notifyListeners();
   }
@@ -20616,8 +20926,20 @@ class DataService extends ChangeNotifier {
       chave,
       _perfisTributarios.map((p) => p.toMap()).toList(),
     );
-    await _persistirPerfisTributariosNaEmpresa();
+    await _persistirPerfisTributariosNaEmpresa(propagarErro: true);
     await _deleteNoSupabase('perfis_tributarios', perfilId);
+    // Remove a linha da TABELA local também. `salvarLista` faz apenas UPSERT,
+    // então a linha excluída continuava no PostgreSQL e era reenviada no sync
+    // completo — o perfil "voltava" na nuvem e nos outros computadores.
+    try {
+      await DatabaseService().removerItemPostgres(
+        'perfis_tributarios',
+        perfilId,
+        _currentEmpresaId,
+      );
+    } catch (e) {
+      debugPrint('>>> [Perfis] ⚠️ Falha ao remover perfil da tabela local: $e');
+    }
     notifyListeners();
   }
 
@@ -20846,10 +21168,7 @@ class DataService extends ChangeNotifier {
       _departamentos.map((d) => d.toMap()).toList(),
     );
     await _persistirDepartamentosNaEmpresa();
-    await _upsertNoSupabase(
-      'departamentos',
-      departamento.toMap(),
-    );
+    await _upsertNoSupabase('departamentos', departamento.toMap());
     notifyListeners();
   }
 

@@ -17,6 +17,9 @@ class ItemPedido {
   // Premiação/brinde: item com valor ZERO (saí do estoque mas não entra no
   // total da venda). O preço de tabela fica guardado em [precoSemPromocao].
   final bool isBonus;
+  // Vendedor responsável por ESTE item (lançado no momento da adição ao carrinho)
+  final String? vendedorId; // ID do vendedor (funcionário)
+  final String? vendedorNome; // Nome do vendedor
 
   ItemPedido({
     required this.id,
@@ -26,6 +29,8 @@ class ItemPedido {
     this.observacao,
     this.idVariacao,
     this.fornecedorNome,
+    this.vendedorId,
+    this.vendedorNome,
     List<AdicionalProduto>? adicionais,
     this.unidadeVenda,
     this.quantidadeBaixa,
@@ -43,6 +48,8 @@ class ItemPedido {
     String? observacao,
     String? idVariacao,
     String? fornecedorNome,
+    String? vendedorId,
+    String? vendedorNome,
     List<AdicionalProduto>? adicionais,
     String? unidadeVenda,
     double? quantidadeBaixa,
@@ -57,6 +64,8 @@ class ItemPedido {
       observacao: observacao ?? this.observacao,
       idVariacao: idVariacao ?? this.idVariacao,
       fornecedorNome: fornecedorNome ?? this.fornecedorNome,
+      vendedorId: vendedorId ?? this.vendedorId,
+      vendedorNome: vendedorNome ?? this.vendedorNome,
       adicionais: adicionais ?? this.adicionais,
       unidadeVenda: unidadeVenda ?? this.unidadeVenda,
       quantidadeBaixa: quantidadeBaixa ?? this.quantidadeBaixa,
@@ -74,6 +83,8 @@ class ItemPedido {
       observacao: map['observacao'],
       idVariacao: map['idVariacao'],
       fornecedorNome: map['fornecedorNome'],
+      vendedorId: map['vendedorId'],
+      vendedorNome: map['vendedorNome'],
       adicionais: (map['adicionais'] as List<dynamic>?)
           ?.map((a) => AdicionalProduto.fromMap(a as Map<String, dynamic>))
           .toList() ?? [],
@@ -97,6 +108,8 @@ class ItemPedido {
       'observacao': observacao,
       'idVariacao': idVariacao,
       'fornecedorNome': fornecedorNome,
+      'vendedorId': vendedorId,
+      'vendedorNome': vendedorNome,
       'adicionais': adicionais.map((a) => a.toMap()).toList(),
       'unidadeVenda': unidadeVenda,
       'quantidadeBaixa': quantidadeBaixa,

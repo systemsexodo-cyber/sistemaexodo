@@ -23,6 +23,7 @@ if sys.stderr is None:
 import setup_sync_local
 import sincronizar_local_supabase
 import sincronizador_lan
+import sincronizador_descoberta_lan
 
 # Diretorio base: quando congelado (exe), a pasta do executavel; senao, a pasta do script.
 # IMPORTANTE: no PyInstaller onefile, o .env precisa ser apontado explicitamente para
@@ -120,15 +121,22 @@ class SyncTrayApp:
 
         # Sincronização pela REDE LOCAL (par). None = desligada.
         self.par_cfg = sincronizador_lan.config_do_par()
+        # Identidade permanente do dispositivo: nao depende de hostname ou IP.
+        self.device_id = sincronizador_descoberta_lan.carregar_ou_criar_device_id(
+            os.path.join(self.base_dir, 'exodo_device.json'))
+        self.descoberta_lan = sincronizador_descoberta_lan.DescobertaLan(
+            self.device_id, porta_postgres=int(self.db_port or 5432))
+        sincronizar_local_supabase.print_log(
+            f"[INIT] Identidade LAN deste dispositivo: {self.device_id}",
+            sincronizar_local_supabase.Colors.CYAN)
         if self.par_cfg:
             sincronizar_local_supabase.print_log(
-                f"[INIT] LAN ativa para o par {self.par_cfg['nome']} "
+                f"[INIT] LAN legado configurado para {self.par_cfg['nome']} "
                 f"({self.par_cfg['host']}:{self.par_cfg['port']}/{self.par_cfg['dbname']}).",
                 sincronizar_local_supabase.Colors.GREEN)
         else:
             sincronizar_local_supabase.print_log(
-                "[INIT] LAN desligada (no sistema: tela inicial > botao "
-                "'Rede LAN' para sincronizar direto com o outro PC).",
+                "[INIT] LAN automatica aguardando descoberta de dispositivos.",
                 sincronizar_local_supabase.Colors.CYAN)
 
     def create_image(self, color=(52, 152, 219)):
@@ -363,31 +371,67 @@ class SyncTrayApp:
         return f" | LAN {self.par_cfg['nome']}{detalhe}"
 
     def lan_loop(self):
-        """Loop DEDICADO da rede local, separado do ciclo da nuvem.
+        """Descobre pares automaticamente e sincroniza cada banco encontrado.
 
-        Roda a cada `LAN_INTERVALO` segundos (padrão 2s) para que uma mudança
-        feita no outro PC apareça aqui em poucos segundos, mesmo com a internet
-        fora. Cada volta abre a sua própria conexão no banco local; o
-        `sincronizar_com_par` cuida de conectar no par e nunca levanta exceção.
+        A descoberta usa UDP broadcast; a conexao PostgreSQL continua usando
+        as credenciais locais e nunca as transmite pela rede de descoberta.
+        O PAR_HOST antigo permanece como fallback durante a migracao.
         """
         INTERVALO = self.lan_intervalo
         while self.running:
             conn = None
             try:
-                conn = psycopg2.connect(
-                    host=self.db_host, port=self.db_port, dbname=self.db_name,
-                    user=self.db_user, password=self.db_password, connect_timeout=5
-                )
-                resumo = sincronizador_lan.sincronizar_com_par(conn, self.par_cfg)
-                if resumo and not resumo.get('erro'):
-                    recebidos = int(resumo.get('recebidos') or 0)
-                    apagados = int(resumo.get('apagados') or 0)
-                    if recebidos or apagados:
-                        self.total_synced += recebidos
-                        self.update_status_icon(
-                            'syncing',
-                            f"LAN {self.par_cfg['nome']}: +{recebidos} ↑ "
-                            f"{apagados} ↓")
+                pares = self.descoberta_lan.pares()
+                alvos = []
+                vistos = set()
+                for peer in pares:
+                    device_id = peer['device_id']
+                    if device_id in vistos:
+                        continue
+                    vistos.add(device_id)
+                    env_par = dict(os.environ)
+                    env_par['PAR_HOST'] = peer['host']
+                    env_par['PAR_PORT'] = str(peer['port'])
+                    env_par['PAR_NOME'] = device_id
+                    cfg = sincronizador_lan.config_do_par(env_par)
+                    if cfg:
+                        alvos.append(cfg)
+
+                # Compatibilidade: enquanto os dois PCs recebem a nova versao,
+                # o par antigo continua sincronizando se ainda nao foi descoberto.
+                if self.par_cfg:
+                    try:
+                        host_legado = sincronizador_lan.ip_do_par(self.par_cfg)
+                    except Exception:
+                        host_legado = self.par_cfg['host']
+                    if not any(p['host'] == host_legado for p in alvos):
+                        alvos.append(self.par_cfg)
+
+                if alvos:
+                    conn = psycopg2.connect(
+                        host=self.db_host, port=self.db_port, dbname=self.db_name,
+                        user=self.db_user, password=self.db_password, connect_timeout=5
+                    )
+                    for cfg in alvos:
+                        if not self.running:
+                            break
+                        resumo = sincronizador_lan.sincronizar_com_par(conn, cfg)
+                        if resumo and not resumo.get('erro'):
+                            recebidos = int(resumo.get('recebidos') or 0)
+                            apagados = int(resumo.get('apagados') or 0)
+                            if recebidos or apagados:
+                                self.total_synced += recebidos
+                                self.update_status_icon(
+                                    'syncing',
+                                    f"LAN {cfg['nome'][:8]}: +{recebidos} "
+                                    f"↑ {apagados} ↓")
+                        elif resumo and resumo.get('erro'):
+                            sincronizar_local_supabase.print_log(
+                                f"[LAN] {cfg['nome']}: {resumo['erro']}",
+                                sincronizar_local_supabase.Colors.YELLOW)
+                elif not pares:
+                    # Sem pares descobertos, a nuvem continua normalmente.
+                    pass
             except Exception as e:
                 sincronizar_local_supabase.print_log(
                     f"[LAN] loop: {e}", sincronizar_local_supabase.Colors.YELLOW)
@@ -397,7 +441,6 @@ class SyncTrayApp:
                         conn.close()
                     except Exception:
                         pass
-            # Pausa em fatias para respeitar a parada do tray rapidamente
             dormiu = 0.0
             while self.running and dormiu < INTERVALO:
                 time.sleep(0.25)
@@ -600,6 +643,7 @@ class SyncTrayApp:
     def on_restart(self, icon, item):
         """Reinicia o processo completamente."""
         self.running = False
+        self.descoberta_lan.parar()
         icon.stop()
         # Relança o proprio executavel de forma independente para evitar travar a pasta temporaria no Windows
         import subprocess
@@ -620,6 +664,7 @@ class SyncTrayApp:
 
     def on_quit(self, icon, item):
         self.running = False
+        self.descoberta_lan.parar()
         icon.stop()
 
     def get_status_text(self):
@@ -771,8 +816,9 @@ class SyncTrayApp:
                 target=self.produtos_loop, daemon=True)
             self.produtos_thread.start()
 
-        # Loop próprio da LAN: é o que mantém os dois PCs em dia sem nuvem.
-        if self.par_cfg:
+        # Descoberta e sincronizacao respeitam o interruptor LAN_SYNC.
+        if os.getenv('LAN_SYNC', 'true').strip().lower() not in ('0', 'false', 'nao', 'off'):
+            self.descoberta_lan.iniciar()
             self.lan_thread = threading.Thread(target=self.lan_loop, daemon=True)
             self.lan_thread.start()
         

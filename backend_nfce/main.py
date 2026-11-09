@@ -470,6 +470,32 @@ async def inutilizar_nfce_endpoint(req: Request):
         print(f"[HTTP ERRO INUTILIZACAO] {e}\n{tb}")
         return {"success": False, "error": str(e), "traceback": tb}
 
+@app.post("/api/nfe/distribuicao")
+async def distribuicao_nfe_endpoint(req: Request):
+    from nfce_handler import consultar_distribuicao_pynfe
+    try:
+        data = await req.json()
+        resultado = consultar_distribuicao_pynfe(data)
+        return resultado
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[HTTP ERRO DISTRIBUICAO DFE] {e}\n{tb}")
+        return {"success": False, "error": str(e), "traceback": tb}
+
+@app.post("/api/nfe/manifestar")
+async def manifestar_nfe_endpoint(req: Request):
+    from nfce_handler import manifestar_dfe_pynfe
+    try:
+        data = await req.json()
+        resultado = manifestar_dfe_pynfe(data)
+        return resultado
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[HTTP ERRO MANIFESTACAO DFE] {e}\n{tb}")
+        return {"success": False, "error": str(e), "traceback": tb}
+
 @app.post("/api/nfce/consultar")
 async def consultar_nfce_endpoint(req: Request):
     from nfce_handler import consultar_nfce_pynfe

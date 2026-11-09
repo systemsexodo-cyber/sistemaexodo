@@ -260,6 +260,52 @@ class NeonConfig {
       storageSecretKey.isNotEmpty;
 
   // ==========================================================================
+  // Storage do SUPABASE (local, publicado pelo Funnel)
+  // ==========================================================================
+  //
+  // Quando a nuvem é o Supabase local (o mesmo modo em que a Data API usa a
+  // chave estática `NEON_DATA_API_KEY`), os arquivos têm de ir para o Storage
+  // do Supabase — o S3 do Neon continua sendo outro serviço, com outra cota
+  // (foi ele que recusou a publicação de versão com `QuotaExceeded`).
+  //
+  // A base é derivada da `NEON_DATA_API_URL` removendo o `/rest/v1`, porque é
+  // o MESMO servidor do Funnel. Dá para apontar para outro endereço com
+  // `NEON_SUPABASE_STORAGE_URL` (ou `NEON_SUPABASE_URL`) e trocar a chave com
+  // `NEON_SUPABASE_STORAGE_KEY` (ou `NEON_SUPABASE_KEY`).
+
+  /// Endereço do Supabase (sem `/storage/v1`). Vazio quando não é o caso.
+  static String get storageSupabaseUrl {
+    final explicito = _resolver([
+      'NEON_SUPABASE_STORAGE_URL',
+      'NEON_SUPABASE_URL',
+    ]);
+    if (explicito.isNotEmpty) return _semSufixoRest(explicito);
+    // Só deriva quando a nuvem está no modo "Supabase local" (chave estática):
+    // a Data API do Neon também termina em /rest/v1 e não tem Storage.
+    if (!dataApiKeyDisponivel) return '';
+    return _semSufixoRest(dataApiUrl);
+  }
+
+  /// Chave usada no Storage do Supabase (a mesma da Data API por padrão).
+  static String get storageSupabaseKey => _resolver([
+        'NEON_SUPABASE_STORAGE_KEY',
+        'NEON_SUPABASE_KEY',
+        'NEON_DATA_API_KEY',
+      ]);
+
+  /// true = os arquivos vão para o Storage do Supabase (e não para o S3).
+  static bool get storageSupabaseDisponivel =>
+      storageSupabaseUrl.isNotEmpty && storageSupabaseKey.isNotEmpty;
+
+  static String _semSufixoRest(String url) {
+    var base = url.trim().replaceAll(RegExp(r'/+$'), '');
+    if (base.endsWith('/rest/v1')) {
+      base = base.substring(0, base.length - '/rest/v1'.length);
+    }
+    return base.replaceAll(RegExp(r'/+$'), '');
+  }
+
+  // ==========================================================================
   // Realtime (Live SQL API) — push de mudanças por WebSocket
   // ==========================================================================
   //
@@ -279,6 +325,17 @@ class NeonConfig {
 
   static bool get realtimeDisponivel =>
       realtimeUrl.isNotEmpty && realtimeSecret.isNotEmpty;
+
+  // Supabase local realtime. Neon remains available as fallback/future.
+  static String get supabaseLocalRealtimeUrl =>
+      _resolver(['SUPABASE_REALTIME_URL']);
+
+  static String get supabaseLocalRealtimeKey =>
+      _resolver(['SUPABASE_REALTIME_KEY', 'SUPABASE_ANON_KEY']);
+
+  static bool get supabaseLocalRealtimeDisponivel =>
+      supabaseLocalRealtimeUrl.isNotEmpty &&
+      supabaseLocalRealtimeKey.isNotEmpty;
 
   /// Banco que vai dentro do selo (o serviço usa para escolher o database).
   static String get realtimeDatabase {

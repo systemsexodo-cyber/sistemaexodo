@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'neon_config.dart';
-import 'neon_realtime_service.dart';
+import 'neon_realtime_service.dart' show OnMudancaNaNuvem;
+import 'supabase_local_realtime_service.dart';
 import 'supabase_service.dart';
 
 /// Callback chamado quando o DataService precisa ser atualizado com novos dados
@@ -97,7 +98,7 @@ class RealtimeSyncService {
     // Repetir a chamada para a MESMA empresa não precisa reabrir o socket: o
     // serviço da nuvem já está assinando as tabelas dela.
     final mesmaEmpresaEJaAtivo =
-        _empresaIdAtual == empresaId && NeonRealtimeService.instance.ativo;
+        _empresaIdAtual == empresaId && SupabaseLocalRealtimeService.instance.ativo;
     _empresaIdAtual = empresaId;
     _lastSyncAt = DateTime.now();
     if (mesmaEmpresaEJaAtivo) {
@@ -105,11 +106,11 @@ class RealtimeSyncService {
       return;
     }
 
-    if (!NeonConfig.realtimeDisponivel) {
+    if (!NeonConfig.supabaseLocalRealtimeDisponivel) {
       _ativo = false;
       debugPrint(
         '>>> [Realtime] ⏸️ Push da nuvem desligado: falta '
-        'NEON_REALTIME_URL/SECRET em ${NeonConfig.nomeArquivo}. Multi-PC segue '
+        'Supabase Realtime local nao configurado. Multi-PC segue '
         'por LAN + sincronização periódica.',
       );
       return;
@@ -121,16 +122,16 @@ class RealtimeSyncService {
       return;
     }
 
-    _ativo = true;
     debugPrint(
-      '>>> [Realtime] 🔔 Push da nuvem ligado (Neon Realtime) para '
+      '>>> [Realtime] 🔔 Push da nuvem ligado (Supabase Realtime local) para '
       '${_tabelasCriticas.length} tabela(s) críticas.',
     );
-    await NeonRealtimeService.instance.iniciar(
+    await SupabaseLocalRealtimeService.instance.iniciar(
       empresaId,
       tabelas: _tabelasCriticas,
       onMudanca: avisar,
     );
+    _ativo = SupabaseLocalRealtimeService.instance.ativo;
   }
 
   /// Aguarda confirmação de que um evento foi divulgado pela nuvem.
@@ -150,7 +151,7 @@ class RealtimeSyncService {
   Future<void> parar() async {
     _ativo = false;
     _empresaIdAtual = null;
-    await NeonRealtimeService.instance.parar();
+    await SupabaseLocalRealtimeService.instance.parar();
     debugPrint('>>> [Realtime] ⏹️ Escuta encerrada.');
   }
 

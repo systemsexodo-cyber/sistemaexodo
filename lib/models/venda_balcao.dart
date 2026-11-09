@@ -30,6 +30,9 @@ class ItemVendaBalcao {
   // Premiação/brinde: item entregue com valor ZERO (saiu do estoque, não
   // entrou no total da venda). O preço de tabela fica em [precoTabela].
   final bool isBonus;
+  // Vendedor responsável por ESTE item (lançado no momento da adição ao carrinho)
+  final String? vendedorId; // ID do vendedor (funcionário)
+  final String? vendedorNome; // Nome do vendedor
 
   ItemVendaBalcao({
     required this.id,
@@ -41,6 +44,8 @@ class ItemVendaBalcao {
     this.quantidadeTrocada = 0,
     this.trocadoPor,
     this.fornecedorNome,
+    this.vendedorId,
+    this.vendedorNome,
     this.observacao,
     this.precoOriginal,
     this.precoSemPromocao,
@@ -137,6 +142,8 @@ class ItemVendaBalcao {
       quantidadeTrocada: parseDouble(get('quantidadeTrocada', 'quantidade_trocada')) ?? 0.0,
       trocadoPor: get('trocadoPor', 'trocado_por'),
       fornecedorNome: get('fornecedorNome', 'fornecedor_nome'),
+      vendedorId: get('vendedorId', 'vendedor_id'),
+      vendedorNome: get('vendedorNome', 'vendedor_nome'),
       observacao: map['observacao'],
       precoOriginal: parseDouble(get('precoOriginal', 'preco_original')),
       precoSemPromocao: parseDouble(get('precoSemPromocao', 'preco_sem_promocao')),
@@ -170,6 +177,8 @@ class ItemVendaBalcao {
       'quantidade_trocada': quantidadeTrocada,
       'trocado_por': trocadoPor,
       'fornecedor_nome': fornecedorNome,
+      'vendedor_id': vendedorId,
+      'vendedor_nome': vendedorNome,
       'observacao': observacao,
       'preco_original': precoOriginal,
       'preco_sem_promocao': precoSemPromocao,
@@ -195,6 +204,8 @@ class ItemVendaBalcao {
     double? quantidadeTrocada,
     String? trocadoPor,
     String? fornecedorNome,
+    String? vendedorId,
+    String? vendedorNome,
     String? observacao,
     double? precoOriginal,
     double? precoSemPromocao,
@@ -213,6 +224,8 @@ class ItemVendaBalcao {
       quantidadeTrocada: quantidadeTrocada ?? this.quantidadeTrocada,
       trocadoPor: trocadoPor ?? this.trocadoPor,
       fornecedorNome: fornecedorNome ?? this.fornecedorNome,
+      vendedorId: vendedorId ?? this.vendedorId,
+      vendedorNome: vendedorNome ?? this.vendedorNome,
       observacao: observacao ?? this.observacao,
       precoOriginal: precoOriginal ?? this.precoOriginal,
       precoSemPromocao: precoSemPromocao ?? this.precoSemPromocao,
@@ -416,13 +429,16 @@ class VendaBalcao {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? senha,
+    /// Permite APAGAR o nome do cliente: `clienteNome: null` sozinho não limpa
+    /// nada (null significa "mantém o atual").
+    bool limparClienteNome = false,
   }) {
     return VendaBalcao(
       id: id ?? this.id,
       numero: numero ?? this.numero,
       dataVenda: dataVenda ?? this.dataVenda,
       clienteId: clienteId ?? this.clienteId,
-      clienteNome: clienteNome ?? this.clienteNome,
+      clienteNome: limparClienteNome ? null : (clienteNome ?? this.clienteNome),
       clienteTelefone: clienteTelefone ?? this.clienteTelefone,
       clienteCpfCnpj: clienteCpfCnpj ?? this.clienteCpfCnpj,
       itens: itens ?? this.itens,

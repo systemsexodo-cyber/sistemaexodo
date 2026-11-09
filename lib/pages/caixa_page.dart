@@ -19,7 +19,6 @@ import '../models/usuario.dart';
 import 'package:printing/printing.dart';
 import '../models/mesa_comanda.dart';
 
-
 /// Página de gerenciamento de caixa
 class CaixaPage extends StatefulWidget {
   const CaixaPage({super.key});
@@ -29,7 +28,10 @@ class CaixaPage extends StatefulWidget {
 }
 
 class _CaixaPageState extends State<CaixaPage> {
-  final NumberFormat formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  final NumberFormat formatoMoeda = NumberFormat.currency(
+    locale: 'pt_BR',
+    symbol: 'R\$',
+  );
   final DateFormat formatoData = DateFormat('dd/MM/yyyy HH:mm');
   final DateFormat formatoHora = DateFormat('HH:mm');
 
@@ -77,7 +79,9 @@ class _CaixaPageState extends State<CaixaPage> {
     final podeVerFluxoCaixa = PermissionHelper.podeVerFluxoCaixa(usuarioLogado);
 
     if (!_responsavelInicializado && usuarioLogado != null) {
-      _responsavelSelecionado = usuarioLogado.email.isNotEmpty ? usuarioLogado.email : usuarioLogado.nome;
+      _responsavelSelecionado = usuarioLogado.email.isNotEmpty
+          ? usuarioLogado.email
+          : usuarioLogado.nome;
       dataService.responsavelAtivo = _responsavelSelecionado;
       _responsavelInicializado = true;
     } else if (_responsavelInicializado) {
@@ -106,7 +110,11 @@ class _CaixaPageState extends State<CaixaPage> {
                   const SizedBox(height: 16),
                   const Text(
                     'Acesso restrito',
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -141,7 +149,8 @@ class _CaixaPageState extends State<CaixaPage> {
             // gestor junta as movimentações e os totais de todos numa só lista.
             // É a visão "em tempo real" dos operadores lado a lado — o que faz
             // sentido ao vivo, quando cada um opera num terminal diferente.
-            final podeJuntarCaixas = aberturasAbertas.length > 1 &&
+            final podeJuntarCaixas =
+                aberturasAbertas.length > 1 &&
                 caixaAberto &&
                 aberturaAtual != null;
             final modoTodosCaixas = _mostrarTodosCaixas && podeJuntarCaixas;
@@ -150,8 +159,8 @@ class _CaixaPageState extends State<CaixaPage> {
             final aberturasResumo = modoTodosCaixas
                 ? aberturasAbertas
                 : (aberturaAtual != null
-                    ? <AberturaCaixa>[aberturaAtual]
-                    : <AberturaCaixa>[]);
+                      ? <AberturaCaixa>[aberturaAtual]
+                      : <AberturaCaixa>[]);
 
             // Painéis operacionais (o card azul com Pagamento/Suprimento/Fechar).
             // No modo "juntar caixas" mostra um painel para CADA caixa aberto —
@@ -176,10 +185,16 @@ class _CaixaPageState extends State<CaixaPage> {
             // Conjunto único de identificadores de operadores (E-mail ou Nome)
             final Set<String> todosOperadores = {};
             if (usuarioLogado != null) {
-              todosOperadores.add(usuarioLogado.email.isNotEmpty ? usuarioLogado.email : usuarioLogado.nome);
+              todosOperadores.add(
+                usuarioLogado.email.isNotEmpty
+                    ? usuarioLogado.email
+                    : usuarioLogado.nome,
+              );
             }
             for (final f in dataService.funcionarios) {
-              final idVal = (f.email != null && f.email!.isNotEmpty) ? f.email! : f.nome;
+              final idVal = (f.email != null && f.email!.isNotEmpty)
+                  ? f.email!
+                  : f.nome;
               if (idVal.isNotEmpty) {
                 todosOperadores.add(idVal);
               }
@@ -193,12 +208,19 @@ class _CaixaPageState extends State<CaixaPage> {
             return CustomScrollView(
               slivers: [
                 // 0. Dropdown de Operadores (visível para Administradores e Gerentes)
-                if (usuarioLogado != null && (usuarioLogado.isAdmin || usuarioLogado.isMaster || usuarioLogado.isGerente || usuarioLogado.email.toLowerCase() == 'user'))
+                if (usuarioLogado != null &&
+                    (usuarioLogado.isAdmin ||
+                        usuarioLogado.isMaster ||
+                        usuarioLogado.isGerente ||
+                        usuarioLogado.email.toLowerCase() == 'user'))
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.05),
                           borderRadius: BorderRadius.circular(16),
@@ -206,11 +228,18 @@ class _CaixaPageState extends State<CaixaPage> {
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.person_search_rounded, color: Colors.blueAccent, size: 22),
+                            const Icon(
+                              Icons.person_search_rounded,
+                              color: Colors.blueAccent,
+                              size: 22,
+                            ),
                             const SizedBox(width: 12),
                             const Text(
                               'Visualizar Caixa de:',
-                              style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w500),
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
@@ -218,18 +247,29 @@ class _CaixaPageState extends State<CaixaPage> {
                                 child: DropdownButton<String>(
                                   dropdownColor: const Color(0xFF1E1E2E),
                                   value: _responsavelSelecionado,
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.arrow_drop_down,
+                                    color: Colors.white70,
+                                  ),
                                   items: todosOperadores.map((operador) {
                                     // Obter nome amigável para exibição (ex: se for e-mail, tenta achar o nome do funcionário correspondente)
                                     String nomeExibicao = operador;
                                     if (operador.contains('@')) {
-                                      final func = dataService.funcionarios.firstWhereOrNull(
-                                        (f) => f.email?.toLowerCase() == operador.toLowerCase(),
-                                      );
+                                      final func = dataService.funcionarios
+                                          .firstWhereOrNull(
+                                            (f) =>
+                                                f.email?.toLowerCase() ==
+                                                operador.toLowerCase(),
+                                          );
                                       if (func != null) {
                                         nomeExibicao = func.nome;
-                                      } else if (usuarioLogado != null && usuarioLogado.email.toLowerCase() == operador.toLowerCase()) {
+                                      } else if (usuarioLogado != null &&
+                                          usuarioLogado.email.toLowerCase() ==
+                                              operador.toLowerCase()) {
                                         nomeExibicao = usuarioLogado.nome;
                                       }
                                     }
@@ -261,10 +301,11 @@ class _CaixaPageState extends State<CaixaPage> {
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                       child: _buildCaixasAbertosSection(
-                          dataService,
-                          aberturasAbertas,
-                          usuarioLogado,
-                          permitirJuntar: podeJuntarCaixas),
+                        dataService,
+                        aberturasAbertas,
+                        usuarioLogado,
+                        permitirJuntar: podeJuntarCaixas,
+                      ),
                     ),
                   ),
 
@@ -278,8 +319,8 @@ class _CaixaPageState extends State<CaixaPage> {
                         for (int i = 0; i < paineisCaixa.length; i++)
                           Padding(
                             padding: EdgeInsets.only(
-                                bottom:
-                                    i == paineisCaixa.length - 1 ? 0 : 16),
+                              bottom: i == paineisCaixa.length - 1 ? 0 : 16,
+                            ),
                             child: _buildStatusHeader(
                               paineisCaixa[i] != null,
                               paineisCaixa[i],
@@ -299,7 +340,11 @@ class _CaixaPageState extends State<CaixaPage> {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
                       child: _buildResumoSession(
-                          dataService, aberturasResumo, podeVerTotais, podeVerFormasPagamento),
+                        dataService,
+                        aberturasResumo,
+                        podeVerTotais,
+                        podeVerFormasPagamento,
+                      ),
                     ),
                   ),
 
@@ -333,7 +378,10 @@ class _CaixaPageState extends State<CaixaPage> {
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(12),
@@ -342,7 +390,10 @@ class _CaixaPageState extends State<CaixaPage> {
                               modoTodosCaixas
                                   ? 'Todos os caixas (${aberturasAbertas.length})'
                                   : 'Sessão Atual',
-                              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.6),
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                           IconButton(
@@ -369,7 +420,10 @@ class _CaixaPageState extends State<CaixaPage> {
                 if (caixaAberto &&
                     aberturaAtual != null &&
                     !_movimentacoesRecolhidas)
-                  _buildSliverFluxoLista(movsFluxoFiltradas, mostrarCaixa: modoTodosCaixas),
+                  _buildSliverFluxoLista(
+                    movsFluxoFiltradas,
+                    mostrarCaixa: modoTodosCaixas,
+                  ),
 
                 // 5.1 Total do que está sendo exibido (respeita os filtros)
                 if (caixaAberto &&
@@ -409,7 +463,7 @@ class _CaixaPageState extends State<CaixaPage> {
 
                 // 6. Lista do Histórico
                 _buildSliverHistorico(dataService, podeVerTotais),
-                
+
                 const SliverToBoxAdapter(child: SizedBox(height: 100)),
               ],
             );
@@ -430,7 +484,8 @@ class _CaixaPageState extends State<CaixaPage> {
     Usuario? usuarioLogado, {
     bool permitirJuntar = false,
   }) {
-    final ehGestor = usuarioLogado != null &&
+    final ehGestor =
+        usuarioLogado != null &&
         (usuarioLogado.isAdmin ||
             usuarioLogado.isMaster ||
             usuarioLogado.isGerente ||
@@ -439,11 +494,13 @@ class _CaixaPageState extends State<CaixaPage> {
     // Filtro para operador: só caixas abertos do próprio operador.
     final exibir = !ehGestor
         ? abertas.where((ab) {
-            if (ab.responsavel == null || ab.responsavel!.trim().isEmpty) return false;
+            if (ab.responsavel == null || ab.responsavel!.trim().isEmpty)
+              return false;
             final idLogado = usuarioLogado!.email.isNotEmpty
                 ? usuarioLogado.email
                 : usuarioLogado.nome;
-            String norm(String s) => s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
+            String norm(String s) =>
+                s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
             final na = norm(ab.responsavel!);
             final nb = norm(idLogado);
             if (na.isEmpty || nb.isEmpty) return false;
@@ -461,7 +518,11 @@ class _CaixaPageState extends State<CaixaPage> {
       children: [
         Row(
           children: [
-            const Icon(Icons.account_balance_wallet_rounded, color: Colors.blueAccent, size: 22),
+            const Icon(
+              Icons.account_balance_wallet_rounded,
+              color: Colors.blueAccent,
+              size: 22,
+            ),
             const SizedBox(width: 10),
             Text(
               'Caixas Abertos (${exibir.length})',
@@ -479,7 +540,9 @@ class _CaixaPageState extends State<CaixaPage> {
               Text(
                 'Juntar caixas',
                 style: TextStyle(
-                  color: _mostrarTodosCaixas ? Colors.blueAccent : Colors.white54,
+                  color: _mostrarTodosCaixas
+                      ? Colors.blueAccent
+                      : Colors.white54,
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                 ),
@@ -498,7 +561,11 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildCardCaixaAberto(DataService ds, AberturaCaixa ab, bool ehGestor) {
+  Widget _buildCardCaixaAberto(
+    DataService ds,
+    AberturaCaixa ab,
+    bool ehGestor,
+  ) {
     final saldo = ds.calcularSaldoDoCaixa(ab);
     final ehSelecionado = ds.aberturaCaixaAtual?.id == ab.id;
     final resumoFormas = ds.calcularResumoFormaPagamentoDoCaixa(ab);
@@ -519,7 +586,9 @@ class _CaixaPageState extends State<CaixaPage> {
       child: Row(
         children: [
           Icon(
-            ehSelecionado ? Icons.lock_open_rounded : Icons.account_balance_rounded,
+            ehSelecionado
+                ? Icons.lock_open_rounded
+                : Icons.account_balance_rounded,
             color: ehSelecionado ? Colors.blueAccent : Colors.white54,
             size: 26,
           ),
@@ -548,7 +617,10 @@ class _CaixaPageState extends State<CaixaPage> {
                 const SizedBox(height: 2),
                 Text(
                   'Aberto ${formatoData.format(ab.dataAbertura.toLocal())}',
-                  style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.4),
+                    fontSize: 11,
+                  ),
                 ),
                 if (ehGestor && resumoFormas.isNotEmpty) ...[
                   const SizedBox(height: 4),
@@ -561,54 +633,69 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  ...resumoFormas.map((r) => Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: r.tipo.cor.withOpacity(0.12),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(r.tipo.icone, color: r.tipo.cor, size: 10),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            r.rotulo,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
+                  ...resumoFormas.map(
+                    (r) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: r.tipo.cor.withOpacity(0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              r.tipo.icone,
+                              color: r.tipo.cor,
+                              size: 10,
                             ),
                           ),
-                        ),
-                        Text(
-                          formatoMoeda.format(r.valor),
-                          style: const TextStyle(
-                            color: Colors.greenAccent,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              r.rotulo,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
+                          Text(
+                            formatoMoeda.format(r.valor),
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  )),
+                  ),
                 ],
               ],
             ),
           ),
           if (ehGestor)
             IconButton(
-              icon: const Icon(Icons.visibility, color: Colors.blueAccent, size: 20),
+              icon: const Icon(
+                Icons.visibility,
+                color: Colors.blueAccent,
+                size: 20,
+              ),
               tooltip: 'Ver o que foi vendido neste caixa',
               onPressed: () => _mostrarVendasDoCaixa(ds, ab),
             ),
           IconButton(
-            icon: const Icon(Icons.stop_circle_outlined, color: Colors.redAccent, size: 20),
+            icon: const Icon(
+              Icons.stop_circle_outlined,
+              color: Colors.redAccent,
+              size: 20,
+            ),
             tooltip: 'Fechar este caixa',
-            onPressed: () => _mostrarDialogoFechamento(context, ds, aberturaParam: ab),
+            onPressed: () =>
+                _mostrarDialogoFechamento(context, ds, aberturaParam: ab),
           ),
         ],
       ),
@@ -622,17 +709,31 @@ class _CaixaPageState extends State<CaixaPage> {
   /// Além da lista (mais recente primeiro), traz busca por número, cliente,
   /// item ou operador e a separação dos totais por forma de pagamento, com
   /// chips que filtram a lista ao tocar.
-  void _mostrarVendasDoCaixa(DataService ds, AberturaCaixa ab,
-      {FechamentoCaixa? fechamento}) {
+  void _mostrarVendasDoCaixa(
+    DataService ds,
+    AberturaCaixa ab, {
+    FechamentoCaixa? fechamento,
+  }) {
     // Para caixas ja fechados, limita as vendas ate o encerramento
-    final vendas = (ds.getVendasDoCaixa(ab)
-            .where((v) => fechamento == null ||
-                v.dataVenda.isBefore(
-                    fechamento!.dataFechamento.add(const Duration(seconds: 1))))
-            .toList())
-      // Histórico: mais recentes primeiro (antes aparecia na ordem de gravação)
-      ..sort((a, b) => b.dataVenda.compareTo(a.dataVenda));
-    final totalVendas = vendas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
+    final vendas =
+        (ds
+              .getVendasDoCaixa(ab)
+              .where(
+                (v) =>
+                    fechamento == null ||
+                    v.dataVenda.isBefore(
+                      fechamento!.dataFechamento.add(
+                        const Duration(seconds: 1),
+                      ),
+                    ),
+              )
+              .toList())
+          // Histórico: mais recentes primeiro (antes aparecia na ordem de gravação)
+          ..sort((a, b) => b.dataVenda.compareTo(a.dataVenda));
+    final totalVendas = vendas.fold<double>(
+      0.0,
+      (sum, v) => sum + v.valorTotal,
+    );
     final nomeResp = ab.responsavel ?? '—';
     final titulo = 'Vendas do ' + ab.numero;
     // Data e hora de abertura (e de fechamento, quando encerrado): sem isso o
@@ -641,10 +742,14 @@ class _CaixaPageState extends State<CaixaPage> {
     final periodo = fechado == null
         ? 'Abertura: ${formatoData.format(ab.dataAbertura.toLocal())}'
         : 'Abertura: ${formatoData.format(ab.dataAbertura.toLocal())} → '
-            '${formatoData.format(fechado.dataFechamento.toLocal())}';
-    final subtitulo = periodo +
-        ' • ' + nomeResp +
-        ' • ' + vendas.length.toString() + ' venda(s) • Total: ' +
+              '${formatoData.format(fechado.dataFechamento.toLocal())}';
+    final subtitulo =
+        periodo +
+        ' • ' +
+        nomeResp +
+        ' • ' +
+        vendas.length.toString() +
+        ' venda(s) • Total: ' +
         formatoMoeda.format(totalVendas);
 
     // Separação das vendas DESTE caixa por forma de pagamento (Dinheiro, PIX,
@@ -678,11 +783,17 @@ class _CaixaPageState extends State<CaixaPage> {
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (sheetContext, setModalState) {
-            final filtradas = aplicarFiltros(buscaController.text, filtroFormaChave);
-            final filtrando = filtroFormaChave != chaveTodas ||
+            final filtradas = aplicarFiltros(
+              buscaController.text,
+              filtroFormaChave,
+            );
+            final filtrando =
+                filtroFormaChave != chaveTodas ||
                 buscaController.text.trim().isNotEmpty;
-            final totalFiltrado =
-                filtradas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
+            final totalFiltrado = filtradas.fold<double>(
+              0.0,
+              (sum, v) => sum + v.valorTotal,
+            );
             return SizedBox(
               height: MediaQuery.of(sheetContext).size.height * 0.85,
               child: Column(
@@ -700,16 +811,31 @@ class _CaixaPageState extends State<CaixaPage> {
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                     child: Row(
                       children: [
-                        const Icon(Icons.shopping_basket_rounded, color: Colors.blueAccent, size: 26),
+                        const Icon(
+                          Icons.shopping_basket_rounded,
+                          color: Colors.blueAccent,
+                          size: 26,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(titulo,
-                                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                              Text(subtitulo,
-                                  style: TextStyle(color: Colors.white54, fontSize: 13)),
+                              Text(
+                                titulo,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                subtitulo,
+                                style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 13,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -730,14 +856,20 @@ class _CaixaPageState extends State<CaixaPage> {
                         children: [
                           Row(
                             children: [
-                              const Icon(Icons.pie_chart_outline_rounded,
-                                  color: Colors.blueAccent, size: 16),
+                              const Icon(
+                                Icons.pie_chart_outline_rounded,
+                                color: Colors.blueAccent,
+                                size: 16,
+                              ),
                               const SizedBox(width: 8),
-                              Text('Entradas por Forma de Pagamento',
-                                  style: TextStyle(
-                                      color: Colors.white.withOpacity(0.6),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600)),
+                              Text(
+                                'Entradas por Forma de Pagamento',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.6),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 8),
@@ -753,7 +885,8 @@ class _CaixaPageState extends State<CaixaPage> {
                                   valor: totalVendas,
                                   selecionado: filtroFormaChave == chaveTodas,
                                   onTap: () => setModalState(
-                                      () => filtroFormaChave = chaveTodas),
+                                    () => filtroFormaChave = chaveTodas,
+                                  ),
                                 ),
                                 ...resumoFormas.map((r) {
                                   final chave =
@@ -765,7 +898,8 @@ class _CaixaPageState extends State<CaixaPage> {
                                     valor: r.valor,
                                     selecionado: filtroFormaChave == chave,
                                     onTap: () => setModalState(
-                                        () => filtroFormaChave = chave),
+                                      () => filtroFormaChave = chave,
+                                    ),
                                   );
                                 }),
                               ],
@@ -783,12 +917,24 @@ class _CaixaPageState extends State<CaixaPage> {
                       style: const TextStyle(color: Colors.white, fontSize: 13),
                       decoration: InputDecoration(
                         hintText: 'Buscar venda por número, cliente, item...',
-                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                        prefixIcon: const Icon(Icons.search, color: Colors.white24, size: 20),
+                        hintStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.3),
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.search,
+                          color: Colors.white24,
+                          size: 20,
+                        ),
                         suffixIcon: buscaController.text.isNotEmpty
                             ? IconButton(
-                                icon: const Icon(Icons.close, color: Colors.white38, size: 18),
-                                onPressed: () => setModalState(() => buscaController.clear()),
+                                icon: const Icon(
+                                  Icons.close,
+                                  color: Colors.white38,
+                                  size: 18,
+                                ),
+                                onPressed: () => setModalState(
+                                  () => buscaController.clear(),
+                                ),
                               )
                             : null,
                         filled: true,
@@ -812,15 +958,20 @@ class _CaixaPageState extends State<CaixaPage> {
                               ? '${filtradas.length} de ${vendas.length} venda(s)'
                               : '${vendas.length} venda(s)',
                           style: TextStyle(
-                              color: Colors.white.withOpacity(0.4), fontSize: 12),
+                            color: Colors.white.withOpacity(0.4),
+                            fontSize: 12,
+                          ),
                         ),
                         const Spacer(),
                         Text(
-                          formatoMoeda.format(filtrando ? totalFiltrado : totalVendas),
+                          formatoMoeda.format(
+                            filtrando ? totalFiltrado : totalVendas,
+                          ),
                           style: const TextStyle(
-                              color: Colors.greenAccent,
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold),
+                            color: Colors.greenAccent,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         if (filtrando)
                           Padding(
@@ -830,11 +981,14 @@ class _CaixaPageState extends State<CaixaPage> {
                                 filtroFormaChave = chaveTodas;
                                 buscaController.clear();
                               }),
-                              child: Text('Limpar filtros',
-                                  style: TextStyle(
-                                      color: Colors.blueAccent.withOpacity(0.9),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600)),
+                              child: Text(
+                                'Limpar filtros',
+                                style: TextStyle(
+                                  color: Colors.blueAccent.withOpacity(0.9),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ),
                           ),
                       ],
@@ -844,23 +998,26 @@ class _CaixaPageState extends State<CaixaPage> {
                   Expanded(
                     child: vendas.isEmpty
                         ? Center(
-                            child: Text('Nenhuma venda neste caixa',
-                                style: TextStyle(color: Colors.white30)),
+                            child: Text(
+                              'Nenhuma venda neste caixa',
+                              style: TextStyle(color: Colors.white30),
+                            ),
                           )
                         : filtradas.isEmpty
-                            ? Center(
-                                child: Text(
-                                    'Nenhuma venda encontrada para a busca/filtro',
-                                    style: TextStyle(color: Colors.white30)),
-                              )
-                            : ListView.builder(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                itemCount: filtradas.length,
-                                itemBuilder: (context, i) {
-                                  final v = filtradas[i];
-                                  return _buildCardVendaModal(v);
-                                },
-                              ),
+                        ? Center(
+                            child: Text(
+                              'Nenhuma venda encontrada para a busca/filtro',
+                              style: TextStyle(color: Colors.white30),
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            itemCount: filtradas.length,
+                            itemBuilder: (context, i) {
+                              final v = filtradas[i];
+                              return _buildCardVendaModal(v);
+                            },
+                          ),
                   ),
                 ],
               ),
@@ -880,18 +1037,21 @@ class _CaixaPageState extends State<CaixaPage> {
             ? '${v.clienteNome!.trim()} • ${v.clienteTelefone!.trim()}'
             : v.clienteNome!.trim(),
       if ((v.origem ?? '').trim().isNotEmpty) v.origem!.trim(),
-      if ((v.operador ?? '').trim().isNotEmpty) 'Operador: ${v.operador!.trim()}',
+      if ((v.operador ?? '').trim().isNotEmpty)
+        'Operador: ${v.operador!.trim()}',
     ].join('  •  ');
     // Formas exibidas no card: cada forma do pagamento dividido (split) com o
     // valor recebido em cada, ou a forma principal quando não há split.
     final chipsFormas = v.pagamentos.isNotEmpty
         ? v.pagamentos
-            .map((p) => _badgeForma(
+              .map(
+                (p) => _badgeForma(
                   p.nomeExibicao,
                   p.tipo.cor,
                   valor: v.pagamentos.length > 1 ? p.valor : null,
-                ))
-            .toList()
+                ),
+              )
+              .toList()
         : [_badgeForma(_formatForma(v.tipoPagamento), v.tipoPagamento.cor)];
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -909,7 +1069,11 @@ class _CaixaPageState extends State<CaixaPage> {
               Expanded(
                 child: Text(
                   'Venda ' + v.numero,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
                 ),
               ),
               Flexible(
@@ -948,17 +1112,27 @@ class _CaixaPageState extends State<CaixaPage> {
                   Expanded(
                     child: Text(
                       item.nome,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text(qtdStr + 'x', style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                  Text(
+                    qtdStr + 'x',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
                   const SizedBox(width: 12),
                   Text(
                     formatoMoeda.format(item.subtotal),
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
@@ -968,11 +1142,18 @@ class _CaixaPageState extends State<CaixaPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              const Text('Total', style: TextStyle(color: Colors.white38, fontSize: 12)),
+              const Text(
+                'Total',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
               const SizedBox(width: 12),
               Text(
                 formatoMoeda.format(v.valorTotal),
-                style: const TextStyle(color: Colors.greenAccent, fontSize: 15, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -1003,7 +1184,9 @@ class _CaixaPageState extends State<CaixaPage> {
           decoration: BoxDecoration(
             color: cor.withOpacity(selecionado ? 0.20 : 0.08),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: cor.withOpacity(selecionado ? 0.85 : 0.25)),
+            border: Border.all(
+              color: cor.withOpacity(selecionado ? 0.85 : 0.25),
+            ),
           ),
           child: Row(
             children: [
@@ -1015,11 +1198,19 @@ class _CaixaPageState extends State<CaixaPage> {
                 children: [
                   Text(
                     rotulo.toUpperCase(),
-                    style: TextStyle(color: cor, fontSize: 9, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: cor,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   Text(
                     formatoMoeda.format(valor),
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ],
               ),
@@ -1028,7 +1219,10 @@ class _CaixaPageState extends State<CaixaPage> {
                   padding: const EdgeInsets.only(left: 6),
                   child: Text(
                     '${quantidade}x',
-                    style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 10),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.35),
+                      fontSize: 10,
+                    ),
                   ),
                 ),
             ],
@@ -1104,25 +1298,35 @@ class _CaixaPageState extends State<CaixaPage> {
   /// (usada pelos chips de filtro do modal — cobre pagamento dividido/split).
   bool _vendaTemForma(VendaBalcao v, String chave) {
     if (v.pagamentos.isNotEmpty) {
-      return v.pagamentos
-          .any((p) => _chaveFormaPagamento(p.tipo, p.nomeForma) == chave);
+      return v.pagamentos.any(
+        (p) => _chaveFormaPagamento(p.tipo, p.nomeForma) == chave,
+      );
     }
     return _chaveFormaPagamento(v.tipoPagamento, null) == chave;
   }
 
-  Widget _buildStatusHeader(bool aberto, AberturaCaixa? abertura, DataService ds) {
+  Widget _buildStatusHeader(
+    bool aberto,
+    AberturaCaixa? abertura,
+    DataService ds,
+  ) {
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: aberto
-              ? [Colors.blueAccent.withOpacity(0.4), Colors.blue.withOpacity(0.1)]
+              ? [
+                  Colors.blueAccent.withOpacity(0.4),
+                  Colors.blue.withOpacity(0.1),
+                ]
               : [Colors.grey.withOpacity(0.3), Colors.black.withOpacity(0.1)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: aberto ? Colors.blueAccent.withOpacity(0.5) : Colors.white.withOpacity(0.2),
+          color: aberto
+              ? Colors.blueAccent.withOpacity(0.5)
+              : Colors.white.withOpacity(0.2),
           width: 1.5,
         ),
         boxShadow: [
@@ -1146,7 +1350,9 @@ class _CaixaPageState extends State<CaixaPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        aberto ? 'Caixa Operacional${abertura?.responsavel != null ? " • Operador: ${abertura!.responsavel}" : ""}' : 'Caixa Encerrado',
+                        aberto
+                            ? 'Caixa Operacional${abertura?.responsavel != null ? " • Operador: ${abertura!.responsavel}" : ""}'
+                            : 'Caixa Encerrado',
                         style: TextStyle(
                           color: aberto ? Colors.blueAccent : Colors.white60,
                           fontWeight: FontWeight.bold,
@@ -1166,7 +1372,10 @@ class _CaixaPageState extends State<CaixaPage> {
                       if (aberto && abertura != null)
                         Text(
                           'Iniciado em: ${formatoData.format(abertura.dataAbertura.toLocal())}',
-                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 13,
+                          ),
                         ),
                     ],
                   ),
@@ -1204,7 +1413,7 @@ class _CaixaPageState extends State<CaixaPage> {
       final authService = Provider.of<AuthService>(context, listen: false);
       final dataService = Provider.of<DataService>(context, listen: false);
       final empresa = authService.empresaAtual;
-      
+
       if (empresa == null) throw Exception('Empresa não selecionada');
 
       showDialog(
@@ -1231,9 +1440,13 @@ class _CaixaPageState extends State<CaixaPage> {
       // caixa e dentro da janela [abertura, fechamento] — getVendasDoCaixa já
       // aplica ambos os filtros). Isso impede vendas de outros caixas/usuários
       // de aparecerem na impressão do fechamento.
-      final vendas = dataService.getVendasDoCaixa(ab)
-          .where((v) => v.dataVenda
-              .isBefore(fe.dataFechamento.add(const Duration(seconds: 1))))
+      final vendas = dataService
+          .getVendasDoCaixa(ab)
+          .where(
+            (v) => v.dataVenda.isBefore(
+              fe.dataFechamento.add(const Duration(seconds: 1)),
+            ),
+          )
           .toList();
 
       final List<String> canceladosExtra = [];
@@ -1243,35 +1456,45 @@ class _CaixaPageState extends State<CaixaPage> {
           if (i.dataModificacao == null) return false;
           return (i.dataModificacao!.isAfter(ab.dataAbertura) ||
                   i.dataModificacao!.isAtSameMomentAs(ab.dataAbertura)) &&
-                 i.dataModificacao!.isBefore(fe.dataFechamento.add(const Duration(seconds: 1)));
+              i.dataModificacao!.isBefore(
+                fe.dataFechamento.add(const Duration(seconds: 1)),
+              );
         }).toList();
         if (cancelados.isNotEmpty) {
-          final labelOrigem = mesa.tipo == TipoControle.comanda ? '[COMANDA]' : '[MESA]';
-          final canceladosInfo = cancelados.map((i) => 
-            '${i.quantidade.toStringAsFixed(0)}x ${i.nome} por ${i.usuarioModificou ?? "Sistema"}'
-          ).join(', ');
-          canceladosExtra.add('$labelOrigem ${mesa.numero} (Aberta): $canceladosInfo');
+          final labelOrigem = mesa.tipo == TipoControle.comanda
+              ? '[COMANDA]'
+              : '[MESA]';
+          final canceladosInfo = cancelados
+              .map(
+                (i) =>
+                    '${i.quantidade.toStringAsFixed(0)}x ${i.nome} por ${i.usuarioModificou ?? "Sistema"}',
+              )
+              .join(', ');
+          canceladosExtra.add(
+            '$labelOrigem ${mesa.numero} (Aberta): $canceladosInfo',
+          );
         }
       }
 
       // Itens deletados do carrinho do PDV (comanda virtual de auditoria) na
       // janela [abertura, fechamento] — antes não apareciam no PDF.
       for (final i in dataService.itensDeletadosNoPDV(
-          inicio: ab.dataAbertura, fim: fe.dataFechamento)) {
+        inicio: ab.dataAbertura,
+        fim: fe.dataFechamento,
+      )) {
         final qtd = i.quantidade == i.quantidade.roundToDouble()
             ? i.quantidade.toStringAsFixed(0)
             : i.quantidade.toString();
         canceladosExtra.add(
-            '[PDV] ${qtd}x ${i.nome} — deletado por ${i.usuarioModificou ?? "Sistema"}');
+          '[PDV] ${qtd}x ${i.nome} — deletado por ${i.usuarioModificou ?? "Sistema"}',
+        );
       }
 
       // Recebimentos de pedidos/mesas no período do caixa (mesma regra exibida
       // no diálogo de fechamento), para o papel não ficar só com as vendas do
       // PDV.
-      final recebimentosPedidos = dataService.calcularRecebimentosDePedidosDoCaixa(
-        ab,
-        limite: fe.dataFechamento,
-      );
+      final recebimentosPedidos = dataService
+          .calcularRecebimentosDePedidosDoCaixa(ab, limite: fe.dataFechamento);
 
       await CaixaPDFService.gerarPDFTermico(
         abertura: ab,
@@ -1282,18 +1505,20 @@ class _CaixaPageState extends State<CaixaPage> {
         recebimentosPedidos: recebimentosPedidos,
       ).then((pdfData) async {
         if (context.mounted) Navigator.pop(context);
-        
+
         await Printing.layoutPdf(
           onLayout: (format) async => pdfData,
           name: 'Fechamento_Caixa_${ab.numero}.pdf',
         );
       });
-      
     } catch (e) {
       if (context.mounted) {
         if (Navigator.canPop(context)) Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao imprimir: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Erro ao imprimir: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -1305,8 +1530,11 @@ class _CaixaPageState extends State<CaixaPage> {
     super.dispose();
   }
 
-  Widget _buildQuickActions(bool aberto, DataService ds,
-      {AberturaCaixa? abertura}) {
+  Widget _buildQuickActions(
+    bool aberto,
+    DataService ds, {
+    AberturaCaixa? abertura,
+  }) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.3),
@@ -1321,12 +1549,20 @@ class _CaixaPageState extends State<CaixaPage> {
               child: ElevatedButton.icon(
                 onPressed: () => _mostrarDialogoAbertura(context, ds),
                 icon: const Icon(Icons.play_circle_filled_rounded, size: 28),
-                label: const Text('INICIAR NOVA SESSÃO DE CAIXA', style: TextStyle(letterSpacing: 1.1, fontWeight: FontWeight.w900)),
+                label: const Text(
+                  'INICIAR NOVA SESSÃO DE CAIXA',
+                  style: TextStyle(
+                    letterSpacing: 1.1,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blueAccent,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 20),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   elevation: 8,
                   shadowColor: Colors.blueAccent.withOpacity(0.4),
                 ),
@@ -1337,24 +1573,34 @@ class _CaixaPageState extends State<CaixaPage> {
               label: 'Pagamento',
               icon: Icons.remove_circle_rounded,
               color: Colors.orangeAccent,
-              onTap: () => _mostrarDialogoSangria(context, ds,
-                  isPagamento: true, aberturaParam: abertura),
+              onTap: () => _mostrarDialogoSangria(
+                context,
+                ds,
+                isPagamento: true,
+                aberturaParam: abertura,
+              ),
             ),
             const SizedBox(width: 12),
             _buildActionButton(
               label: 'Suprimento',
               icon: Icons.add_circle_rounded,
               color: Colors.lightBlueAccent,
-              onTap: () =>
-                  _mostrarDialogoSuprimento(context, ds, aberturaParam: abertura),
+              onTap: () => _mostrarDialogoSuprimento(
+                context,
+                ds,
+                aberturaParam: abertura,
+              ),
             ),
             const SizedBox(width: 12),
             _buildActionButton(
               label: 'Fechar',
               icon: Icons.stop_circle_rounded,
               color: Colors.redAccent,
-              onTap: () => _mostrarDialogoFechamento(context, ds,
-                  aberturaParam: abertura),
+              onTap: () => _mostrarDialogoFechamento(
+                context,
+                ds,
+                aberturaParam: abertura,
+              ),
             ),
           ],
         ],
@@ -1386,7 +1632,11 @@ class _CaixaPageState extends State<CaixaPage> {
                 const SizedBox(height: 4),
                 Text(
                   label,
-                  style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -1451,14 +1701,29 @@ class _CaixaPageState extends State<CaixaPage> {
           children: [
             // Total de vendas/entradas: oculto para quem não pode ver totais
             if (podeVerTotais)
-              _buildStatCard('Entradas', formatoMoeda.format(totalVendas + totalSuprimentos), Icons.trending_up, Colors.greenAccent),
+              _buildStatCard(
+                'Entradas',
+                formatoMoeda.format(totalVendas + totalSuprimentos),
+                Icons.trending_up,
+                Colors.greenAccent,
+              ),
             if (podeVerTotais) const SizedBox(width: 12),
             // O saldo inclui o total vendido (valorInicial + vendas + suprimentos - sangrias),
             // então também fica oculto para quem não pode ver totais.
             if (podeVerTotais)
-              _buildStatCard('Saldo', formatoMoeda.format(saldo), Icons.account_balance_wallet, Colors.blueAccent),
+              _buildStatCard(
+                'Saldo',
+                formatoMoeda.format(saldo),
+                Icons.account_balance_wallet,
+                Colors.blueAccent,
+              ),
             if (podeVerTotais) const SizedBox(width: 12),
-            _buildStatCard('Saídas', formatoMoeda.format(totalSangrias), Icons.trending_down, Colors.redAccent),
+            _buildStatCard(
+              'Saídas',
+              formatoMoeda.format(totalSangrias),
+              Icons.trending_down,
+              Colors.redAccent,
+            ),
           ],
         ),
         if (resumoFormas.isNotEmpty) ...[
@@ -1491,51 +1756,72 @@ class _CaixaPageState extends State<CaixaPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.pie_chart_outline_rounded, color: Colors.blueAccent, size: 18),
+              const Icon(
+                Icons.pie_chart_outline_rounded,
+                color: Colors.blueAccent,
+                size: 18,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   titulo,
-                  style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          ...resumo.map((r) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: r.tipo.cor.withOpacity(0.12),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(r.tipo.icone, color: r.tipo.cor, size: 14),
+          ...resumo.map(
+            (r) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: r.tipo.cor.withOpacity(0.12),
+                      shape: BoxShape.circle,
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
+                    child: Icon(r.tipo.icone, color: r.tipo.cor, size: 14),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      r.rotulo,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (r.quantidade > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 10),
                       child: Text(
-                        r.rotulo,
-                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    if (r.quantidade > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 10),
-                        child: Text(
-                          '${r.quantidade}x',
-                          style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+                        '${r.quantidade}x',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.35),
+                          fontSize: 11,
                         ),
                       ),
-                    Text(
-                      formatoMoeda.format(r.valor),
-                      style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold),
                     ),
-                  ],
-                ),
-              )),
+                  Text(
+                    formatoMoeda.format(r.valor),
+                    style: const TextStyle(
+                      color: Colors.greenAccent,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1564,11 +1850,19 @@ class _CaixaPageState extends State<CaixaPage> {
               children: [
                 Text(
                   r.rotulo.toUpperCase(),
-                  style: TextStyle(color: r.tipo.cor, fontSize: 9, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: r.tipo.cor,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 Text(
                   formatoMoeda.format(r.valor),
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -1578,7 +1872,12 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.all(16),
@@ -1608,15 +1907,20 @@ class _CaixaPageState extends State<CaixaPage> {
             const SizedBox(height: 12),
             Text(
               label,
-              style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.4),
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
             ),
             const SizedBox(height: 4),
             FittedBox(
               child: Text(
                 value,
                 style: TextStyle(
-                  color: color.withOpacity(0.9), 
-                  fontWeight: FontWeight.w900, 
+                  color: color.withOpacity(0.9),
+                  fontWeight: FontWeight.w900,
                   fontSize: 16,
                   letterSpacing: -0.5,
                 ),
@@ -1673,12 +1977,18 @@ class _CaixaPageState extends State<CaixaPage> {
       out = out.where((m) {
         final tipo = (m['tipo'] ?? '').toString();
         switch (_filtroTipoFluxo) {
-          case 'Vendas': return tipo == 'Venda';
-          case 'Pagamento': return tipo == 'Pagamento';
-          case 'Suprimento': return tipo == 'Suprimento';
-          case 'Deletado': return tipo == 'Deletado';
-          case 'Mesa/Comanda': return tipo == 'Mesa' || tipo == 'Comanda';
-          default: return true;
+          case 'Vendas':
+            return tipo == 'Venda';
+          case 'Pagamento':
+            return tipo == 'Pagamento';
+          case 'Suprimento':
+            return tipo == 'Suprimento';
+          case 'Deletado':
+            return tipo == 'Deletado';
+          case 'Mesa/Comanda':
+            return tipo == 'Mesa' || tipo == 'Comanda';
+          default:
+            return true;
         }
       }).toList();
     }
@@ -1719,7 +2029,11 @@ class _CaixaPageState extends State<CaixaPage> {
           padding: const EdgeInsets.all(40.0),
           child: Column(
             children: [
-              Icon(Icons.inventory_2_outlined, color: Colors.white.withOpacity(0.1), size: 48),
+              Icon(
+                Icons.inventory_2_outlined,
+                color: Colors.white.withOpacity(0.1),
+                size: 48,
+              ),
               const SizedBox(height: 12),
               Text(
                 temFiltro
@@ -1737,7 +2051,8 @@ class _CaixaPageState extends State<CaixaPage> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
-          (context, index) => _buildMovCard(movs[index], mostrarCaixa: mostrarCaixa),
+          (context, index) =>
+              _buildMovCard(movs[index], mostrarCaixa: mostrarCaixa),
           childCount: movs.length,
         ),
       ),
@@ -1768,21 +2083,32 @@ class _CaixaPageState extends State<CaixaPage> {
               color: (m['cor'] as Color).withOpacity(0.1),
               shape: BoxShape.circle,
             ),
-            child: Icon(m['icone'] as IconData, color: m['cor'] as Color, size: 20),
+            child: Icon(
+              m['icone'] as IconData,
+              color: m['cor'] as Color,
+              size: 20,
+            ),
           ),
           title: Row(
             children: [
               Flexible(
                 child: Text(
                   m['descricao'].toString(),
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               if (!contabilizado) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(6),
@@ -1804,7 +2130,10 @@ class _CaixaPageState extends State<CaixaPage> {
                   (m['caixaNumero']?.toString().isNotEmpty ?? false)) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.blueAccent.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(6),
@@ -1823,8 +2152,11 @@ class _CaixaPageState extends State<CaixaPage> {
             ],
           ),
           subtitle: Text(
-            '${formatoHora.format((m['data'] as DateTime).toLocal())} • ${m['forma']}',
-            style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+            '${formatoHora.format((m['data'] as DateTime).toLocal())} • ${m['forma']}${m['tipo'] == 'Sangria' ? ' • Sangria • ${m['responsavel'] ?? 'Sem responsável'}' : ''}',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.4),
+              fontSize: 11,
+            ),
           ),
           trailing: Text(
             formatoMoeda.format(valor),
@@ -1885,7 +2217,11 @@ class _CaixaPageState extends State<CaixaPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.functions_rounded, color: Colors.cyanAccent, size: 16),
+              const Icon(
+                Icons.functions_rounded,
+                color: Colors.cyanAccent,
+                size: 16,
+              ),
               const SizedBox(width: 6),
               Text(
                 'Total do filtro atual',
@@ -1898,7 +2234,10 @@ class _CaixaPageState extends State<CaixaPage> {
               const Spacer(),
               Text(
                 '$contabilizadas movimentação(ões)',
-                style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.35),
+                  fontSize: 11,
+                ),
               ),
             ],
           ),
@@ -1908,11 +2247,12 @@ class _CaixaPageState extends State<CaixaPage> {
               Expanded(
                 child: _miniInfo('Entradas', formatoMoeda.format(entradas)),
               ),
+              Expanded(child: _miniInfo('Saídas', formatoMoeda.format(saidas))),
               Expanded(
-                child: _miniInfo('Saídas', formatoMoeda.format(saidas)),
-              ),
-              Expanded(
-                child: _miniInfo('Saldo', formatoMoeda.format(entradas - saidas)),
+                child: _miniInfo(
+                  'Saldo',
+                  formatoMoeda.format(entradas - saidas),
+                ),
               ),
             ],
           ),
@@ -1920,14 +2260,20 @@ class _CaixaPageState extends State<CaixaPage> {
             const SizedBox(height: 8),
             Text(
               '$aReceber mesa(s)/comanda(s) a receber — não incluídas nos totais.',
-              style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.35),
+                fontSize: 11,
+              ),
             ),
           ],
           if (deletados > 0) ...[
             const SizedBox(height: 8),
             Text(
               '$deletados item(ns) deletado(s) do PDV — não contabilizado(s) nos totais.',
-              style: TextStyle(color: Colors.orange.withOpacity(0.7), fontSize: 11),
+              style: TextStyle(
+                color: Colors.orange.withOpacity(0.7),
+                fontSize: 11,
+              ),
             ),
           ],
         ],
@@ -1956,21 +2302,33 @@ class _CaixaPageState extends State<CaixaPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.filter_alt_rounded, color: Colors.blueAccent, size: 20),
+              const Icon(
+                Icons.filter_alt_rounded,
+                color: Colors.blueAccent,
+                size: 20,
+              ),
               const SizedBox(width: 8),
-              const Text('Filtrar Movimentações',
-                  style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+              const Text(
+                'Filtrar Movimentações',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const Spacer(),
               IconButton(
                 // No modo "todos os caixas" não existe uma abertura única para
                 // identificar no CSV (só manda o período quando é uma sessão só).
                 onPressed: () => _exportarFluxoCSV(
-                      _filtrarFluxo(movsBase),
-                      caixa: _mostrarTodosCaixas ? null : abertura.numero,
-                      abertura: _mostrarTodosCaixas ? null : abertura,
-                    ),
-                icon: const Icon(Icons.file_download_outlined,
-                    size: 18, color: Colors.greenAccent),
+                  _filtrarFluxo(movsBase),
+                  caixa: _mostrarTodosCaixas ? null : abertura.numero,
+                  abertura: _mostrarTodosCaixas ? null : abertura,
+                ),
+                icon: const Icon(
+                  Icons.file_download_outlined,
+                  size: 18,
+                  color: Colors.greenAccent,
+                ),
                 tooltip: 'Exportar movimentações (CSV)',
                 visualDensity: VisualDensity.compact,
               ),
@@ -1985,9 +2343,15 @@ class _CaixaPageState extends State<CaixaPage> {
                     _horaFimFluxoMin = null;
                     _buscaFluxoController.clear();
                   }),
-                  icon: const Icon(Icons.close, size: 16, color: Colors.white54),
-                  label: const Text('Limpar',
-                      style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  icon: const Icon(
+                    Icons.close,
+                    size: 16,
+                    color: Colors.white54,
+                  ),
+                  label: const Text(
+                    'Limpar',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
                 ),
             ],
           ),
@@ -2000,7 +2364,11 @@ class _CaixaPageState extends State<CaixaPage> {
             decoration: InputDecoration(
               hintText: 'Buscar por número da venda, descrição...',
               hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-              prefixIcon: const Icon(Icons.search, color: Colors.white24, size: 20),
+              prefixIcon: const Icon(
+                Icons.search,
+                color: Colors.white24,
+                size: 20,
+              ),
               filled: true,
               fillColor: const Color(0xFF2D2D44),
               border: OutlineInputBorder(
@@ -2016,32 +2384,45 @@ class _CaixaPageState extends State<CaixaPage> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: [
-                'Todos', 'Vendas', 'Pagamento', 'Suprimento', 'Mesa/Comanda', 'Deletado',
-              ].map((tipo) {
-                final isSelected = _filtroTipoFluxo == tipo;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(tipo),
-                    selected: isSelected,
-                    onSelected: (val) => setState(() => _filtroTipoFluxo = tipo),
-                    backgroundColor: const Color(0xFF2D2D44),
-                    selectedColor: Colors.blueAccent.withOpacity(0.3),
-                    labelStyle: TextStyle(
-                      color: isSelected ? Colors.blueAccent : Colors.white60,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      fontSize: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    side: BorderSide(
-                      color: isSelected ? Colors.blueAccent : Colors.transparent,
-                    ),
-                  ),
-                );
-              }).toList(),
+              children:
+                  [
+                    'Todos',
+                    'Vendas',
+                    'Pagamento',
+                    'Suprimento',
+                    'Mesa/Comanda',
+                    'Deletado',
+                  ].map((tipo) {
+                    final isSelected = _filtroTipoFluxo == tipo;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(tipo),
+                        selected: isSelected,
+                        onSelected: (val) =>
+                            setState(() => _filtroTipoFluxo = tipo),
+                        backgroundColor: const Color(0xFF2D2D44),
+                        selectedColor: Colors.blueAccent.withOpacity(0.3),
+                        labelStyle: TextStyle(
+                          color: isSelected
+                              ? Colors.blueAccent
+                              : Colors.white60,
+                          fontWeight: isSelected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          fontSize: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        side: BorderSide(
+                          color: isSelected
+                              ? Colors.blueAccent
+                              : Colors.transparent,
+                        ),
+                      ),
+                    );
+                  }).toList(),
             ),
           ),
           // Forma de pagamento (Dinheiro, PIX, Cartão...) e janela de horário.
@@ -2114,9 +2495,7 @@ class _CaixaPageState extends State<CaixaPage> {
           decoration: BoxDecoration(
             color: selected ? color.withOpacity(0.18) : const Color(0xFF2D2D44),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: selected ? color : Colors.transparent,
-            ),
+            border: Border.all(color: selected ? color : Colors.transparent),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -2167,8 +2546,10 @@ class _CaixaPageState extends State<CaixaPage> {
     required VoidCallback onLimparHorario,
   }) {
     final formas = _formasComMovimento(movsBase);
-    final rotuloHorario =
-        CaixaMovFiltroService.rotulo(horaInicioMin, horaFimMin);
+    final rotuloHorario = CaixaMovFiltroService.rotulo(
+      horaInicioMin,
+      horaFimMin,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2179,10 +2560,16 @@ class _CaixaPageState extends State<CaixaPage> {
           const SizedBox(height: 10),
           Row(
             children: [
-              const Icon(Icons.payments_outlined, color: Colors.greenAccent, size: 16),
+              const Icon(
+                Icons.payments_outlined,
+                color: Colors.greenAccent,
+                size: 16,
+              ),
               const SizedBox(width: 6),
-              const Text('Forma de pagamento:',
-                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const Text(
+                'Forma de pagamento:',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -2196,15 +2583,17 @@ class _CaixaPageState extends State<CaixaPage> {
                   color: Colors.blueAccent,
                   onTap: () => onForma(null),
                 ),
-                ...formas.map((tp) => _buildFormaChip(
-                      // Mesmo rótulo usado na lista, para o filtro não divergir
-                      // do que aparece em cada movimentação.
-                      label: _formatForma(tp),
-                      selected: formaSelecionada == tp,
-                      color: tp.cor,
-                      icon: tp.icone,
-                      onTap: () => onForma(tp),
-                    )),
+                ...formas.map(
+                  (tp) => _buildFormaChip(
+                    // Mesmo rótulo usado na lista, para o filtro não divergir
+                    // do que aparece em cada movimentação.
+                    label: _formatForma(tp),
+                    selected: formaSelecionada == tp,
+                    color: tp.cor,
+                    icon: tp.icone,
+                    onTap: () => onForma(tp),
+                  ),
+                ),
               ],
             ),
           ),
@@ -2215,15 +2604,19 @@ class _CaixaPageState extends State<CaixaPage> {
           children: [
             const Icon(Icons.schedule, color: Colors.orangeAccent, size: 16),
             const SizedBox(width: 6),
-            const Text('Horário:',
-                style: TextStyle(color: Colors.white54, fontSize: 12)),
+            const Text(
+              'Horário:',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
             const Spacer(),
             if (rotuloHorario != null)
               TextButton.icon(
                 onPressed: onLimparHorario,
                 icon: const Icon(Icons.close, size: 14, color: Colors.white54),
-                label: const Text('Limpar horário',
-                    style: TextStyle(color: Colors.white54, fontSize: 11)),
+                label: const Text(
+                  'Limpar horário',
+                  style: TextStyle(color: Colors.white54, fontSize: 11),
+                ),
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   minimumSize: const Size(0, 28),
@@ -2265,18 +2658,24 @@ class _CaixaPageState extends State<CaixaPage> {
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.orangeAccent.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.orangeAccent.withOpacity(0.5)),
+                      border: Border.all(
+                        color: Colors.orangeAccent.withOpacity(0.5),
+                      ),
                     ),
                     child: Text(
                       rotuloHorario,
                       style: const TextStyle(
-                          color: Colors.orangeAccent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold),
+                        color: Colors.orangeAccent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
@@ -2292,7 +2691,10 @@ class _CaixaPageState extends State<CaixaPage> {
               'Intervalo atravessa a meia-noite: inclui de '
               '${CaixaMovFiltroService.formatarMinutos(horaInicioMin)} até 23:59 e de '
               '00:00 até ${CaixaMovFiltroService.formatarMinutos(horaFimMin)}.',
-              style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.35),
+                fontSize: 11,
+              ),
             ),
           ),
       ],
@@ -2322,7 +2724,11 @@ class _CaixaPageState extends State<CaixaPage> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.schedule, color: ativo ? color : Colors.white54, size: 14),
+              Icon(
+                Icons.schedule,
+                color: ativo ? color : Colors.white54,
+                size: 14,
+              ),
               const SizedBox(width: 6),
               Text(
                 ativo
@@ -2343,10 +2749,14 @@ class _CaixaPageState extends State<CaixaPage> {
 
   /// Abre o seletor de hora e devolve os minutos desde a meia-noite escolhidos
   /// (ou `null` se o usuário cancelar).
-  Future<int?> _escolherHora({required int? atual, required String titulo}) async {
+  Future<int?> _escolherHora({
+    required int? atual,
+    required String titulo,
+  }) async {
     if (!mounted) return null;
-    final inicial =
-        atual != null ? TimeOfDay(hour: atual ~/ 60, minute: atual % 60) : TimeOfDay.now();
+    final inicial = atual != null
+        ? TimeOfDay(hour: atual ~/ 60, minute: atual % 60)
+        : TimeOfDay.now();
     final escolhido = await showTimePicker(
       context: context,
       initialTime: inicial,
@@ -2358,13 +2768,15 @@ class _CaixaPageState extends State<CaixaPage> {
 
   /// Barra de filtros do Histórico de Encerramentos (data e número do caixa)
   Widget _buildFiltrosHistorico(DataService ds) {
-    final numerosCaixa = ds.aberturasCaixa
-        .map((a) => a.numero)
-        .where((n) => n.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
-    final temFiltro = _filtroNumeroCaixa != 'Todos' ||
+    final numerosCaixa =
+        ds.aberturasCaixa
+            .map((a) => a.numero)
+            .where((n) => n.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    final temFiltro =
+        _filtroNumeroCaixa != 'Todos' ||
         _filtroDataInicio != null ||
         _filtroDataFim != null ||
         _filtroSomenteDivergentes;
@@ -2381,10 +2793,19 @@ class _CaixaPageState extends State<CaixaPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.filter_alt_rounded, color: Colors.blueAccent, size: 20),
+              const Icon(
+                Icons.filter_alt_rounded,
+                color: Colors.blueAccent,
+                size: 20,
+              ),
               const SizedBox(width: 8),
-              const Text('Filtrar por:',
-                  style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+              const Text(
+                'Filtrar por:',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const Spacer(),
               if (temFiltro)
                 TextButton.icon(
@@ -2394,16 +2815,25 @@ class _CaixaPageState extends State<CaixaPage> {
                     _filtroDataFim = null;
                     _filtroSomenteDivergentes = false;
                   }),
-                  icon: const Icon(Icons.close, size: 16, color: Colors.white54),
-                  label: const Text('Limpar',
-                      style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  icon: const Icon(
+                    Icons.close,
+                    size: 16,
+                    color: Colors.white54,
+                  ),
+                  label: const Text(
+                    'Limpar',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
                 ),
             ],
           ),
           const SizedBox(height: 10),
           Row(
             children: [
-              const Text('Caixa:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const Text(
+                'Caixa:',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: DropdownButtonHideUnderline(
@@ -2412,14 +2842,22 @@ class _CaixaPageState extends State<CaixaPage> {
                     dropdownColor: const Color(0xFF1E1E2E),
                     value: _filtroNumeroCaixa,
                     style: const TextStyle(color: Colors.white, fontSize: 13),
-                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                    icon: const Icon(
+                      Icons.arrow_drop_down,
+                      color: Colors.white70,
+                    ),
                     items: [
                       const DropdownMenuItem<String>(
-                          value: 'Todos', child: Text('Todos')),
-                      ...numerosCaixa.map((n) =>
-                          DropdownMenuItem<String>(value: n, child: Text(n))),
+                        value: 'Todos',
+                        child: Text('Todos'),
+                      ),
+                      ...numerosCaixa.map(
+                        (n) =>
+                            DropdownMenuItem<String>(value: n, child: Text(n)),
+                      ),
                     ],
-                    onChanged: (v) => setState(() => _filtroNumeroCaixa = v ?? 'Todos'),
+                    onChanged: (v) =>
+                        setState(() => _filtroNumeroCaixa = v ?? 'Todos'),
                   ),
                 ),
               ),
@@ -2444,18 +2882,25 @@ class _CaixaPageState extends State<CaixaPage> {
             children: [
               FilterChip(
                 selected: _filtroSomenteDivergentes,
-                onSelected: (v) => setState(() => _filtroSomenteDivergentes = v),
+                onSelected: (v) =>
+                    setState(() => _filtroSomenteDivergentes = v),
                 avatar: Icon(
                   Icons.error_outline,
                   size: 16,
-                  color: _filtroSomenteDivergentes ? Colors.redAccent : Colors.white54,
+                  color: _filtroSomenteDivergentes
+                      ? Colors.redAccent
+                      : Colors.white54,
                 ),
                 label: Text(
                   'Só divergentes',
                   style: TextStyle(
                     fontSize: 12,
-                    color: _filtroSomenteDivergentes ? Colors.redAccent : Colors.white60,
-                    fontWeight: _filtroSomenteDivergentes ? FontWeight.bold : FontWeight.normal,
+                    color: _filtroSomenteDivergentes
+                        ? Colors.redAccent
+                        : Colors.white60,
+                    fontWeight: _filtroSomenteDivergentes
+                        ? FontWeight.bold
+                        : FontWeight.normal,
                   ),
                 ),
                 backgroundColor: const Color(0xFF2D2D44),
@@ -2463,7 +2908,9 @@ class _CaixaPageState extends State<CaixaPage> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
                   side: BorderSide(
-                    color: _filtroSomenteDivergentes ? Colors.redAccent : Colors.transparent,
+                    color: _filtroSomenteDivergentes
+                        ? Colors.redAccent
+                        : Colors.transparent,
                   ),
                 ),
               ),
@@ -2474,7 +2921,11 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildDataChip(String label, DateTime? valor, {required bool inicial}) {
+  Widget _buildDataChip(
+    String label,
+    DateTime? valor, {
+    required bool inicial,
+  }) {
     return InkWell(
       onTap: () => _selecionarDataFiltro(inicial: inicial),
       borderRadius: BorderRadius.circular(10),
@@ -2487,15 +2938,19 @@ class _CaixaPageState extends State<CaixaPage> {
         ),
         child: Row(
           children: [
-            Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                valor == null
-                    ? '—'
-                    : DateFormat('dd/MM/yyyy').format(valor!),
+                valor == null ? '—' : DateFormat('dd/MM/yyyy').format(valor!),
                 style: const TextStyle(
-                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -2535,8 +2990,12 @@ class _CaixaPageState extends State<CaixaPage> {
   }
 
   Widget _buildSliverHistorico(DataService ds, bool podeVerTotais) {
-    final usuarioLogadoHist = Provider.of<AuthService>(context, listen: false).usuarioAtual;
-    final ehGestorHist = usuarioLogadoHist != null &&
+    final usuarioLogadoHist = Provider.of<AuthService>(
+      context,
+      listen: false,
+    ).usuarioAtual;
+    final ehGestorHist =
+        usuarioLogadoHist != null &&
         (usuarioLogadoHist.isAdmin ||
             usuarioLogadoHist.isMaster ||
             usuarioLogadoHist.isGerente ||
@@ -2545,10 +3004,15 @@ class _CaixaPageState extends State<CaixaPage> {
     final podeVerFormasPagamentoHist =
         PermissionHelper.podeVerTotaisFormasPagamento(usuarioLogadoHist);
 
-    var hist = ds.aberturasCaixa.map((ab) {
-      final fe = ds.fechamentosCaixa.firstWhereOrNull((f) => f.aberturaCaixaId == ab.id);
-      return MapEntry(ab, fe);
-    }).where((e) => e.value != null).toList();
+    var hist = ds.aberturasCaixa
+        .map((ab) {
+          final fe = ds.fechamentosCaixa.firstWhereOrNull(
+            (f) => f.aberturaCaixaId == ab.id,
+          );
+          return MapEntry(ab, fe);
+        })
+        .where((e) => e.value != null)
+        .toList();
 
     // Operador comum só vê os encerramentos dos PRÓPRIOS caixas — antes o
     // histórico listava todos os caixas de todos os usuários da empresa.
@@ -2559,7 +3023,8 @@ class _CaixaPageState extends State<CaixaPage> {
       hist = hist.where((e) {
         final resp = e.key.responsavel;
         if (resp == null || resp.trim().isEmpty) return false;
-        String norm(String s) => s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
+        String norm(String s) =>
+            s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
         final na = norm(resp);
         final nb = norm(idLogado);
         if (na.isEmpty || nb.isEmpty) return false;
@@ -2575,7 +3040,9 @@ class _CaixaPageState extends State<CaixaPage> {
       hist = hist.where((e) => e.key.numero == _filtroNumeroCaixa).toList();
     }
     if (_filtroDataInicio != null) {
-      hist = hist.where((e) => !e.key.dataAbertura.isBefore(_filtroDataInicio!)).toList();
+      hist = hist
+          .where((e) => !e.key.dataAbertura.isBefore(_filtroDataInicio!))
+          .toList();
     }
     if (_filtroDataFim != null) {
       final fim = _filtroDataFim!.add(const Duration(days: 1));
@@ -2592,7 +3059,8 @@ class _CaixaPageState extends State<CaixaPage> {
     hist.sort((a, b) => b.key.dataAbertura.compareTo(a.key.dataAbertura));
 
     if (hist.isEmpty) {
-      final temFiltro = _filtroNumeroCaixa != 'Todos' ||
+      final temFiltro =
+          _filtroNumeroCaixa != 'Todos' ||
           _filtroDataInicio != null ||
           _filtroDataFim != null ||
           _filtroSomenteDivergentes;
@@ -2610,35 +3078,35 @@ class _CaixaPageState extends State<CaixaPage> {
 
     // Resumo do que está sendo exibido (respeita filtros e a visibilidade do
     // operador): quantos caixas, quantos divergentes e a soma das diferenças.
-    final divergentes =
-        hist.where((e) => e.value!.diferenca.abs() > _toleranciaDivergencia).length;
-    final somaDiferencas =
-        hist.fold<double>(0.0, (s, e) => s + e.value!.diferenca);
+    final divergentes = hist
+        .where((e) => e.value!.diferenca.abs() > _toleranciaDivergencia)
+        .length;
+    final somaDiferencas = hist.fold<double>(
+      0.0,
+      (s, e) => s + e.value!.diferenca,
+    );
 
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            if (index == 0) {
-              return _buildResumoHistorico(
-                total: hist.length,
-                divergentes: divergentes,
-                somaDiferencas: somaDiferencas,
-                podeVerTotais: podeVerTotais,
-              );
-            }
-            final item = hist[index - 1];
-            return _buildCardCaixaModerno(
-              item.key,
-              item.value!,
-              ds,
-              podeVerTotais,
-              podeVerFormasPagamentoHist,
+        delegate: SliverChildBuilderDelegate((context, index) {
+          if (index == 0) {
+            return _buildResumoHistorico(
+              total: hist.length,
+              divergentes: divergentes,
+              somaDiferencas: somaDiferencas,
+              podeVerTotais: podeVerTotais,
             );
-          },
-          childCount: hist.length + 1,
-        ),
+          }
+          final item = hist[index - 1];
+          return _buildCardCaixaModerno(
+            item.key,
+            item.value!,
+            ds,
+            podeVerTotais,
+            podeVerFormasPagamentoHist,
+          );
+        }, childCount: hist.length + 1),
       ),
     );
   }
@@ -2665,13 +3133,21 @@ class _CaixaPageState extends State<CaixaPage> {
         children: [
           Row(
             children: [
-              Icon(divergentes > 0 ? Icons.warning_amber_rounded : Icons.verified_outlined,
-                  color: cor, size: 18),
+              Icon(
+                divergentes > 0
+                    ? Icons.warning_amber_rounded
+                    : Icons.verified_outlined,
+                color: cor,
+                size: 18,
+              ),
               const SizedBox(width: 8),
               Text(
                 '$total caixa(s) no filtro',
                 style: const TextStyle(
-                    color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -2679,10 +3155,7 @@ class _CaixaPageState extends State<CaixaPage> {
           Row(
             children: [
               Expanded(
-                child: _miniInfo(
-                  'Divergentes',
-                  '$divergentes de $total',
-                ),
+                child: _miniInfo('Divergentes', '$divergentes de $total'),
               ),
               if (podeVerTotais)
                 Expanded(
@@ -2728,24 +3201,34 @@ class _CaixaPageState extends State<CaixaPage> {
                 children: [
                   Text(
                     ab.numero,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   Text(
                     'Abertura: ${DateFormat('dd/MM/yyyy HH:mm').format(ab.dataAbertura.toLocal())}'
                     '  •  Fechamento: ${DateFormat('dd/MM/yyyy HH:mm').format(fe.dataFechamento.toLocal())}',
-                    style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 11),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.45),
+                      fontSize: 11,
+                    ),
                   ),
                   if (ab.responsavel != null && ab.responsavel!.isNotEmpty)
                     Text(
                       ab.responsavel!,
-                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 11,
+                      ),
                     ),
                 ],
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: (fe.diferenca >= 0 ? Colors.green : Colors.red).withOpacity(0.1),
+                  color: (fe.diferenca >= 0 ? Colors.green : Colors.red)
+                      .withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -2753,12 +3236,21 @@ class _CaixaPageState extends State<CaixaPage> {
                   children: [
                     Text(
                       fe.diferenca >= 0 ? 'Conforme' : 'Divergente',
-                      style: TextStyle(color: fe.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent, fontSize: 10),
+                      style: TextStyle(
+                        color: fe.diferenca >= 0
+                            ? Colors.greenAccent
+                            : Colors.redAccent,
+                        fontSize: 10,
+                      ),
                     ),
                     const SizedBox(width: 4),
                     if (podeVerTotais)
                       IconButton(
-                        icon: const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 16),
+                        icon: const Icon(
+                          Icons.receipt_long,
+                          color: Colors.cyanAccent,
+                          size: 16,
+                        ),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                         onPressed: () => _mostrarDetalhesCaixaFechado(
@@ -2772,15 +3264,24 @@ class _CaixaPageState extends State<CaixaPage> {
                       ),
                     if (podeVerTotais)
                       IconButton(
-                        icon: const Icon(Icons.visibility, color: Colors.blueAccent, size: 16),
+                        icon: const Icon(
+                          Icons.visibility,
+                          color: Colors.blueAccent,
+                          size: 16,
+                        ),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
-                        onPressed: () => _mostrarVendasDoCaixa(ds, ab, fechamento: fe),
+                        onPressed: () =>
+                            _mostrarVendasDoCaixa(ds, ab, fechamento: fe),
                         tooltip: 'Ver vendas deste caixa',
                       ),
                     if (podeVerTotais)
                       IconButton(
-                        icon: const Icon(Icons.print, color: Colors.blueAccent, size: 16),
+                        icon: const Icon(
+                          Icons.print,
+                          color: Colors.blueAccent,
+                          size: 16,
+                        ),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                         onPressed: () => _imprimirFechamento(ab, fe),
@@ -2797,22 +3298,39 @@ class _CaixaPageState extends State<CaixaPage> {
               // Entrada/Real/Dif. revelam o total vendido — ocultos para quem não
               // pode ver totais (operador sem dashboard.ver_totais).
               if (podeVerTotais)
-                Expanded(child: _miniInfo('Entrada', formatoMoeda.format(fe.valorEsperado))),
+                Expanded(
+                  child: _miniInfo(
+                    'Entrada',
+                    formatoMoeda.format(fe.valorEsperado),
+                  ),
+                ),
               if (podeVerTotais)
-                Expanded(child: _miniInfo('Real', formatoMoeda.format(fe.valorReal))),
+                Expanded(
+                  child: _miniInfo('Real', formatoMoeda.format(fe.valorReal)),
+                ),
               if (podeVerTotais)
-                Expanded(child: _miniInfo('Dif.', formatoMoeda.format(fe.diferenca))),
+                Expanded(
+                  child: _miniInfo('Dif.', formatoMoeda.format(fe.diferenca)),
+                ),
             ],
           ),
           if (resumoFormas.isNotEmpty) ...[
             const SizedBox(height: 14),
             Row(
               children: [
-                const Icon(Icons.pie_chart_outline_rounded, color: Colors.blueAccent, size: 14),
+                const Icon(
+                  Icons.pie_chart_outline_rounded,
+                  color: Colors.blueAccent,
+                  size: 14,
+                ),
                 const SizedBox(width: 6),
                 Text(
                   'Entradas por forma de pagamento',
-                  style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -2832,12 +3350,17 @@ class _CaixaPageState extends State<CaixaPage> {
                   podeVerFormasPagamento: podeVerFormasPagamento,
                 ),
                 icon: const Icon(Icons.receipt_long, size: 16),
-                label: const Text('VER DETALHES COMPLETOS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                label: const Text(
+                  'VER DETALHES COMPLETOS',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.cyanAccent,
                   side: BorderSide(color: Colors.cyanAccent.withOpacity(0.4)),
                   padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ),
@@ -2858,16 +3381,21 @@ class _CaixaPageState extends State<CaixaPage> {
     required bool podeVerFormasPagamento,
   }) {
     final vendas = ds.getVendasDoCaixa(ab);
-    final totalVendas =
-        vendas.fold<double>(0.0, (sum, v) => sum + v.valorTotal);
-    final totalItens =
-        vendas.fold<double>(0.0, (sum, v) => sum + v.quantidadeItens);
+    final totalVendas = vendas.fold<double>(
+      0.0,
+      (sum, v) => sum + v.valorTotal,
+    );
+    final totalItens = vendas.fold<double>(
+      0.0,
+      (sum, v) => sum + v.quantidadeItens,
+    );
     final sangrias = ds.getSangriasDoCaixa(ab);
     final suprimentos = ds.getSuprimentosDoCaixa(ab);
-    final totalSangrias =
-        sangrias.fold<double>(0.0, (sum, s) => sum + s.valor);
-    final totalSuprimentos =
-        suprimentos.fold<double>(0.0, (sum, s) => sum + s.valor);
+    final totalSangrias = sangrias.fold<double>(0.0, (sum, s) => sum + s.valor);
+    final totalSuprimentos = suprimentos.fold<double>(
+      0.0,
+      (sum, s) => sum + s.valor,
+    );
     final resumoFormas = podeVerFormasPagamento
         ? ds.calcularResumoFormaPagamentoDoCaixa(ab)
         : <ResumoFormaPagamento>[];
@@ -2897,7 +3425,11 @@ class _CaixaPageState extends State<CaixaPage> {
                 padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
                 child: Row(
                   children: [
-                    const Icon(Icons.receipt_long, color: Colors.cyanAccent, size: 26),
+                    const Icon(
+                      Icons.receipt_long,
+                      color: Colors.cyanAccent,
+                      size: 26,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -2905,13 +3437,20 @@ class _CaixaPageState extends State<CaixaPage> {
                         children: [
                           Text(
                             'Detalhes do ${ab.numero}',
-                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                           Text(
                             '${ab.responsavel?.isNotEmpty == true ? ab.responsavel! : "Sem responsável"}  •  '
                             '${DateFormat('dd/MM/yyyy HH:mm').format(ab.dataAbertura.toLocal())} → '
                             '${DateFormat('HH:mm').format(fe.dataFechamento.toLocal())}',
-                            style: const TextStyle(color: Colors.white54, fontSize: 12),
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                            ),
                           ),
                         ],
                       ),
@@ -2929,26 +3468,68 @@ class _CaixaPageState extends State<CaixaPage> {
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                   children: [
                     // Conferência do fechamento
-                    _buildDetalheSecao('Conferência do Fechamento', Icons.calculate_outlined, [
-                      _buildInfoRow('Fundo de caixa inicial', formatoMoeda.format(ab.valorInicial), Icons.account_balance_wallet, Colors.grey),
-                      if (podeVerTotais)
-                        _buildInfoRow('Total de vendas', formatoMoeda.format(totalVendas), Icons.trending_up, Colors.greenAccent),
-                      _buildInfoRow('Total suprimentos', formatoMoeda.format(totalSuprimentos), Icons.add_circle_outline, Colors.lightBlueAccent),
-                      _buildInfoRow('Total sangrias', formatoMoeda.format(totalSangrias), Icons.remove_circle_outline, Colors.orangeAccent),
-                      _buildInfoRow('Valor esperado', formatoMoeda.format(fe.valorEsperado), Icons.calculate, Colors.blueAccent),
-                      _buildInfoRow('Valor real (contado)', formatoMoeda.format(fe.valorReal), Icons.account_balance_wallet, Colors.white),
-                      _buildInfoRow(
-                        'Diferença',
-                        '${fe.diferenca >= 0 ? '+' : ''}${formatoMoeda.format(fe.diferenca)}',
-                        fe.diferenca >= 0 ? Icons.check_circle_outline : Icons.error_outline,
-                        fe.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent,
-                      ),
-                    ]),
+                    _buildDetalheSecao(
+                      'Conferência do Fechamento',
+                      Icons.calculate_outlined,
+                      [
+                        _buildInfoRow(
+                          'Fundo de caixa inicial',
+                          formatoMoeda.format(ab.valorInicial),
+                          Icons.account_balance_wallet,
+                          Colors.grey,
+                        ),
+                        if (podeVerTotais)
+                          _buildInfoRow(
+                            'Total de vendas',
+                            formatoMoeda.format(totalVendas),
+                            Icons.trending_up,
+                            Colors.greenAccent,
+                          ),
+                        _buildInfoRow(
+                          'Total suprimentos',
+                          formatoMoeda.format(totalSuprimentos),
+                          Icons.add_circle_outline,
+                          Colors.lightBlueAccent,
+                        ),
+                        _buildInfoRow(
+                          'Total sangrias',
+                          formatoMoeda.format(totalSangrias),
+                          Icons.remove_circle_outline,
+                          Colors.orangeAccent,
+                        ),
+                        _buildInfoRow(
+                          'Valor esperado',
+                          formatoMoeda.format(fe.valorEsperado),
+                          Icons.calculate,
+                          Colors.blueAccent,
+                        ),
+                        _buildInfoRow(
+                          'Valor real (contado)',
+                          formatoMoeda.format(fe.valorReal),
+                          Icons.account_balance_wallet,
+                          Colors.white,
+                        ),
+                        _buildInfoRow(
+                          'Diferença',
+                          '${fe.diferenca >= 0 ? '+' : ''}${formatoMoeda.format(fe.diferenca)}',
+                          fe.diferenca >= 0
+                              ? Icons.check_circle_outline
+                              : Icons.error_outline,
+                          fe.diferenca >= 0
+                              ? Colors.greenAccent
+                              : Colors.redAccent,
+                        ),
+                      ],
+                    ),
                     // Separação por forma de pagamento
                     if (resumoFormas.isNotEmpty) ...[
                       const SizedBox(height: 16),
-                      _buildDetalheSecao('Entradas por Forma de Pagamento', Icons.payments_outlined, [
-                        ...resumoFormas.map((r) => Padding(
+                      _buildDetalheSecao(
+                        'Entradas por Forma de Pagamento',
+                        Icons.payments_outlined,
+                        [
+                          ...resumoFormas.map(
+                            (r) => Padding(
                               padding: const EdgeInsets.only(bottom: 8),
                               child: Row(
                                 children: [
@@ -2958,13 +3539,21 @@ class _CaixaPageState extends State<CaixaPage> {
                                       color: r.tipo.cor.withOpacity(0.12),
                                       shape: BoxShape.circle,
                                     ),
-                                    child: Icon(r.tipo.icone, color: r.tipo.cor, size: 14),
+                                    child: Icon(
+                                      r.tipo.icone,
+                                      color: r.tipo.cor,
+                                      size: 14,
+                                    ),
                                   ),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
                                       r.rotulo,
-                                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                   if (r.quantidade > 0)
@@ -2972,53 +3561,121 @@ class _CaixaPageState extends State<CaixaPage> {
                                       padding: const EdgeInsets.only(right: 10),
                                       child: Text(
                                         '${r.quantidade}x',
-                                        style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.35),
+                                          fontSize: 11,
+                                        ),
                                       ),
                                     ),
                                   Text(
                                     formatoMoeda.format(r.valor),
-                                    style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                                    style: const TextStyle(
+                                      color: Colors.greenAccent,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ],
                               ),
-                            )),
-                      ]),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                     // Resumo de vendas
                     if (podeVerTotais) ...[
                       const SizedBox(height: 16),
-                      _buildDetalheSecao('Vendas do Período', Icons.shopping_basket_outlined, [
-                        _buildInfoRow('Vendas realizadas', '${vendas.length}', Icons.receipt, Colors.white70),
-                        _buildInfoRow('Itens vendidos', totalItens % 1 == 0 ? totalItens.toStringAsFixed(0) : totalItens.toStringAsFixed(1), Icons.inventory_2_outlined, Colors.white70),
-                        _buildInfoRow('Ticket médio', formatoMoeda.format(vendas.isEmpty ? 0 : totalVendas / vendas.length), Icons.insights, Colors.white70),
-                      ]),
+                      _buildDetalheSecao(
+                        'Vendas do Período',
+                        Icons.shopping_basket_outlined,
+                        [
+                          _buildInfoRow(
+                            'Vendas realizadas',
+                            '${vendas.length}',
+                            Icons.receipt,
+                            Colors.white70,
+                          ),
+                          _buildInfoRow(
+                            'Itens vendidos',
+                            totalItens % 1 == 0
+                                ? totalItens.toStringAsFixed(0)
+                                : totalItens.toStringAsFixed(1),
+                            Icons.inventory_2_outlined,
+                            Colors.white70,
+                          ),
+                          _buildInfoRow(
+                            'Ticket médio',
+                            formatoMoeda.format(
+                              vendas.isEmpty ? 0 : totalVendas / vendas.length,
+                            ),
+                            Icons.insights,
+                            Colors.white70,
+                          ),
+                        ],
+                      ),
                     ],
                     // Sangrias e suprimentos detalhados
                     if (sangrias.isNotEmpty || suprimentos.isNotEmpty) ...[
                       const SizedBox(height: 16),
-                      _buildDetalheSecao('Sangrias e Suprimentos', Icons.swap_vert, [
-                        ...sangrias.map((s) => _buildMovLinha(s.motivo, -s.valor, s.data, Colors.orangeAccent)),
-                        ...suprimentos.map((s) => _buildMovLinha(s.motivo, s.valor, s.data, Colors.lightBlueAccent)),
-                      ]),
+                      _buildDetalheSecao(
+                        'Sangrias e Suprimentos',
+                        Icons.swap_vert,
+                        [
+                          ...sangrias.map(
+                            (s) => _buildMovLinha(
+                              s.motivo,
+                              -s.valor,
+                              s.data,
+                              Colors.orangeAccent,
+                            ),
+                          ),
+                          ...suprimentos.map(
+                            (s) => _buildMovLinha(
+                              s.motivo,
+                              s.valor,
+                              s.data,
+                              Colors.lightBlueAccent,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                     // Observação do fechamento
-                    if (fe.observacao != null && fe.observacao!.trim().isNotEmpty) ...[
+                    if (fe.observacao != null &&
+                        fe.observacao!.trim().isNotEmpty) ...[
                       const SizedBox(height: 16),
-                      _buildDetalheSecao('Observações do Fechamento', Icons.edit_note, [
-                        Text(
-                          fe.observacao!,
-                          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
-                        ),
-                      ]),
+                      _buildDetalheSecao(
+                        'Observações do Fechamento',
+                        Icons.edit_note,
+                        [
+                          Text(
+                            fe.observacao!,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
-                    if (ab.observacao != null && ab.observacao!.trim().isNotEmpty) ...[
+                    if (ab.observacao != null &&
+                        ab.observacao!.trim().isNotEmpty) ...[
                       const SizedBox(height: 16),
-                      _buildDetalheSecao('Observações da Abertura', Icons.note_alt_outlined, [
-                        Text(
-                          ab.observacao!,
-                          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
-                        ),
-                      ]),
+                      _buildDetalheSecao(
+                        'Observações da Abertura',
+                        Icons.note_alt_outlined,
+                        [
+                          Text(
+                            ab.observacao!,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                     // Movimentações do caixa encerrado, linha a linha (entradas,
                     // saídas, vendas, mesas e sangrias) — antes só era possível
@@ -3033,13 +3690,22 @@ class _CaixaPageState extends State<CaixaPage> {
                             _mostrarMovimentacoesCaixaFechado(ds, ab, fe);
                           },
                           icon: const Icon(Icons.list_alt, size: 16),
-                          label: const Text('VER MOVIMENTAÇÕES DO CAIXA',
-                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                          label: const Text(
+                            'VER MOVIMENTAÇÕES DO CAIXA',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.greenAccent,
-                            side: BorderSide(color: Colors.greenAccent.withOpacity(0.4)),
+                            side: BorderSide(
+                              color: Colors.greenAccent.withOpacity(0.4),
+                            ),
                             padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -3055,12 +3721,24 @@ class _CaixaPageState extends State<CaixaPage> {
                                 _mostrarVendasDoCaixa(ds, ab, fechamento: fe);
                               },
                               icon: const Icon(Icons.visibility, size: 16),
-                              label: const Text('VER VENDAS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              label: const Text(
+                                'VER VENDAS',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.blueAccent,
-                                side: BorderSide(color: Colors.blueAccent.withOpacity(0.4)),
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                side: BorderSide(
+                                  color: Colors.blueAccent.withOpacity(0.4),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                               ),
                             ),
                           ),
@@ -3073,12 +3751,24 @@ class _CaixaPageState extends State<CaixaPage> {
                                 _imprimirFechamento(ab, fe);
                               },
                               icon: const Icon(Icons.print, size: 16),
-                              label: const Text('IMPRIMIR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              label: const Text(
+                                'IMPRIMIR',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.cyanAccent,
-                                side: BorderSide(color: Colors.cyanAccent.withOpacity(0.4)),
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                side: BorderSide(
+                                  color: Colors.cyanAccent.withOpacity(0.4),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                               ),
                             ),
                           ),
@@ -3095,7 +3785,11 @@ class _CaixaPageState extends State<CaixaPage> {
   }
 
   /// Bloco de seção do modal de detalhes do caixa encerrado.
-  Widget _buildDetalheSecao(String titulo, IconData icon, List<Widget> children) {
+  Widget _buildDetalheSecao(
+    String titulo,
+    IconData icon,
+    List<Widget> children,
+  ) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -3112,7 +3806,11 @@ class _CaixaPageState extends State<CaixaPage> {
               const SizedBox(width: 8),
               Text(
                 titulo,
-                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -3140,12 +3838,19 @@ class _CaixaPageState extends State<CaixaPage> {
           const SizedBox(width: 8),
           Text(
             formatoHora.format(data.toLocal()),
-            style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.35),
+              fontSize: 11,
+            ),
           ),
           const SizedBox(width: 12),
           Text(
             formatoMoeda.format(valor),
-            style: TextStyle(color: cor, fontSize: 12, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: cor,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),
@@ -3185,15 +3890,20 @@ class _CaixaPageState extends State<CaixaPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(destino == null
-              ? 'Não foi possível gerar o CSV.'
-              : 'Fluxo exportado: $destino'),
+          content: Text(
+            destino == null
+                ? 'Não foi possível gerar o CSV.'
+                : 'Fluxo exportado: $destino',
+          ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao exportar fluxo: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Erro ao exportar fluxo: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -3239,7 +3949,8 @@ class _CaixaPageState extends State<CaixaPage> {
         return StatefulBuilder(
           builder: (sheetContext, setSheetState) {
             final movsFiltradas = aplicarFiltros();
-            final temFiltro = formaSelecionada != null ||
+            final temFiltro =
+                formaSelecionada != null ||
                 CaixaMovFiltroService.janelaAtiva(horaInicioMin, horaFimMin);
             return SizedBox(
               height: MediaQuery.of(sheetContext).size.height * 0.9,
@@ -3258,7 +3969,11 @@ class _CaixaPageState extends State<CaixaPage> {
                     padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
                     child: Row(
                       children: [
-                        const Icon(Icons.list_alt, color: Colors.greenAccent, size: 26),
+                        const Icon(
+                          Icons.list_alt,
+                          color: Colors.greenAccent,
+                          size: 26,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -3267,31 +3982,37 @@ class _CaixaPageState extends State<CaixaPage> {
                               Text(
                                 'Movimentações do ${ab.numero}',
                                 style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold),
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                               Text(
                                 '${DateFormat('dd/MM/yyyy HH:mm').format(ab.dataAbertura.toLocal())} → '
                                 '${DateFormat('dd/MM/yyyy HH:mm').format(fe.dataFechamento.toLocal())}',
-                                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
                               ),
                             ],
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.file_download_outlined,
-                              color: Colors.greenAccent),
+                          icon: const Icon(
+                            Icons.file_download_outlined,
+                            color: Colors.greenAccent,
+                          ),
                           // Exporta o que está na tela: o CSV tem que respeitar os
                           // filtros aplicados aqui, como no fluxo do caixa aberto.
                           tooltip: temFiltro
                               ? 'Exportar movimentações filtradas (CSV)'
                               : 'Exportar movimentações (CSV)',
                           onPressed: () => _exportarFluxoCSV(
-                                movsFiltradas,
-                                caixa: ab.numero,
-                                abertura: ab,
-                              ),
+                            movsFiltradas,
+                            caixa: ab.numero,
+                            abertura: ab,
+                          ),
                         ),
                         IconButton(
                           icon: const Icon(Icons.close, color: Colors.white54),
@@ -3315,13 +4036,19 @@ class _CaixaPageState extends State<CaixaPage> {
                         children: [
                           Row(
                             children: [
-                              const Icon(Icons.filter_alt_rounded,
-                                  color: Colors.blueAccent, size: 20),
+                              const Icon(
+                                Icons.filter_alt_rounded,
+                                color: Colors.blueAccent,
+                                size: 20,
+                              ),
                               const SizedBox(width: 8),
-                              const Text('Filtrar Movimentações',
-                                  style: TextStyle(
-                                      color: Colors.white70,
-                                      fontWeight: FontWeight.w600)),
+                              const Text(
+                                'Filtrar Movimentações',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                               const Spacer(),
                               if (temFiltro)
                                 TextButton.icon(
@@ -3330,11 +4057,18 @@ class _CaixaPageState extends State<CaixaPage> {
                                     horaInicioMin = null;
                                     horaFimMin = null;
                                   }),
-                                  icon: const Icon(Icons.close,
-                                      size: 16, color: Colors.white54),
-                                  label: const Text('Limpar',
-                                      style: TextStyle(
-                                          color: Colors.white54, fontSize: 12)),
+                                  icon: const Icon(
+                                    Icons.close,
+                                    size: 16,
+                                    color: Colors.white54,
+                                  ),
+                                  label: const Text(
+                                    'Limpar',
+                                    style: TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 12,
+                                    ),
+                                  ),
                                 ),
                             ],
                           ),
@@ -3376,7 +4110,9 @@ class _CaixaPageState extends State<CaixaPage> {
                               movs.isEmpty
                                   ? 'Nenhuma movimentação registrada neste caixa.'
                                   : 'Nenhuma movimentação com os filtros aplicados.',
-                              style: TextStyle(color: Colors.white.withOpacity(0.3)),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.3),
+                              ),
                             ),
                           )
                         : ListView(
@@ -3403,12 +4139,22 @@ class _CaixaPageState extends State<CaixaPage> {
       children: [
         Text(label, style: TextStyle(color: Colors.white30, fontSize: 10)),
         const SizedBox(height: 2),
-        Text(value, style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ],
     );
   }
 
-  List<Map<String, dynamic>> _getMovimentacoesExt(DataService ds, AberturaCaixa ab) {
+  List<Map<String, dynamic>> _getMovimentacoesExt(
+    DataService ds,
+    AberturaCaixa ab,
+  ) {
     final list = <Map<String, dynamic>>[];
 
     // Vendas (apenas do caixa em questão)
@@ -3434,15 +4180,23 @@ class _CaixaPageState extends State<CaixaPage> {
     for (final mc in ds.mesasComandas) {
       if (respAb.isNotEmpty) {
         final criador = (mc.usuarioCriou ?? mc.usuarioModificou ?? '').trim();
-        if (criador.isNotEmpty && !ds.vendaPertenceAoOperador(criador, respAb)) {
+        if (criador.isNotEmpty &&
+            !ds.vendaPertenceAoOperador(criador, respAb)) {
           continue;
         }
       }
-      final itensValidos = mc.itens.where((i) =>
-          i.status != StatusItem.cancelado &&
-          i.status != StatusItem.entregue).toList();
+      final itensValidos = mc.itens
+          .where(
+            (i) =>
+                i.status != StatusItem.cancelado &&
+                i.status != StatusItem.entregue,
+          )
+          .toList();
       if (itensValidos.isNotEmpty) {
-        final totalMc = itensValidos.fold<double>(0.0, (sum, i) => sum + i.subtotal);
+        final totalMc = itensValidos.fold<double>(
+          0.0,
+          (sum, i) => sum + i.subtotal,
+        );
         final label = mc.tipo == TipoControle.comanda ? 'Comanda' : 'Mesa';
         list.add({
           'data': itensValidos.last.dataModificacao ?? mc.dataAbertura,
@@ -3452,7 +4206,9 @@ class _CaixaPageState extends State<CaixaPage> {
           // totais (só virará entrada quando o pagamento for registrado).
           'forma': 'A receber · não contabilizado',
           'tipoPagamento': null,
-          'icone': mc.tipo == TipoControle.comanda ? Icons.receipt_long : Icons.table_restaurant,
+          'icone': mc.tipo == TipoControle.comanda
+              ? Icons.receipt_long
+              : Icons.table_restaurant,
           'cor': Colors.tealAccent,
           'numero': mc.numero,
           'tipo': label,
@@ -3467,12 +4223,14 @@ class _CaixaPageState extends State<CaixaPage> {
         'data': s.data,
         'descricao': s.motivo,
         'valor': -s.valor,
-        'forma': 'Dinheiro',
+        'forma': 'Saída • Dinheiro',
         'tipoPagamento': TipoPagamento.dinheiro,
         'icone': Icons.outbox_rounded,
         'cor': Colors.orangeAccent,
         'numero': '',
-        'tipo': 'Pagamento',
+        'tipo': 'Sangria',
+        'responsavel': s.responsavel,
+        'observacao': s.observacao,
         'contabilizado': true,
       });
     }
@@ -3539,18 +4297,26 @@ class _CaixaPageState extends State<CaixaPage> {
     for (final mov in list) {
       mov['caixaNumero'] = ab.numero;
     }
-    list.sort((a, b) => (b['data'] as DateTime).compareTo(a['data'] as DateTime));
+    list.sort(
+      (a, b) => (b['data'] as DateTime).compareTo(a['data'] as DateTime),
+    );
     return list;
   }
 
   String _formatForma(TipoPagamento t) {
     switch (t) {
-      case TipoPagamento.dinheiro: return 'Dinheiro';
-      case TipoPagamento.cartaoCredito: return 'Crédito';
-      case TipoPagamento.cartaoDebito: return 'Débito';
-      case TipoPagamento.pix: return 'PIX';
-      case TipoPagamento.alimentacao: return 'Ticket';
-      default: return 'Outro';
+      case TipoPagamento.dinheiro:
+        return 'Dinheiro';
+      case TipoPagamento.cartaoCredito:
+        return 'Crédito';
+      case TipoPagamento.cartaoDebito:
+        return 'Débito';
+      case TipoPagamento.pix:
+        return 'PIX';
+      case TipoPagamento.alimentacao:
+        return 'Ticket';
+      default:
+        return 'Outro';
     }
   }
 
@@ -3609,7 +4375,10 @@ class _CaixaPageState extends State<CaixaPage> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: isAberto
                         ? Colors.green.withOpacity(0.2)
@@ -3774,14 +4543,21 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.green, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.green,
+                        width: 2,
+                      ),
                     ),
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Informe o valor inicial';
@@ -3807,11 +4583,16 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.green, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.green,
+                        width: 2,
+                      ),
                     ),
                   ),
                 ),
@@ -3827,11 +4608,16 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.green, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.green,
+                        width: 2,
+                      ),
                     ),
                   ),
                   maxLines: 3,
@@ -3849,18 +4635,26 @@ class _CaixaPageState extends State<CaixaPage> {
                 (route) => false,
               );
             },
-            child: const Text('Fechar', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'Fechar',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () async {
               if (formKey.currentState!.validate()) {
                 try {
                   final valor = double.parse(
-                    valorController.text.replaceAll('.', '').replaceAll(',', '.'),
+                    valorController.text
+                        .replaceAll('.', '')
+                        .replaceAll(',', '.'),
                   );
 
                   await dataService.abrirCaixaComValor(
@@ -3905,7 +4699,12 @@ class _CaixaPageState extends State<CaixaPage> {
   }
 
   // Função auxiliar para construir linha de informação
-  Widget _buildInfoRow(String label, String value, IconData icon, [Color? valueColor]) {
+  Widget _buildInfoRow(
+    String label,
+    String value,
+    IconData icon, [
+    Color? valueColor,
+  ]) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -3934,8 +4733,11 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  void _mostrarDialogoFechamento(BuildContext context, DataService dataService,
-      {AberturaCaixa? aberturaParam}) {
+  void _mostrarDialogoFechamento(
+    BuildContext context,
+    DataService dataService, {
+    AberturaCaixa? aberturaParam,
+  }) {
     final abertura = aberturaParam ?? dataService.aberturaCaixaAtual;
     if (abertura == null) return;
 
@@ -3944,10 +4746,17 @@ class _CaixaPageState extends State<CaixaPage> {
     // pagamento é controlado por uma permissão própria
     // (caixa.ver_totais_formas_pagamento).
     final authServiceFech = Provider.of<AuthService>(context, listen: false);
-    final podeVerTotais = PermissionHelper.podeVerTotais(authServiceFech.usuarioAtual);
-    final podeVerFormasPagamento = PermissionHelper.podeVerTotaisFormasPagamento(authServiceFech.usuarioAtual);
-    final podeVerTotalVendido = PermissionHelper.podeVerTotalVendidoFechamento(authServiceFech.usuarioAtual);
-// (ok)
+    final podeVerTotais = PermissionHelper.podeVerTotais(
+      authServiceFech.usuarioAtual,
+    );
+    final podeVerFormasPagamento =
+        PermissionHelper.podeVerTotaisFormasPagamento(
+          authServiceFech.usuarioAtual,
+        );
+    final podeVerTotalVendido = PermissionHelper.podeVerTotalVendidoFechamento(
+      authServiceFech.usuarioAtual,
+    );
+    // (ok)
 
     final valorEsperadoController = TextEditingController();
     final valorRealController = TextEditingController();
@@ -3982,13 +4791,16 @@ class _CaixaPageState extends State<CaixaPage> {
     // personalizadas (Caju, VR...) mantêm o nome cadastrado. Antes este
     // diálogo somava só a forma principal de cada venda, então o "Resumo por
     // Forma" aqui divergia do card de "Entradas por Forma de Pagamento".
-    final resumoVendasFormas = dataService.calcularResumoFormaPagamentoDoCaixa(abertura);
+    final resumoVendasFormas = dataService.calcularResumoFormaPagamentoDoCaixa(
+      abertura,
+    );
 
     // Recebimentos de pedidos/mesas no período, em separado, para o gestor ver
     // quanto veio de venda de balcão e quanto veio de pedido. Mesma fonte usada
     // na impressão do fechamento (DataService).
-    final totaisPedidosForma =
-        dataService.calcularRecebimentosDePedidosDoCaixa(abertura);
+    final totaisPedidosForma = dataService.calcularRecebimentosDePedidosDoCaixa(
+      abertura,
+    );
 
     // Mapa combinado (vendas + pedidos), usado no "Valor Esperado" do caixa
     // físico (só a parcela em DINHEIRO é considerada mais abaixo).
@@ -4022,7 +4834,8 @@ class _CaixaPageState extends State<CaixaPage> {
     final temRespCaixa = respCaixa != null && respCaixa.isNotEmpty;
     bool mesmoOperador(String? a, String? b) {
       if (a == null || b == null) return false;
-      String norm(String s) => s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
+      String norm(String s) =>
+          s.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9@]'), '');
       final na = norm(a), nb = norm(b);
       if (na.isEmpty || nb.isEmpty) return false;
       if (na == nb) return true;
@@ -4049,12 +4862,13 @@ class _CaixaPageState extends State<CaixaPage> {
 
       // Contabilizar itens dos pedidos recebidos no período
       // (Aproximação: se o pedido teve pagamento no período, contamos seus itens)
-      final tevePagamentoNoPeriodo = p.pagamentos.any((pag) => 
-        pag.recebido && 
-        pag.dataRecebimento != null && 
-        !pag.dataRecebimento!.isBefore(abertura.dataAbertura)
+      final tevePagamentoNoPeriodo = p.pagamentos.any(
+        (pag) =>
+            pag.recebido &&
+            pag.dataRecebimento != null &&
+            !pag.dataRecebimento!.isBefore(abertura.dataAbertura),
       );
-      
+
       if (tevePagamentoNoPeriodo) {
         for (var item in p.produtos) {
           totalItensVendidos += item.quantidade;
@@ -4070,23 +4884,40 @@ class _CaixaPageState extends State<CaixaPage> {
     // Calcular sangrias e suprimentos do caixa em questão
     final sangriasCaixaAtual = dataService.getSangriasDoCaixa(abertura);
     final suprimentosCaixaAtual = dataService.getSuprimentosDoCaixa(abertura);
-    final totalSangrias = sangriasCaixaAtual.fold(0.0, (sum, s) => sum + s.valor);
-    final totalSuprimentos = suprimentosCaixaAtual.fold(0.0, (sum, s) => sum + s.valor);
-    
+    final totalSangrias = sangriasCaixaAtual.fold(
+      0.0,
+      (sum, s) => sum + s.valor,
+    );
+    final totalSuprimentos = suprimentosCaixaAtual.fold(
+      0.0,
+      (sum, s) => sum + s.valor,
+    );
+
     // Valor esperado no caixa FÍSICO (Dinheiro + Inicial + Suprimentos - Sangrias)
     // Nota: PIX/Cartão não ficam no caixa físico, mas o sistema pode querer rastrear
     // Aqui mantemos a lógica original de "Dinheiro + PIX" se assim estava,
     // mas geralmente PIX não entra na conferência de "dinheiro na gaveta".
     // Vou ajustar para ser apenas DINHEIRO + INICIAL para o "Esperado" físico.
     final totalDinheiro = totaisPorForma[TipoPagamento.dinheiro] ?? 0.0;
-    final valorEsperadoCalculado = abertura.valorInicial + totalDinheiro - totalSangrias + totalSuprimentos;
-    
-    valorEsperadoController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
-    valorRealController.text = valorEsperadoCalculado.toStringAsFixed(2).replaceAll('.', ',');
+    final valorEsperadoCalculado =
+        abertura.valorInicial +
+        totalDinheiro -
+        totalSangrias +
+        totalSuprimentos;
+
+    valorEsperadoController.text = valorEsperadoCalculado
+        .toStringAsFixed(2)
+        .replaceAll('.', ',');
+    valorRealController.text = valorEsperadoCalculado
+        .toStringAsFixed(2)
+        .replaceAll('.', ',');
 
     bool salvandoFechamento = false;
 
-    Future<void> fecharCaixa(BuildContext dialogContext, {required bool imprimir}) async {
+    Future<void> fecharCaixa(
+      BuildContext dialogContext, {
+      required bool imprimir,
+    }) async {
       print('>>> [Fechar Caixa] ========== BOTÃO PRESSIONADO ==========');
       if (salvandoFechamento) {
         print('>>> [Fechar Caixa] Ignorando clique duplicado...');
@@ -4122,7 +4953,9 @@ class _CaixaPageState extends State<CaixaPage> {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Por favor, preencha todos os campos obrigatórios corretamente'),
+              content: Text(
+                'Por favor, preencha todos os campos obrigatórios corretamente',
+              ),
               backgroundColor: Colors.orange,
               duration: Duration(seconds: 3),
             ),
@@ -4134,8 +4967,12 @@ class _CaixaPageState extends State<CaixaPage> {
       formKey.currentState!.save();
 
       try {
-        final valorEsperadoStr = valorEsperadoController.text.replaceAll('.', '').replaceAll(',', '.');
-        final valorRealStr = valorRealController.text.replaceAll('.', '').replaceAll(',', '.');
+        final valorEsperadoStr = valorEsperadoController.text
+            .replaceAll('.', '')
+            .replaceAll(',', '.');
+        final valorRealStr = valorRealController.text
+            .replaceAll('.', '')
+            .replaceAll(',', '.');
 
         final valorEsperado = double.tryParse(valorEsperadoStr) ?? 0.0;
         final valorReal = double.tryParse(valorRealStr) ?? 0.0;
@@ -4147,7 +4984,9 @@ class _CaixaPageState extends State<CaixaPage> {
         final fechamento = await dataService.registrarFechamentoCaixa(
           valorEsperado: valorEsperado,
           valorReal: valorReal,
-          observacao: observacaoController.text.trim().isEmpty ? null : observacaoController.text.trim(),
+          observacao: observacaoController.text.trim().isEmpty
+              ? null
+              : observacaoController.text.trim(),
           responsavel: responsavel,
           abertura: abertura,
         );
@@ -4177,14 +5016,23 @@ class _CaixaPageState extends State<CaixaPage> {
               barrierDismissible: false,
               builder: (context) => AlertDialog(
                 backgroundColor: const Color(0xFF1E1E2E),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
                 title: Column(
                   children: [
-                    const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 64),
+                    const Icon(
+                      Icons.check_circle_outline,
+                      color: Colors.greenAccent,
+                      size: 64,
+                    ),
                     const SizedBox(height: 16),
                     const Text(
                       'Caixa Encerrado!',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -4201,7 +5049,9 @@ class _CaixaPageState extends State<CaixaPage> {
                     Text(
                       'Diferença: ${formatoMoeda.format(fechamento.diferenca)}',
                       style: TextStyle(
-                        color: fechamento.diferenca >= 0 ? Colors.greenAccent : Colors.redAccent,
+                        color: fechamento.diferenca >= 0
+                            ? Colors.greenAccent
+                            : Colors.redAccent,
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
                       ),
@@ -4220,11 +5070,16 @@ class _CaixaPageState extends State<CaixaPage> {
                               if (context.mounted) Navigator.pop(context);
                             },
                             icon: const Icon(Icons.print),
-                            label: const Text('IMPRIMIR FECHAMENTO', style: TextStyle(fontWeight: FontWeight.bold)),
+                            label: const Text(
+                              'IMPRIMIR FECHAMENTO',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.blueAccent,
                               padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
                           ),
                         ),
@@ -4235,7 +5090,10 @@ class _CaixaPageState extends State<CaixaPage> {
                           onPressed: () {
                             if (context.mounted) Navigator.pop(context);
                           },
-                          child: const Text('CONCLUIR E SAIR', style: TextStyle(color: Colors.white54)),
+                          child: const Text(
+                            'CONCLUIR E SAIR',
+                            style: TextStyle(color: Colors.white54),
+                          ),
                         ),
                       ),
                     ],
@@ -4257,7 +5115,10 @@ class _CaixaPageState extends State<CaixaPage> {
         salvandoFechamento = false;
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Erro ao fechar caixa: $e'), backgroundColor: Colors.red),
+            SnackBar(
+              content: Text('Erro ao fechar caixa: $e'),
+              backgroundColor: Colors.red,
+            ),
           );
         }
       }
@@ -4284,7 +5145,10 @@ class _CaixaPageState extends State<CaixaPage> {
               topRight: Radius.circular(20),
             ),
             border: Border(
-              bottom: BorderSide(color: Colors.redAccent.withOpacity(0.3), width: 2),
+              bottom: BorderSide(
+                color: Colors.redAccent.withOpacity(0.3),
+                width: 2,
+              ),
             ),
           ),
           child: Row(
@@ -4295,7 +5159,11 @@ class _CaixaPageState extends State<CaixaPage> {
                   color: Colors.redAccent.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.lock, color: Colors.redAccent, size: 28),
+                child: const Icon(
+                  Icons.lock,
+                  color: Colors.redAccent,
+                  size: 28,
+                ),
               ),
               const SizedBox(width: 16),
               const Expanded(
@@ -4313,10 +5181,7 @@ class _CaixaPageState extends State<CaixaPage> {
                     SizedBox(height: 4),
                     Text(
                       'Preencha os dados para finalizar',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 13,
-                      ),
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ],
                 ),
@@ -4344,14 +5209,21 @@ class _CaixaPageState extends State<CaixaPage> {
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue.withOpacity(0.4), width: 1.5),
+                    border: Border.all(
+                      color: Colors.blue.withOpacity(0.4),
+                      width: 1.5,
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.point_of_sale, color: Colors.blueAccent, size: 20),
+                          const Icon(
+                            Icons.point_of_sale,
+                            color: Colors.blueAccent,
+                            size: 20,
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             abertura.numero,
@@ -4366,7 +5238,11 @@ class _CaixaPageState extends State<CaixaPage> {
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          const Icon(Icons.event, color: Colors.white54, size: 14),
+                          const Icon(
+                            Icons.event,
+                            color: Colors.white54,
+                            size: 14,
+                          ),
                           const SizedBox(width: 6),
                           Text(
                             'Aberto em: ${formatoData.format(abertura.dataAbertura.toLocal())}',
@@ -4425,7 +5301,9 @@ class _CaixaPageState extends State<CaixaPage> {
                         const SizedBox(height: 8),
                         // Vendas do PDV por forma (pagamento dividido detalhado,
                         // nome da forma personalizada preservado).
-                        ...resumoVendasFormas.where((r) => r.valor > 0).map((r) {
+                        ...resumoVendasFormas.where((r) => r.valor > 0).map((
+                          r,
+                        ) {
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 6),
                             child: _buildInfoRow(
@@ -4449,17 +5327,19 @@ class _CaixaPageState extends State<CaixaPage> {
                             ),
                           ),
                           const SizedBox(height: 6),
-                          ...totaisPedidosForma.entries.where((e) => e.value > 0).map((e) {
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: _buildInfoRow(
-                                e.key.nome,
-                                formatoMoeda.format(e.value),
-                                e.key.icone,
-                                e.key.cor,
-                              ),
-                            );
-                          }),
+                          ...totaisPedidosForma.entries
+                              .where((e) => e.value > 0)
+                              .map((e) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: _buildInfoRow(
+                                    e.key.nome,
+                                    formatoMoeda.format(e.value),
+                                    e.key.icone,
+                                    e.key.cor,
+                                  ),
+                                );
+                              }),
                         ],
                         const SizedBox(height: 12),
                       ],
@@ -4469,7 +5349,9 @@ class _CaixaPageState extends State<CaixaPage> {
                         'Movimentações (Sangria/Sup.)',
                         formatoMoeda.format(totalSuprimentos - totalSangrias),
                         Icons.swap_vert,
-                        (totalSuprimentos - totalSangrias) >= 0 ? Colors.blueAccent : Colors.orangeAccent,
+                        (totalSuprimentos - totalSangrias) >= 0
+                            ? Colors.blueAccent
+                            : Colors.orangeAccent,
                       ),
                       const SizedBox(height: 8),
                       _buildInfoRow(
@@ -4479,40 +5361,44 @@ class _CaixaPageState extends State<CaixaPage> {
                         Colors.grey,
                       ),
                       if (podeVerTotalVendido) ...[
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(Icons.calculate, color: Colors.greenAccent, size: 18),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Valor Esperado',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
+                        const SizedBox(height: 16),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.calculate,
+                                    color: Colors.greenAccent,
+                                    size: 18,
                                   ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              formatoMoeda.format(valorEsperadoCalculado),
-                              style: const TextStyle(
-                                color: Colors.greenAccent,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Valor Esperado',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ],
+                              Text(
+                                formatoMoeda.format(valorEsperadoCalculado),
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
                       ],
                     ],
                   ),
@@ -4527,29 +5413,34 @@ class _CaixaPageState extends State<CaixaPage> {
                       color: Colors.orange.withOpacity(0.07),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                          color: Colors.orange.withOpacity(0.35)),
+                        color: Colors.orange.withOpacity(0.35),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.delete_outline,
-                                color: Colors.orangeAccent, size: 20),
+                            const Icon(
+                              Icons.delete_outline,
+                              color: Colors.orangeAccent,
+                              size: 20,
+                            ),
                             const SizedBox(width: 8),
                             Text(
                               'Itens Deletados do PDV (${deletadosPdv.length})',
                               style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold),
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 8),
                         ...deletadosPdv.map((i) {
-                          final qtd = i.quantidade ==
-                                  i.quantidade.roundToDouble()
+                          final qtd =
+                              i.quantidade == i.quantidade.roundToDouble()
                               ? i.quantidade.toStringAsFixed(0)
                               : i.quantidade.toString();
                           final quando = (i.dataModificacao ?? i.dataHora)
@@ -4559,7 +5450,9 @@ class _CaixaPageState extends State<CaixaPage> {
                             child: Text(
                               '${qtd}x ${i.nome} — ${i.usuarioModificou ?? "Sistema"} (${DateFormat('dd/MM HH:mm').format(quando)})',
                               style: const TextStyle(
-                                  color: Colors.white70, fontSize: 12),
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
                             ),
                           );
                         }),
@@ -4581,7 +5474,11 @@ class _CaixaPageState extends State<CaixaPage> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.attach_money, color: Colors.amber, size: 20),
+                          const Icon(
+                            Icons.attach_money,
+                            color: Colors.amber,
+                            size: 20,
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             'Valores do Fechamento',
@@ -4597,40 +5494,58 @@ class _CaixaPageState extends State<CaixaPage> {
                         const SizedBox(height: 16),
                         TextFormField(
                           controller: valorEsperadoController,
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
-                        decoration: InputDecoration(
-                          labelText: 'Valor Esperado (R\$)',
-                          labelStyle: const TextStyle(color: Colors.white70),
-                          hintText: '0,00',
-                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                          prefixIcon: const Icon(Icons.calculate, color: Colors.blueAccent),
-                          prefixText: 'R\$ ',
-                          prefixStyle: const TextStyle(color: Colors.white, fontSize: 16),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.05),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
                           ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                          decoration: InputDecoration(
+                            labelText: 'Valor Esperado (R\$)',
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            hintText: '0,00',
+                            hintStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.3),
+                            ),
+                            prefixIcon: const Icon(
+                              Icons.calculate,
+                              color: Colors.blueAccent,
+                            ),
+                            prefixText: 'R\$ ',
+                            prefixStyle: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.05),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: Colors.white.withOpacity(0.2),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(
+                                color: Colors.blueAccent,
+                                width: 2,
+                              ),
+                            ),
                           ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
                           ),
-                        ),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Informe o valor esperado';
-                          }
-                          final valor = double.tryParse(
-                            value.replaceAll('.', '').replaceAll(',', '.'),
-                          );
-                          if (valor == null || valor < 0) {
-                            return 'Valor inválido';
-                          }
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Informe o valor esperado';
+                            }
+                            final valor = double.tryParse(
+                              value.replaceAll('.', '').replaceAll(',', '.'),
+                            );
+                            if (valor == null || valor < 0) {
+                              return 'Valor inválido';
+                            }
                             return null;
                           },
                         ),
@@ -4638,15 +5553,26 @@ class _CaixaPageState extends State<CaixaPage> {
                       ],
                       TextFormField(
                         controller: valorRealController,
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                        ),
                         decoration: InputDecoration(
                           labelText: 'Valor Real no Caixa (R\$)',
                           labelStyle: const TextStyle(color: Colors.white70),
                           hintText: '0,00',
-                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                          prefixIcon: const Icon(Icons.account_balance_wallet, color: Colors.greenAccent),
+                          hintStyle: TextStyle(
+                            color: Colors.white.withOpacity(0.3),
+                          ),
+                          prefixIcon: const Icon(
+                            Icons.account_balance_wallet,
+                            color: Colors.greenAccent,
+                          ),
                           prefixText: 'R\$ ',
-                          prefixStyle: const TextStyle(color: Colors.white, fontSize: 16),
+                          prefixStyle: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                          ),
                           filled: true,
                           fillColor: Colors.white.withOpacity(0.05),
                           border: OutlineInputBorder(
@@ -4654,14 +5580,21 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                            borderSide: BorderSide(
+                              color: Colors.white.withOpacity(0.2),
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.greenAccent, width: 2),
+                            borderSide: const BorderSide(
+                              color: Colors.greenAccent,
+                              width: 2,
+                            ),
                           ),
                         ),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
                             return 'Informe o valor real';
@@ -4699,7 +5632,11 @@ class _CaixaPageState extends State<CaixaPage> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.person_outline, color: Colors.purpleAccent, size: 20),
+                          const Icon(
+                            Icons.person_outline,
+                            color: Colors.purpleAccent,
+                            size: 20,
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             'Responsável pelo Fechamento',
@@ -4711,7 +5648,10 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                           const SizedBox(width: 8),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.orange.withOpacity(0.3),
                               borderRadius: BorderRadius.circular(4),
@@ -4730,13 +5670,22 @@ class _CaixaPageState extends State<CaixaPage> {
                       const SizedBox(height: 16),
                       TextFormField(
                         controller: responsavelController,
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                        ),
                         decoration: InputDecoration(
                           labelText: 'Nome Completo',
                           labelStyle: const TextStyle(color: Colors.white70),
                           hintText: 'Ex: João Silva',
-                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                          prefixIcon: const Icon(Icons.person, color: Colors.purpleAccent, size: 24),
+                          hintStyle: TextStyle(
+                            color: Colors.white.withOpacity(0.3),
+                          ),
+                          prefixIcon: const Icon(
+                            Icons.person,
+                            color: Colors.purpleAccent,
+                            size: 24,
+                          ),
                           filled: true,
                           fillColor: Colors.white.withOpacity(0.05),
                           border: OutlineInputBorder(
@@ -4744,19 +5693,30 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                            borderSide: BorderSide(
+                              color: Colors.white.withOpacity(0.2),
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.purpleAccent, width: 2),
+                            borderSide: const BorderSide(
+                              color: Colors.purpleAccent,
+                              width: 2,
+                            ),
                           ),
                           errorBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.red, width: 2),
+                            borderSide: const BorderSide(
+                              color: Colors.red,
+                              width: 2,
+                            ),
                           ),
                           focusedErrorBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.red, width: 2),
+                            borderSide: const BorderSide(
+                              color: Colors.red,
+                              width: 2,
+                            ),
                           ),
                         ),
                         textCapitalization: TextCapitalization.words,
@@ -4779,7 +5739,11 @@ class _CaixaPageState extends State<CaixaPage> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.note_alt, color: Colors.orangeAccent, size: 20),
+                          const Icon(
+                            Icons.note_alt,
+                            color: Colors.orangeAccent,
+                            size: 20,
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             'Observações',
@@ -4791,7 +5755,10 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                           const SizedBox(width: 8),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.grey.withOpacity(0.3),
                               borderRadius: BorderRadius.circular(4),
@@ -4812,13 +5779,18 @@ class _CaixaPageState extends State<CaixaPage> {
                         controller: observacaoController,
                         style: const TextStyle(color: Colors.white),
                         decoration: InputDecoration(
-                          hintText: 'Informe observações sobre o fechamento:\n• Diferenças encontradas\n• Problemas identificados\n• Observações importantes',
+                          hintText:
+                              'Informe observações sobre o fechamento:\n• Diferenças encontradas\n• Problemas identificados\n• Observações importantes',
                           hintStyle: TextStyle(
                             color: Colors.white.withOpacity(0.4),
                             fontSize: 13,
                             height: 1.5,
                           ),
-                          prefixIcon: const Icon(Icons.edit_note, color: Colors.orangeAccent, size: 24),
+                          prefixIcon: const Icon(
+                            Icons.edit_note,
+                            color: Colors.orangeAccent,
+                            size: 24,
+                          ),
                           filled: true,
                           fillColor: Colors.white.withOpacity(0.05),
                           border: OutlineInputBorder(
@@ -4826,11 +5798,16 @@ class _CaixaPageState extends State<CaixaPage> {
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                            borderSide: BorderSide(
+                              color: Colors.white.withOpacity(0.2),
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.orangeAccent, width: 2),
+                            borderSide: const BorderSide(
+                              color: Colors.orangeAccent,
+                              width: 2,
+                            ),
                           ),
                         ),
                         maxLines: 4,
@@ -4850,7 +5827,11 @@ class _CaixaPageState extends State<CaixaPage> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline, color: Colors.blueAccent, size: 18),
+                      const Icon(
+                        Icons.info_outline,
+                        color: Colors.blueAccent,
+                        size: 18,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
@@ -4871,7 +5852,10 @@ class _CaixaPageState extends State<CaixaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () => fecharCaixa(dialogContext, imprimir: false),
@@ -4926,12 +5910,25 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  void _mostrarDialogoSangria(BuildContext context, DataService dataService,
-      {bool isPagamento = false, AberturaCaixa? aberturaParam}) {
+  void _mostrarDialogoSangria(
+    BuildContext context,
+    DataService dataService, {
+    bool isPagamento = false,
+    AberturaCaixa? aberturaParam,
+  }) {
     final valorController = TextEditingController();
     final motivoController = TextEditingController();
     final observacaoController = TextEditingController();
-    final responsavelController = TextEditingController();
+    final usuarioAtual = Provider.of<AuthService>(
+      context,
+      listen: false,
+    ).usuarioAtual;
+    final responsavelInicial = (usuarioAtual?.nome.trim().isNotEmpty ?? false)
+        ? usuarioAtual!.nome.trim()
+        : (usuarioAtual?.email.trim() ?? '');
+    final responsavelController = TextEditingController(
+      text: responsavelInicial,
+    );
     final formKey = GlobalKey<FormState>();
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
@@ -4942,9 +5939,16 @@ class _CaixaPageState extends State<CaixaPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            Icon(isPagamento ? Icons.outbox : Icons.remove_circle, color: isPagamento ? Colors.purpleAccent : Colors.orange, size: 28),
+            Icon(
+              isPagamento ? Icons.outbox : Icons.remove_circle,
+              color: isPagamento ? Colors.purpleAccent : Colors.orange,
+              size: 28,
+            ),
             const SizedBox(width: 12),
-            Text(isPagamento ? 'Registrar Pagamento' : 'Registrar Sangria', style: const TextStyle(color: Colors.white)),
+            Text(
+              isPagamento ? 'Registrar Pagamento' : 'Registrar Sangria',
+              style: const TextStyle(color: Colors.white),
+            ),
           ],
         ),
         content: Form(
@@ -4965,14 +5969,21 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.orange, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.orange,
+                        width: 2,
+                      ),
                     ),
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Informe o valor';
@@ -4998,11 +6009,16 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.orange, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.orange,
+                        width: 2,
+                      ),
                     ),
                   ),
                   validator: (value) {
@@ -5017,20 +6033,34 @@ class _CaixaPageState extends State<CaixaPage> {
                   controller: responsavelController,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    labelText: 'Responsável (opcional)',
+                    labelText: 'Nome de quem realizou *',
                     labelStyle: const TextStyle(color: Colors.white70),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.orange, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.orange,
+                        width: 2,
+                      ),
                     ),
                   ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Informe o nome de quem realizou a sangria';
+                    }
+                    if (value.trim().length < 2) {
+                      return 'Informe o nome completo';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -5044,11 +6074,16 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.orange, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.orange,
+                        width: 2,
+                      ),
                     ),
                   ),
                   maxLines: 3,
@@ -5060,25 +6095,30 @@ class _CaixaPageState extends State<CaixaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () async {
               if (formKey.currentState!.validate()) {
                 try {
                   final valor = double.parse(
-                    valorController.text.replaceAll('.', '').replaceAll(',', '.'),
+                    valorController.text
+                        .replaceAll('.', '')
+                        .replaceAll(',', '.'),
                   );
 
                   await dataService.registrarSangria(
                     valor: valor,
-                    motivo: isPagamento ? '[PAGAMENTO] ${motivoController.text.trim()}' : motivoController.text.trim(),
+                    motivo: isPagamento
+                        ? '[PAGAMENTO] ${motivoController.text.trim()}'
+                        : motivoController.text.trim(),
                     observacao: observacaoController.text.trim().isEmpty
                         ? null
                         : observacaoController.text.trim(),
-                    responsavel: responsavelController.text.trim().isEmpty
-                        ? null
-                        : responsavelController.text.trim(),
+                    responsavel: responsavelController.text.trim(),
                     aberturaParam: aberturaParam,
                   );
 
@@ -5087,11 +6127,13 @@ class _CaixaPageState extends State<CaixaPage> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          isPagamento 
-                            ? 'Pagamento registrado: ${formatoMoeda.format(valor)}'
-                            : 'Sangria registrada: ${formatoMoeda.format(valor)}',
+                          isPagamento
+                              ? 'Pagamento registrado: ${formatoMoeda.format(valor)}'
+                              : 'Sangria registrada: ${formatoMoeda.format(valor)}',
                         ),
-                        backgroundColor: isPagamento ? Colors.purple : Colors.orange,
+                        backgroundColor: isPagamento
+                            ? Colors.purple
+                            : Colors.orange,
                       ),
                     );
                   }
@@ -5115,8 +6157,11 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  void _mostrarDialogoSuprimento(BuildContext context, DataService dataService,
-      {AberturaCaixa? aberturaParam}) {
+  void _mostrarDialogoSuprimento(
+    BuildContext context,
+    DataService dataService, {
+    AberturaCaixa? aberturaParam,
+  }) {
     final valorController = TextEditingController();
     final motivoController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -5154,14 +6199,21 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.blue, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.blue,
+                        width: 2,
+                      ),
                     ),
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Informe o valor';
@@ -5187,11 +6239,16 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.blue, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.blue,
+                        width: 2,
+                      ),
                     ),
                   ),
                   validator: (value) {
@@ -5213,11 +6270,16 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.blue, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.blue,
+                        width: 2,
+                      ),
                     ),
                   ),
                 ),
@@ -5233,11 +6295,16 @@ class _CaixaPageState extends State<CaixaPage> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Colors.blue, width: 2),
+                      borderSide: const BorderSide(
+                        color: Colors.blue,
+                        width: 2,
+                      ),
                     ),
                   ),
                   maxLines: 3,
@@ -5249,14 +6316,19 @@ class _CaixaPageState extends State<CaixaPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () async {
               if (formKey.currentState!.validate()) {
                 try {
                   final valor = double.parse(
-                    valorController.text.replaceAll('.', '').replaceAll(',', '.'),
+                    valorController.text
+                        .replaceAll('.', '')
+                        .replaceAll(',', '.'),
                   );
 
                   await dataService.registrarSuprimento(
@@ -5302,7 +6374,12 @@ class _CaixaPageState extends State<CaixaPage> {
     );
   }
 
-  Widget _buildEstatsCard(String label, String value, IconData icon, Color color) {
+  Widget _buildEstatsCard(
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(

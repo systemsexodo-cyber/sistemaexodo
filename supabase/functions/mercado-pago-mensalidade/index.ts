@@ -40,45 +40,19 @@ function jsonResponse(body: JsonObject, status = 200): Response {
   });
 }
 
-function mesCompetencia(configuracoes: JsonObject): string {
+// A competência é sempre o mês corrente (America/Sao_Paulo): antes do dia do
+// vencimento a cobrança já antecipa o mês do vencimento exibido na tela
+// (ex.: vencimento 05/11 pago em 04/11 libera a competência "2026-11").
+function mesCompetencia(): string {
   const partes = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",
     year: "numeric",
     month: "2-digit",
-    day: "2-digit",
   }).formatToParts(new Date());
   const data = Object.fromEntries(
     partes.map((parte) => [parte.type, parte.value]),
   );
-  const hoje = new Date(
-    Number(data.year),
-    Number(data.month) - 1,
-    Number(data.day),
-  );
-  const cobranca = configuracoes.data_cobranca ??
-    configuracoes.dataCobranca;
-  let diaVencimento: number;
-  if (cobranca != null && String(cobranca).trim()) {
-    const texto = String(cobranca).trim();
-    const dataCompleta = /^(\d{4})-(\d{2})-(\d{2})/.exec(texto);
-    diaVencimento = dataCompleta
-      ? Number(dataCompleta[3])
-      : Number.parseInt(texto, 10);
-  } else {
-    diaVencimento = Number.NaN;
-  }
-  if (
-    !Number.isInteger(diaVencimento) || diaVencimento < 1 ||
-    diaVencimento > 31
-  ) {
-    return `${data.year}-${data.month}`;
-  }
-  const competencia = hoje.getDate() < diaVencimento
-    ? new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)
-    : hoje;
-  return `${competencia.getFullYear()}-${
-    String(competencia.getMonth() + 1).padStart(2, "0")
-  }`;
+  return `${data.year}-${data.month}`;
 }
 
 function valorMensalidade(configuracoes: JsonObject): number | null {
@@ -121,6 +95,22 @@ async function buscarPagamento(paymentId: string): Promise<JsonObject> {
   return await resposta.json() as JsonObject;
 }
 
+// Acrescenta o pagamento aprovado ao histórico da empresa sem duplicar
+// (a chave é o id do pagamento do Mercado Pago), mantendo os 36 mais recentes.
+function historicoComPagamento(
+  configuracoes: JsonObject,
+  entrada: JsonObject,
+): JsonObject[] {
+  const atual = Array.isArray(configuracoes.historico_pagamentos)
+    ? configuracoes.historico_pagamentos as JsonObject[]
+    : [];
+  const id = String(entrada.pagamento_id ?? "");
+  const registros = atual
+    .filter((item) => String(item?.pagamento_id ?? "") !== id)
+    .concat([entrada]);
+  return registros.slice(-36);
+}
+
 async function liberarMensalidadeAprovada(
   pagamento: JsonObject,
 ): Promise<{ aprovado: boolean; liberado: boolean }> {
@@ -150,6 +140,7 @@ async function liberarMensalidadeAprovada(
     return { aprovado: true, liberado: true };
   }
 
+  const pagoEm = String(pagamento.date_approved ?? new Date().toISOString());
   const { data: atualizado, error } = await supabase.rpc(
     "registrar_pagamento_mensalidade",
     {
@@ -159,8 +150,14 @@ async function liberarMensalidadeAprovada(
         bloqueado: false,
         ultimo_mes_pago: mes,
         mercado_pago_payment_id: String(pagamento.id),
-        mercado_pago_pago_em: pagamento.date_approved ??
-          new Date().toISOString(),
+        mercado_pago_pago_em: pagoEm,
+        historico_pagamentos: historicoComPagamento(configuracoes, {
+          competencia: mes,
+          valor: valorPago,
+          pagamento_id: String(pagamento.id),
+          pago_em: pagoEm,
+          origem: "mercado_pago",
+        }),
       },
     },
   );
@@ -195,7 +192,7 @@ async function criarPix(body: JsonObject): Promise<Response> {
       erro: "A mensalidade ainda não foi configurada. Fale com o suporte.",
     }, 400);
   }
-  const mes = mesCompetencia(configuracoes);
+  const mes = mesCompetencia();
   if (
     String(configuracoes.ultimo_mes_pago ?? "") >= mes &&
     configuracoes.bloqueado !== true

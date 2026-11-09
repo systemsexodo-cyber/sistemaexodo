@@ -1508,4 +1508,179 @@ class NFCeBackendService extends NFCeServiceBase {
       return {'success': false, 'message': e.toString()};
     }
   }
+
+
+  /// Consulta distribuicao de DF-e na SEFAZ (notas emitidas contra a empresa)
+  Future<Map<String, dynamic>> consultarDistribuicaoDFe({
+    required Empresa empresa,
+    String? chaveAcesso,
+    String? nsu,
+    bool consultaNsuEspecifico = false,
+  }) async {
+    final certBase64 = empresa.configuracoes?['certificadoDigitalBytes'] ??
+        empresa.configuracoes?['certificado_base64'] ??
+        empresa.certificadoDigitalUrl ??
+        '';
+    final senhaCert = empresa.senhaCertificado ??
+        empresa.configuracoes?['certificadoDigitalSenha'] ??
+        empresa.configuracoes?['senha_certificado'] ??
+        '';
+
+    final payload = {
+      'empresa': {
+        'cnpj': empresa.cnpj?.replaceAll(RegExp(r'[^0-9]'), '') ?? '',
+        'uf': empresa.estado ?? 'SP',
+        'ambiente_homologacao': empresa.ambienteHomologacao ?? true,
+        'certificado_base64': certBase64,
+        'senha_certificado': senhaCert,
+      },
+      if (chaveAcesso != null && chaveAcesso.trim().isNotEmpty)
+        'chave_acesso': chaveAcesso.trim().replaceAll(RegExp(r'[^0-9]'), ''),
+      if (nsu != null && nsu.trim().isNotEmpty)
+        'nsu': nsu.trim(),
+      'consulta_nsu_especifico': consultaNsuEspecifico,
+    };
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/nfe/distribuicao'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      if (response.statusCode == 404) {
+        return {
+          'success': false,
+          'http_status': 404,
+          'mensagem':
+              'O Bridge local não possui a rota de Distribuição DF-e (HTTP 404). '
+                  'Atualize o Bridge (Atualizar_Bridge_Local.bat) para a versão mais recente.',
+        };
+      }
+
+      final Map<String, dynamic> data;
+      try {
+        data = jsonDecode(response.body) as Map<String, dynamic>;
+      } catch (_) {
+        return {
+          'success': false,
+          'http_status': response.statusCode,
+          'mensagem':
+              'Resposta inválida do Bridge (HTTP ${response.statusCode}). '
+                  'Verifique se o Bridge está atualizado.',
+          'resposta': response.body.length > 500
+              ? response.body.substring(0, 500)
+              : response.body,
+        };
+      }
+
+      if (response.statusCode != 200) {
+        final detalhe = data['detail'] ??
+            data['mensagem'] ??
+            data['message'] ??
+            data['error'];
+        return {
+          ...data,
+          'success': false,
+          'http_status': response.statusCode,
+          'mensagem': detalhe?.toString() ??
+              'Bridge respondeu HTTP ${response.statusCode} ao consultar a SEFAZ.',
+        };
+      }
+
+      return data;
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'mensagem': 'Erro ao comunicar com Bridge local ou SEFAZ: $e',
+      };
+    }
+  }
+
+  /// Manifestacao do Destinatario (Ciencia da Emissao, Confirmacao, etc.)
+  Future<Map<String, dynamic>> manifestarDFe({
+    required Empresa empresa,
+    required String chaveAcesso,
+    String tipoEvento = '210210', // Padrao: 210210 (Ciencia da Emissao)
+    String? justificativa,
+  }) async {
+    final certBase64 = empresa.configuracoes?['certificadoDigitalBytes'] ??
+        empresa.configuracoes?['certificado_base64'] ??
+        empresa.certificadoDigitalUrl ??
+        '';
+    final senhaCert = empresa.senhaCertificado ??
+        empresa.configuracoes?['certificadoDigitalSenha'] ??
+        empresa.configuracoes?['senha_certificado'] ??
+        '';
+
+    final payload = {
+      'empresa': {
+        'cnpj': empresa.cnpj?.replaceAll(RegExp(r'[^0-9]'), '') ?? '',
+        'uf': empresa.estado ?? 'SP',
+        'ambiente_homologacao': empresa.ambienteHomologacao ?? true,
+        'certificado_base64': certBase64,
+        'senha_certificado': senhaCert,
+      },
+      'chave_acesso': chaveAcesso.trim().replaceAll(RegExp(r'[^0-9]'), ''),
+      'tipo_evento': tipoEvento,
+      if (justificativa != null) 'justificativa': justificativa,
+    };
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/nfe/manifestar'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 40));
+
+      if (response.statusCode == 404) {
+        return {
+          'success': false,
+          'http_status': 404,
+          'mensagem':
+              'O Bridge local não possui a rota de Manifestação do Destinatário (HTTP 404). '
+                  'Atualize o Bridge (Atualizar_Bridge_Local.bat) para a versão mais recente.',
+        };
+      }
+
+      final Map<String, dynamic> data;
+      try {
+        data = jsonDecode(response.body) as Map<String, dynamic>;
+      } catch (_) {
+        return {
+          'success': false,
+          'http_status': response.statusCode,
+          'mensagem':
+              'Resposta inválida do Bridge (HTTP ${response.statusCode}) ao manifestar.',
+        };
+      }
+
+      if (response.statusCode != 200) {
+        final detalhe = data['detail'] ??
+            data['mensagem'] ??
+            data['message'] ??
+            data['error'];
+        return {
+          ...data,
+          'success': false,
+          'http_status': response.statusCode,
+          'mensagem': detalhe?.toString() ??
+              'Bridge respondeu HTTP ${response.statusCode} ao manifestar.',
+        };
+      }
+
+      return data;
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'mensagem': 'Erro ao enviar manifestacao: $e',
+      };
+    }
+  }
 }

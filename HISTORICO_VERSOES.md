@@ -29,3 +29,7 @@ Cada entrada é escrita quando você publica uma versão pelo sistema.
 ## 1.0.62 — 07/11/2026 01:12
 - destino: empresa bd45d75b-fee4-4ac2-8975-0f36f61d01bf
 - Correcao do laco de atualizacao: instalacao de desenvolvimento nao se auto-atualiza, trava por tentativa e publicacao unica para Windows e site.
+
+## 1.0.62 — 07/11/2026 09:09
+- destino: TODAS as empresas
+- (sem detalhes informados)

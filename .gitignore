@@ -184,3 +184,6 @@ sincronizador_local_supabase.py
 # se chama `app.env` e nao `.env`.
 assets/app.env
 assets/app.env.*
+
+# Conexoes salvas da Central (contem senhas dos clientes)
+tool/central_conexoes.json

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../models/usuario.dart';
 import '../models/empresa.dart';
 import '../utils/perfis_tributarios_merge.dart';
+import 'historico_mensalidade.dart';
 import 'local_storage_service.dart';
 import 'supabase_service.dart';
 import 'database_service.dart';
@@ -1396,6 +1397,15 @@ class AuthService extends ChangeNotifier {
                 configMerged[chave] = configLocal[chave];
               }
             }
+            // ══ Histórico de pagamentos: une local × nuvem para não perder
+            // meses já confirmados (Pix do Mercado Pago ou OK manual) ══
+            final historicoPagamentos = HistoricoMensalidade.mesclar(
+              HistoricoMensalidade.ler(configLocal),
+              HistoricoMensalidade.ler(configSupabase),
+            );
+            if (historicoPagamentos.isNotEmpty) {
+              configMerged[HistoricoMensalidade.chave] = historicoPagamentos;
+            }
             // ══ Perfis tributários e de preço ══
             aplicarPerfisTributariosMaisRecentes(
               configMerged,
@@ -2052,8 +2062,12 @@ class AuthService extends ChangeNotifier {
       );
     } else
       try {
+        // Mescla as listas vivas antes de subir (mesma proteção do
+        // `_salvarEmpresas`): salvar o cadastro da empresa não pode reenviar
+        // uma cópia velha dos impostos/preços por cima da edição mais nova.
+        final paraSubir = await _mesclarListasVivasParaSubir(empresaAtualizada);
         await _supabaseService
-            .upsert(SupabaseService.tableEmpresas, empresaAtualizada.toMap())
+            .upsert(SupabaseService.tableEmpresas, paraSubir.toMap())
             .timeout(
               const Duration(seconds: 10),
               onTimeout: () {
@@ -2247,6 +2261,15 @@ class AuthService extends ChangeNotifier {
         configMerged[chave] = configLocal[chave];
       }
     }
+    // ══ Histórico de pagamentos: une local × nuvem para não perder meses
+    // já confirmados (Pix do Mercado Pago ou OK manual) ══
+    final historicoPagamentos = HistoricoMensalidade.mesclar(
+      HistoricoMensalidade.ler(configLocal),
+      HistoricoMensalidade.ler(configRemota),
+    );
+    if (historicoPagamentos.isNotEmpty) {
+      configMerged[HistoricoMensalidade.chave] = historicoPagamentos;
+    }
     // ══ Perfis tributários e de preço ══
     aplicarPerfisTributariosMaisRecentes(
       configMerged,
@@ -2263,6 +2286,69 @@ class AuthService extends ChangeNotifier {
       updatedAtRemota: remota.updatedAt,
     );
     return remota.copyWith(configuracoes: configMerged);
+  }
+
+  /// Mescla, pelo carimbo de cada lista, as listas-vivas de
+  /// `empresa.configuracoes` (perfis tributários, perfis de preço,
+  /// departamentos e estoques) com a cópia que está na nuvem, ANTES de subir a
+  /// empresa.
+  ///
+  /// Sem isso, qualquer gravação da empresa enviava o BLOB INTEIRO com a cópia
+  /// (possivelmente velha) que esta máquina tinha em memória e apagava a
+  /// edição mais nova feita em outra máquina ou no site. Era o sintoma
+  /// "mudo o imposto, recarrego a página e volta": o valor novo chegava à
+  /// nuvem e, segundos depois, um `_salvarEmpresas` de outra tela reenviava a
+  /// cópia antiga por cima.
+  ///
+  /// Quando a lista da NUVEM é a mais nova, ela é adotada na cópia retornada
+  /// (não sobrescrevemos o que é mais recente). Falha de rede não bloqueia:
+  /// nesse caso devolve a empresa como está, preservando o comportamento
+  /// offline.
+  Future<Empresa> _mesclarListasVivasParaSubir(Empresa empresa) async {
+    if (!SupabaseService.isAvailable || !empresa.nuvemAtiva) return empresa;
+    final configLocal = empresa.configuracoes ?? <String, dynamic>{};
+    try {
+      final remota = await _supabaseService.client
+          .from(SupabaseService.tableEmpresas)
+          .select('configuracoes, updated_at')
+          .eq('id', empresa.id)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
+      if (remota == null) return empresa;
+      final bruto = remota['configuracoes'];
+      final configRemota = bruto is Map
+          ? Map<String, dynamic>.from(bruto)
+          : <String, dynamic>{};
+      final rawAt = remota['updated_at'];
+      final updatedAtRemota = rawAt == null
+          ? null
+          : DateTime.tryParse(rawAt.toString())?.toUtc();
+
+      final mesclado = Map<String, dynamic>.from(configLocal);
+      void mesclar(String chave, String chaveCarimbo) {
+        aplicarConfigListaMaisRecente(
+          mesclado,
+          configLocal,
+          configRemota,
+          chave: chave,
+          chaveCarimbo: chaveCarimbo,
+          updatedAtLocal: empresa.updatedAt,
+          updatedAtRemota: updatedAtRemota ?? empresa.updatedAt,
+        );
+      }
+
+      mesclar('perfis_tributarios', chavePerfisTributariosAtualizadoEm);
+      mesclar('perfis_preco', chavePerfisPrecoAtualizadoEm);
+      mesclar('departamentos', chaveDepartamentosAtualizadoEm);
+      mesclar('estoques', chaveEstoquesAtualizadoEm);
+      return empresa.copyWith(configuracoes: mesclado);
+    } catch (e) {
+      debugPrint(
+        '>>> [AuthService] Mescla das listas vivas com a nuvem falhou '
+        '(subindo cópia local): $e',
+      );
+      return empresa;
+    }
   }
 
   Future<void> _salvarEmpresas() async {
@@ -2292,8 +2378,12 @@ class AuthService extends ChangeNotifier {
             continue;
           }
           try {
+            // Mescla as listas vivas (impostos, preços, departamentos,
+            // estoques) pelo carimbo antes de subir: sem isso o blob inteiro
+            // com a cópia velha apagava a edição mais nova da nuvem.
+            final paraSubir = await _mesclarListasVivasParaSubir(empresa);
             await _supabaseService
-                .upsert(SupabaseService.tableEmpresas, empresa.toMap())
+                .upsert(SupabaseService.tableEmpresas, paraSubir.toMap())
                 .timeout(
                   const Duration(seconds: 5),
                   onTimeout: () {

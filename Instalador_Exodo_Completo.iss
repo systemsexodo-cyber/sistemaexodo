@@ -1,6 +1,6 @@
 ; ============================================================================
 ; 🚀 Instalador do Sistema Êxodo Completo
-; Inno Setup Script - v1.0.53
+; Inno Setup Script - v1.0.63
 ; Design Profissional
 ; ============================================================================
 ; INSTRUÇÕES:
@@ -17,10 +17,29 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.56"
+#define MyAppVersion "1.0.63"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
+
+; ============================================================================
+; GUARDAS DE CONTEUDO
+; ============================================================================
+; As linhas do [Files] usam `skipifsourcedoesntexist` para nao quebrar a
+; atualizacao quando um opcional nao existe. O efeito colateral era grave: se o
+; bridge (ou o sincronizador) nao estivesse na pasta na hora de compilar, o
+; Inno gerava um setup "com sucesso" e o cliente recebia a instalacao SEM a
+; NFC-e -- exatamente o que aconteceu na 1.0.58. Agora a compilacao FALHA com
+; mensagem clara em vez de gerar um instalador incompleto.
+#if !FileExists(SourcePath + "backend_nfce\dist\ExodoNfceBridge.exe")
+  #error Bridge NFC-e ausente em backend_nfce\dist\ExodoNfceBridge.exe. Compile o bridge (GERAR_EXECUTAVEL.bat) antes de gerar o instalador.
+#endif
+#if !FileExists(SourcePath + "dist\SincronizadorNuvem\SincronizadorNuvem.exe")
+  #error Sincronizador Nuvem ausente em dist\SincronizadorNuvem\. Rode compilar_sincronizador.bat antes de gerar o instalador.
+#endif
+#if !FileExists(SourcePath + "build\windows\x64\runner\Release\" + MyAppExeName)
+  #error App Flutter ausente em build\windows\x64\runner\Release\. Rode flutter build windows --release antes de gerar o instalador.
+#endif
 
 [Setup]
 ; Identificação
@@ -65,6 +84,8 @@ DisableFinishedPage=no
 DisableReadyPage=no
 AlwaysShowDirOnReadyPage=yes
 ShowComponentSizes=no
+CloseApplications=yes
+RestartApplications=no
 RestartIfNeededByRun=no
 
 ; Idiomas
@@ -129,7 +150,7 @@ Name: "{app}\bridge"
 [Files]
 ; --- App Flutter ---
 Source: "build\windows\x64\runner\Release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.exe"
+Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.exe,vcruntime140.dll,vcruntime140_1.dll,msvcp140.dll"
 
 ; --- Visual C++ Runtime (necessário em máquinas sem VC Redistributable) ---
 Source: "build\windows\x64\runner\Release\vcruntime140.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -222,6 +243,10 @@ Name: "{group}\🌐 Preparar este PC na rede"; Filename: "{app}\PREPARAR_REDE_LO
 ; 1. Configurar PostgreSQL
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\setup_postgres.ps1"" -PostgresDir ""{app}\postgresql"" -DataDir ""{app}\pgdata"" -AppDir ""{app}"""; StatusMsg: "🐘 Configurando banco de dados PostgreSQL... (pode levar alguns minutos)"
 
+; 1a. Preparar a LAN automaticamente: firewall, PostgreSQL e descoberta UDP.
+; O instalador ja roda elevado; nenhum IP ou nome de computador e solicitado.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\configurar_lan_postgres.ps1"" -DbPort 5432"; StatusMsg: "Configurando sincronizacao automatica entre computadores da rede..."; Flags: runhidden
+
 ; 1b. Agendar backup automatico (diario 03:00 + inicializacao)
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\AGENDAR_BACKUP_AUTOMATICO.ps1"" -Silencioso"; StatusMsg: "Agendando backup automatico do banco (diario as 03:00)..."; Flags: runhidden
 ; 2. Iniciar Sincronizador Nuvem
@@ -275,6 +300,20 @@ Type: filesandordirs; Name: "{app}\logs"
 
 [Code]
 
+// Fechar processos que podem manter arquivos bloqueados durante atualização.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  // Fechar app e auxiliares antes de copiar os novos arquivos.
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM sistema_exodo_novo.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM SincronizadorNuvem.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM ExodoNfceBridge.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Solicitar parada normal do PostgreSQL para liberar arquivos sem apagar dados.
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop PostgreSQL_Exodo', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(4000);
+end;
 // Verificar se o PATH já contém o diretório
 function NeedsAddPath(Param: string): Boolean;
 var

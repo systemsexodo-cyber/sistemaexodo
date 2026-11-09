@@ -332,8 +332,40 @@ String? _acharProgramaCompilado(String? pasta) {
   return null;
 }
 
+/// Pasta de onde saem os `.sql` que vão no pacote (a de migração mais nova).
+///
+/// O pacote leva `scripts/migrations/*.sql` para o cliente migrar o schema no
+/// boot, sem depender de alcançar a pasta do servidor pela LAN.
+String? _pastaMigracoes(String origem) {
+  final candidatas = <String>{
+    p.join(Directory.current.path, 'scripts', 'migrations'),
+    p.join(p.dirname(Platform.resolvedExecutable), 'scripts', 'migrations'),
+    p.join(origem, 'scripts', 'migrations'),
+  };
+  String? melhor;
+  var melhorVersao = -1;
+  for (final caminho in candidatas) {
+    final dir = Directory(caminho);
+    if (!dir.existsSync()) continue;
+    var maior = -1;
+    for (final e in dir.listSync()) {
+      if (e is! File || !e.path.toLowerCase().endsWith('.sql')) continue;
+      final m = RegExp(r'^(\d+)').firstMatch(p.basename(e.path));
+      if (m == null) continue;
+      final v = int.tryParse(m.group(1)!) ?? -1;
+      if (v > maior) maior = v;
+    }
+    if (maior >= 0 && maior > melhorVersao) {
+      melhor = dir.path;
+      melhorVersao = maior;
+    }
+  }
+  return melhor;
+}
+
 /// Monta o .zip com o MESMO layout que AppUpdateService.empacotarAtualizacao:
-/// `data/app.so`, `data/flutter_assets/**` e `sistema_exodo_novo.exe`.
+/// `data/app.so`, `data/flutter_assets/**`, `scripts/migrations/*.sql` e
+/// `sistema_exodo_novo.exe`.
 Future<String> _empacotar(String origem) async {
   final zip = File(p.join(Directory.systemTemp.path,
       'exodo_publicar_${DateTime.now().millisecondsSinceEpoch}.zip'));
@@ -351,6 +383,23 @@ Future<String> _empacotar(String origem) async {
         final rel = p.relative(item.path, from: raiz).replaceAll('\\', '/');
         await encoder.addFile(item, 'data/flutter_assets/$rel');
       }
+    }
+
+    // Migracoes de schema: o self_update copia o pacote inteiro para a pasta
+    // do app, e o boot aplica os .sql de scripts/migrations que faltarem.
+    final migracoes = _pastaMigracoes(origem);
+    if (migracoes == null) {
+      print('[aviso] scripts/migrations nao encontrada — o pacote vai sem '
+          'migracoes de schema');
+    } else {
+      var enviadas = 0;
+      for (final item in Directory(migracoes).listSync()) {
+        if (item is! File || !item.path.toLowerCase().endsWith('.sql')) continue;
+        await encoder.addFile(
+            item, 'scripts/migrations/${p.basename(item.path)}');
+        enviadas++;
+      }
+      print('migracoes: $enviadas arquivo(s) de $migracoes');
     }
 
     await encoder.addFile(

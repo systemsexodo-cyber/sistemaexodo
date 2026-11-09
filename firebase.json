@@ -40,6 +40,18 @@
           }
         ]
       }
+    ],
+    "redirects": [
+      {
+        "source": "/",
+        "destination": "https://servidorsupabase.tail9b4943.ts.net/",
+        "type": 302
+      },
+      {
+        "source": "/:path*",
+        "destination": "https://servidorsupabase.tail9b4943.ts.net/:path",
+        "type": 302
+      }
     ]
   },
   "functions": [

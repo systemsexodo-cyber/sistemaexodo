@@ -41,6 +41,11 @@ class SyncQueueService {
     '42501', // insufficient_privilege (RLS)
     'permission denied',
     'violates row-level security',
+    // Gatilho `trg_exodo_empresa_imutavel` da nuvem: o id já é de OUTRA
+    // empresa (padrões do sistema têm id fixo). Reenviar nunca vai passar —
+    // antes, este erro ficava em retry infinito e a empresa aparecia sempre
+    // com "ERRO SYNC" no seletor de empresas.
+    'troca de empresa bloqueada',
   ];
   
   // Função para resolver operações vindas do banco de dados

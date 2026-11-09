@@ -67,21 +67,37 @@ def somente_digitos(valor):
     return SO_CNPJ.sub("", valor or "")
 
 
+def normalizar_nome(nome):
+    """Mesmas regras do bridge: monta a chave de busca da pasta por nome."""
+    nome = (nome or "").strip()
+    for ch in '<>:"/\\|?*':
+        nome = nome.replace(ch, " ")
+    nome = re.sub(r"[\x00-\x1f]", "", nome)
+    nome = re.sub(r"\s+", " ", nome).strip(" .")
+    return nome[:80].strip(" .").lower()
+
+
 def carregar_empresas(url, key):
-    """Retorna {'<cnpj somente digitos>': '<empresa_id>'}."""
+    """Retorna ({cnpj: empresa_id}, {nome_normalizado: cnpj})."""
     resposta = requests.get(
-        f"{url}/rest/v1/empresas?select=id,cnpj", headers=headers(key), timeout=30
+        f"{url}/rest/v1/empresas?select=id,cnpj,nome_fantasia,razao_social",
+        headers=headers(key), timeout=30
     )
     if resposta.status_code != 200:
         print(f"[ERRO] Falha ao ler as empresas: {resposta.status_code} - {resposta.text}")
         sys.exit(1)
 
     mapa = {}
+    mapa_nome = {}
     for empresa in resposta.json():
         cnpj = somente_digitos(empresa.get("cnpj"))
         if cnpj and empresa.get("id"):
             mapa[cnpj] = str(empresa["id"])
-    return mapa
+            for nome_empresa in (empresa.get("nome_fantasia"), empresa.get("razao_social")):
+                chave_nome = normalizar_nome(nome_empresa)
+                if chave_nome:
+                    mapa_nome.setdefault(chave_nome, cnpj)
+    return mapa, mapa_nome
 
 
 def chave_do_conteudo(caminho):
@@ -109,17 +125,22 @@ def cnpj_da_chave(chave):
     return None
 
 
-def resolver_cnpj(partes, chave, empresas):
+def resolver_cnpj(partes, chave, empresas, empresas_por_nome=None):
     """Descobre de qual empresa e o XML.
 
-    A pasta (<CNPJ>\<AAAA-MM>\...) e a fonte mais confiavel para as notas DE
-    ENTRADA (o CNPJ da chave seria o do fornecedor). Quando a pasta nao tem o
-    CNPJ - caso das copias em 'Pacotes\...' criadas para o contador - usamos o
-    CNPJ contido na propria chave de acesso.
+    Pastas por NOME DA EMPRESA (padrao novo do bridge) sao resolvidas pelo
+    nome normalizado; pastas por CNPJ (padrao antigo) continuam valendo. Nas
+    notas DE ENTRADA sem pasta reconhecida usamos o CNPJ da chave de acesso.
     """
-    cnpj_pasta = somente_digitos(partes[0]) if len(partes) > 1 else ""
+    pasta = partes[0] if len(partes) > 1 else ""
+    cnpj_pasta = somente_digitos(pasta)
     if len(cnpj_pasta) == 14 and cnpj_pasta in empresas:
         return cnpj_pasta
+
+    if empresas_por_nome:
+        cnpj_nome = empresas_por_nome.get(normalizar_nome(pasta))
+        if cnpj_nome:
+            return cnpj_nome
 
     cnpj_da_nota = cnpj_da_chave(chave)
     if cnpj_da_nota and cnpj_da_nota in empresas:
@@ -171,7 +192,7 @@ def main():
         print(f"[ERRO] Pasta nao encontrada: {args.pasta}")
         sys.exit(1)
 
-    empresas = carregar_empresas(url, key)
+    empresas, empresas_por_nome = carregar_empresas(url, key)
     print(f"[INFO] {len(empresas)} empresa(s) cadastrada(s) na nuvem.")
 
     cnpj_filtro = somente_digitos(args.cnpj) if args.cnpj else None
@@ -194,7 +215,7 @@ def main():
                 ignorados += 1
                 continue
 
-            cnpj_arquivo = resolver_cnpj(partes, chave, empresas)
+            cnpj_arquivo = resolver_cnpj(partes, chave, empresas, empresas_por_nome)
             if cnpj_filtro and cnpj_arquivo != cnpj_filtro:
                 continue
 

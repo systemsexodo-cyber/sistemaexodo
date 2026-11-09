@@ -2047,6 +2047,16 @@ def cancelar_nfce_pynfe(req_dict):
         return {"success": False, "error": str(e), "mensagem": f"Erro interno: {str(e)}", "traceback": tb}
 
 
+
+CODIGO_UF = {
+    "AC": "12", "AL": "27", "AP": "16", "AM": "13", "BA": "29",
+    "CE": "23", "DF": "53", "ES": "32", "GO": "52", "MA": "21",
+    "MT": "51", "MS": "50", "MG": "31", "PA": "15", "PB": "25",
+    "PR": "41", "PE": "26", "PI": "22", "RJ": "33", "RN": "24",
+    "RS": "43", "RO": "11", "RR": "14", "SC": "42", "SP": "35",
+    "SE": "28", "TO": "17",
+}
+
 def inutilizar_nfce_pynfe(req_dict):
     """
     Inutiliza uma faixa de numeraÃ§Ã£o de NFC-e (serviÃ§o NFeInutilizacao4).
@@ -2386,3 +2396,470 @@ def validar_certificado_pynfe(req_dict):
         return {'success': False, 'error': str(e)}
 
 
+
+
+def consultar_distribuicao_pynfe(req_dict):
+    """
+    Consulta o WebService NFeDistribuicaoDFe da SEFAZ (Ambiente Nacional).
+    Permite puxar as notas fiscais (NF-e) emitidas contra o CNPJ da empresa,
+    seja por chave de acesso (44 digitos) ou por lote NSU.
+    """
+    from lxml import etree
+    import base64, os, re, traceback, uuid, gzip
+    import requests as _req
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    caminho_cert = None
+    chave_pem = None
+    cert_pem = None
+    cert_obj = None
+
+    try:
+        empresa_data = req_dict.get("empresa", {}) or {}
+        cnpj = re.sub(r"[^0-9]", "", empresa_data.get("cnpj", ""))
+        if len(cnpj) != 14:
+            return {"success": False, "error": "CNPJ da empresa invalido ou nao informado."}
+
+        uf = str(empresa_data.get("uf", "SP")).upper()
+        c_uf = CODIGO_UF.get(uf, "35")
+
+        is_homolog = (empresa_data.get("ambiente_homologacao") is True) or (str(empresa_data.get("ambiente")) == "2")
+        tp_amb = "2" if is_homolog else "1"
+
+        cert_b64 = empresa_data.get("certificado_base64")
+        senha_cert = empresa_data.get("senha_certificado", "")
+        if not cert_b64:
+            return {"success": False, "error": "Certificado digital A1 nao configurado na empresa."}
+
+        chave_acesso = re.sub(r"[^0-9]", "", str(req_dict.get("chave_acesso") or ""))
+        nsu_informado = str(req_dict.get("nsu") or "0").strip()
+        consulta_nsu_especifico = bool(req_dict.get("consulta_nsu_especifico", False))
+
+        NS = "http://www.portalfiscal.inf.br/nfe"
+        raiz = etree.Element(f"{{{NS}}}distDFeInt", versao="1.01", nsmap={None: NS})
+        etree.SubElement(raiz, f"{{{NS}}}tpAmb").text = tp_amb
+        etree.SubElement(raiz, f"{{{NS}}}cUFAutor").text = c_uf
+        etree.SubElement(raiz, f"{{{NS}}}CNPJ").text = cnpj
+
+        if chave_acesso and len(chave_acesso) == 44:
+            cons_chave = etree.SubElement(raiz, f"{{{NS}}}consChNFe")
+            etree.SubElement(cons_chave, f"{{{NS}}}chNFe").text = chave_acesso
+        elif consulta_nsu_especifico and nsu_informado and nsu_informado != "0":
+            cons_nsu = etree.SubElement(raiz, f"{{{NS}}}consNSU")
+            etree.SubElement(cons_nsu, f"{{{NS}}}NSU").text = nsu_informado.zfill(15)
+        else:
+            dist_nsu = etree.SubElement(raiz, f"{{{NS}}}distNSU")
+            etree.SubElement(dist_nsu, f"{{{NS}}}ultNSU").text = (nsu_informado or "0").zfill(15)
+
+        xml_dados = etree.tostring(raiz, encoding="unicode")
+        xml_dados = xml_dados.replace(' xmlns=""', '')
+
+        SOAP_ACTION = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse"
+        soap_envelope = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+            'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+            'xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">'
+            '<soap12:Body>'
+            '<nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe">'
+            '<nfeDadosMsg>'
+            + xml_dados +
+            '</nfeDadosMsg>'
+            '</nfeDistDFeInteresse>'
+            '</soap12:Body>'
+            '</soap12:Envelope>'
+        )
+
+        cert_data = base64.b64decode(cert_b64)
+        temp_dir = os.environ.get('TEMP', 'C:/temp')
+        caminho_cert = os.path.join(temp_dir, f"cert_dist_{uuid.uuid4().hex}.pfx")
+        with open(caminho_cert, 'wb') as f:
+            f.write(cert_data)
+
+        from pynfe.entidades.certificado import CertificadoA1 as _CertA1
+        cert_obj = _CertA1(caminho_cert)
+        chave_pem, cert_pem = cert_obj.separar_arquivo(senha_cert, caminho=True)
+
+        url_dist = ("https://hom1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx"
+                    if is_homolog
+                    else "https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx")
+
+        headers = {
+            "Content-Type": f'application/soap+xml; charset=utf-8; action="{SOAP_ACTION}"',
+        }
+
+        print(f"[DEBUG DFE] Enviando consulta distribuicao para {url_dist} (CNPJ: {cnpj})...")
+        resp = _req.post(
+            url_dist,
+            data=soap_envelope.encode("utf-8"),
+            headers=headers,
+            cert=(cert_pem, chave_pem),
+            verify=False,
+            timeout=40
+        )
+        resp.encoding = "utf-8"
+        r_text = resp.text
+
+        if not r_text:
+            return {"success": False, "error": "Sem resposta da SEFAZ.", "mensagem": "Conexao interrompida"}
+
+        xml_to_parse = r_text
+        if "<soap:Body" in r_text or "<soap12:Body" in r_text or ":Body" in r_text:
+            match_body = re.search(r'<[^:>]*:?Body[^>]*>(.*?)</[^:>]*:?Body>', r_text, re.DOTALL)
+            if match_body:
+                xml_to_parse = match_body.group(1)
+
+        resp_xml = etree.fromstring(xml_to_parse.encode('utf-8'))
+
+        cstat_l = resp_xml.xpath('//*[local-name()="retDistDFeInt"]/*[local-name()="cStat"]/text()')
+        xmotivo_l = resp_xml.xpath('//*[local-name()="retDistDFeInt"]/*[local-name()="xMotivo"]/text()')
+        ult_nsu_l = resp_xml.xpath('//*[local-name()="retDistDFeInt"]/*[local-name()="ultNSU"]/text()')
+        max_nsu_l = resp_xml.xpath('//*[local-name()="retDistDFeInt"]/*[local-name()="maxNSU"]/text()')
+
+        cstat = cstat_l[0] if cstat_l else ""
+        xmotivo = xmotivo_l[0] if xmotivo_l else ""
+        ult_nsu = ult_nsu_l[0] if ult_nsu_l else ""
+        max_nsu = max_nsu_l[0] if max_nsu_l else ""
+
+        print(f"[DEBUG DFE] cStat={cstat} | xMotivo={xmotivo} | ultNSU={ult_nsu} | maxNSU={max_nsu}")
+
+        doc_zips = resp_xml.xpath('//*[local-name()="loteDistDFeInt"]/*[local-name()="docZip"]')
+        notas = []
+
+        for dz in doc_zips:
+            try:
+                nsu_doc = dz.get("NSU") or ""
+                schema_doc = dz.get("schema") or ""
+                raw_b64 = (dz.text or "").strip()
+                if not raw_b64:
+                    continue
+
+                decompressed_bytes = gzip.decompress(base64.b64decode(raw_b64))
+                doc_xml_str = decompressed_bytes.decode("utf-8", errors="replace")
+                doc_el = etree.fromstring(decompressed_bytes)
+
+                tag_name = etree.QName(doc_el).localname
+
+                if tag_name == "resNFe":
+                    ch_nfe = doc_el.findtext('.//{*}chNFe') or ""
+                    emit_cnpj = doc_el.findtext('.//{*}CNPJ') or doc_el.findtext('.//{*}CPF') or ""
+                    emit_nome = doc_el.findtext('.//{*}xNome') or ""
+                    emit_ie = doc_el.findtext('.//{*}IE') or ""
+                    dh_emi = doc_el.findtext('.//{*}dhEmi') or ""
+                    v_nf = float(doc_el.findtext('.//{*}vNF') or 0.0)
+                    csit_nfe = doc_el.findtext('.//{*}cSitNFe') or "1"
+                    csit_conf = doc_el.findtext('.//{*}cSitConf') or "0"
+
+                    num_nota = ""
+                    serie_nota = ""
+                    if len(ch_nfe) == 44:
+                        try:
+                            num_nota = str(int(ch_nfe[25:34]))
+                            serie_nota = str(int(ch_nfe[22:25]))
+                        except:
+                            num_nota = ch_nfe[25:34]
+                            serie_nota = ch_nfe[22:25]
+
+                    situacao = "autorizada"
+                    if csit_nfe == "2":
+                        situacao = "denegada"
+                    elif csit_nfe == "3":
+                        situacao = "cancelada"
+
+                    notas.append({
+                        "nsu": nsu_doc,
+                        "schema": schema_doc,
+                        "tipo": "resumo",
+                        "chave": ch_nfe,
+                        "numero": num_nota,
+                        "serie": serie_nota,
+                        "emitente_cnpj": emit_cnpj,
+                        "emitente_nome": emit_nome,
+                        "emitente_ie": emit_ie,
+                        "data_emissao": dh_emi,
+                        "valor_total": v_nf,
+                        "situacao": situacao,
+                        "situacao_codigo": csit_nfe,
+                        "manifestacao_codigo": csit_conf,
+                        "tem_xml_completo": False,
+                        "xml": doc_xml_str
+                    })
+
+                elif "nfeProc" in tag_name or "NFe" in tag_name:
+                    ch_nfe = doc_el.findtext('.//{*}chNFe') or ""
+                    if not ch_nfe:
+                        inf_nfe = doc_el.find('.//{*}infNFe')
+                        if inf_nfe is not None:
+                            attr_id = inf_nfe.get('Id') or ''
+                            if attr_id.startswith('NFe'):
+                                ch_nfe = attr_id[3:]
+
+                    num_nota = doc_el.findtext('.//{*}ide/{*}nNF') or ""
+                    serie_nota = doc_el.findtext('.//{*}ide/{*}serie') or ""
+                    emit_cnpj = doc_el.findtext('.//{*}emit/{*}CNPJ') or doc_el.findtext('.//{*}emit/{*}CPF') or ""
+                    emit_nome = doc_el.findtext('.//{*}emit/{*}xNome') or ""
+                    emit_ie = doc_el.findtext('.//{*}emit/{*}IE') or ""
+                    dh_emi = doc_el.findtext('.//{*}ide/{*}dhEmi') or doc_el.findtext('.//{*}ide/{*}dEmi') or ""
+                    v_nf = float(doc_el.findtext('.//{*}total/{*}ICMSTot/{*}vNF') or 0.0)
+
+                    notas.append({
+                        "nsu": nsu_doc,
+                        "schema": schema_doc,
+                        "tipo": "completo",
+                        "chave": ch_nfe,
+                        "numero": num_nota,
+                        "serie": serie_nota,
+                        "emitente_cnpj": emit_cnpj,
+                        "emitente_nome": emit_nome,
+                        "emitente_ie": emit_ie,
+                        "data_emissao": dh_emi,
+                        "valor_total": v_nf,
+                        "situacao": "autorizada",
+                        "tem_xml_completo": True,
+                        "xml": doc_xml_str
+                    })
+
+                elif "resEvento" in tag_name or "procEventoNFe" in tag_name:
+                    ch_nfe = doc_el.findtext('.//{*}chNFe') or ""
+                    tp_evento = doc_el.findtext('.//{*}tpEvento') or ""
+                    x_evento = doc_el.findtext('.//{*}xEvento') or ""
+                    dh_evento = doc_el.findtext('.//{*}dhEvento') or ""
+                    if tp_evento == "110111":
+                        for n in notas:
+                            if n.get("chave") == ch_nfe:
+                                n["situacao"] = "cancelada"
+            except Exception as e_doc:
+                print(f"[AVISO DFE] Erro ao descompactar docZip {dz.get('NSU')}: {e_doc}")
+
+        success = cstat in ["138", "137"]
+        msg = xmotivo
+        if cstat == "656":
+            msg = "Consumo Indevido: a SEFAZ exige aguardar antes de consultar novamente o mesmo NSU."
+        elif cstat == "137" and not notas:
+            msg = "Nenhuma nova nota fiscal localizada na SEFAZ para este CNPJ no momento."
+
+        return {
+            "success": success,
+            "cStat": cstat,
+            "xMotivo": xmotivo,
+            "mensagem": msg,
+            "ultNSU": ult_nsu,
+            "maxNSU": max_nsu,
+            "total_documentos": len(notas),
+            "notas": notas
+        }
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERRO DISTRIBUICAO DFE] {e} {tb}")
+        return {"success": False, "error": str(e), "mensagem": f"Erro interno ao consultar SEFAZ: {str(e)}", "traceback": tb}
+    finally:
+        for f_path in [chave_pem, cert_pem]:
+            if f_path and os.path.exists(f_path):
+                try: os.remove(f_path)
+                except: pass
+        try:
+            if cert_obj is not None:
+                cert_obj.excluir()
+        except: pass
+        if caminho_cert and os.path.exists(caminho_cert):
+            try: os.remove(caminho_cert)
+            except: pass
+
+
+def manifestar_dfe_pynfe(req_dict):
+    """
+    Envia evento de Manifestacao do Destinatario para a SEFAZ (Ambiente Nacional).
+    Eventos suportados:
+      210200: Confirmacao da Operacao
+      210210: Ciencia da Emissao
+      210220: Desconhecimento da Operacao
+      210240: Operacao nao Realizada
+    """
+    from lxml import etree
+    from datetime import datetime
+    import base64, os, re, traceback, uuid
+    import requests as _req
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    caminho_cert = None
+    chave_pem = None
+    cert_pem = None
+    cert_obj = None
+
+    try:
+        empresa_data = req_dict.get("empresa", {}) or {}
+        chave_acesso = re.sub(r"[^0-9]", "", str(req_dict.get("chave_acesso") or ""))
+        tipo_evento = str(req_dict.get("tipo_evento") or "210210").strip()
+        justificativa = str(req_dict.get("justificativa") or "").strip()
+
+        if len(chave_acesso) != 44:
+            return {"success": False, "error": "Chave de acesso deve conter exatamente 44 digitos."}
+
+        cert_b64 = empresa_data.get("certificado_base64")
+        senha_cert = empresa_data.get("senha_certificado", "")
+        if not cert_b64:
+            return {"success": False, "error": "Certificado digital A1 nao informado."}
+
+        cnpj = re.sub(r"[^0-9]", "", empresa_data.get("cnpj", ""))
+        is_homolog = (empresa_data.get("ambiente_homologacao") is True) or (str(empresa_data.get("ambiente")) == "2")
+        tp_amb = "2" if is_homolog else "1"
+        dh_evento = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-03:00")
+
+        NOMES_EVENTO = {
+            "210200": "Confirmacao da Operacao",
+            "210210": "Ciencia da Emissao",
+            "210220": "Desconhecimento da Operacao",
+            "210240": "Operacao nao Realizada"
+        }
+        desc_evento = NOMES_EVENTO.get(tipo_evento, "Ciencia da Emissao")
+        c_orgao = "91"
+
+        NS = "http://www.portalfiscal.inf.br/nfe"
+        env_evento = etree.Element(f"{{{NS}}}envEvento", versao="1.00", nsmap={None: NS})
+        etree.SubElement(env_evento, f"{{{NS}}}idLote").text = "1"
+
+        evento_el = etree.SubElement(env_evento, f"{{{NS}}}evento", versao="1.00")
+        id_evento = f"ID{tipo_evento}{chave_acesso}01"
+        inf_evento = etree.SubElement(evento_el, f"{{{NS}}}infEvento", Id=id_evento)
+
+        etree.SubElement(inf_evento, f"{{{NS}}}cOrgao").text = c_orgao
+        etree.SubElement(inf_evento, f"{{{NS}}}tpAmb").text = tp_amb
+        etree.SubElement(inf_evento, f"{{{NS}}}CNPJ").text = cnpj
+        etree.SubElement(inf_evento, f"{{{NS}}}chNFe").text = chave_acesso
+        etree.SubElement(inf_evento, f"{{{NS}}}dhEvento").text = dh_evento
+        etree.SubElement(inf_evento, f"{{{NS}}}tpEvento").text = tipo_evento
+        etree.SubElement(inf_evento, f"{{{NS}}}nSeqEvento").text = "1"
+        etree.SubElement(inf_evento, f"{{{NS}}}verEvento").text = "1.00"
+
+        det_evento = etree.SubElement(inf_evento, f"{{{NS}}}detEvento", versao="1.00")
+        etree.SubElement(det_evento, f"{{{NS}}}descEvento").text = desc_evento
+        if tipo_evento == "210240":
+            if len(justificativa) < 15:
+                justificativa = "Operacao nao realizada mercadoria nao recebida"
+            etree.SubElement(det_evento, f"{{{NS}}}xJust").text = justificativa[:255]
+
+        cert_data = base64.b64decode(cert_b64)
+        temp_dir = os.environ.get('TEMP', 'C:/temp')
+        caminho_cert = os.path.join(temp_dir, f"cert_manif_{uuid.uuid4().hex}.pfx")
+        with open(caminho_cert, 'wb') as f:
+            f.write(cert_data)
+
+        from pynfe.processamento.assinatura import AssinaturaA1
+        from pynfe.entidades.certificado import CertificadoA1 as _CertA1
+
+        assinador = AssinaturaA1(caminho_cert, senha_cert)
+        env_evento_assinado = assinador.assinar(env_evento)
+
+        NS_DSIG = "http://www.w3.org/2000/09/xmldsig#"
+        NS_NFE = "http://www.portalfiscal.inf.br/nfe"
+
+        sig_errada = env_evento_assinado.find(f"{{{NS_DSIG}}}Signature")
+        if sig_errada is None:
+            sig_errada = env_evento_assinado.find("Signature")
+
+        if sig_errada is not None:
+            env_evento_assinado.remove(sig_errada)
+            evento_tag = env_evento_assinado.find(f"{{{NS_NFE}}}evento")
+            if evento_tag is None:
+                evento_tag = env_evento_assinado.find("evento")
+            if evento_tag is not None:
+                evento_tag.append(sig_errada)
+            else:
+                env_evento_assinado.append(sig_errada)
+
+        xml_str = etree.tostring(env_evento_assinado, encoding="unicode")
+        xml_str = xml_str.replace(' xmlns=""', '')
+
+        url_evento = ("https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx"
+                      if is_homolog
+                      else "https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx")
+
+        SOAP_ACTION = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento"
+        soap_envelope = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+            'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+            'xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">'
+            '<soap12:Body>'
+            '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">'
+            + xml_str +
+            '</nfeDadosMsg>'
+            '</soap12:Body>'
+            '</soap12:Envelope>'
+        )
+
+        cert_obj = _CertA1(caminho_cert)
+        chave_pem, cert_pem = cert_obj.separar_arquivo(senha_cert, caminho=True)
+
+        headers = {
+            "Content-Type": f'application/soap+xml; charset=utf-8; action="{SOAP_ACTION}"',
+        }
+
+        print(f"[DEBUG MANIF] Enviando evento {tipo_evento} para {url_evento} (Chave: {chave_acesso})...")
+        resp = _req.post(
+            url_evento,
+            data=soap_envelope.encode("utf-8"),
+            headers=headers,
+            cert=(cert_pem, chave_pem),
+            verify=False,
+            timeout=35
+        )
+        resp.encoding = "utf-8"
+        r_text = resp.text
+
+        if not r_text:
+            return {"success": False, "error": "Sem resposta da SEFAZ.", "mensagem": "Conexao interrompida"}
+
+        xml_to_parse = r_text
+        if "<soap:Body" in r_text or "<soap12:Body" in r_text or ":Body" in r_text:
+            match_body = re.search(r'<[^:>]*:?Body[^>]*>(.*?)</[^:>]*:?Body>', r_text, re.DOTALL)
+            if match_body:
+                xml_to_parse = match_body.group(1)
+
+        resp_xml = etree.fromstring(xml_to_parse.encode('utf-8'))
+        cstat_evento = resp_xml.xpath('//*[local-name()="retEvento"]//*[local-name()="infEvento"]//*[local-name()="cStat"]/text()')
+        xmotivo_evento = resp_xml.xpath('//*[local-name()="retEvento"]//*[local-name()="infEvento"]//*[local-name()="xMotivo"]/text()')
+
+        cstat = ""
+        xmotivo = "Sem resposta legivel da SEFAZ"
+
+        if cstat_evento:
+            cstat = cstat_evento[0]
+            xmotivo = xmotivo_evento[0] if xmotivo_evento else "Status retornado vazio"
+        else:
+            cstat_lote = resp_xml.xpath('//*[local-name()="retEnvEvento"]//*[local-name()="cStat"]/text()')
+            xmotivo_lote = resp_xml.xpath('//*[local-name()="retEnvEvento"]//*[local-name()="xMotivo"]/text()')
+            if cstat_lote:
+                cstat = cstat_lote[0]
+                xmotivo = xmotivo_lote[0] if xmotivo_lote else "Status de lote retornado vazio"
+
+        print(f"[DEBUG MANIF] cStat={cstat} | xMotivo={xmotivo}")
+
+        success = cstat in ["135", "573"]
+
+        return {
+            "success": success,
+            "cStat": cstat,
+            "xMotivo": xmotivo,
+            "mensagem": xmotivo,
+            "chave_acesso": chave_acesso,
+            "tipo_evento": tipo_evento
+        }
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERRO MANIFESTACAO DFE] {e} {tb}")
+        return {"success": False, "error": str(e), "mensagem": f"Erro interno ao manifestar SEFAZ: {str(e)}", "traceback": tb}
+    finally:
+        for f_path in [chave_pem, cert_pem]:
+            if f_path and os.path.exists(f_path):
+                try: os.remove(f_path)
+                except: pass
+        try:
+            if cert_obj is not None:
+                cert_obj.excluir()
+        except: pass
+        if caminho_cert and os.path.exists(caminho_cert):
+            try: os.remove(caminho_cert)
+            except: pass

@@ -26,10 +26,33 @@ instável): a loja continua com os dois caixas enxergando as mesmas vendas.
   Quem envia a linha original para o Supabase é o PC de origem.
 - Valem as mesmas travas do download da nuvem:
   - **filtro de empresa** (não mistura dados de empresas diferentes);
-  - **nunca sobrescrever** alteração local ainda não enviada nem conflito aberto
-    (a versão que o usuário está vendo em casa vence);
+  - **nunca sobrescrever** alteração local ainda não enviada nem conflito aberto;
   - tabelas privadas **nunca** são copiadas — `usuarios` (senhas), `cache_dados`,
     `exodo_sync_conflitos`, `sync_status`, `sync_logs`, `bridge_*`, `exodo_config`.
+
+## Descoberta automática (Êxodo Sync LAN)
+
+O sincronizador agora possui uma camada de descoberta automática por UDP
+broadcast:
+
+- Cada instalação cria e guarda um `device_id` UUID em
+  `exodo_device.json`; esse identificador não muda quando o DHCP troca o IP.
+- Os dispositivos anunciam somente protocolo, versão, `device_id` e porta
+  PostgreSQL. **Usuário, senha, nome do banco e dados comerciais não são
+  transmitidos no anúncio.**
+- O sincronizador recebe os pares encontrados e tenta conectar ao PostgreSQL
+  usando as credenciais locais já configuradas.
+- Cada parceiro recebe seu próprio cursor de sincronização, identificado pelo
+  `device_id`; o `PAR_HOST` antigo continua como compatibilidade durante a
+  atualização dos computadores.
+- O serviço usa UDP 45872. O script de preparação cria uma regra de Firewall
+  para essa porta e restringe as regras PostgreSQL/descoberta à sub-rede local.
+
+O instalador atualizado aplica automaticamente a configuracao do PostgreSQL,
+as regras de Firewall TCP/UDP e ativa `LAN_SYNC=true` em cada computador.
+Nao e necessario executar **Liberar este PC na rede**, informar IP ou escolher
+o parceiro manualmente. O SincronizadorNuvem inicia junto com o Windows e
+procura os outros dispositivos Êxodo na mesma rede local.
 
 ---
 

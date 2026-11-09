@@ -20,6 +20,7 @@ import 'adicionar_empresa_page.dart';
 import 'gerenciar_usuarios_page.dart';
 import 'login_page.dart';
 import '../services/google_drive_service.dart';
+import '../services/historico_mensalidade.dart';
 import '../services/bridge_management_service.dart';
 import 'empresas_page.dart';
 import '../services/supabase_service.dart';
@@ -1794,6 +1795,47 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
+  /// Linha do histórico de pagamentos da mensalidade (competência + valor/data).
+  Widget _linhaHistoricoMensalidade(Map<String, dynamic> registro) {
+    final competencia = HistoricoMensalidade.rotuloCompetencia(
+      (registro['competencia'] ?? '').toString(),
+    );
+    final valor = registro['valor'];
+    final valorTexto = valor is num
+        ? 'R\$ ${valor.toStringAsFixed(2).replaceAll('.', ',')}'
+        : '';
+    final data = HistoricoMensalidade.rotuloData(registro['pago_em']);
+    final manual = (registro['origem'] ?? '').toString() == 'manual';
+    final detalhe = [
+      if (valorTexto.isNotEmpty) valorTexto,
+      if (data.isNotEmpty) data,
+    ].join(' • ');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(
+            manual ? Icons.touch_app_rounded : Icons.pix_rounded,
+            color: manual ? Colors.orangeAccent : Colors.greenAccent,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Competência $competencia',
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+          Text(
+            detalhe,
+            style: const TextStyle(color: Colors.white54, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Abre a modal de gerenciamento de mensalidade da empresa
   Future<void> _abrirDialogMensalidade(
     BuildContext context,
@@ -1890,6 +1932,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     bool bloqueadoManual =
         configs['bloqueado'] == true || configs['bloqueado'] == 'true';
     String? ultimoMesPago = configs['ultimo_mes_pago']?.toString();
+    List<Map<String, dynamic>> historico = HistoricoMensalidade.ler(configs);
 
     final agora = DateTime.now();
     final mesAtualStr =
@@ -2021,15 +2064,25 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                                 );
                                 return;
                               }
+                              final configsComHistorico =
+                                  HistoricoMensalidade.registrar(
+                                    configs,
+                                    competencia: mesAtualStr,
+                                    valor: valorMensalidade,
+                                    origem: 'manual',
+                                  );
                               setState(() {
                                 statusPagamento = 'pago';
                                 bloqueadoManual = false;
                                 ultimoMesPago = mesAtualStr;
+                                historico = HistoricoMensalidade.ler(
+                                  configsComHistorico,
+                                );
                               });
                               // Salvar automaticamente no banco ao DAR OK
                               try {
                                 final novasConfigs = Map<String, dynamic>.from(
-                                  configs,
+                                  configsComHistorico,
                                 );
                                 novasConfigs['data_inicio'] =
                                     dataInicioCtrl.text.trim().isEmpty
@@ -2048,6 +2101,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                                 novasConfigs['status_pagamento'] = 'pago';
                                 novasConfigs['bloqueado'] = false;
                                 novasConfigs['ultimo_mes_pago'] = mesAtualStr;
+                                configs[HistoricoMensalidade.chave] = historico;
 
                                 final empresaAtualizada = empresa.copyWith(
                                   configuracoes: novasConfigs,
@@ -2088,6 +2142,80 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               }
                             },
                           ),
+                        ],
+                      ),
+                    ),
+
+                    // Histórico de pagamentos (competências já confirmadas)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.blueAccent.withOpacity(0.35),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.history_rounded,
+                                color: Colors.blueAccent,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Histórico de pagamentos',
+                                  style: TextStyle(
+                                    color: Colors.blueAccent,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                historico.length == 1
+                                    ? '1 mês pago'
+                                    : '${historico.length} meses pagos',
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          if (historico.isEmpty)
+                            const Text(
+                              'Nenhum pagamento registrado ainda. Os meses '
+                              'confirmados (Pix do Mercado Pago ou OK manual) '
+                              'aparecem aqui.',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                                height: 1.4,
+                              ),
+                            )
+                          else
+                            ...HistoricoMensalidade.recentesPrimeiro(
+                              historico,
+                            ).take(12).map(_linhaHistoricoMensalidade),
+                          if (historico.length > 12) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Mostrando os 12 pagamentos mais recentes.',
+                              style: TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -2258,6 +2386,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                       novasConfigs['status_pagamento'] = statusPagamento;
                       novasConfigs['bloqueado'] = bloqueadoManual;
                       novasConfigs['ultimo_mes_pago'] = ultimoMesPago;
+                      novasConfigs[HistoricoMensalidade.chave] = historico;
 
                       final empresaAtualizada = empresa.copyWith(
                         configuracoes: novasConfigs,

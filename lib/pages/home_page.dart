@@ -698,34 +698,6 @@ class _HomePageState extends State<HomePage> {
             children: [
               const ExodoLogoCompact(fontSize: 28),
               const SizedBox(width: 8),
-              // O chip da versão é um BOTÃO: abre o que mudou nesta versão.
-              Tooltip(
-                message: 'Clique para ver as atualizações desta versão',
-                child: InkWell(
-                  onTap: _mostrarNovidadesDaVersao,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.white.withOpacity(0.12)),
-                    ),
-                    child: Text(
-                      'V${AppUpdateService.currentAppVersion}',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.5),
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
               if (!ehCelular && empresaAtual != null) ...[
                 const SizedBox(width: 8),
                 // FLEXIBLE: sem isto o chip da empresa (que tem largura própria,
@@ -797,6 +769,49 @@ class _HomePageState extends State<HomePage> {
             ],
           ), // Restaurado 'ê' conforme pedido
           centerTitle: !ehCelular,
+          // Chip da VERSÃO: é um BOTÃO que abre o que mudou nesta versão.
+          // Ele ficava no COMEÇO das ações e, em janela estreita, o Row de
+          // ações é espremido até colidir com a seta de voltar (o "V1.0.62"
+          // sobreposto no topo, reportado pelo usuário). Agora ele vem ABAIXO
+          // da barra (appBar.bottom), alinhado à direita: continua sempre
+          // visível no desktop e no celular, mas não colide com o voltar.
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(28),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 12, bottom: 4),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Tooltip(
+                  message: 'Clique para ver as atualizações desta versão',
+                  child: InkWell(
+                    onTap: _mostrarNovidadesDaVersao,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border:
+                            Border.all(color: Colors.white.withOpacity(0.12)),
+                      ),
+                      child: Text(
+                        'V${AppUpdateService.currentAppVersion}',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           actions: [
             const SyncStatusWidget(),
 

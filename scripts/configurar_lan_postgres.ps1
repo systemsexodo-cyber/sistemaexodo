@@ -170,7 +170,8 @@ if ($conf -ne $confOriginal) {
 
 # --- 2. pg_hba.conf --------------------------------------------------------
 # Quem pode entrar: um IP (-PeerHost), uma rede (-Subnet) ou, por padrao, a
-# rede local inteira. Vale sempre a senha do banco (scram-sha-256).
+# rede local inteira. O metodo md5 tambem negocia SCRAM automaticamente quando
+# a senha armazenada no PostgreSQL e SCRAM, mantendo compatibilidade com bancos antigos.
 $alvos = @()
 if (-not [string]::IsNullOrWhiteSpace($Subnet)) {
     $alvos += $Subnet.Trim()
@@ -209,25 +210,29 @@ $modo = if ($alvos.Count -eq 1 -and $alvos[0] -like '*/32') { 'IP unico' } else 
 Write-Host ""
 Write-Host "[2/5] Liberando ($modo) no pg_hba.conf: $($alvos -join ', ')"
 $hba = Get-Content $hbaFile -Raw
+$hbaOriginal = $hba
 $novas = @()
 foreach ($alvo in $alvos) {
+    $padrao = "(?m)^(host\s+all\s+all\s+" + [regex]::Escape($alvo) + "\s+)(?:scram-sha-256|md5)(\s*(?:#.*)?)$"
+    $hba = [regex]::Replace($hba, $padrao, '$1md5$2')
     if ($hba -notmatch [regex]::Escape($alvo)) { $novas += $alvo }
 }
-if ($novas.Count -eq 0) {
-    Write-Host "      ja liberado."
-} else {
-    Copy-Item $hbaFile "$hbaFile.bak_lan" -Force
+if ($novas.Count -gt 0) {
     $extra = ""
     foreach ($alvo in $novas) {
-        $extra += "host    all             all             $alvo            scram-sha-256`r`n"
+        $extra += "host    all             all             $alvo            md5`r`n"
     }
-    # IPv6 tambem: o Windows resolve o nome do PC para fe80::... antes do IPv4,
-    # e sem esta linha o outro caixa recebe "nenhuma entrada em pg_hba.conf".
-    $extra += "host    all             all             fe80::/10        scram-sha-256`r`n"
-    $extra += "host    all             all             ::1/128          scram-sha-256`r`n"
+    # IPv6 tambem: o Windows resolve o nome do PC para fe80::... antes do IPv4.
+    $extra += "host    all             all             fe80::/10        md5`r`n"
+    $extra += "host    all             all             ::1/128          md5`r`n"
     $hba = $hba.TrimEnd() + "`r`n`r`n# Exodo - sincronizacao LAN (adicionado automaticamente)`r`n$extra"
+}
+if ($hba -ne $hbaOriginal) {
+    Copy-Item $hbaFile "$hbaFile.bak_lan" -Force
     Set-Content -Path $hbaFile -Value $hba -NoNewline
-    Write-Host "      pg_hba.conf atualizado: $($novas -join ', ') (backup: pg_hba.conf.bak_lan)"
+    Write-Host "      pg_hba.conf atualizado para autenticacao compativel com bancos novos e antigos."
+} else {
+    Write-Host "      pg_hba.conf ja estava correto."
 }
 
 # --- 3. Firewall -----------------------------------------------------------
@@ -241,18 +246,33 @@ try {
     # outro PC continuava sem conectar.
     Remove-NetFirewallRule -DisplayName $regra -ErrorAction SilentlyContinue
     New-NetFirewallRule -DisplayName $regra -Direction Inbound -Protocol TCP `
-        -LocalPort $DbPort -Action Allow -Profile Any | Out-Null
-    Write-Host "      regra '$regra' criada para TODOS os perfis de rede."
+        -LocalPort $DbPort -RemoteAddress LocalSubnet -Action Allow -Profile Any | Out-Null
+    # Descoberta automatica dos outros dispositivos Exodo (UDP broadcast).
+    $regraDescoberta = "Exodo Sync LAN - Descoberta UDP"
+    Remove-NetFirewallRule -DisplayName $regraDescoberta -ErrorAction SilentlyContinue
+    New-NetFirewallRule -DisplayName $regraDescoberta -Direction Inbound -Protocol UDP `
+        -LocalPort 45872 -RemoteAddress LocalSubnet -Action Allow -Profile Any | Out-Null
+    Write-Host "      PostgreSQL e descoberta UDP liberados somente para a rede local."
 } catch {
-    Write-Host "      AVISO: nao consegui criar a regra ($($_.Exception.Message))." -ForegroundColor Yellow
-    Write-Host "      Libere a porta $DbPort manualmente, senao o outro PC nao conecta."
+    Falhar "nao consegui configurar as regras de Firewall para PostgreSQL/descoberta LAN: $($_.Exception.Message)"
 }
 
 # --- 4. .env ---------------------------------------------------------------
 Write-Host ""
 $umParSo = (-not [string]::IsNullOrWhiteSpace($PeerHost)) -and ($PeerHost -notmatch '/')
 if (-not $umParSo) {
-    Write-Host "[4/5] Liberando a rede inteira: PAR_HOST nao muda aqui (quem escolhe o OUTRO PC e a tela Rede LAN do sistema)."
+    Write-Host "[4/5] Ativando descoberta automatica (sem IP manual)."
+    if (-not (Test-Path $envFile)) { Falhar ".env nao encontrado em $envFile" }
+    $envTxt = Get-Content $envFile -Raw
+    $envNovo = [regex]::Replace($envTxt, "(?m)^\s*LAN_SYNC\s*=.*$", "LAN_SYNC=true", 1)
+    if ($envNovo -eq $envTxt -and $envTxt -notmatch "(?m)^\s*LAN_SYNC\s*=") {
+        $envNovo = $envTxt.TrimEnd() + "`r`nLAN_SYNC=true`r`n"
+    }
+    if ($envNovo -ne $envTxt) {
+        Copy-Item $envFile "$envFile.bak_lan" -Force
+        Set-Content -Path $envFile -Value $envNovo -NoNewline
+    }
+    Write-Host "      LAN_SYNC=true configurado; nenhum IP precisa ser informado."
 } elseif (-not (Test-Path $envFile)) {
     Write-Host "[4/5] AVISO: .env nao encontrado em $envFile - preencha PAR_HOST manualmente." -ForegroundColor Yellow
 } else {
@@ -310,8 +330,21 @@ if ($NaoReiniciar) {
     if ($reiniciou) {
         Write-Host "      PostgreSQL reiniciado." -ForegroundColor Green
     } else {
-        Write-Host "      AVISO: nao consegui reiniciar automaticamente. Reinicie o servico PostgreSQL na mao." -ForegroundColor Yellow
+        Falhar "nao consegui reiniciar o PostgreSQL automaticamente. O banco nao foi considerado pronto para LAN."
     }
+    $portaOk = $false
+    for ($i = 0; $i -lt 20; $i++) {
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $ar = $tcp.BeginConnect('127.0.0.1', [int]$DbPort, $null, $null)
+            if ($ar.AsyncWaitHandle.WaitOne(1000) -and $tcp.Connected) { $portaOk = $true }
+            $tcp.Close()
+        } catch { }
+        if ($portaOk) { break }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $portaOk) { Falhar "PostgreSQL nao voltou a escutar na porta $DbPort apos a configuracao LAN." }
+    Write-Host "      PostgreSQL respondendo na porta $DbPort." -ForegroundColor Green
 }
 
 # --- resumo ----------------------------------------------------------------
