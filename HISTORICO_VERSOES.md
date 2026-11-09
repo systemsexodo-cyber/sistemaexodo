@@ -33,3 +33,7 @@ Cada entrada é escrita quando você publica uma versão pelo sistema.
 ## 1.0.62 — 07/11/2026 09:09
 - destino: TODAS as empresas
 - (sem detalhes informados)
+
+## 1.0.63 — 08/11/2026
+- destino: TODAS as empresas
+- Correções de compilação, card de Compras com filtro por data e estado vazio, bridge local reiniciado.

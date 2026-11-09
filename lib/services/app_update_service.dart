@@ -114,7 +114,7 @@ class VersaoNaNuvem {
 }
 
 class AppUpdateService {
-  static const String currentAppVersion = "1.0.62";
+  static const String currentAppVersion = "1.0.63";
 
   /// Verifica se há uma nova versão do aplicativo no Supabase (Direcionada por Empresa ou Global)
   static Future<Map<String, dynamic>?> verificarAtualizacao({
