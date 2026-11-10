@@ -97,7 +97,8 @@ O script faz o mesmo que o botão do app e ainda grava `PAR_HOST`/`PAR_PORT` no
 
 | Chave | Obrigatória | Padrão | O que é |
 |---|---|---|---|
-| `PAR_HOST` | sim (para ligar a LAN) | vazio | IP do **outro** PC na rede local |
+| `PAR_HOST` | sim (para ligar a LAN) | vazio | IP do **outro** PC na rede local (na loja com vários PCs, o primeiro da lista) |
+| `LAN_PEERS` | não | vazio | Todos os PCs da loja, separados por `;` (`nome@host:porta`). A tela **Rede LAN** preenche sozinha com o que a busca encontrar |
 | `PAR_PORT` | não | `5432` | Porta do PostgreSQL do par |
 | `PAR_DB_NAME` | não | `DB_NAME` | Banco no par |
 | `PAR_DB_USER` | não | `DB_USER` | Usuário no par |

@@ -1,6 +1,6 @@
 ; ============================================================================
 ; 🚀 Instalador do Sistema Êxodo Completo
-; Inno Setup Script - v1.0.63
+; Inno Setup Script - v1.0.69
 ; Design Profissional
 ; ============================================================================
 ; INSTRUÇÕES:
@@ -17,7 +17,7 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.63"
+#define MyAppVersion "1.0.73"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
@@ -57,7 +57,7 @@ DefaultGroupName=Sistema Êxodo
 DisableProgramGroupPage=yes
 
 ; Saída
-OutputDir=dist\instalador
+OutputDir=dist
 OutputBaseFilename=Setup_Sistema_Exodo_v{#MyAppVersion}
 
 ; Compressão
@@ -215,6 +215,10 @@ Source: ".env.example"; DestDir: "{app}"; DestName: ".env"; Flags: ignoreversion
 ; app procura); sem ele o aplicativo cai em modo local SEM avisar.
 Source: ".env.neon.example"; DestDir: "{app}"; DestName: ".env.neon"; Flags: ignoreversion onlyifdoesntexist
 
+; ============================================================================
+; CONFIGURACAO DA REDE LAN NO INSTALADOR; ============================================================================
+; O instalador copia o .env.example (com valores vazios). O usuario deve; depois usar a tela "Rede LAN" no app para descobrir e salvar os PCs.; Opcional: preencher LAN_PEERS no .env antes de rodar o sincronizador.
+; Veja o arquivo .env.example para o novo formato LAN_PEERS.
 ; ============================================================================
 ; ATALHOS
 ; ============================================================================

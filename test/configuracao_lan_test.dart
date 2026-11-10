@@ -265,6 +265,52 @@ void main() {
     });
   });
 
+  group('lista de PCs (LAN_PEERS)', () {
+    test('lê e grava a lista sem repetir o mesmo PC', () {
+      final cfg = ConfigRedeLocal.doMapa(const {
+        'LAN_SYNC': 'true',
+        'PAR_HOST': 'PC-CAIXA-1',
+        'LAN_PEERS':
+            'PC-CAIXA-1@PC-CAIXA-1:5432; @PC-CAIXA-2:5433; PC-CAIXA-1@PC-CAIXA-1:5432',
+      });
+
+      final pares = cfg.todosOsPares;
+      // O PAR_HOST (compatibilidade) vem primeiro; o repetido não duplica.
+      expect(pares.map((p) => p.host), ['PC-CAIXA-1', 'PC-CAIXA-2']);
+      expect(pares[1].porta, 5433);
+      expect(cfg.paraMapa()['LAN_PEERS'],
+          'PC-CAIXA-1:5432;PC-CAIXA-2:5433');
+    });
+
+    test('salvar lista põe o PRIMEIRO no PAR_HOST', () {
+      final cfg = const ConfigRedeLocal(ligado: true).comPares(const [
+        ParConfigurado(host: 'PC-CAIXA-2', nome: 'PC-CAIXA-2'),
+        ParConfigurado(host: 'PC-CAIXA-3', nome: 'PC-CAIXA-3'),
+      ]);
+
+      expect(cfg.pronto, isTrue);
+      expect(cfg.paraMapa()['PAR_HOST'], 'PC-CAIXA-2');
+      expect(cfg.paraMapa()['LAN_PEERS'],
+          'PC-CAIXA-2:5432;PC-CAIXA-3:5432');
+      // Ler de volta devolve a mesma lista.
+      expect(
+        ConfigRedeLocal.doMapa(cfg.paraMapa()).todosOsPares.map((p) => p.host),
+        ['PC-CAIXA-2', 'PC-CAIXA-3'],
+      );
+    });
+
+    test('sem lista, vale o PAR_HOST de sempre', () {
+      final cfg = ConfigRedeLocal.doMapa(const {
+        'PAR_HOST': '192.168.0.12',
+        'PAR_PORT': '5433',
+        'PAR_NOME': 'Caixa 2',
+      });
+      expect(cfg.todosOsPares.single.host, '192.168.0.12');
+      expect(cfg.todosOsPares.single.porta, 5433);
+      expect(cfg.todosOsPares.single.nome, 'Caixa 2');
+    });
+  });
+
   group('tela de configuração', () {
     Future<void> abrir(
       WidgetTester tester, {
@@ -456,6 +502,79 @@ void main() {
 
       expect(find.textContaining('Conectado no banco do outro PC'),
           findsOneWidget);
+    });
+
+    testWidgets('busca salva sozinha TODOS os PCs encontrados', (tester) async {
+      ConfigRedeLocal? salvo;
+      await abrir(
+        tester,
+        config: const ConfigRedeLocal(ligado: true),
+        busca: const ResultadoBuscaRede(
+          pares: [
+            ParNaRede(
+              host: '192.168.0.12',
+              porta: 5432,
+              aceitou: true,
+              nome: 'PC-CAIXA-2',
+              ip: '192.168.0.12',
+              tabelas: 42,
+            ),
+            ParNaRede(
+              host: '192.168.0.13',
+              porta: 5432,
+              aceitou: true,
+              nome: 'PC-CAIXA-3',
+              ip: '192.168.0.13',
+              tabelas: 42,
+            ),
+          ],
+          redes: ['192.168.0.x'],
+        ),
+        aoSalvar: (cfg) => salvo = cfg,
+      );
+
+      await tester.tap(find.text('Procurar PCs'));
+      await tester.pumpAndSettle();
+
+      // Ninguém precisa escolher um por um: os dois PCs que responderam com o
+      // banco do Êxodo entram na lista e vão para o .env sem clique extra.
+      expect(salvo, isNotNull);
+      expect(salvo!.pares.map((p) => p.host), ['PC-CAIXA-2', 'PC-CAIXA-3']);
+      expect(salvo!.host, 'PC-CAIXA-2');
+      expect(salvo!.pronto, isTrue);
+      expect(
+        find.textContaining('encontrados e salvos automaticamente'),
+        findsOneWidget,
+      );
+      // Os dois aparecem na lista de PCs que este computador sincroniza.
+      expect(find.text('PC-CAIXA-3'), findsWidgets);
+    });
+
+    testWidgets('remover um PC da lista tira ele do que é salvo',
+        (tester) async {
+      ConfigRedeLocal? salvo;
+      await abrir(
+        tester,
+        config: const ConfigRedeLocal(
+          ligado: true,
+          host: 'PC-CAIXA-2',
+          nome: 'PC-CAIXA-2',
+          pares: [
+            ParConfigurado(host: 'PC-CAIXA-2', nome: 'PC-CAIXA-2'),
+            ParConfigurado(host: 'PC-CAIXA-3', nome: 'PC-CAIXA-3'),
+          ],
+        ),
+        aoSalvar: (cfg) => salvo = cfg,
+      );
+
+      await tester.tap(find.byTooltip('Remover PC-CAIXA-3 da lista'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(salvo, isNotNull);
+      expect(salvo!.pares.map((p) => p.host), ['PC-CAIXA-2']);
+      expect(salvo!.host, 'PC-CAIXA-2');
     });
   });
 

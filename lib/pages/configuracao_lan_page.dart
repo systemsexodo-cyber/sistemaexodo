@@ -73,6 +73,9 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
 
   bool _ligado = false;
   bool _inicialCompleto = false;
+
+  /// PCs que este computador sincroniza — não é mais um par só.
+  List<ParConfigurado> _pares = const <ParConfigurado>[];
   String _ipLocal = '';
   String _nomeLocal = '';
 
@@ -100,6 +103,7 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
     _portaCtrl = TextEditingController(text: '${_cfg.porta}');
     _nomeCtrl = TextEditingController(text: _cfg.nome);
     _diasCtrl = TextEditingController(text: '${_cfg.diasTombstone}');
+    _pares = _cfg.todosOsPares.toList();
     _ipLocal = widget.ipLocal ?? '';
     _nomeLocal = widget.nomeLocal ?? RedeLocalService.nomeProvavel();
     if (widget.ipLocal == null) {
@@ -125,14 +129,34 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
   // ───────────────────────────────────────────────────────────────────────────
 
   ConfigRedeLocal _montarConfig() {
+    final pares = List<ParConfigurado>.from(_pares);
+    // O que estiver digitado no campo entra na lista se ainda não estiver —
+    // assim "digitar o nome e salvar" continua funcionando como antes.
+    final digitado = _hostCtrl.text.trim();
+    if (digitado.isNotEmpty) {
+      final chave = digitado.toLowerCase();
+      final jaTem = pares.any(
+        (p) =>
+            p.host.toLowerCase() == chave ||
+            p.nome.toLowerCase() == chave ||
+            p.chave == chave,
+      );
+      if (!jaTem) {
+        pares.insert(
+          0,
+          ParConfigurado(
+            host: digitado,
+            porta: int.tryParse(_portaCtrl.text.trim()) ?? 5432,
+            nome: _nomeCtrl.text.trim(),
+          ),
+        );
+      }
+    }
     return ConfigRedeLocal(
       ligado: _ligado,
-      host: _hostCtrl.text.trim(),
-      porta: int.tryParse(_portaCtrl.text.trim()) ?? 5432,
-      nome: _nomeCtrl.text.trim(),
       diasTombstone: int.tryParse(_diasCtrl.text.trim()) ?? 30,
       inicialCompleto: _inicialCompleto,
-    );
+    ).comPares(pares);
   }
 
   Future<void> _carregarLog() async {
@@ -167,6 +191,7 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
           _portaCtrl.text = '${par.porta}';
         }
       });
+      await _absorverParesDaBusca(resultado.pares);
     } catch (e) {
       if (!mounted) return;
       setState(() => _busca = null);
@@ -174,6 +199,69 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
     } finally {
       if (mounted) setState(() => _buscando = false);
     }
+  }
+
+  /// Guarda na lista TODOS os PCs que responderam com o banco do Êxodo.
+  ///
+  /// É o "conectar automaticamente e ficar salvo": a busca já entra no banco
+  /// de cada PC (é isso que confirma que ele serve), então o que foi
+  /// encontrado é salvo no `.env` na hora, sem o usuário ter de escolher um
+  /// por vez nem correr o risco de salvar o segundo por cima do primeiro.
+  Future<void> _absorverParesDaBusca(List<ParNaRede> encontrados) async {
+    final pares = List<ParConfigurado>.from(_pares);
+    var novos = 0;
+    for (final par in encontrados) {
+      if (!par.aceitou) continue;
+      // O NOME manda: o IP da loja vem do roteador e muda.
+      final host = (par.nome ?? par.host).trim();
+      if (host.isEmpty) continue;
+      final candidato = ParConfigurado(
+        host: host,
+        porta: par.porta,
+        nome: (par.nome ?? '').trim(),
+      );
+      final chave = host.toLowerCase();
+      final jaTem = pares.any(
+        (p) => p.chave == candidato.chave || p.host.toLowerCase() == chave,
+      );
+      if (jaTem) continue;
+      pares.add(candidato);
+      novos++;
+    }
+    if (novos == 0 || !mounted) return;
+    setState(() => _pares = pares);
+    await _salvar(silencioso: true);
+    if (!mounted) return;
+    _avisar(
+      '✅ $novos computador(es) encontrados e salvos automaticamente. '
+      'O sincronizador atualiza o banco com todos.',
+    );
+  }
+
+  /// Põe na lista o computador digitado no campo (nome ou IP).
+  void _adicionarDigitado() {
+    final host = _hostCtrl.text.trim();
+    if (host.isEmpty) {
+      _avisar('Informe o nome (ou o IP) do computador.', erro: true);
+      return;
+    }
+    final chave = host.toLowerCase();
+    if (_pares.any(
+      (p) => p.chave == chave || p.host.toLowerCase() == chave,
+    )) {
+      _avisar('Esse computador já está na lista.');
+      return;
+    }
+    final par = ParConfigurado(
+      host: host,
+      porta: int.tryParse(_portaCtrl.text.trim()) ?? 5432,
+      nome: _nomeCtrl.text.trim(),
+    );
+    setState(() => _pares = [..._pares, par]);
+    _avisar(
+      '✅ ${par.rotulo} adicionado. Toque em "Salvar" para valer no '
+      'sincronizador.',
+    );
   }
 
   Future<ResultadoBuscaRede> _buscarPadrao(
@@ -285,10 +373,14 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
       _portaCtrl.text = '${lido.porta}';
       _nomeCtrl.text = lido.nome;
       _diasCtrl.text = '${lido.diasTombstone}';
+      _pares = lido.todosOsPares.toList();
     });
   }
 
-  Future<void> _salvar({bool reiniciarDepois = false}) async {
+  Future<void> _salvar({
+    bool reiniciarDepois = false,
+    bool silencioso = false,
+  }) async {
     setState(() => _salvando = true);
     final cfg = _montarConfig();
     final salvar = widget.salvar ?? RedeLocalService.salvar;
@@ -296,7 +388,7 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
       final (ok, mensagem) = await salvar(cfg);
       if (!mounted) return;
       if (ok) setState(() => _cfg = cfg);
-      _avisar('${ok ? '✅' : '❌'} $mensagem', erro: !ok);
+      if (!silencioso) _avisar('${ok ? '✅' : '❌'} $mensagem', erro: !ok);
     } catch (e) {
       if (!mounted) return;
       _avisar('❌ Não consegui salvar: $e', erro: true);
@@ -496,6 +588,59 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _adicionarDigitado,
+                icon: const Icon(Icons.add),
+                label: const Text('Adicionar à lista'),
+              ),
+            ],
+          ),
+          _cartao(
+            titulo: 'Computadores que este PC sincroniza',
+            icone: Icons.devices_other,
+            filhos: [
+              const Text(
+                'O sincronizador atualiza o banco com TODOS os computadores '
+                'desta lista — não só com um. A busca acima já adiciona sozinha '
+                'os PCs que respondem com o banco do Êxodo.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              if (_pares.isEmpty)
+                const Text(
+                  'Nenhum computador salvo ainda. Toque em "Procurar PCs".',
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                )
+              else
+                ..._pares.map(
+                  (par) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading:
+                        const Icon(Icons.computer, color: _azul, size: 18),
+                    title: Text(
+                      par.rotulo,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    subtitle: Text(
+                      '${par.host}:${par.porta}',
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 11),
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Remover ${par.rotulo} da lista',
+                      icon: const Icon(Icons.delete_outline,
+                          color: Colors.redAccent, size: 18),
+                      onPressed: () => setState(
+                        () => _pares = _pares
+                            .where((p) => p.chave != par.chave)
+                            .toList(),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
           _cartao(
@@ -630,12 +775,16 @@ class _ConfiguracaoLanPageState extends State<ConfiguracaoLanPage> {
           const SizedBox(height: 16),
           if (_cfg.pronto)
             _faixa(
-              'Rede local ATIVA com ${_cfg.host}:${_cfg.porta} '
-              '(salvo neste computador).'
-              '${_cfg.hostEhNome ? ' Informado pelo NOME: se o IP do outro PC '
-                  'mudar, a rede se ajusta sozinha.' : ' Atenção: informado pelo '
-                  'IP. Se o outro PC trocar de endereço, a rede para — prefira o '
-                  'nome do computador.'}',
+              _cfg.todosOsPares.length > 1
+                  ? 'Rede local ATIVA com ${_cfg.todosOsPares.length} '
+                      'computadores (${_cfg.todosOsPares.map((p) => p.rotulo).join(', ')}) '
+                      '— salvo neste computador.'
+                  : 'Rede local ATIVA com ${_cfg.host}:${_cfg.porta} '
+                      '(salvo neste computador).'
+                      '${_cfg.hostEhNome ? ' Informado pelo NOME: se o IP do outro PC '
+                          'mudar, a rede se ajusta sozinha.' : ' Atenção: informado pelo '
+                          'IP. Se o outro PC trocar de endereço, a rede para — prefira '
+                          'o nome do computador.'}',
               cor: _verde,
               icone: Icons.check_circle,
             )

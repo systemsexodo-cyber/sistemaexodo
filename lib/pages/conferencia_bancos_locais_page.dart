@@ -60,11 +60,14 @@ class _ConferenciaBancosLocaisPageState
       ).timeout(const Duration(seconds: 10));
     }
     final lan = ConfigRedeLocal.ler();
+    // Loja com vários PCs: confere o PRIMEIRO da lista (o `PAR_HOST` pode estar
+    // vazio quando o `.env` só tem `LAN_PEERS`).
+    final primeiro = lan.todosOsPares.isEmpty ? null : lan.todosOsPares.first;
     final mapa = EnvConfig.env;
     return Connection.open(
       Endpoint(
-        host: lan.host,
-        port: lan.porta,
+        host: primeiro?.host ?? lan.host,
+        port: primeiro?.porta ?? lan.porta,
         database: (mapa['PAR_DB_NAME'] ?? '').trim().isNotEmpty
             ? (mapa['PAR_DB_NAME'] ?? '').trim()
             : EnvConfig.dbName,
@@ -85,7 +88,10 @@ class _ConferenciaBancosLocaisPageState
       _erro = null;
       _linhas = [];
       _status = 'Conectando...';
-      _parNome = ConfigRedeLocal.ler().nome;
+      final lanLido = ConfigRedeLocal.ler();
+      _parNome = lanLido.todosOsPares.isEmpty
+          ? lanLido.nome
+          : lanLido.todosOsPares.first.rotulo;
     });
     Connection? local;
     Connection? par;
@@ -93,7 +99,8 @@ class _ConferenciaBancosLocaisPageState
       final lan = ConfigRedeLocal.ler();
       if (!lan.pronto) {
         throw StateError(
-            'LAN não está configurada (PAR_HOST vazio). Configure em Rede LAN primeiro.');
+            'LAN não está configurada (nenhum computador salvo). Configure em '
+            'Rede LAN primeiro.');
       }
       local = await _abrir(local: true);
       par = await _abrir(local: false);

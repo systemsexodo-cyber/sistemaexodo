@@ -10,7 +10,82 @@ import 'env_config.dart';
 import 'process_utils.dart';
 import 'sincronizador_manager_service.dart';
 
-/// Configuração da REDE LOCAL (os dois PCs da mesma loja) — a mesma que o
+/// Um computador da rede local que este PC sincroniza.
+///
+/// A LAN nasceu com UM par só (`PAR_HOST`/`PAR_PORT`/`PAR_NOME`): numa loja com
+/// três caixas, salvar o segundo apagava o primeiro — e o sincronizador só
+/// falava com um PC. A lista agora fica em `LAN_PEERS`, no formato
+/// `host:porta;host:porta`, e o `PAR_HOST` continua sendo gravado com o
+/// PRIMEIRO item (compatibilidade com o sincronizador antigo).
+class ParConfigurado {
+  const ParConfigurado({this.host = '', this.porta = 5432, this.nome = ''});
+
+  /// NOME do computador (o recomendado: o IP muda com o DHCP) ou o IP.
+  final String host;
+
+  final int porta;
+
+  /// Rótulo do par (aparece no log). Pode ser vazio.
+  final String nome;
+
+  bool get valido => host.trim().isNotEmpty;
+
+  /// O que identifica o PC na lista: o NOME (estável) ou, sem ele, o host.
+  String get chave => (nome.trim().isNotEmpty ? nome : host).trim().toLowerCase();
+
+  /// Como o PC aparece na tela: o nome, quando existe.
+  String get rotulo => nome.trim().isNotEmpty ? nome.trim() : host.trim();
+
+  /// Texto gravado em `LAN_PEERS`: `nome@host:porta` (sem nome repetido, só
+  /// `host:porta`).
+  String paraTexto() {
+    final h = host.trim();
+    final n = nome.replaceAll('@', '').replaceAll(';', '').trim();
+    final base = '$h:$porta';
+    if (n.isEmpty || n.toLowerCase() == h.toLowerCase()) return base;
+    return '$n@$base';
+  }
+
+  /// Lê um item de `LAN_PEERS`. Devolve `null` quando não há endereço.
+  static ParConfigurado? deTexto(String texto) {
+    var bruto = texto.trim();
+    if (bruto.isEmpty) return null;
+    var nome = '';
+    final arroba = bruto.lastIndexOf('@');
+    if (arroba >= 0) {
+      nome = bruto.substring(0, arroba).trim();
+      bruto = bruto.substring(arroba + 1).trim();
+    }
+    if (bruto.isEmpty) return null;
+    var host = bruto;
+    var porta = 5432;
+    final doisPontos = bruto.lastIndexOf(':');
+    if (doisPontos > 0) {
+      final talvezPorta = int.tryParse(bruto.substring(doisPontos + 1).trim());
+      if (talvezPorta != null) {
+        porta = talvezPorta;
+        host = bruto.substring(0, doisPontos).trim();
+      }
+    }
+    if (host.isEmpty) return null;
+    return ParConfigurado(host: host, porta: porta, nome: nome);
+  }
+
+  /// Lê a lista inteira de `LAN_PEERS`, sem repetir PC.
+  static List<ParConfigurado> listaDe(String? texto) {
+    final lista = <ParConfigurado>[];
+    final vistos = <String>{};
+    for (final parte in (texto ?? '').split(';')) {
+      final par = deTexto(parte);
+      if (par == null) continue;
+      if (!vistos.add(par.chave)) continue;
+      lista.add(par);
+    }
+    return lista;
+  }
+}
+
+/// Configuração da REDE LOCAL (os PCs da mesma loja) — a mesma que o
 /// sincronizador de bandeja lê no `.env`.
 ///
 /// O `.env` é o canal entre o app e o sincronizador: a tela de configuração
@@ -25,6 +100,7 @@ class ConfigRedeLocal {
     this.nome = '',
     this.diasTombstone = 30,
     this.inicialCompleto = false,
+    this.pares = const <ParConfigurado>[],
   });
 
   /// `LAN_SYNC`: liga/desliga sem apagar o `PAR_HOST`.
@@ -50,8 +126,55 @@ class ConfigRedeLocal {
   /// `LAN_INICIAL_COMPLETO`: no 1º contato puxa o histórico inteiro do par.
   final bool inicialCompleto;
 
+  /// `LAN_PEERS`: todos os PCs da loja (o `host`/`porta`/`nome` acima é o
+  /// primeiro deles, mantido para o sincronizador antigo).
+  final List<ParConfigurado> pares;
+
   /// true quando dá para o sincronizador ligar a LAN com o que está aqui.
-  bool get pronto => ligado && host.trim().isNotEmpty;
+  bool get pronto =>
+      ligado && (host.trim().isNotEmpty || pares.any((p) => p.valido));
+
+  /// Todos os PCs a sincronizar: o `PAR_HOST` (compatibilidade) mais a lista,
+  /// sem repetir o mesmo computador.
+  List<ParConfigurado> get todosOsPares {
+    final vistos = <String>{};
+    final lista = <ParConfigurado>[];
+    void adicionar(ParConfigurado p) {
+      if (!p.valido) return;
+      if (!vistos.add(p.chave)) return;
+      lista.add(p);
+    }
+
+    if (host.trim().isNotEmpty) {
+      adicionar(ParConfigurado(host: host.trim(), porta: porta, nome: nome));
+    }
+    for (final par in pares) {
+      adicionar(par);
+    }
+    return lista;
+  }
+
+  /// Devolve esta configuração com a lista informada, mantendo o `PAR_HOST`
+  /// apontando para o PRIMEIRO PC (é o que o sincronizador antigo lê).
+  ConfigRedeLocal comPares(List<ParConfigurado> novos) {
+    final limpos = <ParConfigurado>[];
+    final vistos = <String>{};
+    for (final par in novos) {
+      if (!par.valido) continue;
+      if (!vistos.add(par.chave)) continue;
+      limpos.add(par);
+    }
+    final primeiro = limpos.isEmpty ? null : limpos.first;
+    return ConfigRedeLocal(
+      ligado: ligado,
+      host: primeiro?.host.trim() ?? '',
+      porta: primeiro?.porta ?? porta,
+      nome: primeiro?.nome.trim() ?? '',
+      diasTombstone: diasTombstone,
+      inicialCompleto: inicialCompleto,
+      pares: limpos,
+    );
+  }
 
   /// O par foi informado por NOME do computador (e não por IP)?
   bool get hostEhNome => _ehNome(host);
@@ -69,6 +192,7 @@ class ConfigRedeLocal {
       diasTombstone:
           int.tryParse((mapa['LAN_DIAS_TOMBSTONE'] ?? '').trim()) ?? 30,
       inicialCompleto: _booleano(mapa['LAN_INICIAL_COMPLETO'], padrao: false),
+      pares: ParConfigurado.listaDe(mapa['LAN_PEERS']),
     );
   }
 
@@ -80,6 +204,7 @@ class ConfigRedeLocal {
     'PAR_NOME',
     'LAN_DIAS_TOMBSTONE',
     'LAN_INICIAL_COMPLETO',
+    'LAN_PEERS',
   ];
 
   /// Texto do `.env` que a tela escreve (mesmas chaves do `.env.example`).
@@ -90,6 +215,10 @@ class ConfigRedeLocal {
         'PAR_NOME': nome.trim(),
         'LAN_DIAS_TOMBSTONE': '$diasTombstone',
         'LAN_INICIAL_COMPLETO': inicialCompleto ? 'true' : 'false',
+        'LAN_PEERS': pares
+            .where((p) => p.valido)
+            .map((p) => p.paraTexto())
+            .join(';'),
       };
 
   ConfigRedeLocal copyWith({
@@ -99,6 +228,7 @@ class ConfigRedeLocal {
     String? nome,
     int? diasTombstone,
     bool? inicialCompleto,
+    List<ParConfigurado>? pares,
   }) {
     return ConfigRedeLocal(
       ligado: ligado ?? this.ligado,
@@ -107,6 +237,7 @@ class ConfigRedeLocal {
       nome: nome ?? this.nome,
       diasTombstone: diasTombstone ?? this.diasTombstone,
       inicialCompleto: inicialCompleto ?? this.inicialCompleto,
+      pares: pares ?? this.pares,
     );
   }
 
@@ -283,6 +414,18 @@ class RedeLocalService {
       final limpo = cfg.host.trim();
       if (limpo.isEmpty) {
         return (true, 'Salvo: rede local DESLIGADA (nenhum PC par informado).');
+      }
+      final total = cfg.todosOsPares.length;
+      // Loja com vários PCs: só um resumo. Resolver o nome de cada um a cada
+      // gravação custaria segundos (4s por nome) e os PCs já foram conferidos
+      // pela busca, que só mostra quem respondeu no banco.
+      if (total > 1) {
+        return (
+          true,
+          'Salvo: $total computadores na lista '
+              '(${cfg.todosOsPares.map((p) => p.rotulo).join(', ')}). '
+              'O sincronizador atualiza o banco com todos eles.',
+        );
       }
       // Nome de computador: confirma AGORA que este PC consegue achar o outro.
       // Sem isso o erro só apareceria como "sem conexão" no log, sem dizer que
