@@ -124,6 +124,27 @@
         </div>
       </div>
 
+      <!-- Servicos do servidor -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">🖥️ Serviços do Servidor (nuvem, portal, central, sincronizador)</div>
+        <div class="card-body">
+          <div id="servicosTabela" style="margin-bottom: 12px;">
+            <div class="label">Carregando status…</div>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="carregarServicos()">🔄 Atualizar status</button>
+            <button class="btn btn-secondary" onclick="acaoServico('subir_vm')">☁️ Subir VM da nuvem</button>
+            <button class="btn btn-secondary" onclick="acaoServico('subir_central')">📊 Subir Central (8091)</button>
+            <button class="btn btn-secondary" onclick="acaoServico('subir_sincronizador')">🔄 Subir Sincronizador</button>
+            <button class="btn btn-secondary" onclick="acaoServico('reparar_funnel')">🌐 Reparar Funnel</button>
+          </div>
+          <div class="label" style="margin-top: 10px;">
+            Ordem recomendada: VM da nuvem → (espera ~1 min) → Sincronizador → Reparar Funnel.
+            O portal e a Central sobem sozinhos com o Windows.
+          </div>
+        </div>
+      </div>
+
       <!-- Sync Status -->
       <div class="card">
         <div class="card-header">🔄 Status de Sincronização</div>
@@ -342,6 +363,61 @@
           <div id="editorLinhaForm" class="hidden"></div>
           <div class="label" style="margin-top:12px;">Ultima resposta do editor</div>
           <pre id="editorResposta" class="sql-result"></pre>
+        </div>
+      </div>
+
+      <!-- Códigos de ativação (por venda, uso único) -->
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">🔑 Códigos de Ativação (por venda, uso único)</div>
+        <div class="card-body">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+            <div style="flex:1; min-width:150px;">
+              <div class="label">Quantos códigos</div>
+              <input class="input" id="codQuantidade" type="number" min="1" max="200" value="1">
+            </div>
+            <div style="flex:2; min-width:260px;">
+              <div class="label">Empresa (opcional — prende o código à mensalidade dela)</div>
+              <select class="input" id="codEmpresa"><option value="">Sem empresa (vincula no 1º login)</option></select>
+            </div>
+            <div style="flex:1; min-width:150px;">
+              <div class="label">Prazo para usar (dias)</div>
+              <input class="input" id="codDias" type="number" min="0" value="0" placeholder="0 = sem prazo">
+            </div>
+          </div>
+          <div class="label">ID do computador (opcional — cole o “ID DESTE COMPUTADOR” da tela de ativação)</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <input class="input mono" id="codMaquina" placeholder="18ee66...400a (64 caracteres)" style="flex:2; min-width:280px;">
+            <button class="btn btn-secondary" onclick="limparMaquinaCodigo()">Limpar</button>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-success" onclick="gerarCodigosAtivacao()">🔑 Gerar código(s)</button>
+            <button class="btn btn-primary" onclick="carregarCodigosAtivacao()">🔄 Recarregar lista</button>
+            <button class="btn btn-secondary" onclick="copiarCodigosNovos()">📋 Copiar gerados</button>
+          </div>
+          <pre id="codigosNovos" style="display:none;"></pre>
+          <div class="table-container">
+            <table id="codigosTable">
+              <thead>
+                <tr><th>Código</th><th>Empresa</th><th>Máquina</th><th>Situação</th><th>Criado em</th><th>Ativado em</th><th>Ações</th></tr>
+              </thead>
+              <tbody><tr><td colspan="7">Carregando...</td></tr></tbody>
+            </table>
+          </div>
+          <div class="label" style="margin-top:10px;">Cada código ativa UM computador por 30 dias e só pode ser usado uma vez. Entregue um código por venda — o cliente digita na tela “Ative este computador”.</div>
+          <div class="divider"></div>
+          <div class="label">Máquinas ativadas (licença de instalação — computador × empresa)</div>
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="carregarLicencasInstalacao()">🔄 Recarregar máquinas</button>
+          </div>
+          <div class="table-container">
+            <table id="maquinasLicencaTable">
+              <thead>
+                <tr><th>Computador</th><th>ID</th><th>Empresa</th><th>Vence em</th><th>Renovações</th><th>Situação</th></tr>
+              </thead>
+              <tbody><tr><td colspan="6">Carregando...</td></tr></tbody>
+            </table>
+          </div>
+          <div class="label" style="margin-top:8px;">O computador aparece aqui depois que o cliente digita o código. A empresa vem do código gerado acima — o login em outra empresa não troca o vínculo.</div>
         </div>
       </div>
 
@@ -1224,7 +1300,7 @@ function escHtml(v) {
 // Endereço que o CLIENTE alcança. Abrindo o painel por localhost, o
 // `location.origin` é o Kong da própria máquina e o cliente do outro
 // computador recebia "conexão recusada" (erro 1225) ao baixar.
-const ORIGEM_PUBLICA = 'https://servidorsupabase.tail9b4943.ts.net';
+const ORIGEM_PUBLICA = 'https://exodosystems.tail9b4943.ts.net';
 function origemPublica() {
   const origem = location.origin;
   if (/\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|$)/.test(origem)) return ORIGEM_PUBLICA;
@@ -1677,6 +1753,50 @@ async function acaoRapida(nome) {
   return d;
 }
 
+// ── Serviços do servidor (VM, portal, central, sincronizador, Funnel) ──
+async function carregarServicos() {
+  const alvo = document.getElementById('servicosTabela');
+  let d = null;
+  try {
+    d = await fetch('/admin/servicos').then(r => r.json());
+  } catch (e) {
+    d = { sucesso: false, erro: String(e) };
+  }
+  if (!d || !d.sucesso) {
+    alvo.innerHTML = '<div class="label">Não foi possível ler o status: ' + ((d && d.erro) || 'sem resposta') + '</div>';
+    return d;
+  }
+  const linhas = (d.itens || []).map(i =>
+    '<span class="key">' + i.nome + '</span>' +
+    '<span class="value">' + (i.ok ? '✅' : '❌') + ' ' + (i.detalhe || '') + '</span>'
+  ).join('');
+  alvo.innerHTML = '<div class="key-value">' + linhas + '</div>' +
+    '<div class="label" style="margin-top:8px;">' +
+    (d.todos_ok ? 'Tudo de pé.' : 'Tem peça fora do ar — o ❌ acima mostra qual; use o botão correspondente.') +
+    '</div>';
+  return d;
+}
+
+async function acaoServico(nome) {
+  showToast('Executando: ' + nome.replace(/_/g, ' ') + '…', 'info');
+  let d = null;
+  try {
+    d = await fetch('/admin/acoes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acao: nome }),
+    }).then(r => r.json());
+  } catch (e) {
+    d = { sucesso: false, erro: String(e) };
+  }
+  const texto = d.sucesso
+    ? (d.mensagem || ('OK: ' + nome.replace(/_/g, ' ')))
+    : ('Erro em ' + nome.replace(/_/g, ' ') + ': ' + (d.erro || d.saida || 'falhou'));
+  showToast(texto, d.sucesso ? 'ok' : 'erro');
+  await carregarServicos();
+  return d;
+}
+
 async function acionarBackupAgora() {
   const d = await fetch('/admin/acoes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao: 'backup' }) }).then(r => r.json());
   showToast(d.sucesso ? 'Backup iniciado (PID ' + d.pid + ')' : ('Erro no backup: ' + (d.erro || 'falhou')), d.sucesso ? 'ok' : 'erro');
@@ -1695,6 +1815,20 @@ async function resolverTodosConflitos() {
   return d;
 }
 
+function somenteDigitos(v) {
+  return String(v === null || v === undefined ? '' : v).replace(/\D/g, '');
+}
+
+function formatarCnpj(v) {
+  const d = somenteDigitos(v);
+  if (d.length !== 14) return String(v || '');
+  return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+}
+
+function nomeEmpresa(emp) {
+  return emp.nome_fantasia || emp.razao_social || emp.id || 'Empresa';
+}
+
 async function carregarMaquinas() {
   const tbody = document.querySelector('#maquinasTable tbody');
   const confBody = document.querySelector('#conflitosTable tbody');
@@ -1702,18 +1836,73 @@ async function carregarMaquinas() {
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="5">carregando...</td></tr>';
   try {
-    const d = await fetch('/admin/maquinas').then(r => r.json());
+    // /admin/maquinas traz online/versões/conflitos; a leitura direta de
+    // bridge_status acrescenta o CNPJ da empresa de cada máquina.
+    const [d, detalhadas, empresas] = await Promise.all([
+      fetch('/admin/maquinas').then(r => r.json()),
+      api('/bridge_status?select=id,pc_name,online,versao_software,versao_windows,' +
+          'ultimo_cnpj,ultima_atualizacao,configuracoes&order=ultima_atualizacao.desc')
+        .catch(() => []),
+      api('/empresas?select=id,razao_social,nome_fantasia,cnpj').catch(() => [])
+    ]);
     if (!d.sucesso) throw new Error(d.erro || 'falhou');
-    const maquinas = d.maquinas || [];
-    tbody.innerHTML = maquinas.length ? maquinas.map(m => {
-      const quando = m.ultima_atualizacao ? new Date(m.ultima_atualizacao).toLocaleString() : '-';
-      return '<tr>' +
-        '<td class="mono">' + escHtml(m.pc_name || m.id || '?') + '</td>' +
-        '<td>' + (m.online ? '🟢 sim' : '⚪ não') + '</td>' +
-        '<td>' + escHtml(m.versao_software || '-') + '</td>' +
-        '<td>' + escHtml(m.versao_windows || '-') + '</td>' +
-        '<td>' + escHtml(quando) + '</td>' +
-      '</tr>';
+
+    const empresasPorId = {};
+    const empresasPorCnpj = {};
+    (empresas || []).forEach(emp => {
+      empresasPorId[String(emp.id)] = emp;
+      const chave = somenteDigitos(emp.cnpj);
+      if (chave) empresasPorCnpj[chave] = emp;
+    });
+
+    const maquinas = (detalhadas && detalhadas.length ? detalhadas : (d.maquinas || []))
+      .filter(m => !String(m.id || '').startsWith('watchdog_'));
+
+    // Agrupa por empresa. O vínculo vem do CNPJ da última emissão
+    // (ultimo_cnpj) ou da empresa ativa informada pelo sincronizador
+    // (configuracoes.empresa_ativa_id). Sem vínculo, cai no grupo final.
+    const grupos = new Map();
+    maquinas.forEach(m => {
+      let cfg = {};
+      try {
+        cfg = typeof m.configuracoes === 'string'
+          ? JSON.parse(m.configuracoes || '{}')
+          : (m.configuracoes || {});
+      } catch (e) { cfg = {}; }
+      const idCfg = cfg.empresa_ativa_id || cfg.empresa_ativa || null;
+      const empresa = (idCfg && empresasPorId[String(idCfg)])
+        || empresasPorCnpj[somenteDigitos(m.ultimo_cnpj)] || null;
+      const chave = empresa ? 'emp:' + empresa.id : 'sem';
+      if (!grupos.has(chave)) grupos.set(chave, { empresa, maquinas: [] });
+      grupos.get(chave).maquinas.push(m);
+    });
+
+    const lista = [...grupos.values()].sort((a, b) => {
+      if (!a.empresa) return 1;
+      if (!b.empresa) return -1;
+      return nomeEmpresa(a.empresa).localeCompare(nomeEmpresa(b.empresa), 'pt-BR');
+    });
+
+    tbody.innerHTML = lista.length ? lista.map(g => {
+      const n = g.maquinas.length;
+      const titulo = g.empresa ? nomeEmpresa(g.empresa) : 'Sem empresa identificada';
+      const cnpj = g.empresa && g.empresa.cnpj
+        ? ' • CNPJ ' + formatarCnpj(g.empresa.cnpj) : '';
+      const cabecalho = '<tr style="background:#0b1220">' +
+        '<td colspan="5" style="padding:10px 8px;font-weight:700;color:#f4a62a;' +
+        'border-top:2px solid #f4a62a">🏢 ' + escHtml(titulo) +
+        ' <span style="color:#94a3b8;font-weight:400">(' + n +
+        (n === 1 ? ' máquina' : ' máquinas') + escHtml(cnpj) + ')</span></td></tr>';
+      return cabecalho + g.maquinas.map(m => {
+        const quando = m.ultima_atualizacao ? new Date(m.ultima_atualizacao).toLocaleString() : '-';
+        return '<tr>' +
+          '<td class="mono">' + escHtml(m.pc_name || m.id || '?') + '</td>' +
+          '<td>' + (m.online ? '🟢 sim' : '⚪ não') + '</td>' +
+          '<td>' + escHtml(m.versao_software || '-') + '</td>' +
+          '<td>' + escHtml(m.versao_windows || '-') + '</td>' +
+          '<td>' + escHtml(quando) + '</td>' +
+        '</tr>';
+      }).join('');
     }).join('') : '<tr><td colspan="5">Nenhuma máquina reportou ainda. O sincronizador precisa estar rodando no PC (tabela bridge_status).</td></tr>';
 
     const c = d.conflitos || {};
@@ -1903,6 +2092,13 @@ async function publicarAtualizacaoApp() {
     const urlPadrao = origemPublica() + '/storage/v1/object/public/atualizacoes/sistema_exodo_novo_' + versaoArquivo + '.zip';
     const confirmUrl = prompt('URL pública do pacote (.zip) no Storage:', urlPadrao);
     if (!confirmUrl) return showToast('Publicação cancelada', 'info');
+    // Este botão só APONTA para um pacote já enviado. Sem esta conferência ele
+    // gravava a versão com um endereço que não existe, o cliente tentava baixar,
+    // levava 404 e ficava sem atualizar — parecia problema no app.
+    if (!(await pacoteExiste(confirmUrl))) {
+      return showToast('O pacote não existe no Storage ainda. Use "Publicar Versão" ' +
+        '(que compila e envia o .zip) antes de apontar a versão.\n' + confirmUrl, 'error');
+    }
     // Upsert (POST + merge-duplicates): PATCH só altera linha existente e
     // devolvia 200 sem gravar nada nas empresas ainda sem registro.
     await gravarDestino(id, confirmVersao, confirmUrl);
@@ -2177,8 +2373,191 @@ async function loadDebug() {
   }
 }
 
+// --- Códigos de ativação (por venda) ---
+let codigosGerados = [];
+
+async function popularEmpresasCodigos() {
+  const sel = document.getElementById('codEmpresa');
+  if (!sel || sel.options.length > 1) return;
+  try {
+    const empresas = await api('/empresas?select=id,razao_social&order=razao_social.asc');
+    (empresas || []).forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = e.razao_social || e.id;
+      sel.appendChild(opt);
+    });
+  } catch (e) { /* silencioso: a lista do topo ja carregou */ }
+}
+
+// O código vive sem hífens no banco; aqui volta ao formato que o cliente digita.
+function codigoVisivel(bruto) {
+  const t = String(bruto || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (t.length !== 12) return t;
+  return 'EXO-' + t.slice(0, 4) + '-' + t.slice(4, 8) + '-' + t.slice(8, 12);
+}
+
+async function carregarCodigosAtivacao() {
+  const tbody = document.querySelector('#codigosTable tbody');
+  if (!tbody) return;
+  popularEmpresasCodigos();
+  try {
+    const r = await jsonSeguro(await fetch('/admin/codigos-ativacao?limite=200'));
+    if (!r.sucesso) throw new Error(r.erro || 'falha ao listar');
+    const lista = r.codigos || [];
+    const agora = Date.now();
+    tbody.innerHTML = lista.map(c => {
+      const vencido = c.expira_em && new Date(c.expira_em).getTime() <= agora;
+      let situacao = '<span class="badge badge-success">LIVRE</span>';
+      if (c.revogado) situacao = '<span class="badge badge-danger">REVOGADO</span>';
+      else if (c.usada_por) situacao = '<span class="badge badge-info">USADO</span>';
+      else if (vencido) situacao = '<span class="badge badge-warning">VENCIDO</span>';
+      const criado = c.criado_em ? new Date(c.criado_em).toLocaleString('pt-BR') : '-';
+      const usado = c.usada_em ? new Date(c.usada_em).toLocaleString('pt-BR') : '-';
+      const maquina = maquinaDaObservacao(c.observacao);
+      return '<tr>' +
+        '<td class="mono">' + escHtml(codigoVisivel(c.codigo)) + '</td>' +
+        '<td class="mono">' + escHtml(c.empresa_id || '-') + '</td>' +
+        '<td class="mono">' + escHtml(maquina ? maquina.slice(0, 12) + '…' : '-') + '</td>' +
+        '<td>' + situacao + '</td>' +
+        '<td class="mono">' + escHtml(criado) + '</td>' +
+        '<td class="mono">' + escHtml(usado) + '</td>' +
+        '<td>' +
+          '<button class="btn btn-secondary btn-sm" onclick="copiarCodigo(\'' + codigoVisivel(c.codigo) + '\')">📋</button> ' +
+          (c.revogado ? '' : '<button class="btn btn-danger btn-sm" onclick="revogarCodigo(\'' + escHtml(c.codigo) + '\')">Revogar</button>') +
+        '</td></tr>';
+    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#64748b;">Nenhum código gerado ainda</td></tr>';
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:#fca5a5;">' + escHtml(e.message) + '</td></tr>';
+  }
+}
+
+async function gerarCodigosAtivacao() {
+  const quantidade = parseInt(document.getElementById('codQuantidade').value, 10) || 1;
+  const empresa_id = document.getElementById('codEmpresa').value || '';
+  const dias = parseInt(document.getElementById('codDias').value, 10) || 0;
+  const maquina = (document.getElementById('codMaquina').value || '').replace(/[^a-fA-F0-9]/g, '').toLowerCase();
+  if (maquina && !/^[a-f0-9]{64}$/.test(maquina)) {
+    return showToast('ID do computador inválido: cole os 64 caracteres da tela de ativação', 'error');
+  }
+  if (!confirm('Gerar ' + quantidade + ' código(s) de ativação?\n\nCada um ativa UM computador por 30 dias.')) return;
+  try {
+    const res = await fetch('/admin/codigos-ativacao', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantidade: quantidade, empresa_id: empresa_id, dias: dias, machine_id: maquina })
+    });
+    const r = await jsonSeguro(res);
+    if (!r.sucesso) throw new Error(r.erro || 'falha ao gerar');
+    codigosGerados = r.codigos || [];
+    const pre = document.getElementById('codigosNovos');
+    pre.style.display = 'block';
+    pre.textContent = codigosGerados.join('\n');
+    showToast(codigosGerados.length + ' código(s) gravado(s) na nuvem', 'success');
+    carregarCodigosAtivacao();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  }
+}
+
+async function revogarCodigo(codigo) {
+  if (!confirm('Revogar o código ' + codigoVisivel(codigo) + '?\n\nQuem ainda não ativou não conseguirá mais usar.')) return;
+  try {
+    const r = await jsonSeguro(await fetch('/admin/codigos-ativacao/revogar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo: codigo })
+    }));
+    if (!r.sucesso) throw new Error(r.erro || 'falha ao revogar');
+    showToast('Código revogado', 'success');
+    carregarCodigosAtivacao();
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  }
+}
+
+async function copiarTexto(texto) {
+  try {
+    await navigator.clipboard.writeText(texto);
+  } catch (erroClip) {
+    const area = document.createElement('textarea');
+    area.value = texto;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+  showToast('Copiado', 'success');
+}
+
+async function copiarCodigo(texto) {
+  await copiarTexto(texto);
+}
+
+async function copiarCodigosNovos() {
+  if (!codigosGerados.length) return showToast('Gere um código primeiro', 'warning');
+  await copiarTexto(codigosGerados.join('\n'));
+}
+
+function limparMaquinaCodigo() {
+  const campo = document.getElementById('codMaquina');
+  if (campo) campo.value = '';
+}
+
+// A máquina escolhida na geração fica gravada no código (observacao).
+function maquinaDaObservacao(obs) {
+  const achado = String(obs || '').match(/maquina\s+([a-f0-9]{64})/i);
+  return achado ? achado[1].toLowerCase() : '';
+}
+
+// Rota que ainda não existe no portal (processo sem reiniciar) devolve corpo
+// vazio: sem isto, o operador via "Unexpected end of JSON input".
+async function jsonSeguro(res) {
+  const texto = await res.text();
+  if (!texto) {
+    throw new Error('O portal respondeu vazio (HTTP ' + res.status + '). ' +
+      'Reinicie o portal para carregar as rotas novas de licença.');
+  }
+  try {
+    return JSON.parse(texto);
+  } catch (e) {
+    throw new Error('Resposta inesperada do portal (HTTP ' + res.status + '): '
+      + texto.slice(0, 200));
+  }
+}
+
+async function carregarLicencasInstalacao() {
+  const tbody = document.querySelector('#maquinasLicencaTable tbody');
+  if (!tbody) return;
+  try {
+    const r = await jsonSeguro(await fetch('/admin/licencas-instalacao'));
+    if (!r.sucesso) throw new Error(r.erro || 'falha ao listar');
+    const lista = r.maquinas || [];
+    tbody.innerHTML = lista.map(m => {
+      const dias = m.dias_restantes;
+      let situacao = '<span class="badge badge-success">VÁLIDA</span>';
+      if (m.bloqueada) situacao = '<span class="badge badge-danger">BLOQUEADA</span>';
+      else if (dias != null && dias <= 0) situacao = '<span class="badge badge-warning">VENCIDA</span>';
+      const vence = m.expira_em
+        ? new Date(m.expira_em).toLocaleDateString('pt-BR') + (dias != null ? ' (' + dias + 'd)' : '')
+        : '-';
+      return '<tr>' +
+        '<td>' + escHtml(m.machine_name || '-') + '</td>' +
+        '<td class="mono">' + escHtml(String(m.machine_id || '').slice(0, 12)) + '…</td>' +
+        '<td>' + escHtml(m.empresa_nome || m.empresa_id || 'sem empresa') + '</td>' +
+        '<td class="mono">' + escHtml(vence) + '</td>' +
+        '<td>' + escHtml(m.renovacoes == null ? 0 : m.renovacoes) + '</td>' +
+        '<td>' + situacao + '</td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748b;">Nenhuma máquina ativada ainda</td></tr>';
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:#fca5a5;">' + escHtml(e.message) + '</td></tr>';
+  }
+}
+
 // --- Init ---
 async function refreshAll() {
+  await carregarServicos();
   await loadEmpresas();
   await loadSyncStatus();
   await loadVersoesApp();
@@ -2336,6 +2715,8 @@ function iniciarPainel() {
   carregarComponentes();
   carregarMaquinas();
   loadBackupsNuvem();
+  carregarCodigosAtivacao();
+  carregarLicencasInstalacao();
 }
 
 // Se a pagina ja terminou de carregar quando este script roda (painel aberto

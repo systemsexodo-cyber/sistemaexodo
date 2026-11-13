@@ -1147,6 +1147,15 @@ class DatabaseService {
         await conn.execute(
           "ALTER TABLE produtos ADD COLUMN IF NOT EXISTS estoque_por_estoque JSONB DEFAULT '{}'::jsonb;",
         );
+        // CÓDIGOS DE BARRAS ADICIONAIS (vários EANs por produto).
+        //
+        // A coluna só existia no arquivo SQL avulso e nunca era criada no banco
+        // do cliente. Como `_upsertRows` grava apenas colunas que existem de
+        // verdade na tabela, o campo era descartado em silêncio: o usuário
+        // digitava os códigos, salvava e nada persistia (nem local, nem nuvem).
+        await conn.execute(
+          "ALTER TABLE produtos ADD COLUMN IF NOT EXISTS codigos_barras_adicionais JSONB DEFAULT '[]'::jsonb;",
+        );
         await conn.execute(
           'ALTER TABLE produtos ADD COLUMN IF NOT EXISTS estoque_padrao_id VARCHAR;',
         );
@@ -1340,6 +1349,41 @@ class DatabaseService {
             AND replace(substr(f.abertura_caixa_id, 1, 19), ' ', 'T')
               = replace(substr(a.data_abertura::text, 1, 19), ' ', 'T')
         ''');
+        // Campos necessários para persistir integralmente pedidos da loja online.
+        // O upsert ignora silenciosamente chaves sem coluna correspondente.
+        for (final sql in <String>[
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS numero TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS data_pedido TIMESTAMPTZ;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS cliente_telefone TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS cliente_endereco TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS cliente_cpf_cnpj TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS operador TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS link_vendedor_id TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS link_vendedor_codigo TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS link_cliente TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS origem_ecommerce BOOLEAN NOT NULL DEFAULT FALSE;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS origem TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS status TEXT DEFAULT \'Pendente\';',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS total NUMERIC(15,2) NOT NULL DEFAULT 0;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS desconto_total NUMERIC(15,2) NOT NULL DEFAULT 0;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS acrescimo_total NUMERIC(15,2) NOT NULL DEFAULT 0;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS observacoes TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS produtos JSONB NOT NULL DEFAULT \'[]\'::jsonb;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS servicos JSONB NOT NULL DEFAULT \'[]\'::jsonb;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS pagamentos JSONB NOT NULL DEFAULT \'[]\'::jsonb;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS materiais_consumidos JSONB NOT NULL DEFAULT \'[]\'::jsonb;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS delivery_info JSONB;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS senha TEXT;',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();',
+          'ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();',
+        ]) {
+          try {
+            await conn.execute(sql);
+          } catch (e) {
+            debugPrint('>>> [Colunas] ⚠️ pedidos: $sql — $e');
+          }
+        }
         await conn.execute(
           'ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS senha VARCHAR;',
         );
@@ -3497,7 +3541,7 @@ END;
         }
 
         String whereClause =
-            "(nome ILIKE @queryTermo OR codigo ILIKE @queryTermo OR codigo ILIKE @prefixTermo)";
+            "(nome ILIKE @queryTermo OR codigo ILIKE @queryTermo OR codigo ILIKE @prefixTermo OR descricao ILIKE @queryTermo)";
         final params = <String, Object?>{
           'queryTermo': '%$termo%',
           'prefixTermo': 'COD-$termo%',
@@ -3853,6 +3897,69 @@ END;
         total += (result.first.toColumnMap()['n'] as int?) ?? 0;
       }
       return total;
+    });
+  }
+
+  /// Empresa dona, no banco LOCAL, de cada um dos [ids] informados.
+  ///
+  /// Devolve só os ids que existem localmente (`id -> empresa_id`). É a
+  /// conferência que impede o "Zerar Nuvem" de apagar, na nuvem, uma linha
+  /// que aqui pertence a OUTRA empresa — caso real: catálogo de outra empresa
+  /// gravado na nuvem com o `empresa_id` errado; apagar "por empresa" levava
+  /// o catálogo inteiro dela embora.
+  ///
+  /// NÃO filtra pela empresa aberta de propósito: o que se quer saber é
+  /// justamente a dona de cada linha.
+  Future<Map<String, String>> empresasLocaisDosIds(
+    String tabelaChave,
+    Iterable<String> ids,
+  ) {
+    return _enqueue(() async {
+      final resultado = <String, String>{};
+      final tabela = _mapearChaveParaTabela(tabelaChave);
+      if (tabela == null) return resultado;
+      final lista = ids.where((i) => i.isNotEmpty).toList();
+      if (lista.isEmpty) return resultado;
+      try {
+        final conn = await connection;
+        await _inicializarColunas(conn);
+        final columns = _tableColumnTypes[tabela];
+        if (columns == null || !columns.containsKey('empresa_id')) {
+          return resultado;
+        }
+        const chunk = 200;
+        for (var i = 0; i < lista.length; i += chunk) {
+          final fim = (i + chunk) > lista.length ? lista.length : i + chunk;
+          final parte = lista.sublist(i, fim);
+          final params = <String, Object?>{};
+          final nomes = <String>[];
+          for (var j = 0; j < parte.length; j++) {
+            params['id_$j'] = parte[j];
+            nomes.add('@id_$j');
+          }
+          // `id::text` porque o id pode ser uuid/text e o parâmetro chega
+          // como texto — comparar direto com uuid quebraria a consulta.
+          final rows = await conn.execute(
+            Sql.named(
+              'SELECT id::text AS id, empresa_id::text AS empresa '
+              'FROM "$tabela" WHERE id::text IN (${nomes.join(', ')})',
+            ),
+            parameters: params,
+          );
+          for (final row in rows) {
+            final map = row.toColumnMap();
+            final id = map['id']?.toString();
+            if (id == null || id.isEmpty) continue;
+            resultado[id] = (map['empresa'] ?? '').toString();
+          }
+        }
+      } catch (e) {
+        debugPrint(
+          '>>> [PostgreSQL] ❌ Erro ao consultar a dona dos ids em $tabela: $e',
+        );
+        rethrow;
+      }
+      return resultado;
     });
   }
 

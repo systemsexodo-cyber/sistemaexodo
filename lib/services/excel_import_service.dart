@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:excel/excel.dart';
@@ -61,6 +62,10 @@ class ExcelImportService {
       // Tolerância a erro comum de digitação: "CTS" no lugar de "CST"
       // (ex.: cabeçalho "CTS ICMS" deve ser lido como "CST ICMS").
       final valorLower = _normalizarTexto(valor).replaceAll('cts', 'cst');
+      // Colunas de TOTAL (quantidade × preço) nunca são preço unitário. Sem
+      // essa trava, "Total Preço Venda" venceria "Preço Venda" se viesse antes
+      // dela na planilha — o produto entraria com o preço da nota inteira.
+      final ehColunaDeTotal = valorLower.contains('total');
       debugPrint('>>> [Excel Import] Coluna $i: "$valor" (normalizado: "$valorLower")');
       
       // Detectar códigos de coluna
@@ -80,7 +85,7 @@ class ExcelImportService {
       }
       
       // 2. Preço de Venda (padrão específico - verificar ANTES de preço genérico)
-      if (indices['preco'] == null) {
+      if (indices['preco'] == null && !ehColunaDeTotal) {
         // Normalizar removendo espaços extras para comparação
         final valorNormalizado = valorLower.replaceAll(RegExp(r'\s+'), ' ').trim();
         
@@ -107,7 +112,7 @@ class ExcelImportService {
       }
       
       // 3. Preço de Custo (padrão específico - verificar ANTES de preço genérico)
-      if (indices['precoCusto'] == null) {
+      if (indices['precoCusto'] == null && !ehColunaDeTotal) {
         // Normalizar removendo espaços extras para comparação
         final valorNormalizado = valorLower.replaceAll(RegExp(r'\s+'), ' ').trim();
         
@@ -128,7 +133,7 @@ class ExcelImportService {
       }
       
       // 4. Preço genérico (apenas se não foi detectado como preço de venda)
-      if (indices['preco'] == null) {
+      if (indices['preco'] == null && !ehColunaDeTotal) {
         // Busca resiliente por prefixos
         if (valorLower.contains('prec') || valorLower.contains('valor') ||
             valorLower.contains('venda') || valorLower.contains('vlr') ||
@@ -281,7 +286,8 @@ class ExcelImportService {
       // 14. ICMS Alíquota
       if (indices['icmsAliquota'] == null) {
         if (valorLower.contains('icms') && (valorLower.contains('aliquota') || 
-            valorLower.contains('aliquota') || valorLower.contains('%'))) {
+            valorLower.contains('aliquota') || valorLower.contains('aliq') ||
+            valorLower.contains('%'))) {
           indices['icmsAliquota'] = i;
           continue;
         }
@@ -289,8 +295,12 @@ class ExcelImportService {
       
       // 15. ICMS CST
       if (indices['icmsCst'] == null) {
-        if (valorLower.contains('icms') && (valorLower.contains('cst') || 
-            valorLower.contains('situacao tributaria') || valorLower.contains('situacao tributaria'))) {
+        // "CST" sozinho (cabeçalho curto do sistema antigo) também vale: sem
+        // isso a coluna passa em branco e o produto entra SEM a situação
+        // tributária. Igualdade exata para não roubar "CST IPI"/"CST PIS".
+        if (valorLower == 'cst' || valorLower == 'cts' ||
+            (valorLower.contains('icms') && (valorLower.contains('cst') || 
+            valorLower.contains('situacao tributaria') || valorLower.contains('situacao tributaria')))) {
           indices['icmsCst'] = i;
           continue;
         }
@@ -426,36 +436,111 @@ class ExcelImportService {
     return importarProdutosDeBytes(bytes, dataService, onProgress: onProgress);
   }
 
-  /// Importa produtos usando bytes do arquivo (funciona em web e outras plataformas)
-  static Future<Map<String, dynamic>> importarProdutosDeBytes(
-    Uint8List bytes,
-    DataService dataService, {
-    void Function(int processados, int total, String etapa)? onProgress,
-  }) async {
-    final resultado = {
+  /// Monta o resultado zerado da importação (contadores e listas vazias).
+  static Map<String, dynamic> _novoResultado() {
+    return {
       'sucesso': 0,
       'erros': 0,
       'duplicados': 0,
       'atualizados': 0,
       'mensagens': <String>[],
+      // Produtos planejados: quem grava é [importarProdutosDeBytes].
+      'novos': <Produto>[],
+      'paraAtualizar': <Produto>[],
     };
+  }
 
+  /// Importa produtos usando bytes do arquivo (funciona em web e outras plataformas)
+  ///
+  /// São duas etapas: [planejarProdutosDeBytes] lê o arquivo e monta os
+  /// produtos, e aqui a gente grava no banco local + nuvem via [DataService].
+  static Future<Map<String, dynamic>> importarProdutosDeBytes(
+    Uint8List bytes,
+    DataService dataService, {
+    void Function(int processados, int total, String etapa)? onProgress,
+  }) async {
+    // Sinalizar início de importação para o DataService (bloqueia streams de realtime)
+    dataService.setImportandoExcel(true);
+
+    var resultado = _novoResultado();
     try {
-      // Sinalizar início de importação para o DataService (bloqueia streams de realtime)
-      dataService.setImportandoExcel(true);
+      resultado = await planejarProdutosDeBytes(
+        bytes,
+        existentes: dataService.produtos,
+        onProgress: onProgress,
+      );
 
-      // Ler arquivo Excel
-      final excel = Excel.decodeBytes(Uint8List.fromList(bytes));
+      final novos = resultado['novos'] as List<Produto>;
+      final paraAtualizar = resultado['paraAtualizar'] as List<Produto>;
 
-      // Pegar primeira planilha
-      if (excel.tables.isEmpty) {
-        (resultado['mensagens'] as List<String>).add('❌ Arquivo Excel vazio ou inválido');
-        return resultado;
+      // Gravar produtos NOVOS em chunks de 500 (dá feedback à UI e não trava)
+      if (novos.isNotEmpty) {
+        final total = novos.length;
+        for (int i = 0; i < total; i += 500) {
+          final fim = (i + 500 > total) ? total : i + 500;
+          onProgress?.call(
+            fim,
+            total,
+            'Salvando NOVOS produtos ($fim de $total)...',
+          );
+          debugPrint('>>> [Excel Import] Salvando chunk de $i até $fim de $total novos...');
+          await dataService.addProdutosLote(novos.sublist(i, fim));
+
+          // Pequena pausa para a UI processar e respirar
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
       }
 
-      final sheet = excel.tables[excel.tables.keys.first]!;
-      if (sheet.rows.isEmpty) {
-        (resultado['mensagens'] as List<String>).add('❌ Planilha vazia');
+      // Gravar produtos ATUALIZADOS em chunks de 500
+      if (paraAtualizar.isNotEmpty) {
+        final total = paraAtualizar.length;
+        for (int i = 0; i < total; i += 500) {
+          final fim = (i + 500 > total) ? total : i + 500;
+          onProgress?.call(fim, total, 'Atualizando produtos ($fim de $total)...');
+          debugPrint('>>> [Excel Import] Atualizando chunk de $i até $fim de $total...');
+          await dataService.addProdutosLote(paraAtualizar.sublist(i, fim));
+
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+      }
+
+      return resultado;
+    } catch (e, stackTrace) {
+      resultado['erros'] = (resultado['erros'] as int) + 1;
+      (resultado['mensagens'] as List<String>)
+          .add('❌ Erro crítico ao importar Excel: $e');
+      debugPrint('>>> Erro crítico ao importar Excel: $e\n$stackTrace');
+      return resultado;
+    } finally {
+      // Garantir que a flag seja resetada (sucesso ou erro)
+      dataService.setImportandoExcel(false);
+    }
+  }
+
+  /// Lê o arquivo e monta os produtos SEM gravar nada.
+  ///
+  /// É a parte de leitura da importação: reconhece Excel e CSV, acha o
+  /// cabeçalho, detecta as colunas e monta os produtos com os impostos.
+  /// Os produtos saem em `resultado['novos']` e `resultado['paraAtualizar']`;
+  /// a gravação é com quem chama ([importarProdutosDeBytes]).
+  ///
+  /// Separado para os testes poderem validar um CSV do sistema antigo de
+  /// ponta a ponta sem tocar no banco.
+  @visibleForTesting
+  static Future<Map<String, dynamic>> planejarProdutosDeBytes(
+    Uint8List bytes, {
+    List<Produto> existentes = const <Produto>[],
+    void Function(int processados, int total, String etapa)? onProgress,
+  }) async {
+    final resultado = _novoResultado();
+
+    try {
+      // Ler arquivo: Excel (.xlsx/.xls) OU CSV/TSV (.csv) — o export do sistema
+      // antigo ("relatorio"/"produtos") sai em CSV com separador ";".
+      final List<List<dynamic>> linhas = _lerPlanilhaOuCsv(bytes);
+
+      if (linhas.isEmpty) {
+        (resultado['mensagens'] as List<String>).add('❌ Arquivo vazio ou inválido (não foi possível ler nenhuma linha)');
         return resultado;
       }
 
@@ -463,11 +548,11 @@ class ExcelImportService {
       Map<String, int?> indicesColunas = {};
       int linhaInicio = 0;
       bool encontrouCabecalho = false;
-      List<Data?> cabecalhoEfetivo = [];
+      List<dynamic> cabecalhoEfetivo = [];
 
       debugPrint('>>> [Excel Import] Buscando cabecalho nas primeiras 10 linhas...');
-      for (int i = 0; i < sheet.rows.length && i < 10; i++) {
-        final row = sheet.rows[i];
+      for (int i = 0; i < linhas.length && i < 10; i++) {
+        final row = linhas[i];
         
         // Tentar detectar se esta linha é um cabeçalho
         int palavrasChave = 0;
@@ -513,7 +598,7 @@ class ExcelImportService {
 
       if (!encontrouCabecalho) {
         debugPrint('>>> [Excel Import] ⚠️ Cabeçalho não identificado. Usando primeira linha e tentando mapear colunas...');
-        cabecalhoEfetivo = sheet.rows[0];
+        cabecalhoEfetivo = linhas[0];
         indicesColunas = _detectarColunas(cabecalhoEfetivo);
         linhaInicio = 1;
 
@@ -560,8 +645,8 @@ class ExcelImportService {
             : '🧾 Colunas de impostos detectadas: ${fiscaisDetectados.join(', ')}',
       );
 
-      // Carregar produtos existentes
-      final produtosExistentes = dataService.produtos;
+      // Carregar produtos existentes (quem chama passa a lista atual)
+      final produtosExistentes = existentes;
       final codigosExistentes = <String>{};
       final nomesExistentes = <String>{};
       final codigosBarrasExistentes = <String>{};
@@ -581,12 +666,12 @@ class ExcelImportService {
       final produtosProcessados = <String>{}; // Para evitar duplicatas na mesma importação
 
       // Calcular total de linhas para processar
-      final totalLinhas = sheet.rows.length - linhaInicio;
+      final totalLinhas = linhas.length - linhaInicio;
       int linhasProcessadas = 0;
       int linhasVazias = 0;
 
-      debugPrint('>>> [Excel Import] Planilha detectada: ${excel.tables.keys.first}');
-      debugPrint('>>> [Excel Import] Total de linhas na planilha: ${sheet.rows.length}');
+      debugPrint('>>> [Excel Import] Arquivo lido: ${linhas.length} linha(s)');
+      debugPrint('>>> [Excel Import] Total de linhas na planilha: ${linhas.length}');
       debugPrint('>>> [Excel Import] Linha inicial de dados: $linhaInicio');
       debugPrint('>>> [Excel Import] Expectativa de processamento: $totalLinhas linhas');
 
@@ -594,9 +679,9 @@ class ExcelImportService {
       onProgress?.call(0, totalLinhas, 'Lendo planilha...');
 
       // Processar cada linha
-      debugPrint('>>> [Excel Import] Iniciando processamento de linhas de $linhaInicio até ${sheet.rows.length - 1}...');
-      for (int i = linhaInicio; i < sheet.rows.length; i++) {
-        final row = sheet.rows[i];
+      debugPrint('>>> [Excel Import] Iniciando processamento de linhas de $linhaInicio até ${linhas.length - 1}...');
+      for (int i = linhaInicio; i < linhas.length; i++) {
+        final row = linhas[i];
         
         // Verificar se linha está vazia com mais detalhes
         if (row.isEmpty) {
@@ -618,7 +703,7 @@ class ExcelImportService {
           continue;
         }
         
-        debugPrint('>>> [Excel Import] ========== Processando LINHA ${i + 1} de ${sheet.rows.length} ==========');
+        debugPrint('>>> [Excel Import] ========== Processando LINHA ${i + 1} de ${linhas.length} ==========');
         
         // Mostrar valores RAW de todas as células da linha primeiro
         debugPrint('>>> [Excel Import] Linha ${i + 1} - Total de colunas: ${row.length}');
@@ -1045,7 +1130,7 @@ class ExcelImportService {
       }
       
       debugPrint('>>> [Excel Import] ========== FIM DO PROCESSAMENTO DE LINHAS ==========');
-      debugPrint('>>> [Excel Import] Total de linhas na planilha: ${sheet.rows.length}');
+      debugPrint('>>> [Excel Import] Total de linhas na planilha: ${linhas.length}');
       debugPrint('>>> [Excel Import] Linha de início (pula cabeçalho): $linhaInicio');
       debugPrint('>>> [Excel Import] Linhas que deveriam ser processadas: $totalLinhas');
       debugPrint('>>> [Excel Import] Linhas efetivamente processadas: $linhasProcessadas');
@@ -1054,43 +1139,18 @@ class ExcelImportService {
       debugPrint('>>> [Excel Import] Produtos para atualizar: ${produtosParaAtualizar.length}');
       debugPrint('>>> [Excel Import] Preparados ${produtosParaImportar.length} novos e ${produtosParaAtualizar.length} para atualizar.');
 
-      // Notificar início do salvamento
-      // Sincronizar produtos NOVOS em lote
+      // Entregar o plano pronto: quem grava é importarProdutosDeBytes.
+      // (Aqui dentro a gente não toca no banco — é o que os testes usam para
+      // validar um CSV do sistema antigo sem gravar nada.)
+      resultado['novos'] = produtosParaImportar;
+      resultado['paraAtualizar'] = produtosParaAtualizar;
       if (produtosParaImportar.isNotEmpty) {
-        final total = produtosParaImportar.length;
-        // Processar em chunks menores para dar feedback à UI e não travar o Firebase
-        for (int i = 0; i < total; i += 500) {
-          final fim = (i + 500 > total) ? total : i + 500;
-          final chunk = produtosParaImportar.sublist(i, fim);
-          
-          onProgress?.call(linhasProcessadas, totalLinhas, 'Salvando NOVOS produtos ($fim de $total)...');
-          debugPrint('>>> [Excel Import] Salvando chunk de $i até $fim de $total novos...');
-          
-          await dataService.addProdutosLote(chunk);
-          
-          // Pequena pausa para a UI processar e respirar
-          await Future.delayed(const Duration(milliseconds: 50));
-        }
-        resultado['sucesso'] = total;
+        resultado['sucesso'] = produtosParaImportar.length;
       }
-
-      // Sincronizar produtos ATUALIZADOS em lote
       if (produtosParaAtualizar.isNotEmpty) {
-        final total = produtosParaAtualizar.length;
-        for (int i = 0; i < total; i += 500) {
-          final fim = (i + 500 > total) ? total : i + 500;
-          final chunk = produtosParaAtualizar.sublist(i, fim);
-
-          onProgress?.call(linhasProcessadas, totalLinhas, 'Atualizando produtos ($fim de $total)...');
-          debugPrint('>>> [Excel Import] Atualizando chunk de $i até $fim de $total...');
-          
-          await dataService.addProdutosLote(chunk);
-          
-          await Future.delayed(const Duration(milliseconds: 50));
-        }
-        resultado['atualizados'] = total;
+        resultado['atualizados'] = produtosParaAtualizar.length;
       }
-      
+
       // Notificar conclusão
       onProgress?.call(linhasProcessadas, totalLinhas, 'Concluído!');
 
@@ -1101,18 +1161,173 @@ class ExcelImportService {
         '${resultado['duplicados']} duplicados ignorados, '
         '${resultado['erros']} erros',
       );
-      // Garantir que a flag seja resetada
-      dataService.setImportandoExcel(false);
     } catch (e, stackTrace) {
-      // Resetar flag em caso de erro
-      dataService.setImportandoExcel(false);
-      
       resultado['erros'] = (resultado['erros'] as int) + 1;
       (resultado['mensagens'] as List<String>).add('❌ Erro crítico ao ler arquivo Excel: $e');
       debugPrint('>>> Erro crítico ao importar Excel: $e\n$stackTrace');
     }
 
     return resultado;
+  }
+
+  /// Lê o arquivo de qualquer forma que ele venha e devolve as linhas prontas.
+  ///
+  /// Aceita os dois formatos que o pessoal da loja usa:
+  ///   - Excel (.xlsx / .xls)  → pacote excel;
+  ///   - CSV/TSV (.csv)        → export direto do sistema antigo, que costuma
+  ///                              vir com separador ";" e aspas nos campos.
+  ///
+  /// O CSV é o caso que mais aparece na migração: o "Exportar relatório" do
+  /// sistema antigo gera exatamente esse formato, e antes este serviço só
+  /// conseguia ler planilha — o arquivo era recusado antes de qualquer linha.
+  static List<List<dynamic>> _lerPlanilhaOuCsv(Uint8List bytes) {
+    if (bytes.isEmpty) return <List<dynamic>>[];
+
+    if (_ehExcel(bytes)) {
+      final excel = Excel.decodeBytes(bytes);
+      if (excel.tables.isEmpty) return <List<dynamic>>[];
+      final sheet = excel.tables[excel.tables.keys.first]!;
+      // List<List<Data?>> é um List<List<dynamic>> em Dart (covariância),
+      // então dá para devolver direto e o resto do fluxo é igual.
+      return sheet.rows;
+    }
+
+    return _lerCsv(bytes);
+  }
+
+  /// Excel .xlsx é um ZIP (começa com "PK"); .xls antigo é OLE2 (D0 CF 11 E0).
+  /// Qualquer outra coisa tratamos como texto (CSV/TSV).
+  static bool _ehExcel(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    if (bytes[0] == 0x50 && bytes[1] == 0x4B) return true; // ZIP/xlsx
+    return bytes[0] == 0xD0 && bytes[1] == 0xCF &&
+        bytes[2] == 0x11 && bytes[3] == 0xE0; // OLE2/xls
+  }
+
+  /// Converte bytes de CSV/TSV em linhas de células (texto puro).
+  ///
+  /// Cuidados que importam na prática:
+  ///   - BOM do Windows (UTF-8 com BOM) senão a primeira coluna vira "ï»¿Código";
+  ///   - separador detectado (o sistema antigo usa ";", mas aceitamos "," e tab);
+  ///   - aspas: "AGULHA 20X5,5" e descrições longas vêm entre aspas;
+  ///   - acentuação em ANSI/Windows-1252 quando o arquivo não é UTF-8.
+  static List<List<dynamic>> _lerCsv(Uint8List bytes) {
+    String texto;
+    try {
+      texto = utf8.decode(bytes);
+    } catch (_) {
+      // Arquivo salvo em ANSI (pt-BR sem BOM): utf8.decode lança exceção.
+      texto = latin1.decode(bytes);
+    }
+
+    // Remove o BOM, se existir (UTF-8 ou UTF-16).
+    if (texto.isNotEmpty && texto.codeUnitAt(0) == 0xFEFF) {
+      texto = texto.substring(1);
+    }
+
+    final separador = _detectarSeparadorCsv(texto);
+    final linhas = <List<dynamic>>[];
+    final campos = <String>[];
+    final atual = StringBuffer();
+    var dentroAspas = false;
+    var i = 0;
+
+    void fecharCampo() {
+      campos.add(atual.toString());
+      atual.clear();
+    }
+
+    void fecharLinha() {
+      fecharCampo();
+      // Linha totalmente vazia no fim do arquivo não é produto.
+      linhas.add(List<dynamic>.from(campos));
+      campos.clear();
+    }
+
+    while (i < texto.length) {
+      final c = texto[i];
+
+      if (dentroAspas) {
+        if (c == '"') {
+          if (i + 1 < texto.length && texto[i + 1] == '"') {
+            atual.write('"'); // aspa escapada ("" dentro de campo)
+            i += 2;
+            continue;
+          }
+          dentroAspas = false; // fecha a aspa
+          i++;
+          continue;
+        }
+        atual.write(c);
+        i++;
+        continue;
+      }
+
+      if (c == '"') {
+        dentroAspas = true;
+        i++;
+        continue;
+      }
+
+      if (c == separador) {
+        fecharCampo();
+        i++;
+        continue;
+      }
+
+      if (c == '\r') {
+        fecharLinha();
+        if (i + 1 < texto.length && texto[i + 1] == '\n') i++; // CRLF
+        i++;
+        continue;
+      }
+
+      if (c == '\n') {
+        fecharLinha();
+        i++;
+        continue;
+      }
+
+      atual.write(c);
+      i++;
+    }
+
+    // Última linha, se o arquivo não terminar com quebra.
+    if (atual.isNotEmpty || campos.isNotEmpty) {
+      fecharLinha();
+    }
+
+    return linhas;
+  }
+
+  /// Escolhe o separador contando ocorrências fora de aspas na primeira linha
+  /// útil. ";" vence o desempate porque é o padrão do sistema antigo.
+  static String _detectarSeparadorCsv(String texto) {
+    final primeiraLinha = texto
+        .split(RegExp(r'\r\n|\n|\r'))
+        .firstWhere((l) => l.trim().isNotEmpty, orElse: () => '');
+
+    int contar(String sep) {
+      var n = 0;
+      var aspas = false;
+      for (var k = 0; k < primeiraLinha.length; k++) {
+        final c = primeiraLinha[k];
+        if (c == '"') {
+          aspas = !aspas;
+        } else if (!aspas && c == sep) {
+          n++;
+        }
+      }
+      return n;
+    }
+
+    final pontovirgula = contar(';');
+    if (pontovirgula > 0) return ';';
+    final tab = contar('\t');
+    if (tab > 0) return '\t';
+    final virgula = contar(',');
+    if (virgula > 0) return ',';
+    return ';';
   }
 
   /// Lê o valor de uma célula de forma segura e inteligente

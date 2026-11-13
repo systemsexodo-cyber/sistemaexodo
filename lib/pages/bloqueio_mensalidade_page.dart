@@ -498,35 +498,27 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
   }
 
   Future<void> _liberarComCodigoOffline() async {
-    final esperado = widget.configs['codigo_liberacao_offline']
-        ?.toString()
-        .trim()
-        .toUpperCase();
-    if (esperado == null || esperado.isEmpty) {
-      setState(() {
-        _erroCodigoOffline =
-            'Codigo nao cadastrado para esta empresa. Fale com o suporte.';
-      });
-      return;
-    }
-    if (_codigoOfflineController.text.trim().toUpperCase() != esperado) {
-      setState(() {
-        _erroCodigoOffline = 'Codigo invalido. Verifique e tente novamente.';
-      });
-      return;
-    }
-
     setState(() {
       _liberandoCortesia = true;
+      _erroCodigoOffline = null;
     });
     try {
       final dataService = Provider.of<DataService>(context, listen: false);
       final authService = Provider.of<AuthService>(context, listen: false);
-      await dataService.resetarSimulacoesLicenca();
+      final aplicada = await dataService.aplicarLicencaEmergencia(
+        _codigoOfflineController.text.trim(),
+      );
+      if (!aplicada) {
+        setState(() {
+          _erroCodigoOffline =
+              'Licença inválida, expirada ou emitida para outra empresa/computador.';
+        });
+        return;
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Acesso liberado. Conecte a internet em ate 7 dias.'),
+            content: Text('Licença emergencial validada neste computador.'),
             backgroundColor: Colors.green,
           ),
         );
@@ -541,12 +533,9 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro ao liberar: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        setState(() {
+          _erroCodigoOffline = 'Não foi possível validar a licença: $e';
+        });
       }
     } finally {
       if (mounted) {
@@ -616,9 +605,9 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
     String vencimentoFormatado = 'Não Informado';
     final diaVencimento = _diaVencimentoDe(dataCobrancaStr);
     if (diaVencimento != null) {
-      vencimentoFormatado = DateFormat('dd/MM/yyyy').format(
-        _vencimentoDaCompetenciaCobrada(diaVencimento),
-      );
+      vencimentoFormatado = DateFormat(
+        'dd/MM/yyyy',
+      ).format(_vencimentoDaCompetenciaCobrada(diaVencimento));
     }
 
     final valorMensalidade = double.tryParse(
@@ -1001,15 +990,83 @@ class _BloqueioMensalidadePageState extends State<BloqueioMensalidadePage> {
                   if (widget.motivoBloqueio ==
                       MotivoBloqueioEmpresa.excessoDiasOffline) ...[
                     const SizedBox(height: 8),
+                    FutureBuilder<String>(
+                      future: Provider.of<DataService>(
+                        context,
+                        listen: false,
+                      ).identificadorMaquinaLicenca(),
+                      builder: (context, snapshot) {
+                        final idMaquina = snapshot.data;
+                        return Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.07),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.orange.withOpacity(0.25),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'DADOS PARA O SUPORTE',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Empresa: ${authService.empresaAtual?.id ?? 'não identificada'}',
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              const SizedBox(height: 4),
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting)
+                                const LinearProgressIndicator()
+                              else if (idMaquina != null) ...[
+                                SelectableText(
+                                  'ID da máquina: $idMaquina',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton.icon(
+                                    onPressed: () => Clipboard.setData(
+                                      ClipboardData(text: idMaquina),
+                                    ),
+                                    icon: const Icon(Icons.copy, size: 14),
+                                    label: const Text('Copiar ID da máquina'),
+                                  ),
+                                ),
+                              ] else
+                                const Text(
+                                  'Não foi possível identificar este computador.',
+                                  style: TextStyle(color: Colors.redAccent),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: _codigoOfflineController,
+                      minLines: 3,
+                      maxLines: 6,
                       decoration: InputDecoration(
-                        labelText: 'Codigo de Liberacao Offline',
-                        hintText: 'Digite o codigo fornecido pelo suporte',
+                        labelText: 'Licença emergencial (JSON)',
+                        hintText:
+                            'Cole aqui o conteúdo do arquivo enviado pelo suporte',
                         errorText: _erroCodigoOffline,
                         border: const OutlineInputBorder(),
+                        alignLabelWithHint: true,
                       ),
-                      textCapitalization: TextCapitalization.characters,
                     ),
                     const SizedBox(height: 8),
                     SizedBox(

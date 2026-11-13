@@ -51,6 +51,36 @@ extension TipoPagamentoExtension on TipoPagamento {
     }
   }
 
+  /// Texto curto que explica a forma de pagamento no checkout da loja.
+  String get descricao {
+    switch (this) {
+      case TipoPagamento.dinheiro:
+        return 'Pague em dinheiro na entrega ou na retirada';
+      case TipoPagamento.pix:
+        return 'Aprovação imediata, direto no app do seu banco';
+      case TipoPagamento.cartaoCredito:
+        return 'Pague em até 12x na maquininha ou online';
+      case TipoPagamento.cartaoDebito:
+        return 'Débito na maquininha no momento da entrega';
+      case TipoPagamento.boleto:
+        return 'Boleto bancário, compensa em até 3 dias úteis';
+      case TipoPagamento.crediario:
+        return 'Parcelamento combinado direto com a loja';
+      case TipoPagamento.fiado:
+        return 'Pague depois, com o crédito aprovado pela loja';
+      case TipoPagamento.outro:
+        return 'Outra forma combinada com a loja';
+      case TipoPagamento.alimentacao:
+        return 'Vale-refeição ou vale-alimentação';
+      case TipoPagamento.transferencia:
+        return 'Transferência bancária para a conta da loja';
+      case TipoPagamento.mercado_pago:
+        return 'Pague pelo app do Mercado Pago';
+      case TipoPagamento.cashBack:
+        return 'Use o saldo de cash back acumulado';
+    }
+  }
+
   IconData get icone {
     switch (this) {
       case TipoPagamento.dinheiro:
@@ -127,6 +157,20 @@ extension TipoPagamentoExtension on TipoPagamento {
         this == TipoPagamento.crediario;
   }
 }
+
+/// Formas de pagamento que a loja online mostra por padrão no checkout.
+///
+/// Fiado, crediário, cash back, alimentação e transferência são formas do
+/// balcão/PDV e não fazem sentido no site; o lojista pode liberar qualquer
+/// outra em Personalizar Loja > Pagamento.
+const List<String> formasPagamentoLojaPadrao = <String>[
+  'pix',
+  'cartaoCredito',
+  'cartaoDebito',
+  'dinheiro',
+  'mercado_pago',
+  'boleto',
+];
 
 /// Item de pagamento de um pedido
 class PagamentoPedido {
@@ -246,6 +290,11 @@ class PagamentoPedido {
     double? troco,
     double? desconto,
     double? acrescimo,
+
+    /// Permite LIMPAR os dados de recebimento no estorno: `dataRecebimento`,
+    /// `valorRecebido`, `troco` e `nomePagador` voltam a ficar nulos. Sozinhos,
+    /// esses campos passados como `null` significam "mantém o valor atual".
+    bool limparRecebimento = false,
   }) {
     return PagamentoPedido(
       id: id ?? this.id,
@@ -258,11 +307,15 @@ class PagamentoPedido {
       parcelamentoId: parcelamentoId ?? this.parcelamentoId,
       dataVencimento: dataVencimento ?? this.dataVencimento,
       recebido: recebido ?? this.recebido,
-      dataRecebimento: dataRecebimento ?? this.dataRecebimento,
-      nomePagador: nomePagador ?? this.nomePagador,
+      dataRecebimento: limparRecebimento
+          ? null
+          : (dataRecebimento ?? this.dataRecebimento),
+      nomePagador: limparRecebimento ? null : (nomePagador ?? this.nomePagador),
       observacao: observacao ?? this.observacao,
-      valorRecebido: valorRecebido ?? this.valorRecebido,
-      troco: troco ?? this.troco,
+      valorRecebido: limparRecebimento
+          ? null
+          : (valorRecebido ?? this.valorRecebido),
+      troco: limparRecebimento ? null : (troco ?? this.troco),
       desconto: desconto ?? this.desconto,
       acrescimo: acrescimo ?? this.acrescimo,
     );

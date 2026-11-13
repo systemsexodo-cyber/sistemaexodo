@@ -37,3 +37,19 @@ Cada entrada é escrita quando você publica uma versão pelo sistema.
 ## 1.0.63 — 08/11/2026
 - destino: TODAS as empresas
 - Correções de compilação, card de Compras com filtro por data e estado vazio, bridge local reiniciado.
+
+## 1.0.63 — 08/11/2026 23:11
+- destino: empresa bd45d75b-fee4-4ac2-8975-0f36f61d01bf
+- Implantado busca automática NFE
+
+## 1.0.72 — 10/11/2026 10:15
+- destino: TODAS as empresas
+- (sem detalhes informados)
+
+## 1.0.73 — 10/11/2026 11:13
+- destino: TODAS as empresas
+- Host publico migrado para exodosystems (maquina renomeada no Tailscale); URLs da nuvem atualizadas.
+
+## 1.0.73 — 10/11/2026 11:37
+- destino: TODAS as empresas
+- (sem detalhes informados)

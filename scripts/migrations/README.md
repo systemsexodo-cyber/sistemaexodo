@@ -31,6 +31,10 @@ fazem sentido na nuvem se auto-pulam no banco local, e vice-versa).
 | `011_remover_foreign_keys.sql` | local | Remove FKs (a nuvem não tem; quebravam o download) |
 | `012_converter_uuid_para_text.sql` | local | Converte colunas `uuid` -> `text` (ids da nuvem são text) |
 | `013_bloquear_troca_de_empresa.sql` | local + nuvem | Trava no banco: um registro **nunca** troca de empresa (anti-mistura) |
+| `016_bucket_imagens.sql` | nuvem | Cria o bucket público `imagens` e libera `anon`/`authenticated` (fotos de produto, logo, banners) |
+| `017_storage_imagens_nuvem.sql` | nuvem | Garante os buckets públicos (`imagens`, `atualizacoes`, `backups`, `dumps`, `xmls`) e as políticas de `anon`/`authenticated` — resolve o 403 no upload de logo/foto |
+| `020_licencas_instalacao.sql` | nuvem | Licença de instalação de 30 dias por computador + histórico de ativações/renovações (usada pela função `licenca-instalacao`) |
+| `021_codigos_ativacao.sql` | nuvem | Códigos de ativação por venda (uso único, um computador), opcionalmente presos a uma empresa |
 
 > A numeração 005–009 é a mesma das migrações originais do Supabase, para não
 > embaralhar o histórico. O baseline (`init_db.sql`) equivale à

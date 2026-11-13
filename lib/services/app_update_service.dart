@@ -114,7 +114,7 @@ class VersaoNaNuvem {
 }
 
 class AppUpdateService {
-  static const String currentAppVersion = "1.0.63";
+  static const String currentAppVersion = "1.0.81";
 
   /// Verifica se há uma nova versão do aplicativo no Supabase (Direcionada por Empresa ou Global)
   static Future<Map<String, dynamic>?> verificarAtualizacao({
@@ -125,6 +125,8 @@ class AppUpdateService {
     if (!Platform.isWindows) return null; // Apenas Windows por enquanto
 
     try {
+      final instaladaEm = _dataDaInstalacao();
+
       // 1. PRIMEIRO: Checar no Supabase se há atualização direcionada para esta empresa
       if (empresaId != null && empresaId.isNotEmpty) {
         final respEmpresa = await SupabaseService.instance
@@ -138,11 +140,23 @@ class AppUpdateService {
           final bool ativa = config['ativo'] ?? true;
 
           if (ativa && vRemota.isNotEmpty && downloadUrl.isNotEmpty) {
-            if (_deveAtualizar(currentAppVersion, vRemota)) {
+            if (_publicacaoJaTentada(downloadUrl, config['updated_at'])) {
+              debugPrint(
+                '>>> [AppUpdateService] Publicação "$vRemota" desta empresa já '
+                'foi tentada nesta instalação: não ofereço de novo.',
+              );
+            } else if (_publicacaoVencida(config, vRemota, instaladaEm)) {
+              debugPrint(
+                '>>> [AppUpdateService] Publicação forçada "$vRemota" desta '
+                'empresa é anterior a esta instalação ($instaladaEm): ignorada '
+                'para não voltar a versão a cada abertura.',
+              );
+            } else if (_deveAtualizar(currentAppVersion, vRemota)) {
               return {
                 'version': _limparVersao(vRemota),
                 'download_url': downloadUrl,
                 'is_direcionada': true,
+                'publicada_em': _marcaPublicacao(config['updated_at']),
               };
             }
           }
@@ -156,11 +170,22 @@ class AppUpdateService {
         final String downloadUrl = configsEmpresa['update_download_url'] ?? '';
 
         if (vRemota.isNotEmpty && downloadUrl.isNotEmpty) {
-          if (_deveAtualizar(currentAppVersion, vRemota)) {
+          if (_publicacaoJaTentada(
+            downloadUrl,
+            configsEmpresa['versao_alvo_em'],
+          )) {
+            debugPrint(
+              '>>> [AppUpdateService] Publicação "$vRemota" da configuração '
+              'da empresa já foi tentada nesta instalação: não ofereço de novo.',
+            );
+          } else if (_deveAtualizar(currentAppVersion, vRemota)) {
             return {
               'version': _limparVersao(vRemota),
               'download_url': downloadUrl,
               'is_direcionada': true,
+              'publicada_em': _marcaPublicacao(
+                configsEmpresa['versao_alvo_em'],
+              ),
             };
           }
         }
@@ -180,11 +205,23 @@ class AppUpdateService {
           final String downloadUrl = config['download_url'] ?? '';
 
           if (nuverVersion.isNotEmpty && downloadUrl.isNotEmpty) {
-            if (_deveAtualizar(currentAppVersion, nuverVersion)) {
+            if (_publicacaoJaTentada(downloadUrl, config['updated_at'])) {
+              debugPrint(
+                '>>> [AppUpdateService] Publicação GLOBAL "$nuverVersion" já '
+                'foi tentada nesta instalação: não ofereço de novo.',
+              );
+            } else if (_publicacaoVencida(config, nuverVersion, instaladaEm)) {
+              debugPrint(
+                '>>> [AppUpdateService] Publicação GLOBAL forçada '
+                '"$nuverVersion" é anterior a esta instalação ($instaladaEm): '
+                'ignorada para não voltar a versão a cada abertura.',
+              );
+            } else if (_deveAtualizar(currentAppVersion, nuverVersion)) {
               return {
                 'version': _limparVersao(nuverVersion),
                 'download_url': downloadUrl,
                 'is_direcionada': false,
+                'publicada_em': _marcaPublicacao(config['updated_at']),
               };
             }
           }
@@ -320,6 +357,12 @@ class AppUpdateService {
   /// baixa, fecha, reabre na mesma versão e baixa de novo, sem parar.
   static bool get instalacaoDeDesenvolvimento {
     if (kIsWeb) return false;
+    // O MODO do build é a fonte de verdade: em Release o código é AOT
+    // (data/app.so). A pasta de assets pode guardar um kernel_blob.bin deixado
+    // por um build Debug anterior na mesma árvore — e aí um Release se passava
+    // por Debug e recusava TODA atualização. Só em build não-Release vale
+    // inspecionar o arquivo (JIT real).
+    if (kReleaseMode) return false;
     try {
       final exeDir = p.dirname(Platform.resolvedExecutable);
       return File(
@@ -330,44 +373,222 @@ class AppUpdateService {
     }
   }
 
-  /// Arquivo (ao lado do programa) que guarda a última atualização baixada.
+  /// Pasta GRAVÁVEL onde ficam as marcas de atualização.
+  ///
+  /// Antes o arquivo ficava ao lado do programa (`C:\SistemaExodo`), que é
+  /// criado pelo instalador rodando como administrador; o aplicativo abre como
+  /// usuário comum e a gravação ali pode ser negada. Quando era negada, a
+  /// trava simplesmente não existia e o programa baixava, reiniciava na mesma
+  /// versão e baixava de novo — o laço sem fim. `%LOCALAPPDATA%` é sempre
+  /// gravável pelo usuário que está rodando o sistema.
+  static Directory _pastaDeControle() {
+    final base =
+        Platform.environment['LOCALAPPDATA'] ??
+        Platform.environment['APPDATA'];
+    final caminho = (base == null || base.trim().isEmpty)
+        ? p.dirname(Platform.resolvedExecutable)
+        : p.join(base, 'sistema_exodo_novo');
+    final dir = Directory(caminho);
+    try {
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+    } catch (_) {}
+    return dir;
+  }
+
+  /// Arquivo que guarda as atualizações já tentadas nesta instalação.
   static File _arquivoDaTentativa() => File(
-    p.join(p.dirname(Platform.resolvedExecutable), 'atualizacao_tentada.txt'),
+    p.join(_pastaDeControle().path, 'atualizacoes_tentadas.txt'),
   );
 
-  /// Já baixei esta MESMA atualização e o programa continuou na mesma versão?
+  /// Identificador da PUBLICAÇÃO (não do pacote): o `updated_at` da linha na
+  /// `bridge_config`.
   ///
-  /// É a trava contra o laço infinito em qualquer instalação: se o pacote foi
-  /// aplicado e a versão não mudou (pacote errado, arquivo travado, antivírus),
-  /// repetir só faria o programa abrir e fechar para sempre.
-  static bool _urlJaTentada(String downloadUrl) {
+  /// É o que separa "o mesmo pacote, de novo" de "o suporte republicou".
+  /// Republicar atualiza o `updated_at`, então a marca muda e aquele pacote
+  /// ganha UMA tentativa nova; a mesma publicação nunca é tentada duas vezes.
+  /// Sem data na publicação, a marca fica vazia e a trava vale pelo endereço.
+  static String _marcaPublicacao(dynamic updatedAt) {
+    final data = PublicacaoVersao._data(updatedAt);
+    return data?.toUtc().toIso8601String() ?? '';
+  }
+
+  /// Esta PUBLICAÇÃO já foi tentada nesta instalação?
+  ///
+  /// Cada linha do arquivo é `<url>\t<versão instalada>\t<marca da publicação>`.
+  /// A comparação é por endereço E marca: a mesma publicação é tentada uma
+  /// única vez (mesmo que dê erro ou que a versão instalada não mude), mas uma
+  /// publicação nova do mesmo endereço volta a valer.
+  ///
+  /// A versão guardada na linha é só registro do que estava instalado na hora;
+  /// ela NÃO entra na comparação. Quando entrava, um pacote publicado com
+  /// `app.so` de versão diferente do rótulo mudava a versão instalada, o
+  /// endereço continuava o mesmo e a trava não reconhecia a repetição — o laço
+  /// voltava.
+  ///
+  /// Linhas no formato antigo (`<url>\t<versão>`, sem marca) não bloqueiam: elas
+  /// vinham da trava permanente, que deixava a máquina sem conseguir instalar
+  /// aquela versão para sempre. A primeira tentativa nova já grava a marca.
+  static bool _urlJaTentada(String downloadUrl, {String marca = ''}) {
+    final url = downloadUrl.trim();
+    if (url.isEmpty) return false;
     try {
       final arquivo = _arquivoDaTentativa();
       if (!arquivo.existsSync()) return false;
-      final linhas = arquivo.readAsLinesSync();
-      if (linhas.isEmpty) return false;
-      final url = linhas[0].trim();
-      final versao = linhas.length > 1 ? linhas[1].trim() : '';
-      return url == downloadUrl.trim() && versao == currentAppVersion;
+      for (final linha in arquivo.readAsLinesSync()) {
+        final partes = linha.split('\t');
+        if (partes.isEmpty || partes[0].trim() != url) continue;
+        final marcaGravada = partes.length > 2 ? partes[2].trim() : '';
+        // Marca vazia de um lado ou outro: registro antigo, não bloqueia.
+        if (marcaGravada.isEmpty || marca.isEmpty) return false;
+        return marcaGravada == marca;
+      }
+      return false;
     } catch (_) {
       return false;
     }
   }
 
-  static Future<void> _registrarTentativa(String downloadUrl) async {
+  /// Anota a tentativa ANTES de baixar o pacote. Devolve `false` se não
+  /// conseguiu gravar — nesse caso a atualização nem começa, porque sem a marca
+  /// o programa poderia repetir a tentativa para sempre.
+  ///
+  /// Gravar antes do download é o que impede o laço quando a PRIMEIRA tentativa
+  /// falha: sem isso, um pacote com defeito (ou a rede fora do ar) era baixado
+  /// de novo a cada abertura do programa, sem nunca deixar rastro.
+  static Future<bool> _registrarTentativa(
+    String downloadUrl, {
+    String marca = '',
+  }) async {
     try {
-      await _arquivoDaTentativa().writeAsString(
-        '${downloadUrl.trim()}\r\n$currentAppVersion\r\n',
+      final url = downloadUrl.trim();
+      final arquivo = _arquivoDaTentativa();
+      final linhas = arquivo.existsSync()
+          ? arquivo
+                .readAsLinesSync()
+                .where((l) => l.trim().isNotEmpty)
+                .toList()
+          : <String>[];
+      // Mesmo endereço: substitui a linha (atualiza a marca) em vez de
+      // acumular registros do mesmo pacote.
+      final existente = linhas.indexWhere((l) => l.split('\t').first.trim() == url);
+      final registro = '$url\t$currentAppVersion\t$marca';
+      if (existente >= 0) {
+        if (linhas[existente] == registro) return true;
+        linhas[existente] = registro;
+      } else {
+        linhas.add(registro);
+      }
+      final inicio = linhas.length > 40 ? linhas.length - 40 : 0;
+      await arquivo.writeAsString(
+        '${linhas.sublist(inicio).join('\r\n')}\r\n',
+        flush: true,
       );
+      return true;
     } catch (e) {
       debugPrint('>>> [AppUpdateService] Não gravei a tentativa: $e');
+      return false;
     }
   }
 
+  /// Arquivo que guarda QUANDO esta versão passou a rodar nesta máquina.
+  static const String _arquivoInstalacao = 'instalacao.txt';
+
+  /// Data em que a versão em execução passou a rodar aqui (a instalação).
+  ///
+  /// NÃO pode ser a data do arquivo do executável: o script de atualização
+  /// copia o `.exe` com o carimbo de data de dentro do pacote, então essa data
+  /// pode ANDAR PARA TRÁS depois de uma atualização. Quando andava, uma
+  /// publicação forçada antiga deixava de parecer vencida e voltava a mandar o
+  /// programa para a versão velha — o vaivém "abre, atualiza, abre pedindo
+  /// atualização de novo". A âncora é gravada uma vez por versão, em
+  /// `%LOCALAPPDATA%\sistema_exodo_novo\instalacao.txt`, que a atualização não
+  /// toca.
+  static DateTime? _dataDaInstalacao() {
+    try {
+      final arquivo = File(
+        p.join(_pastaDeControle().path, _arquivoInstalacao),
+      );
+      if (arquivo.existsSync()) {
+        final partes = arquivo.readAsStringSync().trim().split('\t');
+        if (partes.length >= 2 && partes[0].trim() == currentAppVersion) {
+          final data = DateTime.tryParse(partes[1].trim());
+          if (data != null) return data;
+        }
+      }
+      // Primeira abertura desta versão nesta máquina: é agora que ela começou
+      // a rodar. Grava antes de devolver, para a marca não mudar a cada boot.
+      final agora = DateTime.now();
+      arquivo.writeAsStringSync(
+        '$currentAppVersion\t${agora.toIso8601String()}\r\n',
+        flush: true,
+      );
+      return agora;
+    } catch (_) {
+      // Sem a pasta gravável, resta a data do executável.
+      try {
+        return File(Platform.resolvedExecutable).lastModifiedSync();
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  /// Esta publicação já foi tentada por esta instalação?
+  ///
+  /// Serve para NEM OFERECER de novo: sem isso o programa abria, mostrava
+  /// "atualização disponível" da mesma publicação recusada, e parecia que
+  /// estava em laço. Republicar gera outra marca e libera.
+  static bool _publicacaoJaTentada(String downloadUrl, dynamic updatedAt) =>
+      _urlJaTentada(downloadUrl, marca: _marcaPublicacao(updatedAt));
+
+  /// Uma publicação FORÇADA que manda VOLTAR para uma versão mais antiga, mas
+  /// foi feita ANTES desta instalação existir, está vencida.
+  ///
+  /// O `!` existe para o suporte desfazer uma versão com problema. Só que a
+  /// publicação forçada fica gravada na nuvem para sempre: apontando para uma
+  /// versão anterior à instalada, cada abertura do programa baixa e reinstala a
+  /// versão velha — e a próxima publicação normal sobe de novo, num vaivém sem
+  /// fim, que é o "abre e fica atualizando". Uma ordem de voltar atrás decidida
+  /// antes de esta instalação ser gerada já foi superada por ela.
+  ///
+  /// Subir de versão continua valendo mesmo que a publicação seja anterior ao
+  /// build (é o caso de quem está atrasado) — a regra só vale para downgrade.
+  @visibleForTesting
+  static bool downgradeForcadoVencido({
+    required bool forcada,
+    required String versaoRemota,
+    required DateTime? publicadaEm,
+    required DateTime? instaladaEm,
+    required String versaoInstalada,
+  }) {
+    if (!forcada || publicadaEm == null || instaladaEm == null) return false;
+    final remota = versaoRemota.replaceAll('!', '').trim();
+    if (remota.isEmpty) return false;
+    if (compararVersoes(remota, versaoInstalada) >= 0) return false;
+    return publicadaEm.isBefore(instaladaEm);
+  }
+
+  /// [downgradeForcadoVencido] a partir de uma linha da `bridge_config`.
+  static bool _publicacaoVencida(
+    Map<String, dynamic> config,
+    String versaoBruta,
+    DateTime? instaladaEm,
+  ) => downgradeForcadoVencido(
+    forcada: versaoBruta.trim().startsWith('!'),
+    versaoRemota: versaoBruta,
+    publicadaEm: PublicacaoVersao._data(config['updated_at']),
+    instaladaEm: instaladaEm,
+    versaoInstalada: currentAppVersion,
+  );
+
+  /// [publicadaEm] é a marca da publicação (`updated_at`) que veio junto com a
+  /// versão em [verificarAtualizacao]. É o que permite tentar de novo quando o
+  /// suporte republica o pacote, sem liberar a repetição da mesma publicação.
   static Future<(bool, String)> baixarEAplicarAtualizacao(
     String downloadUrl,
-    Function(double) onProgress,
-  ) async {
+    Function(double) onProgress, {
+    String publicadaEm = '',
+  }) async {
     if (_aplicandoAtualizacao) {
       return (false, 'já existe uma atualização sendo aplicada');
     }
@@ -380,17 +601,35 @@ class AppUpdateService {
             'Instale a versão Release para receber atualizações.',
       );
     }
-    if (_urlJaTentada(downloadUrl)) {
+    if (_urlJaTentada(downloadUrl, marca: publicadaEm)) {
       return (
         false,
-        'esta atualização já foi aplicada nesta instalação e o programa '
-            'continuou na versão $currentAppVersion; não vou repetir para não '
-            'ficar abrindo e fechando. Se o pacote foi corrigido, apague o '
-            'arquivo atualizacao_tentada.txt ao lado do programa.',
+        'esta atualização já foi tentada nesta instalação (versão '
+            '$currentAppVersion) e não vou repetir sozinho, para o programa '
+            'não ficar baixando e reabrindo sem parar. Republicar a versão ou '
+            'publicar uma versão nova libera a atualização.',
       );
     }
     _aplicandoAtualizacao = true;
     try {
+      // A marca vai para o disco ANTES do download: um erro já na primeira
+      // tentativa (sem internet, pacote cortado, disco cheio, falha na
+      // extração) impede o programa de tentar este mesmo pacote de novo a
+      // cada abertura.
+      if (!await _registrarTentativa(downloadUrl, marca: publicadaEm)) {
+        debugPrint(
+          '>>> [AppUpdateService] ⚠️ Não gravei a marca da atualização em '
+          '${_arquivoDaTentativa().path} — não vou baixar.',
+        );
+        _aplicandoAtualizacao = false;
+        return (
+          false,
+          'não consegui gravar a marca da atualização em '
+              '${_arquivoDaTentativa().path}. Sem ela o programa poderia ficar '
+              'baixando e reabrindo sem parar, então a atualização não foi '
+              'tentada.',
+        );
+      }
       final currentExePath = Platform.resolvedExecutable;
       final exeDir = p.dirname(currentExePath);
       final ehPacote = downloadUrl.toLowerCase().contains('.zip');
@@ -475,10 +714,8 @@ class AppUpdateService {
       // O BAT precisa de CRLF de verdade — cmd.exe não entende '\n' sozinho.
       await File(batPath).writeAsString('${bat.join('\r\n')}\r\n');
 
-      // Antes de sair: anota o que foi tentado. Se ao voltar a versão não
-      // tiver mudado, a próxima checagem reconhece e não repete.
-      await _registrarTentativa(downloadUrl);
-
+      // A marca desta tentativa já foi gravada antes do download; aqui só
+      // falta trocar os arquivos e reabrir.
       debugPrint(
         '>>> [AppUpdateService] Executando script de troca e fechando...',
       );
@@ -952,8 +1189,21 @@ class AppUpdateService {
       final assets = Directory(p.join(origem.path, 'data', 'flutter_assets'));
       if (assets.existsSync()) {
         final raiz = assets.path;
+        // Artefatos de build Debug (JIT). O kernel_blob.bin chega a 124 MB e,
+        // indo no pacote, era copiado para a instalação do cliente — deixando
+        // um Release com cara de Debug e recusando atualizações futuras.
+        const artefatosJit = {
+          'kernel_blob.bin',
+          'vm_snapshot_data',
+          'vm_snapshot_instructions',
+          'isolate_snapshot_data',
+          'isolate_snapshot_instructions',
+        };
         for (final item in assets.listSync(recursive: true)) {
           if (item is! File) continue;
+          if (artefatosJit.contains(p.basename(item.path).toLowerCase())) {
+            continue;
+          }
           final rel = p.relative(item.path, from: raiz).replaceAll('\\', '/');
           await encoder.addFile(item, 'data/flutter_assets/$rel');
         }

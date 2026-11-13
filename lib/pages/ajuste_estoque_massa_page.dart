@@ -242,7 +242,8 @@ class _AjusteEstoqueMassaPageState extends State<AjusteEstoqueMassaPage> {
       return p.nome.toLowerCase().contains(q) ||
           (p.codigo?.toLowerCase().contains(q) ?? false) ||
           (p.codigoBarras?.toLowerCase().contains(q) ?? false) ||
-          p.todosCodigosBarras.any((c) => c.toLowerCase().contains(q));
+          p.todosCodigosBarras.any((c) => c.toLowerCase().contains(q)) ||
+          (p.descricao?.toLowerCase().contains(q) ?? false);
     }).toList();
 
     lista.sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));

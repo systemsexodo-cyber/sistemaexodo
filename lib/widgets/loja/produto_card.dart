@@ -38,6 +38,7 @@ class _ProdutoCardState extends State<ProdutoCard> {
     final produto = widget.produto;
     final formatoMoeda = widget.formatoMoeda;
     final temEstoque = produto.estoqueTotal > 0;
+    final ehVendaFracionada = produto.vendaFracionada ?? false;
     final fotoUrl = produto.fotoPrincipalUrl ?? 
                     (produto.fotosUrls.isNotEmpty ? produto.fotosUrls.first : null);
     final corPrimaria = widget.corPrimaria ?? Theme.of(context).colorScheme.primary;
@@ -220,6 +221,34 @@ class _ProdutoCardState extends State<ProdutoCard> {
                         ],
                       ],
                     ),
+                    // Descrição do item na loja ("Descrição Vitrine"). Em
+                    // cards estreitos ela é omitida para não estourar o card.
+                    if (!widget.isCompacto && produto.descricaoLoja != null)
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (constraints.maxWidth < 180) {
+                            return const SizedBox.shrink();
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              produto.descricaoLoja!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                height: 1.3,
+                                color: (Theme.of(context)
+                                            .textTheme
+                                            .bodyLarge
+                                            ?.color ??
+                                        Colors.black)
+                                    .withOpacity(0.65),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     if (!temEstoque) ...[
                       const SizedBox(height: 0.5),
                       Container(
@@ -249,6 +278,7 @@ class _ProdutoCardState extends State<ProdutoCard> {
                         ),
                       ),
                     ],
+                    if (ehVendaFracionada && temEstoque) _buildBadgeFracionado(),
                     // Empurra o botão para a base do card (cards simétricos)
                     const Spacer(),
                     Padding(
@@ -340,14 +370,15 @@ class _ProdutoCardState extends State<ProdutoCard> {
                         curve: Curves.easeOutCubic,
                         transform: Matrix4.identity()
                           ..scale(isImageHovered ? 1.2 : 1.0),
-                        padding: const EdgeInsets.all(12),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                        ),
+                        // Sem moldura branca: a foto do produto preenche todo o
+                        // espaço do card. `cover` encaixa a imagem cobrindo a
+                        // área (cortando sobras nas bordas) em vez de deixar
+                        // faixas brancas em cima/embaixo.
                         child: Image.network(
                           fotoUrl,
-                          fit: BoxFit.contain,
+                          fit: BoxFit.cover,
                           alignment: Alignment.center,
+                          cacheWidth: 400,
                           loadingBuilder: (context, child, loadingProgress) {
                             if (loadingProgress == null) return child;
                             return const Center(
@@ -435,6 +466,51 @@ class _ProdutoCardState extends State<ProdutoCard> {
           ),
         );
       },
+    );
+  }
+
+  /// Selo de produto vendido a granel (ex.: "R$ 12,90 / kg").
+  Widget _buildBadgeFracionado() {
+    final produto = widget.produto;
+    final corPrimaria =
+        widget.corPrimaria ?? Theme.of(context).colorScheme.primary;
+    final baseGramas = produto.pesoBaseGramas;
+    final rotuloBase = baseGramas >= 1000
+        ? '${(baseGramas / 1000).toStringAsFixed(baseGramas % 1000 == 0 ? 0 : 1)} kg'
+        : '$baseGramas g';
+
+    return Padding(
+      padding: EdgeInsets.only(top: widget.isCompacto ? 3 : 5),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: widget.isCompacto ? 4 : 6,
+          vertical: widget.isCompacto ? 1 : 2,
+        ),
+        decoration: BoxDecoration(
+          color: corPrimaria.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: corPrimaria.withOpacity(0.25), width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.scale_outlined,
+              size: widget.isCompacto ? 10 : 12,
+              color: corPrimaria,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              '${widget.formatoMoeda.format(produto.preco)} / $rotuloBase',
+              style: TextStyle(
+                fontSize: widget.isCompacto ? 9 : 10,
+                color: corPrimaria,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

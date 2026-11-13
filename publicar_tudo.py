@@ -52,6 +52,8 @@ ARQUIVO_VERSAO_CODIGO = os.path.join(
     BASE_DIR, "lib", "services", "app_update_service.dart"
 )
 ARQUIVO_PUBSPEC = os.path.join(BASE_DIR, "pubspec.yaml")
+ARQUIVO_INSTALADOR = os.path.join(BASE_DIR, "Instalador_Exodo_Completo.iss")
+PASTA_MIGRACOES = os.path.join(BASE_DIR, "scripts", "migrations")
 
 
 def log(msg=""):
@@ -88,7 +90,13 @@ def ler_versao_do_codigo():
 
 
 def gravar_versao_no_codigo(versao):
-    """Ajusta `currentAppVersion` (o app) e `version:` do pubspec (instalador/site)."""
+    """Ajusta a versão nos TRÊS pontos que precisam concordar.
+
+    `currentAppVersion` (o que o app reporta), `version:` do pubspec (site) e
+    `MyAppVersion` do instalador. Sem o terceiro, o `Setup_*.exe` saía com o
+    número antigo e o cliente instalado por ele ficava com uma versão que não
+    batia com o pacote publicado — mais um caminho para o laço.
+    """
     mudou = []
 
     with open(ARQUIVO_VERSAO_CODIGO, "r", encoding="utf-8") as f:
@@ -119,7 +127,55 @@ def gravar_versao_no_codigo(versao):
             f.write(novo_pub)
         mudou.append("pubspec.yaml")
 
+    if os.path.exists(ARQUIVO_INSTALADOR):
+        with open(ARQUIVO_INSTALADOR, "r", encoding="utf-8", errors="ignore") as f:
+            instalador = f.read()
+        novo_iss = re.sub(
+            r'(#define\s+MyAppVersion\s+")([^"]+)(")',
+            lambda m: m.group(1) + versao + m.group(3),
+            instalador,
+            count=1,
+        )
+        if novo_iss != instalador:
+            with open(ARQUIVO_INSTALADOR, "w", encoding="utf-8") as f:
+                f.write(novo_iss)
+            mudou.append("Instalador_Exodo_Completo.iss")
+
     return mudou
+
+
+def versao_publicada_atual(supabase_url, chave, config_id):
+    """Versão publicada hoje neste canal ('' quando não há registro)."""
+    import requests
+
+    try:
+        resposta = requests.get(
+            f"{supabase_url}/rest/v1/bridge_config",
+            params={"id": f"eq.{config_id}", "select": "version"},
+            headers={"apikey": chave, "Authorization": f"Bearer {chave}"},
+            timeout=20,
+        )
+        if resposta.status_code != 200:
+            return ""
+        linhas = resposta.json() or []
+        return str((linhas[0] or {}).get("version") or "").strip()
+    except Exception:
+        return ""
+
+
+def comparar_versoes(a, b):
+    """a<b -> -1, a==b -> 0, a>b -> 1 (ignora o '!')."""
+    def pedacos(v):
+        return [int(p) if p.isdigit() else 0
+                for p in str(v or "").replace("!", "").strip().split(".")]
+
+    pa, pb = pedacos(a), pedacos(b)
+    for i in range(max(len(pa), len(pb))):
+        va = pa[i] if i < len(pa) else 0
+        vb = pb[i] if i < len(pb) else 0
+        if va != vb:
+            return -1 if va < vb else 1
+    return 0
 
 
 def achar_flutter():
@@ -234,7 +290,11 @@ def devolver_extras_do_site(temporario, guardadas):
     return guardadas
 
 
-HOST_PUBLICO_PADRAO = "https://servidorsupabase.tail9b4943.ts.net"
+# Host pelo qual o CLIENTE alcança a nuvem. Precisa ser o nome que o Tailscale
+# Funnel publica (conferido com `tailscale status`: exodosystems).
+# Um host que não resolve grava uma URL morta na `bridge_config` e o cliente
+# falha o download sem conseguir atualizar.
+HOST_PUBLICO_PADRAO = "https://exodosystems.tail9b4943.ts.net"
 
 
 def url_publica_base(env, supabase_url):
@@ -323,6 +383,7 @@ def main():
     args = parser.parse_args()
 
     from publicar_pacote_comum import (
+        binario_confere_versao,
         empacotar_programa,
         enviar_notas,
         nome_pacote,
@@ -364,6 +425,22 @@ def main():
         log("❌ Faltam SUPABASE_URL / chave no .env")
         return 2
 
+    # Trava de downgrade acidental -------------------------------------
+    # Publicar uma versão menor que a já publicada manda os clientes VOLTAREM,
+    # e a publicação anterior (que continua na nuvem) os manda subir de novo:
+    # é o vaivém de atualização. Só passa com --force, que é a ordem explícita
+    # de voltar atrás.
+    atual = versao_publicada_atual(supabase_url, chave, config_id)
+    if atual:
+        log(f"  Publicado hoje .. {atual}")
+    if atual and not args.force and comparar_versoes(versao, atual) < 0:
+        log(
+            f"❌ {versao} é MENOR que a versão já publicada ({atual}) em {config_id}.\n"
+            f"   Isso faria os clientes voltarem de versão e entrarem em vaivém.\n"
+            f"   Se for mesmo um rollback, repita com --force."
+        )
+        return 2
+
     # 1. Bump das versões ------------------------------------------------
     if versao != versao_codigo:
         alterados = gravar_versao_no_codigo(versao)
@@ -380,11 +457,26 @@ def main():
             log(f"❌ {erro}")
             return 1
 
+    # 2b. O programa compilado é MESMO da versão que se vai publicar? -----
+    # Publicar o rótulo novo com um `app.so` velho é o que faz o cliente baixar,
+    # instalar, continuar se identificando com a versão antiga e pedir
+    # atualização outra vez — sem parar. Publique só o que confere.
+    if not args.simular and not binario_confere_versao(BASE_DIR, versao):
+        log(
+            f"❌ O programa em build\\windows\\x64\\runner\\Release\\data\\app.so "
+            f"não é da versão {versao}.\n"
+            f"   Rode o build sem pular Windows (a versão do código agora é "
+            f"{ler_versao_do_codigo()}) e publique de novo."
+        )
+        return 1
+    if not args.simular:
+        log(f"✓ app.so confere com a versão {versao}")
+
     # 3. Pacote .zip -----------------------------------------------------
     nome_arquivo = nome_pacote(versao)
     caminho_zip = os.path.join(BASE_DIR, nome_arquivo)
     try:
-        empacotar_programa(BASE_DIR, caminho_zip)
+        empacotar_programa(BASE_DIR, caminho_zip, migracoes_dir=PASTA_MIGRACOES)
     except FileNotFoundError as erro:
         log(f"❌ {erro}")
         return 1

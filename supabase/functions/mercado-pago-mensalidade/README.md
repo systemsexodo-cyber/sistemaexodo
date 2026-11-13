@@ -18,7 +18,7 @@ Configure no ambiente do Edge Runtime:
 
 Antes de habilitar a função, aplique
 `supabase/migrations/010_liberar_mensalidade_mercado_pago.sql` no banco local.
-O app chama `https://servidorsupabase.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade`;
+O app chama `https://exodosystems.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade`;
 se o domínio público mudar, configure `SUPABASE_FUNCTIONS_URL` no ambiente
 empacotado do app. Cadastre no Mercado Pago o webhook de pagamentos em
-`https://servidorsupabase.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade/webhook`.
+`https://exodosystems.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade/webhook`.

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:io';
 import 'dart:typed_data';
 import '../services/auth_service.dart';
 import '../services/image_storage_service.dart';
@@ -118,16 +119,12 @@ class _GerenciarImagensPageState extends State<GerenciarImagensPage> {
 
       if (kIsWeb) {
         imageBytes = file.bytes;
-      } else if (file.path != null) {
-        // Para mobile, precisaríamos ler o arquivo
-        // Por enquanto, vamos focar no web
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Upload de imagens no mobile será implementado em breve'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
+      } else if (file.path != null && file.path!.isNotEmpty) {
+        // Windows, Linux, macOS, Android e iOS: lê o arquivo escolhido e
+        // manda os bytes para o storage, igual ao web.
+        imageBytes = await File(file.path!).readAsBytes();
+      } else {
+        imageBytes = file.bytes;
       }
 
       if (imageBytes == null || imageBytes.isEmpty) {

@@ -66,7 +66,7 @@ async function waitChrome() {
     }
     if (m.method === 'Network.responseReceived') {
       const r = m.params.response;
-      if (/servidorsupabase|neonauth|rest\/v1|empresas|auth|token|app\.env/.test(r.url)) {
+      if (/exodosystems|neonauth|rest\/v1|empresas|auth|token|app\.env/.test(r.url)) {
         events.push({ kind: 'http', status: r.status, url: r.url });
       }
     }

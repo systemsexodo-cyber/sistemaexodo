@@ -890,7 +890,11 @@ CREATE TABLE IF NOT EXISTS public.pedidos (
     observacoes text,
     data_entrega text,
     sync boolean DEFAULT false,
-    senha character varying
+    senha character varying,
+    desconto_total numeric(15,2) DEFAULT 0,
+    acrescimo_total numeric(15,2) DEFAULT 0,
+    recebido boolean NOT NULL DEFAULT false,
+    link_cliente text
 );
 
 --
@@ -2050,6 +2054,11 @@ CREATE TRIGGER trg_exodo_sync_log_vendas_balcao AFTER INSERT OR DELETE OR UPDATE
 
 ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS subgrupo text;
 ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS departamentos_adicionais jsonb;
+-- Códigos de barras EXTRAS do produto (vários EANs para o mesmo item).
+-- Sem a coluna, a gravação descarta o campo em silêncio (o formulário salva,
+-- mas nada persiste). O app também garante a coluna no boot, para instalações
+-- cujo schema já estava criado.
+ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS codigos_barras_adicionais jsonb DEFAULT '[]'::jsonb;
 -- Disponibilidade temporária do produto (janela dia/hora em que pode ser vendido)
 ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS disponivel_de timestamp with time zone;
 ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS disponivel_ate timestamp with time zone;

@@ -46,8 +46,10 @@ class _LoginPageState extends State<LoginPage> {
       _emailController.text.trim(),
       _senhaController.text.trim(),
     );
-    setState(() => _isLoading = false);
+    // A tela pode ter sido fechada enquanto o login rodava: o guarda tem de
+    // vir antes do setState, senao ele roda num State ja descartado.
     if (!mounted) return;
+    setState(() => _isLoading = false);
 
     if (sucesso) {
       // Entrou com os dados locais porque a nuvem estava fora/cota: avisa uma

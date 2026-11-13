@@ -1,0 +1,6 @@
+-- MOVIDA para a fonte única: scripts/migrations/016_bucket_imagens.sql
+--
+-- Para aplicar na nuvem, abra e cole o arquivo:
+--     scripts/migrations/016_bucket_imagens.sql
+--
+-- Ver scripts/migrations/README.md.

@@ -187,3 +187,10 @@ assets/app.env.*
 
 # Conexoes salvas da Central (contem senhas dos clientes)
 tool/central_conexoes.json
+
+# Heap dumps do Android (centenas de MB por arquivo; o GitHub recusa acima de 100 MB)
+*.hprof
+
+# Dumps/backups locais de banco de clientes e rascunhos de código
+temp/restore_*.sql
+temp/*.bak*

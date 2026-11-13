@@ -60,7 +60,7 @@ class MercadoPagoMensalidadeService {
     return Uri.parse(
       configured != null && configured.isNotEmpty
           ? configured
-          : 'https://servidorsupabase.tail9b4943.ts.net/'
+          : 'https://exodosystems.tail9b4943.ts.net/'
                 'functions/v1/mercado-pago-mensalidade',
     );
   }

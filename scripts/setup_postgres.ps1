@@ -279,8 +279,12 @@ $hbaFile = Join-Path $DataDir "pg_hba.conf"
 if (Test-Path $hbaFile) {
     try {
         $content = [System.IO.File]::ReadAllText($hbaFile)
-        $content = $content -replace 'host\s+all\s+all\s+127\.0\.0\.1/32\s+\w+', "host    all             all             127.0.0.1/32            md5"
-        $content = $content -replace 'host\s+all\s+all\s+::1/128\s+\w+', "host    all             all             ::1/128                 md5"
+        # O metodo de autenticacao e trocado por inteiro: `\w+` parava no hifen
+        # e deixava passar metodos invalidos para a versao instalada (ex.:
+        # "md5-sha-256", que so existe em versoes novas) - o PostgreSQL entao
+        # se recusava a iniciar no proximo restart. `[^\s#]+` consome o token todo.
+        $content = $content -replace '(?m)^(host\s+all\s+all\s+127\.0\.0\.1/32\s+)[^\s#]+', '${1}md5'
+        $content = $content -replace '(?m)^(host\s+all\s+all\s+::1/128\s+)[^\s#]+', '${1}md5'
         [System.IO.File]::WriteAllText($hbaFile, $content)
         Write-Log "pg_hba.conf alterado para md5"
 

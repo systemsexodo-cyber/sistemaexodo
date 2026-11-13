@@ -10,8 +10,13 @@ import 'dart:io';
 import '../theme.dart';
 import 'package:intl/intl.dart';
 import '../models/empresa.dart';
+import '../models/forma_pagamento.dart';
+import '../services/data_service.dart';
+import '../services/horario_loja_service.dart';
+import '../utils/perfis_tributarios_merge.dart';
 import 'package:flutter/services.dart';
 import '../widgets/sync_status_widget.dart';
+import 'taxas_entrega_page.dart';
 // Import condicional para Web
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
@@ -45,6 +50,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   final _mensagemFinalizacaoController = TextEditingController();
   final _valorFreteGratisController = TextEditingController();
   final _percentualDescontoPixController = TextEditingController();
+  final _statusLojaController = TextEditingController(text: 'Aberto');
   
   // Estado
   String? _logoUrl;
@@ -69,12 +75,27 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   String? _corSecundariaLoja;
   bool _descontoPixAtivo = true;
   double _percentualDescontoPix = 5.0;
+
+  /// Formas de pagamento exibidas no checkout da loja online.
+  /// Vazio = usa o padrão do e-commerce (PIX, cartões, dinheiro, Mercado Pago).
+  final Set<String> _formasPagamentoLoja = {};
   double _valorFreteGratis = 399.90;
   String _tamanhoLogo = 'medio'; // pequeno, medio, grande
   String _posicaoLogo = 'esquerda'; // esquerda, centro, direita
   String _estiloCards = 'padrao'; // padrao, moderno, minimalista
   bool _exibirRedesSociais = true;
   bool _exibirHorarioFuncionamento = true;
+
+  /// Horário próprio de cada dia da semana (segunda a domingo).
+  Map<String, HorarioDiaLoja> _horariosLoja = HorarioLojaService.padrao();
+
+  /// Interruptor "Aceitar pedidos agora". Desligado, a loja fecha na hora —
+  /// sem depender de o horário de cada dia estar configurado.
+  bool _aceitarPedidos = true;
+
+  /// Confirma e imprime sozinho os pedidos que chegam da loja online.
+  bool _autoConfirmarPedidos = false;
+  bool _exibirLojaAberto = true;
   bool _exibirEnderecoLoja = true;
   String _modoExibicao = 'ecommerce'; // ecommerce, delivery
   
@@ -117,7 +138,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 8, vsync: this);
+    _tabController = TabController(length: 7, vsync: this);
     _carregarConfiguracoes();
   }
 
@@ -168,6 +189,14 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     setState(() {
       _logoUrl = ecommerceConfig['logoUrl'] as String? ?? empresa.logoUrl;
       _bannerUrl = ecommerceConfig['bannerUrl'] as String?;
+      // Sem recarregar estes três, o "Salvar Tudo" gravava null por cima dos
+      // banners promocionais que já estavam salvos (eles sumiam da loja).
+      _bannerPromocional1Url =
+          ecommerceConfig['bannerPromocional1Url'] as String?;
+      _bannerPromocional2Url =
+          ecommerceConfig['bannerPromocional2Url'] as String?;
+      _bannerPromocional3Url =
+          ecommerceConfig['bannerPromocional3Url'] as String?;
       _textoPromocional1Controller.text = ecommerceConfig['textoPromocional1'] as String? ?? '';
       _textoPromocional2Controller.text = ecommerceConfig['textoPromocional2'] as String? ?? '';
       _textoPromocional3Controller.text = ecommerceConfig['textoPromocional3'] as String? ?? '';
@@ -189,6 +218,17 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       }
       _descontoPixAtivo = ecommerceConfig['descontoPixAtivo'] as bool? ?? true;
       _percentualDescontoPix = (ecommerceConfig['percentualDescontoPix'] as num?)?.toDouble() ?? 5.0;
+      _formasPagamentoLoja.clear();
+      final formasSalvas = ecommerceConfig['formasPagamentoLoja'] as List<dynamic>?;
+      if (formasSalvas == null) {
+        _formasPagamentoLoja.addAll(formasPagamentoLojaPadrao);
+      } else {
+        _formasPagamentoLoja.addAll(
+          formasSalvas.map((e) => e.toString()).where(
+                (nome) => TipoPagamento.values.any((t) => t.name == nome),
+              ),
+        );
+      }
       _valorFreteGratis = (ecommerceConfig['valorFreteGratis'] as num?)?.toDouble() ?? 399.90;
       _valorFreteGratisController.text = _valorFreteGratis.toStringAsFixed(2);
       _bannerFreteGratisAtivo = ecommerceConfig['bannerFreteGratisAtivo'] as bool? ?? true;
@@ -237,6 +277,12 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _exibirRedesSociais = ecommerceConfig['exibirRedesSociais'] as bool? ?? true;
       _slugController.text = empresa.slug;
       _exibirHorarioFuncionamento = ecommerceConfig['exibirHorarioFuncionamento'] as bool? ?? true;
+      // Era salvo mas nunca relido: o interruptor voltava a ligado a cada
+      // abertura da tela e o valor escolhido se perdia no próximo save.
+      _exibirLojaAberto = ecommerceConfig['exibirLojaAberto'] as bool? ?? true;
+      _aceitarPedidos = ecommerceConfig['aceitarPedidos'] as bool? ?? true;
+      _autoConfirmarPedidos =
+          ecommerceConfig['autoConfirmarPedidos'] as bool? ?? false;
       _exibirEnderecoLoja = ecommerceConfig['exibirEnderecoLoja'] as bool? ?? true;
       _modoExibicao = ecommerceConfig['modoExibicao'] as String? ?? 'ecommerce';
       
@@ -244,6 +290,10 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _facebookController.text = ecommerceConfig['facebook'] as String? ?? '';
       _instagramController.text = ecommerceConfig['instagram'] as String? ?? '';
       _horarioFuncionamentoController.text = ecommerceConfig['horarioFuncionamento'] as String? ?? 'Segunda a Sexta: 8h às 18h';
+      final horariosSalvos = HorarioLojaService.doConfig(ecommerceConfig);
+      _horariosLoja = horariosSalvos.isEmpty
+          ? HorarioLojaService.padrao()
+          : horariosSalvos;
       _enderecoLojaController.text = ecommerceConfig['enderecoLoja'] as String? ?? '';
       _termosUsoController.text = ecommerceConfig['termosUso'] as String? ?? '';
       _politicaPrivacidadeController.text = ecommerceConfig['politicaPrivacidade'] as String? ?? '';
@@ -261,20 +311,102 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     });
   }
 
+  Widget _buildLinhaHorarioDia(String chave) {
+    final dia = _horariosLoja[chave] ?? const HorarioDiaLoja();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 76,
+            child: Text(
+              HorarioLojaService.nomesDias[chave] ?? chave,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+            ),
+          ),
+          Switch(
+            value: dia.aberto,
+            activeColor: Colors.green,
+            onChanged: (valor) => setState(
+              () => _horariosLoja[chave] = dia.copyWith(aberto: valor),
+            ),
+          ),
+          const SizedBox(width: 4),
+          if (dia.aberto) ...[
+            Expanded(
+              child: _botaoHoraDia(chave, abertura: true, hora: dia.abre),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6),
+              child: Text('às', style: TextStyle(color: Colors.white54, fontSize: 12)),
+            ),
+            Expanded(
+              child: _botaoHoraDia(chave, abertura: false, hora: dia.fecha),
+            ),
+          ] else
+            const Expanded(
+              child: Text(
+                'Fechado',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _botaoHoraDia(String chave, {required bool abertura, required String hora}) {
+    return OutlinedButton(
+      onPressed: () => _selecionarHoraDia(chave, abertura: abertura),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        side: const BorderSide(color: Colors.white24),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        minimumSize: const Size(0, 34),
+      ),
+      child: Text(hora, style: const TextStyle(fontSize: 12)),
+    );
+  }
+
+  Future<void> _selecionarHoraDia(String chave, {required bool abertura}) async {
+    final dia = _horariosLoja[chave] ?? const HorarioDiaLoja();
+    final minutos =
+        HorarioLojaService.minutosDe(abertura ? dia.abre : dia.fecha) ?? 480;
+    final escolhida = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: minutos ~/ 60, minute: minutos % 60),
+      helpText: abertura ? 'Hora de abrir' : 'Hora de fechar',
+    );
+    if (escolhida == null || !mounted) return;
+    final texto = '${escolhida.hour.toString().padLeft(2, '0')}:'
+        '${escolhida.minute.toString().padLeft(2, '0')}';
+    setState(() {
+      _horariosLoja[chave] = dia.copyWith(
+        abre: abertura ? texto : null,
+        fecha: abertura ? null : texto,
+      );
+    });
+  }
+
   Future<void> _uploadLogo() async {
     try {
       setState(() => _uploadingLogo = true);
       
       FilePickerResult? result;
+      // Formato: filtro por extensao (abre sempre no Windows e no celular) e
+      // so aceita imagem de verdade.
+      const formatosLogo = ['png', 'jpg', 'jpeg', 'webp'];
       if (kIsWeb) {
         result = await FilePicker.platform.pickFiles(
-          type: FileType.image,
+          type: FileType.custom,
+          allowedExtensions: formatosLogo,
           allowMultiple: false,
           withData: true,
         );
       } else {
         result = await FilePicker.platform.pickFiles(
-          type: FileType.image,
+          type: FileType.custom,
+          allowedExtensions: formatosLogo,
           allowMultiple: false,
         );
       }
@@ -298,6 +430,26 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       }
       
       final file = result.files.first;
+
+      // O filtro do seletor pode ser burlado (renomear .txt para .png):
+      // confere a extensao antes de gastar upload.
+      final nomeLogo = file.name.toLowerCase();
+      final extensaoLogo =
+          nomeLogo.contains('.') ? nomeLogo.split('.').last : '';
+      if (!formatosLogo.contains(extensaoLogo)) {
+        setState(() => _uploadingLogo = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Formato nao suportado. Envie a logo em PNG ou JPG '
+              '(PNG mantem o fundo transparente).',
+            ),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 6),
+          ),
+        );
+        return;
+      }
       String? url;
       
       if (kIsWeb) {
@@ -314,7 +466,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
         
         // Usar armazenamento GRATUITO no Firestore
         url = await ImageStorageService.salvarImagemERetornarUrl(
-          imageBytes: file.bytes!,
+          imageBytes: ImageStorageService.otimizarLogo(file.bytes!),
           empresaId: empresa.id,
           categoria: 'logos',
           nome: 'Logo ${empresa.nomeExibicao}',
@@ -339,7 +491,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
         try {
           final fileData = await File(file.path!).readAsBytes();
           url = await ImageStorageService.salvarImagemERetornarUrl(
-            imageBytes: fileData,
+            imageBytes: ImageStorageService.otimizarLogo(fileData),
             empresaId: empresa.id,
             categoria: 'logos',
             nome: 'Logo ${empresa.nomeExibicao}',
@@ -352,8 +504,9 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
           setState(() => _uploadingLogo = false);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Erro ao ler arquivo: $e'),
+              content: Text('Erro ao enviar logo: $e'),
               backgroundColor: Colors.red,
+              duration: const Duration(seconds: 8),
             ),
           );
           return;
@@ -364,6 +517,9 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
         setState(() {
           _logoUrl = url;
         });
+        // A loja online le a logo do cadastro da empresa (nuvem), nao do
+        // estado desta tela: grava agora, sem depender do botao Salvar.
+        await _persistirLogo(url);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Logo enviada com sucesso!'),
@@ -390,6 +546,39 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       );
     } finally {
       setState(() => _uploadingLogo = false);
+    }
+  }
+
+  /// Grava a logo na empresa assim que o upload termina.
+  ///
+  /// Antes a URL ficava so no estado desta tela ate clicar em "Salvar": quem
+  /// enviava a logo e saia, ou abria a loja em outro aparelho, continuava sem
+  /// logo — `empresa.logoUrl` e `configuracoes.ecommerce.logoUrl` seguiam
+  /// vazios na nuvem.
+  Future<void> _persistirLogo(String url) async {
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final empresa = authService.empresaAtual;
+      if (empresa == null) return;
+
+      final config = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+      final ecommerce = config['ecommerce'] != null
+          ? Map<String, dynamic>.from(config['ecommerce'] as Map)
+          : <String, dynamic>{};
+      ecommerce['logoUrl'] = url;
+      config['ecommerce'] = ecommerce;
+      _carimbarEcommerce(config);
+
+      await authService.atualizarEmpresa(
+        empresa.copyWith(
+          configuracoes: config,
+          logoUrl: url,
+          updatedAt: DateTime.now(),
+        ),
+      );
+      debugPrint('>>> [PersonalizarLoja] Logo gravada na empresa: $url');
+    } catch (e) {
+      debugPrint('>>> [PersonalizarLoja] Erro ao gravar a logo na empresa: $e');
     }
   }
 
@@ -538,6 +727,52 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     return '#${color.value.toRadixString(16).substring(2, 8).toUpperCase()}';
   }
 
+  /// Carimba a personalização da loja em `configuracoes`.
+  ///
+  /// É o que permite ao merge (AuthService) escolher a cópia MAIS NOVA entre o
+  /// PC e a nuvem. Sem o carimbo, a seção `ecommerce` da nuvem sempre vencia e
+  /// a tela voltava ao valor antigo no próximo boot.
+  void _carimbarEcommerce(Map<String, dynamic> config) {
+    config[chaveEcommerceAtualizadoEm] =
+        DateTime.now().toUtc().toIso8601String();
+  }
+
+  /// Salva imediatamente as configurações de ecommerce quando um toggle é alterado.
+  /// Isso garante que os dados persistam mesmo sem clicar em "Salvar Tudo".
+  Future<void> _salvarConfigEcommerceImediato() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final empresa = authService.empresaAtual;
+    if (empresa == null) return;
+    
+    // Criar uma cópia profunda das configurações existentes
+    final config = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+    
+    // Criar uma cópia profunda da seção ecommerce se existir
+    final ecommerceExistente = config['ecommerce'] != null
+        ? Map<String, dynamic>.from(config['ecommerce'] as Map)
+        : <String, dynamic>{};
+    
+    // Atualizar os campos de ecommerce que foram alterados pelos toggles
+    // Esses são os toggles que o usuário pode alterar na interface
+    ecommerceExistente['aceitarPedidos'] = _aceitarPedidos;
+    ecommerceExistente['autoConfirmarPedidos'] = _autoConfirmarPedidos;
+    ecommerceExistente['exibirLojaAberto'] = _exibirLojaAberto;
+    ecommerceExistente['exibirEnderecoLoja'] = _exibirEnderecoLoja;
+    ecommerceExistente['modoExibicao'] = _modoExibicao;
+    
+    // Atualizar a seção ecommerce no config
+    config['ecommerce'] = ecommerceExistente;
+    _carimbarEcommerce(config);
+    
+    // Atualizar a empresa no authService e localStorage
+    final empresaAtualizada = empresa.copyWith(
+      configuracoes: config,
+      updatedAt: DateTime.now(),
+    );
+    
+    await authService.atualizarEmpresa(empresaAtualizada);
+  }
+
   Future<void> _salvar() async {
     if (!_formKey.currentState!.validate()) return;
     
@@ -560,13 +795,30 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
           ? Map<String, dynamic>.from(config['ecommerce'] as Map)
           : <String, dynamic>{};
       
-      // Atualizar apenas os campos de ecommerce
-      ecommerceExistente['logoUrl'] = _logoUrl;
-      ecommerceExistente['bannerUrl'] = _bannerUrl;
-      // Salvar banners promocionais (imagens)
-      ecommerceExistente['bannerPromocional1Url'] = _bannerPromocional1Url;
-      ecommerceExistente['bannerPromocional2Url'] = _bannerPromocional2Url;
-      ecommerceExistente['bannerPromocional3Url'] = _bannerPromocional3Url;
+      // Atualizar apenas os campos de ecommerce.
+      // IMPORTANTE: so grava a imagem quando existe valor nesta tela. Antes o
+      // campo era escrito sempre, e um `null` (tela aberta antes do upload, ou
+      // estado vazio) APAGAVA a logo/banner que ja estava salvo - na nuvem
+      // inclusive, porque o cadastro da empresa sobe inteiro.
+      if (_logoUrl != null && _logoUrl!.isNotEmpty) {
+        ecommerceExistente['logoUrl'] = _logoUrl;
+      }
+      if (_bannerUrl != null && _bannerUrl!.isNotEmpty) {
+        ecommerceExistente['bannerUrl'] = _bannerUrl;
+      }
+      // Banners promocionais (imagens)
+      if (_bannerPromocional1Url != null &&
+          _bannerPromocional1Url!.isNotEmpty) {
+        ecommerceExistente['bannerPromocional1Url'] = _bannerPromocional1Url;
+      }
+      if (_bannerPromocional2Url != null &&
+          _bannerPromocional2Url!.isNotEmpty) {
+        ecommerceExistente['bannerPromocional2Url'] = _bannerPromocional2Url;
+      }
+      if (_bannerPromocional3Url != null &&
+          _bannerPromocional3Url!.isNotEmpty) {
+        ecommerceExistente['bannerPromocional3Url'] = _bannerPromocional3Url;
+      }
       // Manter textos para compatibilidade
       ecommerceExistente['textoPromocional1'] = _textoPromocional1Controller.text.trim();
       ecommerceExistente['textoPromocional2'] = _textoPromocional2Controller.text.trim();
@@ -584,6 +836,15 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       ecommerceExistente['bannerDataFim'] = _bannerDataFim?.toIso8601String();
       ecommerceExistente['descontoPixAtivo'] = _descontoPixAtivo;
       ecommerceExistente['percentualDescontoPix'] = percentualDescontoPix;
+      // Lista ordenada pela ordem do enum, para o checkout agrupar do mesmo jeito.
+      ecommerceExistente['horariosFuncionamento'] =
+          HorarioLojaService.paraConfig(_horariosLoja);
+      ecommerceExistente['aceitarPedidos'] = _aceitarPedidos;
+      ecommerceExistente['autoConfirmarPedidos'] = _autoConfirmarPedidos;
+      ecommerceExistente['formasPagamentoLoja'] = TipoPagamento.values
+          .map((t) => t.name)
+          .where(_formasPagamentoLoja.contains)
+          .toList();
       ecommerceExistente['valorFreteGratis'] = valorFreteGratis;
       ecommerceExistente['bannerFreteGratisAtivo'] = _bannerFreteGratisAtivo;
       ecommerceExistente['textoBannerFreteGratis'] = _textoBannerFreteGratis.trim();
@@ -628,6 +889,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       ecommerceExistente['estiloCards'] = _estiloCards;
       ecommerceExistente['exibirRedesSociais'] = _exibirRedesSociais;
       ecommerceExistente['exibirHorarioFuncionamento'] = _exibirHorarioFuncionamento;
+      ecommerceExistente['exibirLojaAberto'] = _exibirLojaAberto;
       ecommerceExistente['exibirEnderecoLoja'] = _exibirEnderecoLoja;
       ecommerceExistente['modoExibicao'] = _modoExibicao;
       ecommerceExistente['emailContato'] = _emailContatoController.text.trim();
@@ -643,6 +905,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       
       // Atualizar a seção ecommerce no config
       config['ecommerce'] = ecommerceExistente;
+      _carimbarEcommerce(config);
 
       // Configurações de agendamento
       final agendamentoExistente = config['agendamento'] != null
@@ -650,11 +913,22 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
           : <String, dynamic>{};
       agendamentoExistente['bairrosTaxiDog'] = _bairrosTaxiDog;
       config['agendamento'] = agendamentoExistente;
+      config[chaveAgendamentoAtualizadoEm] =
+          DateTime.now().toUtc().toIso8601String();
       
       debugPrint('>>> [PersonalizarLoja] Salvando configurações completas');
       
       final empresaAtualizada = empresa.copyWith(
         configuracoes: config,
+        // A logo vai também no cadastro da empresa (não só em
+        // configuracoes.ecommerce): é o campo que a loja pública, o PDV e o app
+        // leem direto, e sobe junto com a empresa para a nuvem — assim a logo
+        // aparece de qualquer lugar, não só na rede local.
+        // Nunca zera a logo do cadastro: mantem a que ja esta salva quando o
+        // estado da tela nao tem valor.
+        logoUrl: (_logoUrl != null && _logoUrl!.isNotEmpty)
+            ? _logoUrl
+            : empresa.logoUrl,
         updatedAt: DateTime.now(),
         slug: _slugController.text.trim().isNotEmpty 
           ? Empresa.gerarSlug(_slugController.text) 
@@ -1596,6 +1870,86 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                 children: [
                   Row(
                     children: [
+                      Icon(Icons.account_balance_wallet, color: Colors.greenAccent),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Formas de Pagamento Aceitas',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Marque só as formas que sua loja realmente aceita no site. '
+                    'As desmarcadas não aparecem para o cliente no checkout.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  ...TipoPagamento.values.map(
+                    (tipo) => CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      value: _formasPagamentoLoja.contains(tipo.name),
+                      onChanged: (marcado) {
+                        setState(() {
+                          if (marcado == true) {
+                            _formasPagamentoLoja.add(tipo.name);
+                          } else {
+                            _formasPagamentoLoja.remove(tipo.name);
+                          }
+                        });
+                      },
+                      activeColor: Colors.green,
+                      checkColor: Colors.white,
+                      secondary: Icon(tipo.icone, color: tipo.cor, size: 22),
+                      title: Text(tipo.nome, style: const TextStyle(color: Colors.white)),
+                      subtitle: Text(
+                        tipo.descricao,
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                    ),
+                  ),
+                  if (_formasPagamentoLoja.isEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.withOpacity(0.4)),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Marque ao menos uma forma: sem nenhuma, o checkout '
+                              'mostra PIX para o cliente não ficar travado.',
+                              style: TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          Card(
+            color: Colors.white.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
                       Icon(Icons.percent, color: Colors.white),
                       const SizedBox(width: 8),
                       const Text(
@@ -1734,6 +2088,97 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Taxas de entrega por bairro (o que o checkout cobra do cliente)
+          Card(
+            color: Colors.white.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.payments, color: Colors.greenAccent),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Taxas de Entrega por Bairro',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Cadastre o valor da entrega de cada bairro. É esse valor que o '
+                    'checkout cobra quando o cliente escolhe receber em casa.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  Consumer<DataService>(
+                    builder: (context, dataService, _) {
+                      final taxas = dataService.taxasEntrega.where((t) => t.ativo).toList();
+                      if (taxas.isEmpty) {
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.orange.withOpacity(0.4)),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Nenhuma taxa cadastrada. Sem isso o cliente que pedir '
+                                  'entrega não vê valor de frete.',
+                                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+                      final exemplos = taxas.take(3).map(
+                        (t) => '${t.bairro} ${moeda.format(t.valor)}',
+                      ).join(' • ');
+                      return Text(
+                        '${taxas.length} bairro${taxas.length == 1 ? '' : 's'} cadastrado${taxas.length == 1 ? '' : 's'}: $exemplos'
+                        '${taxas.length > 3 ? ' e mais ${taxas.length - 3}' : ''}',
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const TaxasEntregaPage()),
+                      ),
+                      icon: const Icon(Icons.add_location_alt),
+                      label: const Text('Cadastrar / Gerenciar Taxas'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
           // Zonas removidas temporariamente para simplificação
           // Opções Fixas removidas temporariamente para simplificação
           
@@ -2178,13 +2623,66 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                     onChanged: (value) => setState(() => _exibirHorarioFuncionamento = value),
                     activeColor: Colors.green,
                   ),
+                  const Divider(color: Colors.white24, height: 28),
+                  SwitchListTile(
+                    title: const Text(
+                      'Aceitar pedidos agora',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    subtitle: const Text(
+                      'Desligado, a loja aparece como fechada e o cliente não '
+                      'consegue adicionar ao carrinho nem finalizar o pedido.',
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                    value: _aceitarPedidos,
+                    onChanged: (value) {
+                      setState(() => _aceitarPedidos = value);
+                      _salvarConfigEcommerceImediato();
+                    },
+                    activeColor: Colors.green,
+                  ),
+                  SwitchListTile(
+                    title: const Text(
+                      'Confirmar e imprimir sozinho os pedidos do site',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    subtitle: const Text(
+                      'Quando um pedido da loja online chegar, ele ja entra '
+                      'como Em Andamento e o cupom e impresso automaticamente '
+                      'neste computador.',
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                    value: _autoConfirmarPedidos,
+                    onChanged: (value) {
+                      setState(() => _autoConfirmarPedidos = value);
+                      _salvarConfigEcommerceImediato();
+                    },
+                    activeColor: Colors.green,
+                  ),
                   if (_exibirHorarioFuncionamento) ...[
                     const SizedBox(height: 16),
                     _buildTextField(
                       _horarioFuncionamentoController,
-                      'Horário',
+                      'Horário (texto exibido no cabeçalho)',
                       hint: 'Ex: Segunda a Sexta: 8h às 18h',
                     ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Horário de cada dia',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Fora desses horários a loja aparece como fechada e não '
+                      'aceita pedidos. Deixe o dia desligado para fechá-lo.',
+                      style: TextStyle(color: Colors.white60, fontSize: 12, height: 1.4),
+                    ),
+                    const SizedBox(height: 12),
+                    ...HorarioLojaService.chavesDias.map(_buildLinhaHorarioDia),
                   ],
                 ],
               ),

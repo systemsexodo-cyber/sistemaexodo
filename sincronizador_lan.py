@@ -137,6 +137,59 @@ def config_do_par(env=None):
     }
 
 
+def pares_do_env(env=None):
+    """TODOS os PCs salvos pelo app (`LAN_PEERS`) como configs de par.
+
+    O app grava uma lista (`nome@host:porta;host:porta`) para a loja com mais de
+    dois PCs — antes só existia `PAR_HOST`, e salvar o segundo computador
+    apagava o primeiro. O `PAR_HOST` continua valendo (é o primeiro da lista),
+    mas quem tem a lista sincroniza com todos, inclusive quando o anúncio UDP
+    não chega (firewall/rede que bloqueia broadcast).
+
+    Devolve lista vazia quando a LAN está desligada ou não há lista.
+    """
+    env = env if env is not None else os.environ
+    if not _ligado(env.get('LAN_SYNC'), padrao=True):
+        return []
+    bruto = (env.get('LAN_PEERS') or '').strip()
+    if not bruto:
+        return []
+    pares = []
+    vistos = set()
+    for parte in bruto.split(';'):
+        item = parte.strip()
+        if not item:
+            continue
+        nome = ''
+        resto = item
+        if '@' in item:
+            nome, _, resto = item.rpartition('@')
+            nome = nome.strip()
+            resto = resto.strip()
+        if not resto:
+            continue
+        host = resto
+        porta = '5432'
+        if ':' in resto:
+            host, _, porta = resto.rpartition(':')
+            host = host.strip()
+            porta = porta.strip() or '5432'
+        if not host:
+            continue
+        chave = (nome or host).lower()
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        env_par = dict(env)
+        env_par['PAR_HOST'] = host
+        env_par['PAR_PORT'] = porta
+        env_par['PAR_NOME'] = nome or host
+        cfg = config_do_par(env_par)
+        if cfg:
+            pares.append(cfg)
+    return pares
+
+
 def _eh_ip(host):
     """O endereço informado já é um IP (IPv4 ou IPv6)?"""
     texto = str(host or '').strip()
@@ -422,7 +475,7 @@ def _push_tombstones_para_par(conn_local, conn_par, cfg, tabelas, bloqueados, re
 
     for tabela in tabelas:
         # Pula tabelas proibidas
-        if tabela in S.TABELAS_PROIBIDAS or _tabela_proibida(tabela):
+        if tabela in TABELAS_PROIBIDAS or _tabela_proibida(tabela):
             continue
 
         # Busca tombstones locais (DELETEs) desta tabela.
@@ -430,27 +483,37 @@ def _push_tombstones_para_par(conn_local, conn_par, cfg, tabelas, bloqueados, re
         chave = _chave_cursor(tabela, par_nome, apagados=True)
         cursor_atual = _ler_cursor(conn_local, chave)
         # Se cursor for None (1º contato), começamos do epoch.
-        desde = cursor_atual if cursor_atual and str(cursor_atual) != _EPOCH else _EPOCH
+        desde = cursor_atual if cursor_atual and str(cursor_atual) != S._EPOCH else S._EPOCH
 
         try:
             with conn_local.cursor() as cur:
+                # _exodo_sync_log guarda (table_name, record_id, operation,
+                # created_at) — nao tem empresa_id/deleted_at. O created_at e
+                # o momento do DELETE, entao serve de "deletado_em".
                 cur.execute("""
-                    SELECT record_id, empresa_id, deleted_at
+                    SELECT record_id, '' AS empresa_id, created_at AS deleted_at
                     FROM _exodo_sync_log
                     WHERE table_name = %s
                       AND operation = 'DELETE'
-                      AND deleted_at > %s::timestamptz
-                    ORDER BY deleted_at ASC
+                      AND created_at > %s::timestamptz
+                    ORDER BY created_at ASC
                 """, (tabela, desde))
                 tombstones = cur.fetchall()
+            conn_local.commit()
         except Exception as e:
+            # Sem o rollback a transacao fica abortada e TODAS as tabelas
+            # seguintes falham com "transacao atual foi interrompida".
+            try:
+                conn_local.rollback()
+            except Exception:
+                pass
             S.print_log(f'[LAN] Erro ao buscar tombstones de {tabela}: {e}', S.Colors.YELLOW)
             continue
 
         if not tombstones:
             # Ainda assim avançar o cursor para o epoch se era 1º contato
             if cursor_atual is None:
-                _salvar_cursor(conn_local, chave, _EPOCH)
+                _salvar_cursor(conn_local, chave, S._EPOCH)
             continue
 
         # Garantir que a tabela de apagados existe no par
@@ -486,7 +549,10 @@ def _push_tombstones_para_par(conn_local, conn_par, cfg, tabelas, bloqueados, re
                     _salvar_cursor(conn_local, chave, str(deletado_em))
                     continue
             except Exception:
-                pass
+                try:
+                    conn_local.rollback()
+                except Exception:
+                    pass
 
             # --- Guard 2: cópia no par é mais nova que deletado_em?
             # Verificamos no par se a linha ja foi recriada com data mais recente
@@ -510,6 +576,10 @@ def _push_tombstones_para_par(conn_local, conn_par, cfg, tabelas, bloqueados, re
                         _salvar_cursor(conn_local, chave, str(deletado_em))
                         continue
             except Exception as e:
+                try:
+                    conn_par.rollback()
+                except Exception:
+                    pass
                 S.print_log(f'[LAN] Erro ao verificar versão no par para {id_str}: {e}', S.Colors.YELLOW)
 
             # --- Aplicar DELETE no par com sync_mode='on'
@@ -519,6 +589,7 @@ def _push_tombstones_para_par(conn_local, conn_par, cfg, tabelas, bloqueados, re
                     # Usar _ident para casar o nome da tabela corretamente
                     cur.execute(f'DELETE FROM {_ident(tabela)} WHERE id = %s', (id_str,))
                     linhas_apagadas = cur.rowcount
+                conn_par.commit()
                 # Inserir túmulo no _exodo_deletados do par (ON CONFLICT IGNORE)
                 try:
                     with conn_par.cursor() as cur:
@@ -540,6 +611,10 @@ def _push_tombstones_para_par(conn_local, conn_par, cfg, tabelas, bloqueados, re
                 S.print_log(f'[LAN] Tombstone push: DELETE {id_str}/{tabela} aplicado no par {par_nome}.',
                             S.Colors.CYAN)
             except Exception as e:
+                try:
+                    conn_par.rollback()
+                except Exception:
+                    pass
                 S.print_log(f'[LAN] Erro ao aplicar tombstone {id_str}/{tabela} no par {par_nome}: {e}', S.Colors.RED)
                 continue
 
@@ -854,7 +929,7 @@ def sincronizar_com_par(conn, cfg=None, tabelas=None):
             resumo['tombstones'] = aplicados
         except Exception as e:
             S.print_log(f'[LAN] Erro no push de túmulos para o par {par}: {e}',
-                        S.Colors.YELLOW')
+                        S.Colors.YELLOW)
 
         resumo['tombstones'] = purgar_tombstones_antigos(conn, cfg['dias_tombstone'])
 

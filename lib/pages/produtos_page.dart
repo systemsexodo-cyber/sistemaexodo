@@ -22,6 +22,7 @@ import 'consumo_interno_page.dart';
 import 'inventario_page.dart';
 import '../services/inventario_print_service.dart';
 import 'producao_page.dart';
+import 'editor_etiqueta_page.dart';
 
 class ProdutosPage extends StatefulWidget {
   const ProdutosPage({super.key});
@@ -897,6 +898,83 @@ class _ProdutosPageState extends State<ProdutosPage> {
     );
   }
 
+  /// Abre o editor de etiqueta do produto.
+  void _abrirEditorEtiqueta(Produto produto) {
+    final empresa =
+        Provider.of<DataService>(context, listen: false).empresaAtual;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditorEtiquetaPage(produto: produto, empresa: empresa),
+      ),
+    );
+  }
+
+  /// Pergunta quais produtos etiquetar e abre o editor de etiqueta.
+  ///
+  /// Aceita marcar vários produtos de uma vez; com mais de um selecionado
+  /// entra no modo lote (uma etiqueta por produto, mesmo layout).
+  Future<void> _escolherProdutoParaEtiqueta(List<Produto> produtos) async {
+    if (produtos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nenhum produto para etiquetar.')),
+      );
+      return;
+    }
+
+    final escolhidos = await showModalBottomSheet<List<Produto>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: const Color(0xFF1A1A2E),
+      builder: (_) => _SeletorProdutoEtiqueta(produtos: produtos),
+    );
+
+    if (escolhidos == null || escolhidos.isEmpty || !mounted) return;
+
+    if (escolhidos.length == 1) {
+      _abrirEditorEtiqueta(escolhidos.first);
+      return;
+    }
+
+    final empresa =
+        Provider.of<DataService>(context, listen: false).empresaAtual;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditorEtiquetaPage.lote(
+          produtos: escolhidos,
+          empresa: empresa,
+          titulo: 'Etiquetas • ${escolhidos.length} produtos',
+        ),
+      ),
+    );
+  }
+
+  /// Abre o editor de etiquetas para os produtos marcados na seleção em massa.
+  void _etiquetarSelecionados(DataService service) {
+    final produtos = service.produtos
+        .where((produto) => _selecionados.contains(produto.id))
+        .toList();
+
+    if (produtos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecione ao menos um produto.')),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditorEtiquetaPage.lote(
+          produtos: produtos,
+          empresa: service.empresaAtual,
+        ),
+      ),
+    );
+  }
+
   /// Mesma regra do [PermissionWidget]: admin/master/gerente (e o usuário
   /// "user") têm acesso a tudo; os demais dependem da permissão.
   bool _podeNoTopo(TipoPermissao permissao) {
@@ -988,6 +1066,13 @@ class _ProdutosPageState extends State<ProdutosPage> {
             MaterialPageRoute(builder: (_) => const EstoqueReposicaoPage()),
           );
         },
+      ),
+      _AcaoProdutos(
+        rotulo: 'Imprimir Etiqueta de Preço',
+        icone: Icons.sell_outlined,
+        cor: Colors.greenAccent,
+        permissao: TipoPermissao.produtosVisualizar,
+        onPressed: () => _escolherProdutoParaEtiqueta(produtosFiltrados),
       ),
       _AcaoProdutos(
         rotulo: 'Imprimir Inventário p/ Contagem',
@@ -1135,6 +1220,11 @@ class _ProdutosPageState extends State<ProdutosPage> {
             tooltip: 'Alterar Selecionados (Massa)',
             onPressed: () => _mostrarDialogEdicaoEmMassa(context, service),
           ),
+          IconButton(
+            icon: const Icon(Icons.sell_outlined, color: Colors.greenAccent),
+            tooltip: 'Imprimir etiquetas dos selecionados',
+            onPressed: () => _etiquetarSelecionados(service),
+          ),
         ],
       ],
       for (final acao in _acoesSecundariasDoTopo(context, service, produtosFiltrados))
@@ -1206,6 +1296,12 @@ class _ProdutosPageState extends State<ProdutosPage> {
                 icone: Icons.auto_fix_high_rounded,
                 cor: Colors.orangeAccent,
                 onPressed: () => _mostrarDialogEdicaoEmMassa(context, service),
+              ),
+              _AcaoProdutos(
+                rotulo: 'Imprimir etiquetas dos selecionados',
+                icone: Icons.sell_outlined,
+                cor: Colors.greenAccent,
+                onPressed: () => _etiquetarSelecionados(service),
               ),
             ],
           ];
@@ -1369,7 +1465,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
         }
 
         if (!ehNumero) {
-          final palavras = p.nome
+          final nomePalavras = p.nome
               .toLowerCase()
               .replaceAll(RegExp(r'[0-9]+'), ' ')
               .replaceAll(RegExp(r'[^a-záàâãéêíóôõúç\s]'), ' ')
@@ -1377,7 +1473,16 @@ class _ProdutosPageState extends State<ProdutosPage> {
               .where((w) => w.length >= 2)
               .toList();
 
-          return palavras.any((palavra) => palavra.startsWith(buscaLower));
+          final descPalavras = (p.descricao ?? '')
+              .toLowerCase()
+              .replaceAll(RegExp(r'[0-9]+'), ' ')
+              .replaceAll(RegExp(r'[^a-záàâãéêíóôõúç\s]'), ' ')
+              .split(RegExp(r'\s+'))
+              .where((w) => w.length >= 2)
+              .toList();
+
+          return nomePalavras.any((palavra) => palavra.startsWith(buscaLower)) ||
+                  descPalavras.any((palavra) => palavra.startsWith(buscaLower));
         }
 
         return false;
@@ -1770,6 +1875,7 @@ class _ProdutosPageState extends State<ProdutosPage> {
                               }
                               if (v == 'clone') _clonarProduto(produto);
                               if (v == 'copy') _copiarDescricao(produto);
+                              if (v == 'etiqueta') _abrirEditorEtiqueta(produto);
                               if (v == 'del') _confirmarExclusao(produto);
                             },
                             itemBuilder: (context) => [
@@ -1800,6 +1906,16 @@ class _ProdutosPageState extends State<ProdutosPage> {
                                       size: 16, color: Colors.white70),
                                   SizedBox(width: 8),
                                   Text('Copiar Texto',
+                                      style: TextStyle(color: Colors.white)),
+                                ]),
+                              ),
+                              const PopupMenuItem(
+                                value: 'etiqueta',
+                                child: Row(children: [
+                                  Icon(Icons.sell_outlined,
+                                      size: 16, color: Colors.greenAccent),
+                                  SizedBox(width: 8),
+                                  Text('Imprimir Etiqueta',
                                       style: TextStyle(color: Colors.white)),
                                 ]),
                               ),
@@ -2863,6 +2979,225 @@ class _ProdutosPageState extends State<ProdutosPage> {
         children: [
           Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
           Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lista de escolha dos produtos a etiquetar, com seleção múltipla.
+///
+/// Devolve a lista marcada; o chamador abre o editor em modo lote quando há
+/// mais de um produto.
+class _SeletorProdutoEtiqueta extends StatefulWidget {
+  final List<Produto> produtos;
+
+  const _SeletorProdutoEtiqueta({required this.produtos});
+
+  @override
+  State<_SeletorProdutoEtiqueta> createState() =>
+      _SeletorProdutoEtiquetaState();
+}
+
+class _SeletorProdutoEtiquetaState extends State<_SeletorProdutoEtiqueta> {
+  final _buscaController = TextEditingController();
+  String _termo = '';
+
+  /// Ids dos produtos marcados para imprimir.
+  final Set<String> _marcados = {};
+
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
+
+  List<Produto> get _filtrados {
+    final termo = _termo.trim().toLowerCase();
+    if (termo.isEmpty) return widget.produtos;
+    return widget.produtos.where((p) {
+      return p.nome.toLowerCase().contains(termo) ||
+          (p.codigo ?? '').toLowerCase().contains(termo) ||
+          (p.codigoBarras ?? '').toLowerCase().contains(termo);
+    }).toList();
+  }
+
+  /// Marcados na ordem da lista original, para a impressão sair previsível.
+  List<Produto> get _selecionados => widget.produtos
+      .where((p) => _marcados.contains(p.id))
+      .toList();
+
+  bool get _todosMarcados =>
+      widget.produtos.isNotEmpty &&
+      _marcados.length == widget.produtos.length;
+
+  void _alternar(Produto produto) {
+    setState(() {
+      if (!_marcados.remove(produto.id)) _marcados.add(produto.id);
+    });
+  }
+
+  void _alternarTodos() {
+    setState(() {
+      if (_todosMarcados) {
+        _marcados.clear();
+      } else {
+        _marcados.addAll(widget.produtos.map((p) => p.id));
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final formatoMoeda =
+        NumberFormat.currency(locale: 'pt_BR', symbol: r'R$');
+    final itens = _filtrados;
+    final total = _selecionados.length;
+
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.75,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Quais produtos imprimir?',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: widget.produtos.isEmpty ? null : _alternarTodos,
+                  icon: Icon(
+                    _todosMarcados ? Icons.deselect : Icons.select_all,
+                    size: 18,
+                    color: Colors.greenAccent,
+                  ),
+                  label: Text(
+                    _todosMarcados ? 'Limpar' : 'Todos',
+                    style: const TextStyle(
+                      color: Colors.greenAccent,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _buscaController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Buscar por nome, código ou código de barras',
+                hintStyle: TextStyle(color: Colors.white38),
+                prefixIcon: Icon(Icons.search, color: Colors.white38),
+                filled: true,
+                fillColor: Colors.white10,
+                border: OutlineInputBorder(borderSide: BorderSide.none),
+              ),
+              onChanged: (v) => setState(() => _termo = v),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: itens.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Nenhum produto encontrado',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: itens.length,
+                    itemBuilder: (context, index) {
+                      final produto = itens[index];
+                      final codigos = [produto.codigo ?? '', produto.codigoBarras ?? '']
+                          .where((e) => e.trim().isNotEmpty)
+                          .join(' • ');
+                      final marcado = _marcados.contains(produto.id);
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(
+                          marcado
+                              ? Icons.check_circle
+                              : Icons.radio_button_unchecked,
+                          color:
+                              marcado ? Colors.greenAccent : Colors.white38,
+                          size: 20,
+                        ),
+                        title: Text(
+                          produto.nome,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                        ),
+                        subtitle: codigos.isEmpty
+                            ? null
+                            : Text(
+                                codigos,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                        trailing: Text(
+                          formatoMoeda.format(produto.precoAtual),
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        onTap: () => _alternar(produto),
+                      );
+                    },
+                  ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: SizedBox(
+                height: 48,
+                child: FilledButton.icon(
+                  onPressed: total == 0
+                      ? null
+                      : () => Navigator.pop(context, _selecionados),
+                  icon: const Icon(Icons.print_rounded),
+                  label: Text(
+                    total == 0
+                        ? 'Marque ao menos um produto'
+                        : total == 1
+                            ? 'IMPRIMIR 1 ETIQUETA'
+                            : 'IMPRIMIR $total PRODUTOS',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.greenAccent,
+                    foregroundColor: Colors.black87,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

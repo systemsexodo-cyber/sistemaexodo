@@ -22,7 +22,7 @@ Git, no app Flutter, neste arquivo ou em mensagens.**
 
 O Compose da VM já injeta `SUPABASE_URL`, `SUPABASE_PUBLIC_URL` e
 `SUPABASE_SERVICE_ROLE_KEY` no Edge Runtime. Confirme que `SUPABASE_PUBLIC_URL`
-é `https://servidorsupabase.tail9b4943.ts.net`.
+é `https://exodosystems.tail9b4943.ts.net`.
 
 ## 2. Passe as novas variáveis ao Edge Runtime
 
@@ -68,7 +68,7 @@ ssh -i $key -p 2222 charles@127.0.0.1 `
 Configure notificações de pagamentos para:
 
 ```text
-https://servidorsupabase.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade/webhook
+https://exodosystems.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade/webhook
 ```
 
 Use o mesmo segredo de assinatura colocado em
@@ -79,7 +79,7 @@ Use o mesmo segredo de assinatura colocado em
 O app usa por padrão:
 
 ```text
-https://servidorsupabase.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade
+https://exodosystems.tail9b4943.ts.net/functions/v1/mercado-pago-mensalidade
 ```
 
 Se o endereço público mudar, configure `SUPABASE_FUNCTIONS_URL` no ambiente

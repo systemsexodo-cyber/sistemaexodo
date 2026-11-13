@@ -87,6 +87,43 @@ def gravar_versao_no_codigo(comp, versao):
     return True
 
 
+ARQUIVO_VERSAO_SINC = os.path.join(BASE_DIR, "version_sincronizador.txt")
+
+
+def tupla_versao(versao):
+    partes = [int(p) for p in re.findall(r"\d+", versao)][:4]
+    while len(partes) < 4:
+        partes.append(0)
+    return tuple(partes)
+
+
+def gravar_versao_no_arquivo_versao(versao):
+    """Mantem o FileVersion do .exe igual ao VERSION do sinc.
+
+    O `SincronizadorNuvem.spec` embute o `version_sincronizador.txt`. Se ele nao
+    acompanha a publicacao, o exe sai com 1.0.16 nas propriedades mesmo
+    publicado como 1.0.19 — o painel e a aba "Versoes do App" mostram o numero
+    errado.
+    """
+    try:
+        with open(ARQUIVO_VERSAO_SINC, encoding="utf-8", errors="replace") as arquivo:
+            texto = arquivo.read()
+    except OSError:
+        return False
+
+    tupla = ", ".join(str(p) for p in tupla_versao(versao))
+    completo = f"{'.'.join(str(p) for p in tupla_versao(versao))}"
+    novo = re.sub(r"filevers=\([^)]*\)", f"filevers=({tupla})", texto)
+    novo = re.sub(r"prodvers=\([^)]*\)", f"prodvers=({tupla})", novo)
+    novo = re.sub(r"'FileVersion', '[^']*'", f"'FileVersion', '{completo}'", novo)
+    novo = re.sub(r"'ProductVersion', '[^']*'", f"'ProductVersion', '{completo}'", novo)
+    if novo == texto:
+        return False
+    with open(ARQUIVO_VERSAO_SINC, "w", encoding="utf-8") as arquivo:
+        arquivo.write(novo)
+    return True
+
+
 def versao_valida(versao):
     return bool(re.fullmatch(r"\d+(\.\d+){1,3}", versao or ""))
 
@@ -208,12 +245,28 @@ def main():
     if versao != versao_codigo:
         if gravar_versao_no_codigo(comp, versao):
             pt.log(f"✏️  Versão atualizada em {os.path.relpath(comp.fonte, BASE_DIR)}")
+        if comp.chave == "sinc" and gravar_versao_no_arquivo_versao(versao):
+            pt.log(f"✏️  FileVersion do exe: {versao}")
+    elif comp.chave == "sinc" and gravar_versao_no_arquivo_versao(versao):
+        # Mesmo com a mesma versao no codigo, o arquivo de versao pode estar atras.
+        pt.log(f"✏️  FileVersion do exe sincronizado com {versao}")
 
     if args.build:
         ok, erro = compilar(comp)
         if not ok:
             pt.log(f"❌ {erro}")
             return 1
+        if comp.chave == "sinc":
+            # Erro de sintaxe num modulo nao quebra o PyInstaller: ele gera o
+            # exe SEM o modulo e o sincronizador so falha no cliente. Conferir
+            # aqui evita subir pacote quebrado como `sync_latest`.
+            ok_modulos, _ = pt.rodar(
+                [sys.executable, "verificar_sincronizador.py"],
+                "Conferência dos módulos do build",
+            )
+            if not ok_modulos:
+                pt.log("❌ Build saiu sem os módulos principais — NADA foi publicado.")
+                return 1
     else:
         pt.log("▶ Build: reaproveitando o executável atual (use --build para recompilar)")
 

@@ -57,6 +57,11 @@ class SupabaseService {
   /// A nuvem está configurada? Basta a URL da Data API estar no `.env.neon`.
   static bool get isAvailable => NeonConfig.dataApiUrl.isNotEmpty;
 
+  /// Motivo da última falha de upload no storage (HTTP e corpo da resposta).
+  /// Sem isso a UI só mostrava "falha ao subir imagem", sem dizer se era
+  /// bucket inexistente, permissão, tamanho ou servidor fora do ar.
+  static String? ultimoErroUpload;
+
   /// Alias de instância para isAvailable
   bool get connected => isAvailable;
 
@@ -716,7 +721,11 @@ class SupabaseService {
     if (!isAvailable || data.isEmpty) return;
     try {
       final colunas = await _detectarColunasTabela(table);
-      var lista = data.map((m) => _toSafeMap(m)).toList();
+      var lista = data
+          .map(
+            (m) => _filtrarCamposLocais(table, _toSafeMap(m), colunasReais: colunas),
+          )
+          .toList();
       if (table == 'vendas_balcao') {
         lista = lista.map(_prepararVendaBalcao).toList();
       }
@@ -990,22 +999,106 @@ class SupabaseService {
     }
   }
 
-  /// Deleta todos os registros de uma tabela para uma empresa específica.
+  /// Ids das linhas da empresa [empresaId] na tabela [table] da nuvem.
+  ///
+  /// O "Zerar Nuvem" enumera os ids ANTES de apagar: assim ele sabe
+  /// exatamente o que vai sair e pode conferir cada id contra o banco local
+  /// (ver `DataService.deletarTudoNoSupabaseDestaEmpresa`). Se a enumeração
+  /// falhar, nada é apagado — melhor não apagar do que apagar às cegas.
+  Future<List<String>> listarIdsDaEmpresa(String table, String empresaId) async {
+    final alvo = empresaId.trim();
+    final ids = <String>[];
+    if (!isAvailable || alvo.isEmpty) return ids;
+    const pageSize = 1000;
+    var inicio = 0;
+    while (true) {
+      final pagina = await _client
+          .from(table)
+          .select('id')
+          .eq('empresa_id', alvo)
+          .order('id')
+          .range(inicio, inicio + pageSize - 1)
+          .timeout(const Duration(seconds: 30));
+      for (final linha in pagina) {
+        final id = linha['id']?.toString();
+        if (id != null && id.isNotEmpty) ids.add(id);
+      }
+      if (pagina.length < pageSize) break;
+      inicio += pageSize;
+    }
+    debugPrint(
+      '>>> [Supabase] 🔎 $table: ${ids.length} id(s) da empresa $alvo na nuvem',
+    );
+    return ids;
+  }
+
+  /// Deleta registros de uma tabela para uma empresa específica.
   /// Retorna quantos registros foram removidos (0 se nada foi encontrado).
-  Future<int> deleteByEmpresa(String table, String empresaId) async {
+  ///
+  /// [somenteIds]: quando informado, apaga SÓ estes ids (e só se ainda forem
+  /// da empresa) — é o caminho usado pelo "Zerar Nuvem", que confere cada id
+  /// contra o banco local antes. Lista vazia = não apaga nada.
+  Future<int> deleteByEmpresa(
+    String table,
+    String empresaId, {
+    Iterable<String>? somenteIds,
+  }) async {
     try {
       if (!isAvailable) return 0;
-      if (empresaId.isEmpty) {
+      final alvo = empresaId.trim();
+      if (alvo.isEmpty) {
         debugPrint(
           '>>> [Supabase] ❌ ERRO: empresaId vazio, abortando delete em $table',
         );
         return 0;
       }
+
+      if (somenteIds != null) {
+        final ids = somenteIds.where((i) => i.isNotEmpty).toList();
+        if (ids.isEmpty) {
+          debugPrint(
+            '>>> [Supabase] ⏭️ $table: nenhum id confirmado, nada apagado.',
+          );
+          return 0;
+        }
+        // Lotes pequenos: os ids vão na URL do PostgREST e uma lista enorme
+        // estoura o tamanho máximo da requisição.
+        const loteMax = 100;
+        var removidos = 0;
+        for (var i = 0; i < ids.length; i += loteMax) {
+          final fim = (i + loteMax) > ids.length ? ids.length : i + loteMax;
+          final lote = ids.sublist(i, fim);
+          final contagem = await _client
+              .from(table)
+              .select('id')
+              .eq('empresa_id', alvo)
+              .inFilter('id', lote)
+              .count()
+              .timeout(const Duration(seconds: 30));
+          final quantidade = contagem.count;
+          if (quantidade == 0) continue;
+          // O filtro de empresa vai SEMPRE junto do id: um id que não é mais
+          // desta empresa nunca é apagado.
+          await _client
+              .from(table)
+              .delete()
+              .eq('empresa_id', alvo)
+              .inFilter('id', lote)
+              .timeout(const Duration(seconds: 30));
+          removidos += quantidade;
+        }
+        debugPrint(
+          '>>> [Supabase] 🗑️ $table: $removidos registro(s) da empresa $alvo '
+          'apagados (um a um, por id)',
+        );
+        return removidos;
+      }
+
       // Contar ANTES de apagar: só apaga o que realmente pertence à empresa
       final countResp = await _client
           .from(table)
           .select('id')
-          .eq('empresa_id', empresaId)
+          .eq('empresa_id', alvo)
           .count()
           .timeout(const Duration(seconds: 15));
       final count = countResp.count;
@@ -1013,10 +1106,10 @@ class SupabaseService {
         await _client
             .from(table)
             .delete()
-            .eq('empresa_id', empresaId)
+            .eq('empresa_id', alvo)
             .timeout(const Duration(seconds: 15));
         debugPrint(
-          '>>> [Supabase] 🗑️ $table: $count registro(s) removidos da empresa $empresaId',
+          '>>> [Supabase] 🗑️ $table: $count registro(s) removidos da empresa $alvo',
         );
       } else {
         debugPrint(
@@ -1032,8 +1125,9 @@ class SupabaseService {
 
   Map<String, dynamic> _filtrarCamposLocais(
     String table,
-    Map<String, dynamic> map,
-  ) {
+    Map<String, dynamic> map, {
+    Set<String>? colunasReais,
+  }) {
     final m = <String, dynamic>{};
 
     // Normalizar datas locais para UTC com indicador 'Z'
@@ -1062,10 +1156,17 @@ class SupabaseService {
       m.remove('perguntasSelecao');
       m.remove('exibir_composicao_pdv');
       m.remove('exibirComposicaoPdv');
-      // Existe apenas no Postgres LOCAL. Sem removê-la, TODO upsert de produto
-      // falhava com PGRST204 e a edição era descartada silenciosamente.
-      m.remove('codigos_barras_adicionais');
-      m.remove('codigosBarrasAdicionais');
+      // `codigos_barras_adicionais` (vários códigos de barras por produto).
+      //
+      // Antes era SEMPRE descartada, mesmo depois de a coluna existir — era
+      // isso que fazia os códigos extras nunca chegarem à nuvem. Agora só sai
+      // quando a coluna realmente não existe na tabela (instalação que ainda
+      // não rodou ADICIONAR_CODIGOS_BARRAS_ADICIONAIS.sql), preservando a
+      // proteção contra PGRST204 que derrubava o produto inteiro.
+      if (!(colunasReais?.contains('codigos_barras_adicionais') ?? false)) {
+        m.remove('codigos_barras_adicionais');
+        m.remove('codigosBarrasAdicionais');
+      }
     }
     if (table.contains('pedidos')) {
       m.remove('acrescimoTotal');
@@ -1124,19 +1225,23 @@ class SupabaseService {
       debugPrint('>>> [Supabase]    ID: ${data['id']}');
       debugPrint('>>> [Supabase]    Empresa: ${data['empresa_id']}');
 
-      Map<String, dynamic> dataToUpsert = _filtrarCamposLocais(table, data);
+      // Filtro genérico: envia SOMENTE colunas que existem na tabela real
+      // (via OpenAPI, em cache). Elimina PGRST204 para qualquer tabela,
+      // inclusive as legadas com colunas camelCase (temAcesso, linkVendedorId,
+      // etc.). Se a detecção falhar, mantém o comportamento antigo.
+      final colunas = await _detectarColunasTabela(table);
+
+      Map<String, dynamic> dataToUpsert = _filtrarCamposLocais(
+        table,
+        data,
+        colunasReais: colunas,
+      );
 
       // vendas_balcao: derivar numero_venda para consistência.
       String? onConflict;
       if (table == 'vendas_balcao') {
         dataToUpsert = _prepararVendaBalcao(dataToUpsert);
       }
-
-      // Filtro genérico: envia SOMENTE colunas que existem na tabela real
-      // (via OpenAPI, em cache). Elimina PGRST204 para qualquer tabela,
-      // inclusive as legadas com colunas camelCase (temAcesso, linkVendedorId,
-      // etc.). Se a detecção falhar, mantém o comportamento antigo.
-      final colunas = await _detectarColunasTabela(table);
       if (colunas != null && colunas.isNotEmpty) {
         final descartadas = <String>{};
         dataToUpsert = _filtrarParaColunasReais(
@@ -2106,9 +2211,13 @@ class SupabaseService {
     String path,
     dynamic file, {
     String? contentType,
-  }) async {
+  }  ) async {
     try {
-      if (!isAvailable) return null;
+      ultimoErroUpload = null;
+      if (!isAvailable) {
+        ultimoErroUpload = 'Nuvem não configurada (NEON_DATA_API_URL vazia)';
+        return null;
+      }
 
       final extension = path.split('.').last.toLowerCase();
       String finalContentType = contentType ?? 'application/octet-stream';
@@ -2147,13 +2256,47 @@ class SupabaseService {
             );
       }
 
-      final String publicUrl = _client.storage.from(bucket).getPublicUrl(path);
+      final String publicUrl = urlPublicoDoStorage(bucket, path);
       debugPrint('>>> [Supabase Storage] ✅ Upload concluído: $publicUrl');
       return publicUrl;
     } catch (e) {
+      ultimoErroUpload = e.toString();
       debugPrint('>>> [Supabase Storage] ❌ Erro no upload: $e');
       return null;
     }
+  }
+
+  Future<Map<String, dynamic>?> buscarPedidoPublicoPorCodigo(
+    String codigo,
+  ) async {
+    final valor = codigo.trim();
+    if (valor.isEmpty || !isAvailable) return null;
+    try {
+      final resposta = await _client
+          .from(tablePedidos)
+          .select()
+          .or('link_cliente.eq.$valor,numero.eq.$valor,id.eq.$valor')
+          .limit(1);
+      final lista = List<Map<String, dynamic>>.from(resposta as List);
+      return lista.isEmpty ? null : lista.first;
+    } catch (e) {
+      debugPrint('>>> [PedidoCliente] Busca na nuvem falhou: $e');
+      return null;
+    }
+  }
+
+  /// URL pública que fica GRAVADA no cadastro (produto, logo, banner).
+  ///
+  /// O cliente conversa com a nuvem por 127.0.0.1:8001, que só responde nesta
+  /// máquina. Gravar essa URL fazia a foto desaparecer na loja online e em
+  /// qualquer outro aparelho. Aqui a URL é montada sobre a base pública
+  /// (Funnel), quando ela existe.
+  String urlPublicoDoStorage(String bucket, String path) {
+    final interna = _client.storage.from(bucket).getPublicUrl(path);
+    final base = NeonConfig.storageSupabaseUrlPublica;
+    if (base.isEmpty) return interna;
+    final chave = path.split('/').map(Uri.encodeComponent).join('/');
+    return '$base/storage/v1/object/public/$bucket/$chave';
   }
 
   /// Remove um arquivo do Supabase Storage

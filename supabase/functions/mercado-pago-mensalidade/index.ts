@@ -23,7 +23,7 @@ const mercadoPagoAccessToken =
 const mercadoPagoWebhookSecret =
   Deno.env.get("MERCADO_PAGO_WEBHOOK_SECRET") ?? "";
 const supabasePublicUrl = Deno.env.get("SUPABASE_PUBLIC_URL") ??
-  "https://servidorsupabase.tail9b4943.ts.net";
+  "https://exodosystems.tail9b4943.ts.net";
 
 if (!supabaseUrl || !supabaseServiceRoleKey) {
   throw new Error("Faltam as credenciais do Supabase no Edge Runtime.");

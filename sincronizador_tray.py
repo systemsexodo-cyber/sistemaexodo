@@ -397,6 +397,32 @@ class SyncTrayApp:
                     if cfg:
                         alvos.append(cfg)
 
+                # PCs SALVOS PELO APP (LAN_PEERS): sincroniza com todos,
+                # mesmo que o anuncio UDP nao chegue ate aqui (firewall/rede que
+                # bloqueia broadcast). Sem isso, a loja com tres caixas so
+                # falava com o PC que estava no PAR_HOST.
+                try:
+                    hosts_ja = set()
+                    for alvo in alvos:
+                        try:
+                            hosts_ja.add(str(sincronizador_lan.ip_do_par(alvo)).lower())
+                        except Exception:
+                            hosts_ja.add(str(alvo['host']).lower())
+                    for cfg_salvo in sincronizador_lan.pares_do_env():
+                        try:
+                            host_salvo = str(
+                                sincronizador_lan.ip_do_par(cfg_salvo)).lower()
+                        except Exception:
+                            host_salvo = str(cfg_salvo['host']).lower()
+                        if host_salvo in hosts_ja:
+                            continue
+                        hosts_ja.add(host_salvo)
+                        alvos.append(cfg_salvo)
+                except Exception as e_salvos:
+                    sincronizar_local_supabase.print_log(
+                        f"[LAN] lista de PCs salvos: {e_salvos}",
+                        sincronizar_local_supabase.Colors.YELLOW)
+
                 # Compatibilidade: enquanto os dois PCs recebem a nova versao,
                 # o par antigo continua sincronizando se ainda nao foi descoberto.
                 if self.par_cfg:

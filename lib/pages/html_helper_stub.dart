@@ -7,12 +7,12 @@ void fazerHardRefresh() {
 
 /// Retorna o host da janela (stub)
 String getWindowHost() {
-  return "servidorsupabase.tail9b4943.ts.net";
+  return "exodosystems.tail9b4943.ts.net";
 }
 
 /// Retorna a origem da janela (stub)
 String getWindowOrigin() {
-  return "https://servidorsupabase.tail9b4943.ts.net";
+  return "https://exodosystems.tail9b4943.ts.net";
 }
 
 /// Retorna o pathname da janela (stub)
@@ -37,6 +37,11 @@ void updateUrl(String path, {bool replace = false}) {
 
 /// Stream de foco da janela (stub)
 Stream<dynamic> get onWindowFocus => const Stream.empty();
+
+/// Troca o favicon da aba (stub)
+void setFavicon(String url) {
+  // Nao faz nada fora da Web
+}
 
 /// Stream de retorno da página à tela (stub)
 Stream<dynamic> get onWindowVisible => const Stream.empty();

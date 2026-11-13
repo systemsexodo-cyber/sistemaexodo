@@ -8700,7 +8700,7 @@ class _AgendaServicosPageState extends State<AgendaServicosPage> {
         baseUrl = baseUrl.substring(0, baseUrl.length - 1);
       }
     } else {
-      baseUrl = 'https://servidorsupabase.tail9b4943.ts.net'; // Fallback para mobile/desktop
+      baseUrl = 'https://exodosystems.tail9b4943.ts.net'; // Fallback para mobile/desktop
     }
     
     // Garantir que identificador não tenha espaços ou caracteres especiais

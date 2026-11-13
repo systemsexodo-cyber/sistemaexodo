@@ -2382,7 +2382,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                     size: 24,
                   ),
                 ),
-                tooltip: 'Importar Produtos do Excel',
+                tooltip: 'Importar Produtos (Excel ou CSV)',
                 onPressed: () => _importarProdutosExcel(context),
               ),
             ),
@@ -2528,7 +2528,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
           backgroundColor: Colors.green,
           icon: const Icon(Icons.file_upload, color: Colors.white, size: 28),
           label: const Text(
-            'IMPORTAR EXCEL',
+            'IMPORTAR EXCEL/CSV',
             style: TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.bold,
@@ -4214,7 +4214,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                         children: [
                           Text(
                             podeImportar
-                                ? '📊 IMPORTAR PRODUTOS EXCEL'
+                                ? '📊 IMPORTAR PRODUTOS (EXCEL OU CSV)'
                                 : '⚠️ Selecione uma empresa para importar',
                             style: const TextStyle(
                               fontSize: 20,
@@ -4226,8 +4226,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
                           Text(
                             podeImportar
                                 ? empresaAtual != null
-                                      ? 'Empresa: ${empresaAtual.nomeExibicao}\nClique para selecionar arquivo Excel'
-                                      : 'Clique para importar produtos de um arquivo Excel'
+                                      ? 'Empresa: ${empresaAtual.nomeExibicao}\nClique para selecionar arquivo Excel ou CSV'
+                                      : 'Clique para importar produtos de um arquivo Excel ou CSV'
                                 : 'Clique no botão "Selecionar" da empresa primeiro',
                             style: TextStyle(
                               fontSize: 14,
@@ -4783,7 +4783,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
                             ),
                             SizedBox(width: 8),
                             Text(
-                              'Importar Produtos Excel',
+                              'Importar Produtos (Excel ou CSV)',
                               style: TextStyle(color: Colors.green),
                             ),
                           ],
@@ -4942,7 +4942,6 @@ class _EmpresasPageState extends State<EmpresasPage> {
   Future<void> _importarProdutosExcel(BuildContext context) async {
     final authService = Provider.of<AuthService>(context, listen: false);
     final dataService = Provider.of<DataService>(context, listen: false);
-
     // Se não há empresa selecionada, tentar selecionar automaticamente
     if (authService.empresaAtual == null) {
       final empresasPermitidas = authService.getEmpresasDoUsuario();
@@ -4991,7 +4990,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         title: const Text(
-          'Importar Produtos do Excel',
+          'Importar Produtos (Excel ou CSV)',
           style: TextStyle(color: Colors.white),
         ),
         content: SingleChildScrollView(
@@ -5000,7 +4999,8 @@ class _EmpresasPageState extends State<EmpresasPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Formato esperado do Excel:',
+                'Aceita planilha (.xlsx/.xls) ou CSV (.csv) — o cabeçalho pode '
+                'estar em qualquer ordem:',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
@@ -5008,15 +5008,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Coluna A: Código (opcional)\n'
-                'Coluna B: Nome (obrigatório)\n'
-                'Coluna C: Descrição (opcional)\n'
-                'Coluna D: Unidade (padrão: UN)\n'
-                'Coluna E: Grupo (padrão: Sem Grupo)\n'
-                'Coluna F: Preço (obrigatório)\n'
-                'Coluna G: Preço de Custo (opcional)\n'
-                'Coluna H: Estoque (padrão: 0)\n'
-                'Coluna I: Código de Barras (opcional)',
+                'Cadastro: Código, Nome (obrigatório), Descrição, Unidade, '
+                'Grupo, Quantidade/Estoque, Preço, Preço de Custo e '
+                'Código de Barras.\n'
+                'Fiscal: NCM, CFOP, CST, CSOSN, CEST, Origem e as alíquotas '
+                'de ICMS, IPI, PIS, COFINS e ISS.',
                 style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
               const SizedBox(height: 16),
@@ -5057,7 +5053,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
     try {
       result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['xlsx', 'xls'],
+        allowedExtensions: ['xlsx', 'xls', 'csv'],
         withData: true, // IMPORTANTE: precisa dos bytes na web
       );
     } catch (e) {

@@ -17,7 +17,7 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.73"
+#define MyAppVersion "1.0.81"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
@@ -192,6 +192,8 @@ Source: "scripts\migrations\*"; DestDir: "{app}\scripts\migrations"; Flags: igno
 ; arquivo, o botao "Liberar este PC na rede" da tela Rede LAN nao funciona na
 ; instalacao nova: o app responde "nao achei o script na pasta do sistema".
 Source: "scripts\configurar_lan_postgres.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+; Ativa a licenca de 30 dias deste computador durante a instalacao.
+Source: "scripts\ativar_instalacao.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 ; Atalho de 1 clique para liberar ESTE PC na rede (o PC da loja cujo servico
 ; PostgreSQL ficou parado era o que impedia a sincronizacao entre os caixas).
 ; Ele roda o PS1 acima, sobe o servico e confere a porta 5432 no final.
@@ -218,7 +220,7 @@ Source: ".env.neon.example"; DestDir: "{app}"; DestName: ".env.neon"; Flags: ign
 ; ============================================================================
 ; CONFIGURACAO DA REDE LAN NO INSTALADOR; ============================================================================
 ; O instalador copia o .env.example (com valores vazios). O usuario deve; depois usar a tela "Rede LAN" no app para descobrir e salvar os PCs.; Opcional: preencher LAN_PEERS no .env antes de rodar o sincronizador.
-; Veja o arquivo .env.example para o novo formato LAN_PEERS.
+; Veja o arquivo .env.example para o novo formato LAN_PEERS.
 ; ============================================================================
 ; ATALHOS
 ; ============================================================================
@@ -244,6 +246,11 @@ Name: "{group}\🌐 Preparar este PC na rede"; Filename: "{app}\PREPARAR_REDE_LO
 ; ============================================================================
 
 [Run]
+; 0. Licenca de instalacao: 30 dias, presa a este computador (MachineGuid).
+; Roda primeiro para o sistema ja abrir licenciado. Se a nuvem estiver fora,
+; o proprio app mostra a tela de ativacao; isto nao aborta a instalacao.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\ativar_instalacao.ps1"" -AppDir ""{app}"" -CodigoAtivacao ""{code:GetCodigoAtivacao}"""; StatusMsg: "Ativando a licenca deste computador (30 dias)..."; Flags: runhidden
+
 ; 1. Configurar PostgreSQL
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\setup_postgres.ps1"" -PostgresDir ""{app}\postgresql"" -DataDir ""{app}\pgdata"" -AppDir ""{app}"""; StatusMsg: "🐘 Configurando banco de dados PostgreSQL... (pode levar alguns minutos)"
 
@@ -304,6 +311,33 @@ Type: filesandordirs; Name: "{app}\logs"
 
 [Code]
 
+// Página do código de ativação (uma por venda). Sem ele o setup não ativa um
+// computador novo: é o que impede uma cópia do setup de liberar outra máquina.
+var
+  PaginaAtivacao: TInputQueryWizardPage;
+
+function GetCodigoAtivacao(Param: String): String;
+begin
+  Result := '';
+  if Assigned(PaginaAtivacao) then
+    Result := Trim(PaginaAtivacao.Values[0]);
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if Assigned(PaginaAtivacao) and (CurPageID = PaginaAtivacao.ID) then
+  begin
+    if GetCodigoAtivacao('') = '' then
+    begin
+      MsgBox('Informe o código de ativação que acompanha a compra do Sistema Êxodo.' + #13#10 +
+        'Sem ele o sistema instala, mas não abre até a ativação.' + #13#10#13#10 +
+        'Se não tiver o código em mãos, peça ao suporte.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+end;
+
 // Fechar processos que podem manter arquivos bloqueados durante atualização.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
@@ -333,16 +367,6 @@ begin
   Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
 end;
 
-// Personalizar página de boas-vindas
-procedure InitializeWizard;
-begin
-  WizardForm.WelcomeLabel1.Font.Style := [fsBold];
-  WizardForm.WelcomeLabel1.Font.Size := 14;
-  
-  // Adicionar crédito na página de confirmação
-  WizardForm.PageDescriptionLabel.Caption := 'Sistema Êxodo - Gestão Completa para seu Negócio';
-end;
-
 // Verifica se o PostgreSQL esta respondendo na porta 5432
 function IsPostgresRunning(): Boolean;
 var
@@ -359,6 +383,25 @@ begin
   begin
     Result := False;
   end;
+end;
+
+// Personalizar página de boas-vindas
+procedure InitializeWizard;
+begin
+  WizardForm.WelcomeLabel1.Font.Style := [fsBold];
+  WizardForm.WelcomeLabel1.Font.Size := 14;
+  
+  // Adicionar crédito na página de confirmação
+  WizardForm.PageDescriptionLabel.Caption := 'Sistema Êxodo - Gestão Completa para seu Negócio';
+
+  // Código de ativação (vem com a venda). Aparece logo após a escolha da pasta.
+  PaginaAtivacao := CreateInputQueryPage(
+    wpSelectDir,
+    'Ativação do sistema',
+    'Código de ativação',
+    'Informe o código de ativação que acompanha a compra do Sistema Êxodo. ' +
+    'Ele libera este computador por 30 dias e não funciona em outro.');
+  PaginaAtivacao.Add('Código de ativação:', False);
 end;
 
 // Ações após instalação

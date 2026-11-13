@@ -469,7 +469,8 @@ class _DialogSelecionarProdutoQuebraState extends State<_DialogSelecionarProduto
     return widget.produtos.where((p) {
       return p.nome.toLowerCase().contains(q) ||
           (p.codigo?.toLowerCase().contains(q) ?? false) ||
-          (p.codigoBarras?.toLowerCase().contains(q) ?? false);
+          (p.codigoBarras?.toLowerCase().contains(q) ?? false) ||
+          (p.descricao?.toLowerCase().contains(q) ?? false);
     }).toList();
   }
 

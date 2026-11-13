@@ -28,7 +28,7 @@ void main() {
     final service = MercadoPagoMensalidadeService(
       client: client,
       functionsUrl: Uri.parse(
-        'https://servidorsupabase.tail9b4943.ts.net/'
+        'https://exodosystems.tail9b4943.ts.net/'
         'functions/v1/mercado-pago-mensalidade',
       ),
     );
@@ -72,7 +72,7 @@ void main() {
     final service = MercadoPagoMensalidadeService(
       client: client,
       functionsUrl: Uri.parse(
-        'https://servidorsupabase.tail9b4943.ts.net/'
+        'https://exodosystems.tail9b4943.ts.net/'
         'functions/v1/mercado-pago-mensalidade',
       ),
     );

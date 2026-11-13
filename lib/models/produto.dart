@@ -46,6 +46,8 @@ class Produto {
 
   // Campos de promoção
   final double? precoPromocional;
+  // Preço específico para vendas online (loja pública)
+  final double? precoOnline;
   final DateTime? promocaoInicio;
   final DateTime? promocaoFim;
   // Regras avançadas de promoção (empilháveis): por data, dia da semana,
@@ -154,7 +156,7 @@ class Produto {
   final bool exibirComposicaoPdv;
   final Map<String, double>? precosPorPerfil;
   final List<RegraQuantidade>? regrasQuantidade;
- // Se true, produto é enviado para a balança 
+  // Se true, produto é enviado para a balança 
 
   Produto({
     required this.id,
@@ -176,6 +178,7 @@ class Produto {
     required this.createdAt,
     required this.updatedAt,
     this.precoPromocional,
+    this.precoOnline,
     this.promocaoInicio,
     this.promocaoFim,
     List<RegraPromocao>? promocoes,
@@ -251,6 +254,7 @@ class Produto {
        estoquePorEstoque = estoquePorEstoque ?? {},
        formasVenda = formasVenda ?? [],
        promocoes = promocoes ?? [];
+  
 
   /// Todos os códigos de barras do produto (principal + adicionais),
   /// sem duplicatas e sem valores vazios. Usado na busca por código de barras.
@@ -322,6 +326,36 @@ class Produto {
       unidadeVenda == 'caixa' ||
       unidadeVenda == 'pacote' ||
       unidadeVenda == 'saco';
+
+  /// Venda fracionada (a granel): o produto é vendido por peso/volume e o
+  /// cliente escolhe a quantidade em gramas/ml. Deriva da forma de venda:
+  /// produtos cadastrados em kg/g/litro/ml são pesáveis.
+  bool get vendaFracionada {
+    final u = unidadeVenda.trim().toLowerCase();
+    return u == 'kg' ||
+        u == 'g' ||
+        u == 'grama' ||
+        u == 'gramas' ||
+        u == 'l' ||
+        u == 'lt' ||
+        u == 'litro' ||
+        u == 'litros' ||
+        u == 'ml';
+  }
+
+  /// Base de peso (em gramas) a que o [preco] cadastrado se refere.
+  /// Produto vendido por grama usa base 1 g; os demais usam 1 kg.
+  int get pesoBaseGramas {
+    final u = unidadeVenda.trim().toLowerCase();
+    if (u == 'g' || u == 'grama' || u == 'gramas') return 1;
+    return 1000;
+  }
+
+  /// Preço por grama (ou por ml) do produto, usado na venda fracionada.
+  double get precoPorGrama {
+    final base = pesoBaseGramas;
+    return base > 0 ? preco / base : preco;
+  }
 
   /// Rótulo amigável da forma de venda (para exibição no PDV e formulário).
   /// Para valores desconhecidos (dados legados), devolve o valor em maiúsculas.
@@ -711,6 +745,7 @@ class Produto {
       createdAt: getDate('createdAt', 'created_at') ?? DateTime.now(),
       updatedAt: getDate('updatedAt', 'updated_at') ?? DateTime.now(),
       precoPromocional: getNum('precoPromocional', 'preco_promocional')?.toDouble(),
+      precoOnline: getNum('precoOnline', 'preco_online')?.toDouble(),
       promocaoInicio: getDate('promocaoInicio', 'promocao_inicio'),
       promocaoFim: getDate('promocaoFim', 'promocao_fim'),
       promocoes: (getList('promocoes', 'promocoes') ?? [])
@@ -846,6 +881,9 @@ class Produto {
     bool? emDestaque,
     List<String>? fotosUrls,
     String? fotoPrincipalUrl,
+    /// Limpa a foto principal. O `null` sozinho significa "nao mexer", entao
+    /// remover todas as fotos precisa deste flag.
+    bool limparFotoPrincipal = false,
     String? descricaoEcommerce,
     int? pesoGramas,
     double? alturaCm,
@@ -902,6 +940,7 @@ class Produto {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       precoPromocional: precoPromocional ?? this.precoPromocional,
+      precoOnline: precoOnline ?? this.precoOnline,
       promocaoInicio: promocaoInicio ?? this.promocaoInicio,
       promocaoFim: promocaoFim ?? this.promocaoFim,
       promocoes: promocoes ?? this.promocoes,
@@ -930,7 +969,9 @@ class Produto {
       exibirNaLoja: exibirNaLoja ?? this.exibirNaLoja,
       emDestaque: emDestaque ?? this.emDestaque,
       fotosUrls: fotosUrls ?? this.fotosUrls,
-      fotoPrincipalUrl: fotoPrincipalUrl ?? this.fotoPrincipalUrl,
+      fotoPrincipalUrl: limparFotoPrincipal
+          ? null
+          : (fotoPrincipalUrl ?? this.fotoPrincipalUrl),
       descricaoEcommerce: descricaoEcommerce ?? this.descricaoEcommerce,
       pesoGramas: pesoGramas ?? this.pesoGramas,
       alturaCm: alturaCm ?? this.alturaCm,
@@ -969,6 +1010,16 @@ class Produto {
   
   // Getter para foto principal (primeira foto ou fotoPrincipalUrl)
   String? get fotoPrincipal => fotoPrincipalUrl ?? (fotosUrls.isNotEmpty ? fotosUrls.first : null);
+
+  /// Descrição que a loja online deve exibir: a "Descrição Vitrine"
+  /// (`descricaoEcommerce`) quando preenchida; senão a descrição comum.
+  String? get descricaoLoja {
+    final vitrine = descricaoEcommerce?.trim();
+    if (vitrine != null && vitrine.isNotEmpty) return vitrine;
+    final comum = descricao?.trim();
+    if (comum != null && comum.isNotEmpty) return comum;
+    return null;
+  }
   
   // Verifica se tem fotos
   bool get temFotos => fotosUrls.isNotEmpty;

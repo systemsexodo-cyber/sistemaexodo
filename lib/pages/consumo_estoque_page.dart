@@ -203,7 +203,13 @@ class _ConsumoEstoquePageState extends State<ConsumoEstoquePage> {
   Widget _buildProdutos(DataService dataService) {
     final termo = _busca.trim().toLowerCase();
     final produtos = dataService.produtos
-        .where((produto) => produto.ativo && produto.nome.toLowerCase().contains(termo))
+        .where((produto) => produto.ativo &&
+            (produto.nome.toLowerCase().contains(termo) ||
+                (produto.codigo?.toLowerCase().contains(termo) ?? false) ||
+                (produto.descricao?.isNotEmpty ?? false) &&
+                produto.descricao!.toLowerCase().contains(termo) ||
+                (produto.codigoBarras?.isNotEmpty ?? false) &&
+                produto.codigoBarras!.toLowerCase().contains(termo)))
         .take(200)
         .toList();
 

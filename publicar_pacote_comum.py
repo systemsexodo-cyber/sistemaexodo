@@ -99,8 +99,14 @@ def pasta_do_programa(base_dir: str) -> str:
     return os.path.join(base_dir, "build", "windows", "x64", "runner", "Release")
 
 
-def empacotar_programa(base_dir: str, destino_zip: str) -> str:
+def empacotar_programa(base_dir: str, destino_zip: str,
+                       migracoes_dir=None) -> str:
     """Monta o .zip com `data/app.so`, `data/flutter_assets` e o executável.
+
+    [migracoes_dir] leva os `.sql` das migrações para dentro do pacote, do mesmo
+    jeito que o app faz ao publicar pela tela: sem elas o cliente atualiza o
+    programa mas não o schema do banco (coluna nova faltando = dado descartado
+    em silêncio).
 
     Levanta FileNotFoundError com explicação se o programa não estiver compilado.
     """
@@ -127,4 +133,31 @@ def empacotar_programa(base_dir: str, destino_zip: str) -> str:
                     caminho = os.path.join(raiz, nome)
                     rel = os.path.relpath(caminho, release).replace("\\", "/")
                     z.write(caminho, rel)
+        if migracoes_dir and os.path.isdir(migracoes_dir):
+            for nome in sorted(os.listdir(migracoes_dir)):
+                if nome.lower().endswith(".sql"):
+                    z.write(os.path.join(migracoes_dir, nome),
+                            "scripts/migrations/" + nome)
     return destino_zip
+
+
+def binario_confere_versao(base_dir: str, versao: str) -> bool:
+    """O `data/app.so` compilado carrega mesmo a versão que se vai publicar?
+
+    É a checagem que faltava: publicar o rótulo 1.0.72 com um `app.so` de 1.0.62
+    faz o cliente instalar, continuar se apresentando como 1.0.62 e pedir
+    atualização de novo — o laço de atualização.
+
+    A constante `currentAppVersion` vai como texto no AOT, então o número da
+    versão aparece literal no binário. Sem build, devolve False.
+    """
+    app_so = os.path.join(pasta_do_programa(base_dir), "data", "app.so")
+    alvo = str(versao or "").replace("!", "").strip()
+    if not alvo or not os.path.exists(app_so):
+        return False
+    try:
+        with open(app_so, "rb") as f:
+            dados = f.read()
+    except OSError:
+        return False
+    return alvo.encode("utf-8") in dados

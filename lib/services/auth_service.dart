@@ -488,6 +488,25 @@ class AuthService extends ChangeNotifier {
                         updatedAtLocal: _empresaAtual!.updatedAt,
                         updatedAtRemota: empresaSupabase.updatedAt,
                       );
+                      // Personalização da loja e agendamento: mesma regra de
+                      // "a cópia mais nova vence". Antes o merge começava pela
+                      // nuvem e só preenchia chaves ausentes, então o
+                      // `ecommerce` da nuvem (que sempre existe) revertia a
+                      // alteração salva no PC.
+                      aplicarEcommerceMaisRecente(
+                        configMerged,
+                        configLocal,
+                        configSupabase,
+                        updatedAtLocal: _empresaAtual!.updatedAt,
+                        updatedAtRemota: empresaSupabase.updatedAt,
+                      );
+                      aplicarAgendamentoMaisRecente(
+                        configMerged,
+                        configLocal,
+                        configSupabase,
+                        updatedAtLocal: _empresaAtual!.updatedAt,
+                        updatedAtRemota: empresaSupabase.updatedAt,
+                      );
                       // Configs de UI/UX do PDV local sempre têm prioridade
                       if (configLocal.containsKey('habilitarMesasComandas')) {
                         configMerged['habilitarMesasComandas'] =
@@ -1421,6 +1440,22 @@ class AuthService extends ChangeNotifier {
               updatedAtLocal: empresa.updatedAt,
               updatedAtRemota: empresaSupabase.updatedAt,
             );
+            // Personalização da loja e agendamento: vence a cópia MAIS NOVA.
+            // Antes a nuvem sempre sobrescrevia o `ecommerce` local.
+            aplicarEcommerceMaisRecente(
+              configMerged,
+              configLocal,
+              configSupabase,
+              updatedAtLocal: empresa.updatedAt,
+              updatedAtRemota: empresaSupabase.updatedAt,
+            );
+            aplicarAgendamentoMaisRecente(
+              configMerged,
+              configLocal,
+              configSupabase,
+              updatedAtLocal: empresa.updatedAt,
+              updatedAtRemota: empresaSupabase.updatedAt,
+            );
             // ══ Configs de UI/UX do PDV ══
             for (final chave in [
               'habilitarMesasComandas',
@@ -1962,8 +1997,169 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Define a empresa exibida nas páginas PÚBLICAS (loja / agendamento).
+  ///
+  /// Não mexe em usuário, permissões nem no storage: uma visita pública não
+  /// deve "logar" ninguém. Existe porque a loja (e o checkout) lê a
+  /// personalização de [empresaAtual]. No navegador do cliente esta empresa
+  /// costuma ser null — e no do lojista costuma ser a cópia velha salva no
+  /// boot. Nos dois casos a loja abria com os valores padrão, como se a
+  /// personalização salva não tivesse persistido. O wrapper público busca a
+  /// empresa fresca no Supabase e a instala aqui.
+  void definirEmpresaPublica(Empresa empresa) {
+    final index = _empresas.indexWhere((e) => e.id == empresa.id);
+    if (index != -1) {
+      _empresas[index] = empresa;
+    }
+    _empresaAtual = empresa;
+    notifyListeners();
+  }
+
   /// Atualiza uma empresa
+  /// Recoloca logo/banner existentes quando a copia que chegou no save veio
+  /// vazia.
+  ///
+  /// Várias telas salvam o cadastro da empresa a partir de uma cópia antiga
+  /// (mensalidade, etiquetas, agenda, venda direta...). Se essa cópia foi
+  /// carregada antes do upload da logo, ela traz `logoUrl` vazio e o save
+  /// APAGAVA a imagem no banco local e na nuvem — era isso que fazia a logo
+  /// "não ficar salva". O valor que já existe é mantido.
+  Empresa _preservarImagensDoCadastro(Empresa nova, Empresa? atual) {
+    if (atual == null) return nova;
+
+    const chavesImagem = [
+      'logoUrl',
+      'bannerUrl',
+      'bannerPromocional1Url',
+      'bannerPromocional2Url',
+      'bannerPromocional3Url',
+    ];
+
+    var resultado = nova;
+
+    // 1. Coluna `logoUrl` do cadastro da empresa
+    if ((nova.logoUrl ?? '').isEmpty && (atual.logoUrl ?? '').isNotEmpty) {
+      resultado = resultado.copyWith(logoUrl: atual.logoUrl);
+    }
+
+    // 2. Imagens dentro de configuracoes.ecommerce
+    final novaConfig = Map<String, dynamic>.from(resultado.configuracoes ?? {});
+    final novaEcom = novaConfig['ecommerce'] is Map
+        ? Map<String, dynamic>.from(novaConfig['ecommerce'] as Map)
+        : <String, dynamic>{};
+    final atualEcom = (atual.configuracoes?['ecommerce'] is Map)
+        ? Map<String, dynamic>.from(
+            atual.configuracoes!['ecommerce'] as Map,
+          )
+        : <String, dynamic>{};
+
+    var mudou = false;
+    for (final chave in chavesImagem) {
+      final novoValor = (novaEcom[chave] ?? '').toString();
+      final valorAtual = (atualEcom[chave] ?? '').toString();
+      if (novoValor.isEmpty && valorAtual.isNotEmpty) {
+        novaEcom[chave] = valorAtual;
+        mudou = true;
+      }
+    }
+    if (mudou) {
+      novaConfig['ecommerce'] = novaEcom;
+      resultado = resultado.copyWith(configuracoes: novaConfig);
+    }
+
+    return resultado;
+  }
+
+  /// Cópia da empresa que este app considera mais atual, entre a empresa
+  /// ativa ([_empresaAtual]) e a lista em memória ([_empresas]).
+  Empresa? _copiaMaisRecenteConhecida(String empresaId) {
+    Empresa? encontrada;
+    void considerar(Empresa? e) {
+      if (e == null || e.id != empresaId) return;
+      if (encontrada == null || e.updatedAt.isAfter(encontrada!.updatedAt)) {
+        encontrada = e;
+      }
+    }
+
+    considerar(_empresaAtual);
+    for (final e in _empresas) {
+      considerar(e);
+    }
+    return encontrada;
+  }
+
+  /// Protege a gravação contra telas que seguram uma cópia antiga da empresa.
+  ///
+  /// As seções que têm carimbo próprio (listas de perfis, departamentos,
+  /// estoques, etiquetas, personalização da loja e agendamento) ficam sempre
+  /// com a versão mais nova entre a cópia atual e a que veio da tela. As
+  /// demais chaves continuam vindo da tela, mas nenhuma chave que a tela
+  /// desconhece é perdida.
+  Empresa _aplicarConfigsMaisRecentesNaEntrada(
+    Empresa entrada,
+    Empresa atual,
+  ) {
+    final configEntrada = Map<String, dynamic>.from(
+      entrada.configuracoes ?? <String, dynamic>{},
+    );
+    final configAtual = atual.configuracoes ?? <String, dynamic>{};
+
+    // Nunca perde uma chave que a tela antiga não conhece (certificado,
+    // credenciais, backups...).
+    for (final entry in configAtual.entries) {
+      if (!configEntrada.containsKey(entry.key) ||
+          configEntrada[entry.key] == null) {
+        configEntrada[entry.key] = entry.value;
+      }
+    }
+
+    void lista(String chave, String carimbo) {
+      aplicarConfigListaMaisRecente(
+        configEntrada,
+        configAtual,
+        configEntrada,
+        chave: chave,
+        chaveCarimbo: carimbo,
+        updatedAtLocal: atual.updatedAt,
+        updatedAtRemota: entrada.updatedAt,
+      );
+    }
+
+    lista('perfis_tributarios', chavePerfisTributariosAtualizadoEm);
+    lista('perfis_preco', chavePerfisPrecoAtualizadoEm);
+    lista('departamentos', chaveDepartamentosAtualizadoEm);
+    lista('estoques', chaveEstoquesAtualizadoEm);
+    lista('etiquetas', chaveEtiquetasAtualizadoEm);
+
+    aplicarEcommerceMaisRecente(
+      configEntrada,
+      configAtual,
+      configEntrada,
+      updatedAtLocal: atual.updatedAt,
+      updatedAtRemota: entrada.updatedAt,
+    );
+    aplicarAgendamentoMaisRecente(
+      configEntrada,
+      configAtual,
+      configEntrada,
+      updatedAtLocal: atual.updatedAt,
+      updatedAtRemota: entrada.updatedAt,
+    );
+
+    return entrada.copyWith(configuracoes: configEntrada);
+  }
+
   Future<void> atualizarEmpresa(Empresa empresa) async {
+    // Nunca deixa a logo/banner salvos serem apagados por um save parcial.
+    final empresaExistente = _copiaMaisRecenteConhecida(empresa.id);
+    empresa = _preservarImagensDoCadastro(empresa, empresaExistente);
+    // Uma tela que ficou aberta segura uma cópia antiga da empresa. Se ela
+    // salvar (ex.: só o cadastro), não pode reenviar a personalização da loja,
+    // o agendamento nem os impostos velhos por cima do que já foi salvo.
+    if (empresaExistente != null) {
+      empresa = _aplicarConfigsMaisRecentesNaEntrada(empresa, empresaExistente);
+    }
+
     debugPrint('>>> [AuthService] ========================================');
     debugPrint('>>> [AuthService] Atualizando empresa: ${empresa.razaoSocial}');
     debugPrint('>>> [AuthService] ID: ${empresa.id}');
@@ -1991,16 +2187,26 @@ class AuthService extends ChangeNotifier {
     // Garantir que updatedAt está atualizado
     final empresaAtualizada = empresa.copyWith(updatedAt: DateTime.now());
 
+    // Mescla as seções carimbadas com a nuvem ANTES de gravar. Se outra
+    // máquina/site salvou depois, é a versão dela que fica em memória e no
+    // banco local — antes a nuvem vencia só no upload e o PC continuava com a
+    // cópia velha, reaplicando-a na próxima abertura ("personalização volta ao
+    // antigo").
+    Empresa efetiva = empresaAtualizada;
+    if (empresaAtualizada.nuvemAtiva) {
+      efetiva = await _mesclarListasVivasParaSubir(empresaAtualizada);
+    }
+
     final index = _empresas.indexWhere((e) => e.id == empresa.id);
     if (index != -1) {
-      _empresas[index] = empresaAtualizada;
+      _empresas[index] = efetiva;
       debugPrint('>>> [AuthService] ✓ Empresa atualizada na lista local');
     } else {
       // Se não encontrou, adicionar como nova empresa
       debugPrint(
         '>>> [AuthService] ⚠️ Empresa não encontrada na lista, adicionando como nova...',
       );
-      _empresas.add(empresaAtualizada);
+      _empresas.add(efetiva);
     }
 
     // Se a empresa atualizada é a empresa atual, atualizar também
@@ -2008,17 +2214,17 @@ class AuthService extends ChangeNotifier {
       debugPrint(
         '>>> [AuthService] Empresa atualizada é a empresa atual, atualizando...',
       );
-      _empresaAtual = empresaAtualizada;
+      _empresaAtual = efetiva;
       await _storage.salvar('empresa_atual', _empresaAtual!.toMap());
       debugPrint(
         '>>> [AuthService] ✓ Empresa atual atualizada no localStorage',
       );
 
       // Salvar backup dedicado de config de mensalidade para proteger contra sobrescrever
-      if (empresaAtualizada.configuracoes != null) {
+      if (efetiva.configuracoes != null) {
         await _storage.salvarConfiguracoesMensalidadeLocal(
-          empresaAtualizada.id,
-          empresaAtualizada.configuracoes!,
+          efetiva.id,
+          efetiva.configuracoes!,
         );
         debugPrint(
           '>>> [AuthService] ✓ Config de mensalidade salva no backup local',
@@ -2056,18 +2262,16 @@ class AuthService extends ChangeNotifier {
     await _salvarEmpresas();
 
     // Salvar no Supabase — tenta agora com timeout generoso
-    if (!empresaAtualizada.nuvemAtiva) {
+    if (!efetiva.nuvemAtiva) {
       debugPrint(
         '>>> [AuthService] ☁️⛔ Nuvem desativada para a empresa — não enviada ao Supabase',
       );
     } else
       try {
-        // Mescla as listas vivas antes de subir (mesma proteção do
-        // `_salvarEmpresas`): salvar o cadastro da empresa não pode reenviar
-        // uma cópia velha dos impostos/preços por cima da edição mais nova.
-        final paraSubir = await _mesclarListasVivasParaSubir(empresaAtualizada);
+        // `efetiva` já passou por `_mesclarListasVivasParaSubir`: sobe a
+        // versão mesclada (seções mais novas da nuvem foram adotadas).
         await _supabaseService
-            .upsert(SupabaseService.tableEmpresas, paraSubir.toMap())
+            .upsert(SupabaseService.tableEmpresas, efetiva.toMap())
             .timeout(
               const Duration(seconds: 10),
               onTimeout: () {
@@ -2285,6 +2489,21 @@ class AuthService extends ChangeNotifier {
       updatedAtLocal: local.updatedAt,
       updatedAtRemota: remota.updatedAt,
     );
+    // Personalização da loja e agendamento: vence a cópia MAIS NOVA.
+    aplicarEcommerceMaisRecente(
+      configMerged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
+    aplicarAgendamentoMaisRecente(
+      configMerged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
     return remota.copyWith(configuracoes: configMerged);
   }
 
@@ -2341,6 +2560,23 @@ class AuthService extends ChangeNotifier {
       mesclar('perfis_preco', chavePerfisPrecoAtualizadoEm);
       mesclar('departamentos', chaveDepartamentosAtualizadoEm);
       mesclar('estoques', chaveEstoquesAtualizadoEm);
+      // A personalização da loja e o agendamento também sobem pelo carimbo:
+      // sem isso, salvar qualquer outra coisa na empresa reenviava a cópia
+      // velha do `ecommerce` por cima da personalização mais nova.
+      aplicarEcommerceMaisRecente(
+        mesclado,
+        configLocal,
+        configRemota,
+        updatedAtLocal: empresa.updatedAt,
+        updatedAtRemota: updatedAtRemota ?? empresa.updatedAt,
+      );
+      aplicarAgendamentoMaisRecente(
+        mesclado,
+        configLocal,
+        configRemota,
+        updatedAtLocal: empresa.updatedAt,
+        updatedAtRemota: updatedAtRemota ?? empresa.updatedAt,
+      );
       return empresa.copyWith(configuracoes: mesclado);
     } catch (e) {
       debugPrint(

@@ -47,6 +47,7 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
         _ProdutoRapido(
           codigo: proximoCodigo,
           nomeController: TextEditingController(),
+          codigoBarrasController: TextEditingController(),
           precoController: TextEditingController(),
           estoqueController: TextEditingController(text: '0'),
           unidade: 'UN',
@@ -71,6 +72,7 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
   void _removerLinha(int index) {
     setState(() {
       _produtos[index].nomeController.dispose();
+      _produtos[index].codigoBarrasController.dispose();
       _produtos[index].precoController.dispose();
       _produtos[index].estoqueController.dispose();
       _produtos.removeAt(index);
@@ -102,6 +104,7 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
               setState(() {
                 for (var p in _produtos) {
                   p.nomeController.dispose();
+                  p.codigoBarrasController.dispose();
                   p.precoController.dispose();
                   p.estoqueController.dispose();
                 }
@@ -149,6 +152,9 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
         final produto = Produto(
           id: const Uuid().v4(),
           codigo: p.codigo,
+          codigoBarras: p.codigoBarrasController.text.trim().isEmpty
+              ? null
+              : p.codigoBarrasController.text.trim(),
           nome: p.nomeController.text.trim(),
           descricao: '',
           unidade: p.unidade,
@@ -185,6 +191,7 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
             final index = _produtos.indexOf(p);
             if (index != -1) {
               p.nomeController.dispose();
+              p.codigoBarrasController.dispose();
               p.precoController.dispose();
               p.estoqueController.dispose();
               _produtos.removeAt(index);
@@ -203,6 +210,7 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
   void dispose() {
     for (var p in _produtos) {
       p.nomeController.dispose();
+      p.codigoBarrasController.dispose();
       p.precoController.dispose();
       p.estoqueController.dispose();
     }
@@ -276,7 +284,7 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
                           ),
                         ),
                         Text(
-                          'Preencha nome e preço. Código gerado automaticamente.',
+                          'Preencha nome e preço. Código gerado automaticamente. Código de barras opcional.',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.8),
                             fontSize: 12,
@@ -326,6 +334,11 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
                   Expanded(
                     flex: 3,
                     child: Text('Nome do Produto', style: _headerStyle),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 140,
+                    child: Text('Código de Barras', style: _headerStyle),
                   ),
                   const SizedBox(width: 8),
                   SizedBox(
@@ -412,6 +425,46 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
                               ),
                               decoration: InputDecoration(
                                 hintText: 'Digite o nome...',
+                                hintStyle: TextStyle(
+                                  color: Colors.grey.shade500,
+                                  fontSize: 13,
+                                ),
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 10,
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFF2D2D2D),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(4),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onChanged: (_) => setState(() {}),
+                              textInputAction: TextInputAction.next,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Código de Barras
+                          SizedBox(
+                            width: 140,
+                            child: TextField(
+                              controller: produto.codigoBarrasController,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                              ),
+                              keyboardType: TextInputType.text,
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                  RegExp(r'[\dA-Za-z]'),
+                                ),
+                              ],
+                              decoration: InputDecoration(
+                                hintText: 'Opcional...',
                                 hintStyle: TextStyle(
                                   color: Colors.grey.shade500,
                                   fontSize: 13,
@@ -621,6 +674,7 @@ class _EntradaRapidaProdutosPageState extends State<EntradaRapidaProdutosPage> {
 class _ProdutoRapido {
   String codigo;
   final TextEditingController nomeController;
+  final TextEditingController codigoBarrasController;
   final TextEditingController precoController;
   final TextEditingController estoqueController;
   String unidade;
@@ -629,6 +683,7 @@ class _ProdutoRapido {
   _ProdutoRapido({
     required this.codigo,
     required this.nomeController,
+    required this.codigoBarrasController,
     required this.precoController,
     required this.estoqueController,
     required this.unidade,

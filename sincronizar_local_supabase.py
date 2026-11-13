@@ -281,7 +281,7 @@ if sys.stderr is None:
         def flush(self, *args, **kwargs): pass
     sys.stderr = DummyWriter()
 
-VERSION = "1.0.18"
+VERSION = "1.0.24"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1000,6 +1000,30 @@ def _obter_token_neon():
     return _nuvem_token['valor']
 
 
+def _chave_estatica_nuvem(base):
+    """Chave ESTATICA da Data API, quando a nuvem e o Supabase local (Funnel).
+
+    O PostgREST do Supabase exige `apikey` valido e NAO aceita o JWT anonimo do
+    Neon Auth: a resposta e 401 Unauthorized, que a sincronizacao trata como
+    bloqueio e pausa a nuvem por 30 min. A `NEON_DATA_API_KEY` e a chave desse
+    modo (mesmo criterio do app, em lib/services/neon_client.dart).
+
+    `SUPABASE_ANON_KEY` so serve de reserva quando o endereco NAO e do Neon,
+    para nao estragar uma Data API do Neon de verdade (que so aceita JWT).
+    """
+    for nome in ('NEON_DATA_API_KEY', 'NEON_SUPABASE_KEY'):
+        valor = (os.getenv(nome) or '').strip()
+        if valor:
+            return valor
+    if 'neon.tech' in (base or '').lower():
+        return ''
+    for nome in ('SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'):
+        valor = (os.getenv(nome) or '').strip()
+        if valor:
+            return valor
+    return ''
+
+
 def resolver_nuvem():
     """Resolve a nuvem ATIVA e devolve (provedor, base_url, api_key).
 
@@ -1033,6 +1057,10 @@ def resolver_nuvem():
         raise RuntimeError('NEON_DATA_API_URL ausente (veja o .env.neon).')
     NUVEM_PROVEDOR = 'neon'
     _nuvem_base = _normalizar_base_neon(neon_url)
+    # Com a chave estatica configurada, ela vai direto (sem Neon Auth).
+    chave_estatica = _chave_estatica_nuvem(_nuvem_base)
+    if chave_estatica:
+        return 'neon', _nuvem_base, chave_estatica
     return 'neon', _nuvem_base, _obter_token_neon()
 
 
@@ -1973,13 +2001,30 @@ def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
                             print_log(f"[OUTBOX] {table_name}: registro ID {record_id} e identico na nuvem, pulando upload.", Colors.GREEN)
 
         # 1. Processar DELETES em lote (bulk delete) de 100 items
+        #
+        # 🛡️ O DELETE leva TAMBÉM o filtro de empresa quando a tabela tem
+        # `empresa_id`. Apagar só por `id` deixava a porta aberta para um id
+        # repetido entre empresas (empresa copiada/importada) levar embora o
+        # registro da OUTRA empresa na nuvem.
+        filtro_empresa_delete = ''
+        if empresa_filtro:
+            try:
+                colunas_da_tabela = supabase_cols or get_colunas_tabela(conn, table_name)
+            except Exception:
+                colunas_da_tabela = supabase_cols or set()
+            if 'empresa_id' in colunas_da_tabela:
+                filtro_empresa_delete = (
+                    '&empresa_id=eq.'
+                    + urllib.parse.quote(str(empresa_filtro), safe='')
+                )
+
         deletes_to_process = [log[1] for log in logs if log[2] == 'DELETE']
         if deletes_to_process:
             for i in range(0, len(deletes_to_process), 100):
                 chunk = deletes_to_process[i:i+100]
                 ids_formatted = _pg_in_list(chunk)
                 try:
-                    url = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?id=in.({ids_formatted})"
+                    url = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?id=in.({ids_formatted}){filtro_empresa_delete}"
                     headers = {
                         'apikey': api_key,
                         'Authorization': f'Bearer {api_key}',
@@ -2567,17 +2612,17 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
                             # Encontrar o proximo numero livre para este prefixo
                             proximo = _obter_max_numero_prefixo(prefixo_ocupado) + 1 if prefixo_ocupado else 1
                             # Evitar colisao com numeros ja existentes no local
-                            while formatar_numero(prefixo_ocupado, proximo) in [
+                            while _formatar_numero(prefixo_ocupado, proximo) in [
                                 n for n in numeros_ocupados_local.values()
                             ] or any(
                                 _analisar_numero(r[1]) and _analisar_numero(r[1])[0] == prefixo_ocupado
                                 and _analisar_numero(r[1])[1] == proximo
                                 for r in numeros_ocupados_local.values()
-                            ]:
+                            ):
                                 proximo += 1
-                            novo_numero = formatar_numero(prefixo_ocupado, proximo)
+                            novo_numero = _formatar_numero(prefixo_ocupado, proximo)
                             row_filtrado['numero'] = novo_numero
-                            S.print_log(
+                            print_log(
                                 f"[NUMERACAO] '{table_name}' id {id_recebido}: numero '{numero_recebido}' "
                                 f"ja de OUTRO registro, renumerado para '{novo_numero}'.",
                                 Colors.YELLOW,
@@ -2603,7 +2648,7 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
                                         novo = max_local + 1
                                         # loop para garantir que nao colida
                                         while True:
-                                            candidato = formatar_numero(prefixo, novo)
+                                            candidato = _formatar_numero(prefixo, novo)
                                             # verifica se candidato ja existe
                                             with conn.cursor() as cur3:
                                                 cur3.execute(f'SELECT 1 FROM "{table_name}" WHERE numero = %s', (candidato,))
@@ -2611,8 +2656,8 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
                                                     novo += 1
                                                 else:
                                                     break
-                                        row_filtrado['numero'] = formatar_numero(prefixo, novo)
-                                        S.print_log(
+                                        row_filtrado['numero'] = _formatar_numero(prefixo, novo)
+                                        print_log(
                                             f"[NUMERACAO] '{table_name}' id {id_recebido}: numero '{numero_recebido}' "
                                             f"ja de OUTRO registro (id {conflitos[0][0]}), renumerado para '{row_filtrado['numero']}'.",
                                             Colors.YELLOW,
@@ -2671,7 +2716,7 @@ def gravar_registros_locais(conn, table_name, rows, empresa_filtro=None, bloquea
                                 """, (table_name, str(row_filtrado.get('id'))))
                                 log_cur.execute("SET LOCAL exodo.sync_mode = 'on'")
                         except Exception as e_log:
-                            S.print_log(f"[NUMERACAO] Nao foi possivel registrar log_sync_log: {e_log}", Colors.YELLOW)
+                            print_log(f"[NUMERACAO] Nao foi possivel registrar log_sync_log: {e_log}", Colors.YELLOW)
                 else:
                     ignorados_mais_antigos += 1
         conn.commit()
@@ -2832,6 +2877,167 @@ def sincronizar_produtos_rapido(conn, supabase_url, api_key, empresa_ativa=None)
     return recebidos_total
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# EXCLUSÕES FEITAS NA NUVEM (site, outro PC, painel da nuvem)
+#
+# O download é incremental por `updated_at`: uma linha APAGADA na nuvem apenas
+# desaparece do delta — ela continua no banco local e, na primeira edição
+# local, é reenviada e volta a existir. Foi o que aconteceu em 09/11/2026: 222
+# produtos foram excluídos pelo site e reapareceram porque o banco local ainda
+# os tinha.
+#
+# Aqui a nuvem é a fonte da verdade para o CATÁLOGO da empresa aberta: busca só
+# os IDs que existem lá e apaga do banco local o que não existe mais. Roda
+# ANTES do upload (senão o reenvio vence a exclusão) e nunca toca em registro
+# com alteração local pendente em `_exodo_sync_log`.
+# ─────────────────────────────────────────────────────────────────────────────
+TABELAS_RECONCILIAR_EXCLUSOES = ('produtos',)
+_INTERVALO_RECONCILIACAO_EXCLUSOES = 3600  # 1 h por tabela
+
+
+def _tabela_tem_coluna(conn, tabela, coluna):
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = %s
+                  AND column_name = %s
+            """, (tabela, coluna))
+            return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
+def _ids_existentes_na_nuvem(tabela, empresa_id, supabase_url, api_key, pagina=1000):
+    """IDs da tabela na nuvem para a empresa (None quando não deu para ler)."""
+    base = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(tabela, safe='')}"
+    headers = {'apikey': api_key, 'Authorization': f'Bearer {api_key}'}
+    session = get_http_session()
+    ids = set()
+    deslocamento = 0
+    while True:
+        r = session.get(base, headers=headers, timeout=30, params={
+            'select': 'id',
+            'empresa_id': f'eq.{empresa_id}',
+            'order': 'id.asc',
+            'limit': pagina,
+            'offset': deslocamento,
+        })
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        lote = r.json()
+        if not isinstance(lote, list):
+            return None
+        for linha in lote:
+            if isinstance(linha, dict) and linha.get('id') is not None:
+                ids.add(str(linha['id']))
+        if len(lote) < pagina:
+            return ids
+        deslocamento += pagina
+        if deslocamento >= 2_000_000:  # trava de segurança
+            return None
+
+
+def reconciliar_exclusoes_da_nuvem(conn, supabase_url, api_key, empresa_ativa):
+    """Apaga do banco local o que foi apagado na nuvem (catálogo da empresa).
+
+    Devolve quantos registros locais foram removidos. Falha de rede não apaga
+    nada; nuvem devolvendo conjunto vazio com base local cheia também não
+    (proteção contra resposta truncada/filtro errado).
+    """
+    if not empresa_ativa or nuvem_bloqueada():
+        return 0
+
+    total = 0
+    for tabela in TABELAS_RECONCILIAR_EXCLUSOES:
+        chave_cursor = f'_reconcil_exclusoes_{tabela}'
+        agora = datetime.now(timezone.utc)
+        anterior = _instante_canonico(
+            get_ultima_sync_tabela(conn, chave_cursor, empresa_ativa))
+        if (anterior and
+                (agora - anterior).total_seconds() < _INTERVALO_RECONCILIACAO_EXCLUSOES):
+            continue
+        if _em_cooldown(tabela) or not _tabela_tem_coluna(conn, tabela, 'empresa_id'):
+            continue
+
+        try:
+            ids_nuvem = _ids_existentes_na_nuvem(
+                tabela, empresa_ativa, supabase_url, api_key)
+        except Exception as e:
+            print_log(f'[EXCLUSÃO] {tabela}: falha ao ler os IDs da nuvem ({e})',
+                      Colors.YELLOW)
+            ids_nuvem = None
+        if ids_nuvem is None:
+            continue  # tenta de novo no próximo ciclo
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f'SELECT id FROM "{tabela}" WHERE empresa_id = %s',
+                            (empresa_ativa,))
+                locais = {str(r[0]) for r in cur.fetchall() if r[0] is not None}
+                # Só INSERT pendente protege: é linha criada aqui e que ainda
+                # não existe em lugar nenhum. UPDATE pendente de um registro
+                # apagado na nuvem é descartado — a exclusão vence.
+                cur.execute(
+                    'SELECT record_id, operation FROM _exodo_sync_log '
+                    'WHERE table_name = %s', (tabela,))
+                pendentes = {str(r[0]) for r in cur.fetchall()
+                             if r[0] is not None and r[1] == 'INSERT'}
+        except Exception as e:
+            print_log(f'[EXCLUSÃO] {tabela}: falha ao ler o banco local ({e})',
+                      Colors.YELLOW)
+            continue
+
+        if not ids_nuvem and locais:
+            print_log(f'[EXCLUSÃO] {tabela}: a nuvem devolveu 0 IDs para a empresa '
+                      f'{empresa_ativa}, mas há {len(locais)} aqui. Nada foi apagado '
+                      '(proteção contra leitura incompleta).', Colors.RED)
+            salvar_ultima_sync_tabela(
+                conn, chave_cursor, agora.isoformat(), empresa_ativa)
+            continue
+
+        faltantes = sorted(locais - ids_nuvem - pendentes)
+        if faltantes:
+            try:
+                with conn.cursor() as cur:
+                    # sync_mode: o trigger não registra estes DELETEs como
+                    # alteração local (a nuvem já os aplicou).
+                    cur.execute("SET LOCAL exodo.sync_mode = 'on'")
+                    cur.execute(f'DELETE FROM "{tabela}" WHERE id = ANY(%s)',
+                                (faltantes,))
+                    apagados = cur.rowcount
+                    cur.execute(
+                        'DELETE FROM _exodo_sync_log '
+                        'WHERE table_name = %s AND record_id = ANY(%s)',
+                        (tabela, faltantes))
+                    cur.execute("SELECT to_regclass('public._exodo_deletados')")
+                    if cur.fetchone()[0]:
+                        cur.executemany("""
+                            INSERT INTO _exodo_deletados
+                                (tabela, registro_id, empresa_id, deletado_em)
+                            VALUES (%s, %s, %s, NOW())
+                            ON CONFLICT (tabela, registro_id)
+                            DO UPDATE SET deletado_em = NOW()
+                        """, [(tabela, i, empresa_ativa) for i in faltantes])
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                print_log(f'[EXCLUSÃO] {tabela}: falha ao apagar localmente ({e})',
+                          Colors.RED)
+                continue
+            total += apagados
+            print_log(
+                f'[EXCLUSÃO] {tabela}: {apagados} registro(s) apagados na nuvem '
+                'foram removidos do banco local (senão voltariam no próximo envio).',
+                Colors.YELLOW)
+            notificar_ui_local(conn, tabela)
+
+        salvar_ultima_sync_tabela(
+            conn, chave_cursor, agora.isoformat(), empresa_ativa)
+    return total
+
+
 # Vira True depois da primeira limpeza desta execução do sincronizador.
 _limpou_outras_empresas_nesta_execucao = False
 
@@ -2944,9 +3150,30 @@ def remover_dados_de_outras_empresas(conn, empresa_ativa, tabelas):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def obter_cnpj_local(conn):
+    """CNPJ da empresa em uso nesta máquina.
+
+    Antes era `SELECT cnpj FROM empresas LIMIT 1`: sem ORDER BY, o Postgres
+    podia devolver uma linha de OUTRA empresa (ou com cnpj nulo) e o status
+    publicado na nuvem ficava sem CNPJ — era o que impedia separar as máquinas
+    por empresa no painel. Agora a empresa ativa do app tem prioridade.
+    """
     try:
+        ativa = obter_empresa_ativa(conn)
         with conn.cursor() as cur:
-            cur.execute("SELECT cnpj FROM public.empresas LIMIT 1")
+            if ativa:
+                cur.execute(
+                    "SELECT cnpj FROM public.empresas WHERE id = %s LIMIT 1",
+                    (ativa,),
+                )
+                row = cur.fetchone()
+                if row and str(row[0] or '').strip():
+                    return row[0]
+            # Instalação antiga (sem empresa ativa gravada): mantém o
+            # comportamento anterior, mas ignorando linhas sem CNPJ.
+            cur.execute(
+                "SELECT cnpj FROM public.empresas "
+                "WHERE cnpj IS NOT NULL AND btrim(cnpj) <> '' LIMIT 1"
+            )
             row = cur.fetchone()
             if row:
                 return row[0]
@@ -2969,6 +3196,7 @@ def atualizar_status_no_supabase(conn, supabase_url, api_key):
     try:
         pc_name = platform.node()
         cnpj = obter_cnpj_local(conn)
+        empresa_ativa = obter_empresa_ativa(conn)
         versao_win = f"{platform.system()} {platform.release()} (v{platform.version()})"
         
         headers = {
@@ -2982,14 +3210,20 @@ def atualizar_status_no_supabase(conn, supabase_url, api_key):
             "id": pc_name,
             "pc_name": pc_name,
             "online": True,
-            "ultimo_cnpj": cnpj,
             "versao_windows": versao_win,
             "versao_software": VERSION,  # Versao do sincronizador/sistema
             "ultima_atualizacao": datetime.now(timezone.utc).isoformat(),
             "configuracoes": {
-                "bridge_running": is_bridge_running()
+                "bridge_running": is_bridge_running(),
+                # Empresa aberta no app desta máquina: o painel usa isso para
+                # agrupar as máquinas por empresa mesmo antes da primeira venda.
+                "empresa_ativa_id": empresa_ativa,
             }
         }
+        # Sem CNPJ conhecido, NÃO envia o campo: o upsert preserva o valor que
+        # o bridge gravou (antes um null apagava o CNPJ a cada ciclo).
+        if cnpj:
+            payload["ultimo_cnpj"] = cnpj
         
         url = f"{supabase_url.rstrip('/')}/rest/v1/bridge_status"
         requests.post(url, json=payload, headers=headers, timeout=10)
@@ -3653,6 +3887,13 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
     if not nuvem_bloqueada():
         atualizar_status_no_supabase(conn, supabase_url, api_key)
         processar_comandos_no_supabase(conn, supabase_url, api_key)
+
+        # Exclusões feitas no site/outro PC precisam sumir daqui ANTES do
+        # upload: senão o reenvio do catálogo local recria o que foi apagado.
+        try:
+            reconciliar_exclusoes_da_nuvem(conn, supabase_url, api_key, empresa_ativa)
+        except Exception as e:
+            print_log(f'[EXCLUSÃO] reconciliação falhou: {e}', Colors.YELLOW)
     
     with conn.cursor() as cur:
         cur.execute("""

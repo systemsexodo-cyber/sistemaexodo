@@ -110,6 +110,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   bool _imprimirCupomAoSalvar = false;
   bool _imprimirProducaoAoSalvar = true;
 
+  // Botão que já abre em destaque (e recebe o Enter) na tela de venda
+  // finalizada: 'imprimir' (padrão), 'fechar', 'nfce' ou 'whatsapp'.
+  String _botaoPadraoFinalizarVenda = 'imprimir';
+
   Color _corPrimaria = Colors.blueAccent;
   Color _corSecundaria = Colors.blue;
 
@@ -271,6 +275,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         empresa.configuracoes?['imprimirCupomAoSalvar'] ?? false;
     _imprimirProducaoAoSalvar =
         empresa.configuracoes?['imprimirProducaoAoSalvar'] ?? true;
+    _botaoPadraoFinalizarVenda =
+        (empresa.configuracoes?['botaoPadraoFinalizarVenda'] as String?) ??
+        'imprimir';
     if (_impressoraSelecionada.isEmpty) {
       ImpressaoService.getUltimaImpressora(empresaId: empresa.id).then((val) {
         if (val != null && val.isNotEmpty && mounted) {
@@ -467,7 +474,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           widget.empresa?.configuracoes?['perfis_preco'];
       final perfisPrecoMudaram =
           jsonEncode(perfisPrecoAnteriores ?? const []) !=
-              jsonEncode(_configPerfisPreco);
+          jsonEncode(_configPerfisPreco);
       final carimboPerfisPreco = perfisPrecoMudaram
           ? agora.toUtc().toIso8601String()
           : widget.empresa?.configuracoes?[chavePerfisPrecoAtualizadoEm];
@@ -614,6 +621,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'impressoraSelecionada': _impressoraSelecionada,
           'imprimirCupomAoSalvar': _imprimirCupomAoSalvar,
           'imprimirProducaoAoSalvar': _imprimirProducaoAoSalvar,
+          'botaoPadraoFinalizarVenda': _botaoPadraoFinalizarVenda,
 
           'ultimo_numero_nfce': _ultimoNumeroNFCeController.text.trim().isEmpty
               ? null
@@ -642,16 +650,14 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           // Cash back (fidelidade) — lidos pelo CashBackService
           'cashback_taxa_percentual':
               double.tryParse(
-                    _cashbackTaxaController.text.trim().replaceAll(',', '.'),
-                  ) ??
-                  5.0,
+                _cashbackTaxaController.text.trim().replaceAll(',', '.'),
+              ) ??
+              5.0,
           'cashback_limite_uso_percentual':
               double.tryParse(
-                    _cashbackLimiteUsoController.text
-                        .trim()
-                        .replaceAll(',', '.'),
-                  ) ??
-                  100.0,
+                _cashbackLimiteUsoController.text.trim().replaceAll(',', '.'),
+              ) ??
+              100.0,
           'cashback_validade_dias':
               int.tryParse(_cashbackValidadeController.text.trim()) ?? 0,
           'perfis_preco': _configPerfisPreco,
@@ -662,8 +668,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
               .map((f) => f.toMap())
               .toList(),
 
-          'codigo_liberacao_offline':
-              Empresa.normalizarCodigoLiberacaoOffline(_codigoLiberacaoOffline),
+          'codigo_liberacao_offline': Empresa.normalizarCodigoLiberacaoOffline(
+            _codigoLiberacaoOffline,
+          ),
         },
       );
 
@@ -788,9 +795,11 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
 
       if (mounted &&
           (widget.empresa == null ||
-              widget.empresa!.configuracoes?['codigo_liberacao_offline'] == null)) {
+              widget.empresa!.configuracoes?['codigo_liberacao_offline'] ==
+                  null)) {
         final codigoGerado =
-            empresa.configuracoes?['codigo_liberacao_offline']?.toString() ?? '';
+            empresa.configuracoes?['codigo_liberacao_offline']?.toString() ??
+            '';
         if (codigoGerado.isNotEmpty) {
           await showDialog<void>(
             context: context,
@@ -1347,7 +1356,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                         : Colors.red.shade700,
                     foregroundColor: Colors.white,
                   ),
-                  icon: Icon(_nuvemAtiva ? Icons.cloud_off : Icons.cloud_off_outlined),
+                  icon: Icon(
+                    _nuvemAtiva ? Icons.cloud_off : Icons.cloud_off_outlined,
+                  ),
                   label: Text(
                     _nuvemAtiva
                         ? 'Ativar Modo Sem Nuvem (somente local)'
@@ -1365,7 +1376,10 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
                     '☁️⛔ Modo sem nuvem ativo: dados e certificado ficam apenas no PostgreSQL local. Nada é enviado ao Supabase.',
-                    style: TextStyle(color: Colors.orange.shade300, fontSize: 12),
+                    style: TextStyle(
+                      color: Colors.orange.shade300,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               const SizedBox(height: 8),
@@ -1523,6 +1537,56 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 contentPadding: EdgeInsets.zero,
               ),
               const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _botaoPadraoFinalizarVenda,
+                decoration: InputDecoration(
+                  labelText: 'Botão em destaque ao finalizar a venda',
+                  helperText:
+                      'Qual botão já fica selecionado na tela de venda finalizada. O Enter do caixa aciona esse botão.',
+                  helperMaxLines: 2,
+                  prefixIcon: const Icon(
+                    Icons.highlight_alt,
+                    color: Colors.amberAccent,
+                  ),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.1),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: Colors.white.withOpacity(0.2),
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: Colors.amberAccent,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                dropdownColor: const Color(0xFF2D2D3E),
+                style: const TextStyle(color: Colors.white),
+                icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'imprimir',
+                    child: Text('Imprimir (padrão)'),
+                  ),
+                  DropdownMenuItem(value: 'fechar', child: Text('Fechar')),
+                  DropdownMenuItem(value: 'nfce', child: Text('Emitir NFC-e')),
+                  DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _botaoPadraoFinalizarVenda = value);
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
               ListTile(
                 leading: const Icon(Icons.print, color: Colors.blueAccent),
                 title: Text(

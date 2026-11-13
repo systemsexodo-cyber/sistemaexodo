@@ -1123,15 +1123,30 @@ class _HomePageState extends State<HomePage> {
                               context,
                               listen: false,
                             );
-                            final empresaNome =
-                                dataService.empresaAtual?.nomeExibicao ??
-                                'empresa atual';
+                            // O id usado na exclusão é o da empresa que a tela
+                            // está mostrando. Antes a tela mostrava
+                            // `empresaAtual` e o serviço apagava com
+                            // `_currentEmpresaId`: quando os dois divergiam, o
+                            // catálogo de OUTRA empresa ia embora.
+                            final empresa = dataService.empresaAtual;
+                            if (empresa == null || empresa.id.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    '⚠️ Nenhuma empresa aberta — nada foi apagado.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            final empresaNome = empresa.nomeExibicao;
+                            final empresaId = empresa.id;
 
                             // Contar o que existe na nuvem APENAS para esta empresa (só leitura)
                             Map<String, int> contagens = {};
                             try {
                               contagens = await dataService
-                                  .contarDadosDaEmpresa();
+                                  .contarDadosDaEmpresa(empresaId);
                             } catch (_) {}
 
                             final tabelasComDados = contagens.entries
@@ -1142,99 +1157,162 @@ class _HomePageState extends State<HomePage> {
                               (soma, e) => soma + e.value,
                             );
 
-                            // Mostrar diálogo de confirmação extra com nome e contagem
+                            // Mostrar diálogo de confirmação extra com nome e
+                            // contagem. A confirmação é DIGITADA: apagar a nuvem
+                            // de uma empresa não pode sair de um clique sem
+                            // intenção (foi assim que o acidente aconteceu).
                             final confirmar = await showDialog<bool>(
                               context: context,
-                              builder: (context) => AlertDialog(
-                                backgroundColor: const Color(0xFF1E1E2E),
-                                title: const Text(
-                                  '⚠️ APAGAR NUVEM?',
-                                  style: TextStyle(color: Colors.white),
-                                ),
-                                content: SingleChildScrollView(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Isso vai apagar APENAS os dados da empresa "$empresaNome" no servidor. Tem certeza?',
-                                        style: const TextStyle(
-                                          color: Colors.white70,
+                              builder: (dialogContext) {
+                                var liberado = false;
+                                return StatefulBuilder(
+                                  builder: (dialogContext, setDialogState) =>
+                                      AlertDialog(
+                                        backgroundColor: const Color(0xFF1E1E2E),
+                                        title: const Text(
+                                          '⚠️ APAGAR NUVEM?',
+                                          style: TextStyle(color: Colors.white),
                                         ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      if (tabelasComDados.isEmpty)
-                                        const Text(
-                                          'Nenhum registro encontrado na nuvem para esta empresa.',
-                                          style: TextStyle(
-                                            color: Colors.white38,
-                                            fontSize: 12,
-                                          ),
-                                        )
-                                      else ...[
-                                        const Text(
-                                          'Serão apagados na nuvem:',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
+                                        content: SingleChildScrollView(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Isso vai apagar APENAS os dados da empresa "$empresaNome" no servidor. '
+                                                'Os dados deste computador NÃO são apagados.',
+                                                style: const TextStyle(
+                                                  color: Colors.white70,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 12),
+                                              if (tabelasComDados.isEmpty)
+                                                const Text(
+                                                  'Nenhum registro encontrado na nuvem para esta empresa.',
+                                                  style: TextStyle(
+                                                    color: Colors.white38,
+                                                    fontSize: 12,
+                                                  ),
+                                                )
+                                              else ...[
+                                                const Text(
+                                                  'Serão apagados na nuvem:',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                ...tabelasComDados.map(
+                                                  (e) => Text(
+                                                    '  • ${e.key}: ${e.value} registro(s)',
+                                                    style: const TextStyle(
+                                                      color: Colors.white60,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Text(
+                                                  'Total: $total registro(s)',
+                                                  style: const TextStyle(
+                                                    color: Colors.amberAccent,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
+                                              const SizedBox(height: 16),
+                                              const Text(
+                                                'Para confirmar, digite APAGAR:',
+                                                style: TextStyle(
+                                                  color: Colors.white70,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              TextField(
+                                                autofocus: true,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                ),
+                                                decoration:
+                                                    const InputDecoration(
+                                                      hintText: 'APAGAR',
+                                                      hintStyle: TextStyle(
+                                                        color: Colors.white24,
+                                                      ),
+                                                      isDense: true,
+                                                    ),
+                                                onChanged: (valor) {
+                                                  final ok = valor
+                                                          .trim()
+                                                          .toUpperCase() ==
+                                                      'APAGAR';
+                                                  if (ok != liberado) {
+                                                    setDialogState(
+                                                      () => liberado = ok,
+                                                    );
+                                                  }
+                                                },
+                                              ),
+                                            ],
                                           ),
                                         ),
-                                        const SizedBox(height: 6),
-                                        ...tabelasComDados.map(
-                                          (e) => Text(
-                                            '  • ${e.key}: ${e.value} registro(s)',
-                                            style: const TextStyle(
-                                              color: Colors.white60,
-                                              fontSize: 12,
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(dialogContext, false),
+                                            child: const Text(
+                                              'Cancelar',
+                                              style: TextStyle(
+                                                color: Colors.white54,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          'Total: $total registro(s)',
-                                          style: const TextStyle(
-                                            color: Colors.amberAccent,
-                                            fontSize: 12,
+                                          TextButton(
+                                            onPressed: liberado
+                                                ? () => Navigator.pop(
+                                                    dialogContext,
+                                                    true,
+                                                  )
+                                                : null,
+                                            child: Text(
+                                              'Sim, Apagar Tudo',
+                                              style: TextStyle(
+                                                color: liberado
+                                                    ? Colors.red
+                                                    : Colors.white24,
+                                              ),
+                                            ),
                                           ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: const Text(
-                                      'Não',
-                                      style: TextStyle(color: Colors.white54),
-                                    ),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    child: const Text(
-                                      'Sim, Apagar Tudo',
-                                      style: TextStyle(color: Colors.red),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                        ],
+                                      ),
+                                );
+                              },
                             );
 
                             if (confirmar == true) {
                               try {
-                                final removidos = await dataService
-                                    .deletarTudoNoSupabaseDestaEmpresa();
-                                final qtd = removidos.values.fold<int>(
+                                final resultado = await dataService
+                                    .deletarTudoNoSupabaseDestaEmpresa(
+                                      empresaIdEsperada: empresaId,
+                                    );
+                                final qtd = resultado.removidos.values.fold<int>(
                                   0,
                                   (soma, v) => soma + v,
                                 );
+                                final protegidos = resultado.preservados
+                                    .values
+                                    .fold<int>(0, (soma, v) => soma + v);
+                                if (!mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      '🔥 Nuvem limpada! $qtd registro(s) removidos da empresa atual.',
+                                      protegidos > 0
+                                          ? '🔥 Nuvem limpa: $qtd registro(s) de "$empresaNome" removidos. '
+                                                '$protegidos registro(s) preservado(s) por pertencerem a OUTRA empresa.'
+                                          : '🔥 Nuvem limpa: $qtd registro(s) removidos de "$empresaNome".',
                                     ),
                                   ),
                                 );
@@ -1631,6 +1709,7 @@ class _HomePageState extends State<HomePage> {
       final (ok, motivo) = await AppUpdateService.baixarEAplicarAtualizacao(
         url,
         (p) => progresso.value = p,
+        publicadaEm: (config['publicada_em'] ?? '').toString(),
       );
       if (!ok) {
         // Fecha o progresso e avisa; se deu certo o app já fechou para a troca.

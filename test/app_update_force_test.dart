@@ -14,4 +14,60 @@ void main() {
     expect(AppUpdateService.deveAtualizar('1.0.52', '1.0.56'), isTrue);
     expect(AppUpdateService.deveAtualizar('1.0.56', '1.0.52'), isFalse);
   });
+
+  group('forcada vencida (trava do "abre e fica atualizando")', () {
+    final instalada = DateTime.utc(2026, 11, 9, 23, 45);
+
+    test('downgrade forcado publicado antes da instalacao e ignorado', () {
+      expect(
+        AppUpdateService.downgradeForcadoVencido(
+          forcada: true,
+          versaoRemota: '!1.0.62',
+          publicadaEm: DateTime.utc(2026, 11, 7, 12, 9),
+          instaladaEm: instalada,
+          versaoInstalada: '1.0.69',
+        ),
+        isTrue,
+      );
+    });
+
+    test('downgrade forcado publicado depois da instalacao continua valendo', () {
+      expect(
+        AppUpdateService.downgradeForcadoVencido(
+          forcada: true,
+          versaoRemota: '!1.0.62',
+          publicadaEm: DateTime.utc(2026, 11, 10),
+          instaladaEm: instalada,
+          versaoInstalada: '1.0.69',
+        ),
+        isFalse,
+      );
+    });
+
+    test('subir de versao nunca e tratado como vencido', () {
+      expect(
+        AppUpdateService.downgradeForcadoVencido(
+          forcada: true,
+          versaoRemota: '!1.0.70',
+          publicadaEm: DateTime.utc(2026, 11, 1),
+          instaladaEm: instalada,
+          versaoInstalada: '1.0.69',
+        ),
+        isFalse,
+      );
+    });
+
+    test('publicacao normal nao usa a regra da forcada', () {
+      expect(
+        AppUpdateService.downgradeForcadoVencido(
+          forcada: false,
+          versaoRemota: '1.0.62',
+          publicadaEm: DateTime.utc(2026, 11, 7),
+          instaladaEm: instalada,
+          versaoInstalada: '1.0.69',
+        ),
+        isFalse,
+      );
+    });
+  });
 }

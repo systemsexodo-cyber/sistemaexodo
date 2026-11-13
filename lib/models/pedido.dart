@@ -22,6 +22,7 @@ class Pedido {
   final String? origem; // Origem detalhada do pedido (Mesa/Comanda, Venda Direta, etc)
   final DateTime dataPedido;
   final String status; // Pendente, Em Andamento, Concluído, Cancelado
+  final bool recebido; // Confirmado como recebido pelo cliente (e-commerce)
   final double total;
   final double descontoTotal;
   final double acrescimoTotal;
@@ -34,6 +35,7 @@ class Pedido {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? senha; // Senha de atendimento/fila do pedido
+  final String? linkCliente; // Código único para cliente rastrear pedido (ex: ABC-123)
 
   Pedido({
     required this.id,
@@ -48,10 +50,12 @@ class Pedido {
     this.operador,
     this.linkVendedorId,
     this.linkVendedorCodigo,
+    this.linkCliente,
     this.origemEcommerce = false, // Por padrão, não é do e-commerce
     this.origem,
     DateTime? dataPedido,
     this.status = 'Pendente',
+    this.recebido = false, // Por padrão, não confirmado
     this.total = 0.0,
     this.descontoTotal = 0.0,
     this.acrescimoTotal = 0.0,
@@ -205,13 +209,15 @@ class Pedido {
       operador: getStr('operador', 'operador'),
       linkVendedorId: getStr('linkVendedorId', 'link_vendedor_id'),
       linkVendedorCodigo: getStr('linkVendedorCodigo', 'link_vendedor_codigo'),
-      origemEcommerce: getBool('origemEcommerce', 'origem_ecommerce') ?? false, 
+      origemEcommerce: getBool('origemEcommerce', 'origem_ecommerce') ?? false,
+      linkCliente: map['linkCliente'] ?? map['link_cliente'], 
       origem: map['origem'],
       dataPedido: getDate('dataPedido', 'data_pedido', DateTime.now()),
       status: map['status'] ?? 'Pendente',
+      recebido: getBool('recebido', 'recebido') ?? false,
       total: parseDouble(map['total']) ?? 0.0,
-      descontoTotal: parseDouble(map['descontoTotal']) ?? 0.0,
-      acrescimoTotal: parseDouble(map['acrescimoTotal']) ?? 0.0,
+      descontoTotal: parseDouble(map['descontoTotal'] ?? map['desconto_total']) ?? 0.0,
+      acrescimoTotal: parseDouble(map['acrescimoTotal'] ?? map['acrescimo_total']) ?? 0.0,
       observacoes: map['observacoes'],
       produtos: (getList('produtos', 'produtos') ?? [])
           .map((p) => ItemPedido.fromMap(p as Map<String, dynamic>))
@@ -248,14 +254,16 @@ class Pedido {
       'operador': operador,
       'link_vendedor_id': linkVendedorId,
       'link_vendedor_codigo': linkVendedorCodigo,
+      'link_cliente': linkCliente,
       'origem_ecommerce': origemEcommerce,
       'origem': origem,
       'data_pedido': dataPedido.toIso8601String(),
       'status': status,
       'total': total,
-      'descontoTotal': descontoTotal,
-      'acrescimoTotal': acrescimoTotal,
+      'desconto_total': descontoTotal,
+      'acrescimo_total': acrescimoTotal,
       'observacoes': observacoes,
+      'recebido': recebido,
       'produtos': produtos.map((p) => p.toMap()).toList(),
       'servicos': servicos.map((s) => s.toMap()).toList(),
       'pagamentos': pagamentos.map((p) => p.toMap()).toList(),
@@ -281,6 +289,7 @@ class Pedido {
     String? operador,
     String? linkVendedorId,
     String? linkVendedorCodigo,
+    String? linkCliente,
     bool? origemEcommerce,
     String? origem,
     DateTime? dataPedido,
@@ -297,6 +306,7 @@ class Pedido {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? senha,
+    bool? recebido,
     /// Permite APAGAR o nome do cliente: `clienteNome: null` sozinho não limpa
     /// nada (null significa "mantém o atual").
     bool limparClienteNome = false,
@@ -314,10 +324,12 @@ class Pedido {
       operador: operador ?? this.operador,
       linkVendedorId: linkVendedorId ?? this.linkVendedorId,
       linkVendedorCodigo: linkVendedorCodigo ?? this.linkVendedorCodigo,
+      linkCliente: linkCliente ?? this.linkCliente,
       origemEcommerce: origemEcommerce ?? this.origemEcommerce,
       origem: origem ?? this.origem,
       dataPedido: dataPedido ?? this.dataPedido,
       status: status ?? this.status,
+      recebido: recebido ?? this.recebido,
       total: total ?? this.total,
       descontoTotal: descontoTotal ?? this.descontoTotal,
       acrescimoTotal: acrescimoTotal ?? this.acrescimoTotal,

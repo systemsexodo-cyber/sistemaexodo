@@ -14,7 +14,7 @@ class CentralNuvemPage extends StatefulWidget {
 
 class _CentralNuvemPageState extends State<CentralNuvemPage> {
   static const String _painelUrl =
-      'https://servidorsupabase.tail9b4943.ts.net/central-nuvem/';
+      'https://exodosystems.tail9b4943.ts.net/central-nuvem/';
   int _versaoPainel = 0;
 
   void _atualizarAgora() {

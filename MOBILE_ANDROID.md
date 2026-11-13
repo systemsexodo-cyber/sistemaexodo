@@ -118,7 +118,7 @@ Quando o celular está fora da loja, as duas primeiras tentativas falham e o app
 cai no terceiro destino, o bloco `DB_CLOUD_*` do `assets/app.env`:
 
 ```
-DB_CLOUD_HOST=desktop-86ut1r1.tail9b4943.ts.net   endereço público fixo
+DB_CLOUD_HOST=exodosystems.tail9b4943.ts.net   endereço público fixo
 DB_CLOUD_PORT=10000                                porta do Funnel
 DB_CLOUD_NAME=postgres
 DB_CLOUD_USER=postgres.your-tenant-id
@@ -149,7 +149,7 @@ dart run tool/teste_funnel.dart
 
 Resultado na última verificação: `OK em ~200 ms | produtos=7233 clientes=13`
 (mesmos números do `exodo_db` local), e o certificado apresentado na porta
-10000 é válido para `desktop-86ut1r1.tail9b4943.ts.net`.
+10000 é válido para `exodosystems.tail9b4943.ts.net`.
 
 > ⚠️ **Segurança:** a senha do banco vai embutida no APK e a porta 10000 fica
 > aberta para a internet. Não distribua o APK fora das lojas. A senha atual é o

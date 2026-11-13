@@ -309,7 +309,8 @@ class _ConsumoInternoPageState extends State<ConsumoInternoPage> {
         );
         final q = _busca.toLowerCase();
         final bateProduto = prod.nome.toLowerCase().contains(q) ||
-            (prod.codigo?.toLowerCase().contains(q) ?? false);
+            (prod.codigo?.toLowerCase().contains(q) ?? false) ||
+            (prod.descricao?.toLowerCase().contains(q) ?? false);
         final batePessoa = (h.usuario ?? '').toLowerCase().contains(q);
         if (!bateProduto && !batePessoa) return false;
       }
@@ -679,7 +680,8 @@ class _DialogSelecionarProdutoConsumoState
     return widget.produtos.where((p) {
       return p.nome.toLowerCase().contains(q) ||
           (p.codigo?.toLowerCase().contains(q) ?? false) ||
-          (p.codigoBarras?.toLowerCase().contains(q) ?? false);
+          (p.codigoBarras?.toLowerCase().contains(q) ?? false) ||
+          (p.descricao?.toLowerCase().contains(q) ?? false);
     }).toList();
   }
 

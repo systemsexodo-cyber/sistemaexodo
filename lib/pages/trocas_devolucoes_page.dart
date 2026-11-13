@@ -1897,7 +1897,8 @@ class SelecionarNovosProdutosPageState
           .where(
             (p) =>
                 p.nome.toLowerCase().contains(termo) ||
-                (p.codigo?.toLowerCase().contains(termo) ?? false),
+                (p.codigo?.toLowerCase().contains(termo) ?? false) ||
+                (p.descricao?.toLowerCase().contains(termo) ?? false),
           )
           .toList();
     }

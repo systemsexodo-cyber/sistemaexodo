@@ -3,7 +3,7 @@
 --
 -- SINTOMA
 --   Um navegador sem cache (guia anônima, outro PC, celular novo) abre o site
---   em servidorsupabase.tail9b4943.ts.net e não carrega nada: a lista de
+--   em exodosystems.tail9b4943.ts.net e não carrega nada: a lista de
 --   empresas mostra só a empresa de demonstração ("Exodo Systems",
 --   CNPJ 12.345.678/0001-90, "SEM SYNC") e, ao entrar, todas as telas ficam
 --   vazias.

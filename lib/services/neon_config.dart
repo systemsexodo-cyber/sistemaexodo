@@ -297,6 +297,28 @@ class NeonConfig {
   static bool get storageSupabaseDisponivel =>
       storageSupabaseUrl.isNotEmpty && storageSupabaseKey.isNotEmpty;
 
+  /// Endereço PÚBLICO do Storage — é ele que vai gravado em produtos, logo e
+  /// banners. A nuvem interna é acessada por 127.0.0.1:8001 (rápido nesta
+  /// máquina), mas essa URL não abre em outro computador, no celular nem na
+  /// loja online. Quando a base interna é local, usamos o Funnel do Tailscale,
+  /// o mesmo endereço público já usado pelo resto do sistema.
+  ///
+  /// Dá para apontar para outro endereço com `NEON_SUPABASE_PUBLIC_STORAGE_URL`.
+  static String get storageSupabaseUrlPublica {
+    final explicito = _resolver([
+      'NEON_SUPABASE_PUBLIC_STORAGE_URL',
+      'NEON_PUBLIC_STORAGE_URL',
+      'NEON_PUBLIC_URL',
+    ]);
+    if (explicito.isNotEmpty) return _semSufixoRest(explicito);
+    final interno = storageSupabaseUrl;
+    if (interno.isEmpty) return '';
+    final host = (Uri.tryParse(interno)?.host ?? '').toLowerCase();
+    const locais = {'localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'};
+    if (locais.contains(host)) return 'https://exodosystems.tail9b4943.ts.net';
+    return interno;
+  }
+
   static String _semSufixoRest(String url) {
     var base = url.trim().replaceAll(RegExp(r'/+$'), '');
     if (base.endsWith('/rest/v1')) {

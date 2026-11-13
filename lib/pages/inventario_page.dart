@@ -333,7 +333,8 @@ class _InventarioPageState extends State<InventarioPage> {
         final q = _busca.toLowerCase();
         if (!p.nome.toLowerCase().contains(q) &&
             !(p.codigo?.toLowerCase().contains(q) ?? false) &&
-            !(p.codigoBarras?.toLowerCase().contains(q) ?? false)) {
+            !(p.codigoBarras?.toLowerCase().contains(q) ?? false) &&
+            !(p.descricao?.toLowerCase().contains(q) ?? false)) {
           return false;
         }
       }

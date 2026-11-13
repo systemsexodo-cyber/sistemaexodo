@@ -34,8 +34,52 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
   bool _usarMock = true;
   double _pesoMock = 1.5;
   bool _testandoBalanca = false;
+  String _protocolo = 'auto';
 
   static const List<int> _baudRates = [2400, 4800, 9600, 19200, 38400, 57600, 115200];
+
+  /// Protocolo de pesagem: define como o app pede e interpreta o peso.
+  static const Map<String, String> _protocolos = {
+    'auto': 'Automático (reconhece o quadro)',
+    'prt2': 'Toledo PRT2 (ENQ, 5 dígitos)',
+    'prt3': 'Toledo PRT3 (ENQ, 5 dígitos, I/N/S)',
+    'toledo_a': 'Toledo Protocolo A (impressão, peso+tara)',
+    'filizola': 'Filizola (ENQ, 5 dígitos)',
+    'generico': 'Genérico (envio contínuo em texto)',
+  };
+
+  /// Ajustes de série recomendados por protocolo (a balança tem que estar
+  /// configurada igual).
+  static const Map<String, String> _dicasProtocolo = {
+    'auto': 'PRT2/PRT3/Filizola: ENQ. Genérico: envio contínuo.',
+    'prt2': 'Toledo PRT2: 9600, 8 bits, sem paridade, 1 stop. Não transmite em zero.',
+    'prt3': 'Toledo PRT3: 9600, 8 bits, sem paridade, 1 stop. Avisa instável/negativo.',
+    'toledo_a': 'Protocolo A: 7 ou 8 bits, paridade par (na maioria), 1 stop.',
+    'filizola': 'Filizola: 9600, 8 bits, sem paridade, 1 stop.',
+    'generico': 'Balança enviando texto contínuo com vírgula (ex.: 1,540 kg).',
+  };
+
+  /// Nomes antigos salvos ("toledo") continuam válidos.
+  static String _normalizarProtocolo(String valor) {
+    switch (valor.trim().toLowerCase()) {
+      case 'prt2':
+      case 'toledo_prt2':
+        return 'prt2';
+      case 'prt3':
+      case 'toledo':
+      case 'toledo_prt3':
+        return 'prt3';
+      case 'toledo_a':
+      case 'toledoa':
+        return 'toledo_a';
+      case 'filizola':
+        return 'filizola';
+      case 'generico':
+        return 'generico';
+      default:
+        return 'auto';
+    }
+  }
 
   @override
   void initState() {
@@ -68,6 +112,9 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
             : (int.tryParse(baudRaw?.toString() ?? '9600') ?? 9600);
         _usarMock = config['usarMock'] == true;
         _pesoMock = double.tryParse(config['pesoMock']?.toString() ?? '1.5') ?? 1.5;
+        _protocolo = _normalizarProtocolo(
+          (config['protocolo'] ?? 'auto').toString(),
+        );
         _portasCOM = portas;
         if (!_portasCOM.contains(_portaSelecionada)) {
           _portasCOM.insert(0, _portaSelecionada);
@@ -113,6 +160,12 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
     final erro = res['erro'] as String?;
     final peso = res['peso'];
     final simulado = res['simulado'] == true;
+    final bruto = res['bruto'] as String?;
+    final ms = res['ms'];
+    final detalhe = [
+      if (ms != null) '${ms}ms',
+      if (bruto != null && bruto.isNotEmpty) 'quadro: $bruto',
+    ].join(' | ');
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -121,8 +174,9 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
         title: const Text('Resultado da Balança', style: TextStyle(color: Colors.white)),
         content: Text(
           erro != null
-              ? erro
-              : 'Peso lido: $peso kg${simulado ? ' (modo simulado)' : ''}',
+              ? '$erro${detalhe.isEmpty ? '' : '\n\n$detalhe'}'
+              : 'Peso lido: $peso kg${simulado ? ' (modo simulado)' : ''}'
+                  '${detalhe.isEmpty ? '' : '\n\n$detalhe'}',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -142,6 +196,7 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
     novaConfig['baudRate'] = _baudRate;
     novaConfig['usarMock'] = _usarMock;
     novaConfig['pesoMock'] = _pesoMock;
+    novaConfig['protocolo'] = _protocolo;
     await BalancaService().salvarConfiguracao(novaConfig);
     if (mounted) {
       _mostrarSnack('✓ Configurações da balança salvas (somente nesta máquina)', Colors.green);
@@ -399,6 +454,9 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
             ],
           ),
           const SizedBox(height: 10),
+          _dropdownProtocolo(),
+          _ajudaProtocolo(),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -466,6 +524,44 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
       onChanged: (v) {
         if (v != null) setState(() => _portaSelecionada = v);
       },
+    );
+  }
+
+  Widget _dropdownProtocolo() {
+    return DropdownButtonFormField<String>(
+      initialValue: _protocolo,
+      dropdownColor: const Color(0xFF2A2D3E),
+      style: const TextStyle(color: Colors.white, fontSize: 13),
+      decoration: InputDecoration(
+        labelText: 'Protocolo de pesagem',
+        labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Colors.white12),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Colors.white12),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      items: _protocolos.entries
+          .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+          .toList(),
+      onChanged: (v) {
+        if (v != null) setState(() => _protocolo = v);
+      },
+    );
+  }
+
+  /// Linha de ajuda do protocolo escolhido.
+  Widget _ajudaProtocolo() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, left: 4),
+      child: Text(
+        _dicasProtocolo[_protocolo] ?? '',
+        style: const TextStyle(color: Colors.white38, fontSize: 11, height: 1.3),
+      ),
     );
   }
 

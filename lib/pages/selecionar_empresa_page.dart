@@ -1409,7 +1409,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               size: 18,
                             ),
                             SizedBox(width: 12),
-                            Text('Importar Excel'),
+                            Text('Importar Excel/CSV'),
                           ],
                         ),
                       ),
@@ -2705,7 +2705,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         title: const Text(
-          'Importar Produtos do Excel',
+          'Importar Produtos (Excel ou CSV)',
           style: TextStyle(color: Colors.white),
         ),
         content: SingleChildScrollView(
@@ -2714,7 +2714,8 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Formato esperado do Excel:',
+                'Aceita planilha (.xlsx/.xls) ou CSV (.csv) — o cabeçalho pode '
+                'estar em qualquer ordem:',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
@@ -2722,15 +2723,11 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Coluna A: Código (opcional)\n'
-                'Coluna B: Nome (obrigatório)\n'
-                'Coluna C: Descrição (opcional)\n'
-                'Coluna D: Unidade (padrão: UN)\n'
-                'Coluna E: Grupo (padrão: Sem Grupo)\n'
-                'Coluna F: Preço (obrigatório)\n'
-                'Coluna G: Preço de Custo (opcional)\n'
-                'Coluna H: Estoque (padrão: 0)\n'
-                'Coluna I: Código de Barras (opcional)',
+                'Cadastro: Código, Nome (obrigatório), Descrição, Unidade, '
+                'Grupo, Quantidade/Estoque, Preço, Preço de Custo e '
+                'Código de Barras.\n'
+                'Fiscal: NCM, CFOP, CST, CSOSN, CEST, Origem e as alíquotas '
+                'de ICMS, IPI, PIS, COFINS e ISS.',
                 style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
               const SizedBox(height: 16),
@@ -2771,7 +2768,7 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     try {
       result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['xlsx', 'xls'],
+        allowedExtensions: ['xlsx', 'xls', 'csv'],
         withData: true, // IMPORTANTE: true para funcionar no web
       );
 

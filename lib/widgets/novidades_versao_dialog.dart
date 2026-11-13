@@ -112,6 +112,7 @@ class _NovidadesVersaoDialogState extends State<NovidadesVersaoDialog> {
       (progresso) {
         if (mounted) setState(() => _progresso = progresso);
       },
+      publicadaEm: (_novaVersao?['publicada_em'] ?? '').toString(),
     );
     if (!mounted) return;
     setState(() {

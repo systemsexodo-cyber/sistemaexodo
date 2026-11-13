@@ -3705,25 +3705,20 @@ class _PdvPageState extends State<PdvPage> {
                             .where((p) => p.recebido)
                             .fold<double>(0, (total, p) => total + p.valor);
 
-                        final pedidoAtualizado = Pedido(
-                          id: pedido.id,
-                          numero: pedido.numero,
-                          clienteId: pedido.clienteId,
-                          clienteNome: pedido.clienteNome,
-                          clienteTelefone: pedido.clienteTelefone,
-                          clienteEndereco: pedido.clienteEndereco,
-                          clienteCpfCnpj: pedido.clienteCpfCnpj,
-                          dataPedido: pedido.dataPedido,
-                          status:
-                              todosRecebidos &&
-                                  totalRecebido >= pedido.totalGeral - 0.01
+                        // copyWith preserva desconto/acréscimo, delivery,
+                        // observações, operador etc. Montar um Pedido novo aqui
+                        // apagava esses campos e mudava o total do pedido.
+                        final bool ficaPago =
+                            todosRecebidos &&
+                            totalRecebido >= pedido.totalGeral - 0.01;
+                        final pedidoAtualizado = pedido.copyWith(
+                          status: ficaPago
                               ? 'Pago'
                               : totalRecebido > 0
                               ? 'Parcialmente Pago'
                               : pedido.status,
-                          produtos: pedido.produtos,
-                          servicos: pedido.servicos,
                           pagamentos: novosPagamentos,
+                          recebido: ficaPago,
                         );
 
                         dataService.updatePedido(pedidoAtualizado);
@@ -7879,6 +7874,19 @@ class _PdvPageState extends State<PdvPage> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                        // Recebimento parcial: mostra quanto já entrou, para o
+                        // valor recebido não parecer perdido no PDV.
+                        if (!isCancelado && pedido.totalRecebido > 0.01) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Recebido: R\$ ${pedido.totalRecebido.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         if (!isCancelado)
                           Row(
@@ -11157,7 +11165,8 @@ class _PdvPageState extends State<PdvPage> {
                       : catalogo.where(
                           (p) =>
                               p.nome.toLowerCase().contains(termo) ||
-                              (p.codigo ?? '').toLowerCase().contains(termo),
+                              (p.codigo ?? '').toLowerCase().contains(termo) ||
+                              (p.descricao ?? '').toLowerCase().contains(termo),
                         ))
                   .take(100)
                   .toList();
@@ -12664,7 +12673,7 @@ class _PdvPageState extends State<PdvPage> {
             ElevatedButton(
               onPressed: () {
                 final novaTaxa =
-                    double.tryParse(taxaC.text) ??
+                    double.tryParse(taxaC.text.replaceAll(',', '.').trim()) ??
                     pedido.deliveryInfo!.taxaEntrega;
                 final novoInfo = pedido.deliveryInfo!.copyWith(
                   status: statusAtual,
@@ -13648,6 +13657,7 @@ class _PdvPageState extends State<PdvPage> {
       clienteTelefone: cliente?.telefone ?? pedido.clienteTelefone,
       clienteEndereco: cliente?.endereco ?? pedido.clienteEndereco,
       status: novoStatus,
+      recebido: ficaTotalmentePago,
     );
 
     // ATUALIZAR ESTOQUE - Se pedido passou de Pendente para Pago
@@ -13798,11 +13808,17 @@ class _PdvPageState extends State<PdvPage> {
     Pedido pedido,
   ) {
     // Usa o popup animado com dinheiro caindo
+    final authServiceConfig = Provider.of<AuthService>(context, listen: false);
+    final botaoPadraoFinalizar = authServiceConfig
+        .empresaAtual
+        ?.configuracoes?['botaoPadraoFinalizarVenda']
+        ?.toString();
     PopupSucessoVenda.mostrar(
       context,
       valor: valor,
       titulo: 'RECEBIDO COM SUCESSO!',
       subtitulo: '$qtdPagamentos pagamento(s)',
+      botaoPadrao: botaoPadraoFinalizar,
       onDismiss: () {
         // Limpar seleção e voltar para tela inicial
         if (mounted) {
@@ -14751,6 +14767,7 @@ class _PdvPageState extends State<PdvPage> {
       clienteTelefone: cliente?.telefone ?? pedido.clienteTelefone,
       clienteEndereco: cliente?.endereco ?? pedido.clienteEndereco,
       status: novoStatus,
+      recebido: ficaTotalmentePago,
     );
 
     dataService.updatePedido(pedidoAtualizado);
@@ -14866,15 +14883,48 @@ class _PdvPageState extends State<PdvPage> {
     bool recebido,
     DataService dataService,
   ) async {
-    final novosPagamentos = pedido.pagamentos.map((p) {
+    // No estorno de um recebimento PARCIAL a parcela ficou dividida em duas:
+    // a parte recebida e a sobra (`<id>_resto_...`). Ao estornar, as duas
+    // voltam a ser uma única parcela com o valor original — senão o pedido
+    // acumulava parcelas e o valor recebido continuava aparecendo no PDV.
+    final sobrasDaParcela = pedido.pagamentos
+        .where((p) => p.id.startsWith('${pagamento.id}_resto_'))
+        .toList();
+    final valorRestaurado =
+        pagamento.valor +
+        sobrasDaParcela.fold<double>(0.0, (soma, p) => soma + p.valor);
+    final restituirDivisao = !recebido && sobrasDaParcela.isNotEmpty;
+
+    final novosPagamentos = <PagamentoPedido>[];
+    for (final p in pedido.pagamentos) {
+      // A sobra do recebimento parcial é absorvida pela parcela original.
+      if (sobrasDaParcela.any((sobra) => sobra.id == p.id)) continue;
+
       if (p.id == pagamento.id) {
-        return p.copyWith(
-          recebido: recebido,
-          dataRecebimento: recebido ? DateTime.now() : null,
-        );
+        if (recebido) {
+          novosPagamentos.add(
+            p.copyWith(
+              recebido: true,
+              dataRecebimento: DateTime.now(),
+              valorRecebido: p.valorRecebido ?? p.valor,
+            ),
+          );
+        } else {
+          // Estorno: volta ao valor original (quando havia divisão) e limpa
+          // data/valor recebido, troco e pagador da confirmação.
+          novosPagamentos.add(
+            p.copyWith(
+              tipo: restituirDivisao ? (p.tipoOriginal ?? p.tipo) : p.tipo,
+              valor: restituirDivisao ? valorRestaurado : p.valor,
+              recebido: false,
+              limparRecebimento: true,
+            ),
+          );
+        }
+      } else {
+        novosPagamentos.add(p);
       }
-      return p;
-    }).toList();
+    }
 
     // Buscar dados do cliente para salvar no pedido quando receber
     final cliente = recebido && pedido.clienteId != null
@@ -14892,11 +14942,17 @@ class _PdvPageState extends State<PdvPage> {
     final ficaTotalmentePago =
         totalRecebidoNovo >= pedido.totalGeral - 0.01 && todasParcelasRecebidas;
 
-    // Se estornando e estava pago, volta para Pendente
-    String novoStatus = pedido.status;
-    if (recebido && ficaTotalmentePago) {
+    // O status precisa refletir SEMPRE o que está recebido. Antes ele só
+    // virava "Pago" e, no estorno, só voltava de "Pago" para "Pendente":
+    // o recebimento parcial continuava "Pendente" (o valor recebido não
+    // aparecia) e o estorno de um pedido parcial seguia "Parcialmente Pago"
+    // com o valor recebido na tela.
+    final String novoStatus;
+    if (ficaTotalmentePago) {
       novoStatus = 'Pago';
-    } else if (!recebido && pedido.status == 'Pago') {
+    } else if (totalRecebidoNovo > 0.01) {
+      novoStatus = 'Parcialmente Pago';
+    } else {
       novoStatus = 'Pendente';
     }
 
@@ -14909,6 +14965,7 @@ class _PdvPageState extends State<PdvPage> {
           ? (cliente?.endereco ?? pedido.clienteEndereco)
           : pedido.clienteEndereco,
       status: novoStatus,
+      recebido: ficaTotalmentePago,
     );
 
     // ATUALIZAR ESTOQUE - Se pedido passou de Pendente para Pago
@@ -14979,10 +15036,15 @@ class _PdvPageState extends State<PdvPage> {
     if (recebido && pedidoAtualizado.totalmenteRecebido) {
       _mostrarSucessoRecebimento(pagamento.valor, 1, pedidoAtualizado);
     } else {
+      final faltando = pedido.totalGeral - totalRecebidoNovo;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            recebido ? '✓ Recebimento confirmado!' : 'Recebimento estornado',
+            !recebido
+                ? 'Recebimento estornado'
+                : totalRecebidoNovo > 0.01
+                ? '✓ Recebido R\$ ${pagamento.valor.toStringAsFixed(2)} - Falta R\$ ${faltando.toStringAsFixed(2)}'
+                : '✓ Recebimento confirmado!',
           ),
           backgroundColor: recebido ? Colors.green : Colors.orange,
           behavior: SnackBarBehavior.floating,
@@ -15607,7 +15669,8 @@ class _DialogSelecionarProdutoPremiacaoState
     return widget.produtos.where((p) {
       return p.nome.toLowerCase().contains(q) ||
           (p.codigo?.toLowerCase().contains(q) ?? false) ||
-          (p.codigoBarras?.toLowerCase().contains(q) ?? false);
+          (p.codigoBarras?.toLowerCase().contains(q) ?? false) ||
+          (p.descricao?.toLowerCase().contains(q) ?? false);
     }).toList();
   }
 

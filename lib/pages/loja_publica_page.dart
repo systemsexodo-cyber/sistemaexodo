@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
@@ -14,6 +14,8 @@ import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
 import 'package:sistema_exodo_novo/services/cliente_auth_service.dart';
 import 'package:sistema_exodo_novo/services/frete_service.dart';
+import 'package:sistema_exodo_novo/services/horario_loja_service.dart';
+import 'package:sistema_exodo_novo/utils/busca_produtos.dart';
 import 'package:sistema_exodo_novo/models/opcao_frete.dart';
 import 'package:sistema_exodo_novo/models/zona_entrega.dart';
 import 'package:sistema_exodo_novo/widgets/loja/produto_card.dart';
@@ -22,6 +24,7 @@ import 'package:sistema_exodo_novo/widgets/loja/categoria_filtro.dart';
 import 'package:sistema_exodo_novo/widgets/loja/carrinho_drawer.dart';
 import 'package:sistema_exodo_novo/pages/loja_checkout_page.dart';
 import 'package:intl/intl.dart';
+import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
 class LojaPublicaPage extends StatefulWidget {
   final String? codigoLink; // Código do link do vendedor (ex: ABC123)
@@ -53,10 +56,12 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   // Filtro de preço removido
   final ScrollController _scrollController = ScrollController();
   bool _isDark = true; // Tema Premium padrão é escuro
+  String? _faviconAplicado; // logo que já foi para a aba do navegador
   
   // Carrossel de banners
   final PageController _bannerPageController = PageController();
   Timer? _bannerTimer;
+  Timer? _statusLojaTimer;
   int _bannerIndexAtual = 0;
   OpcaoFrete? _freteSelecionadoProduto;
   String? _modoLojaOverride; // Para teste em tempo real
@@ -69,10 +74,15 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _iniciarCarrosselBanners();
     });
+    // Reavalia aberto/fechado a cada minuto, sem precisar recarregar a página.
+    _statusLojaTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _statusLojaTimer?.cancel();
     _bannerTimer?.cancel();
     _bannerPageController.dispose();
     _buscaController.dispose();
@@ -248,6 +258,13 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   /// conta compra como visitante e preenche os dados no próprio checkout
   /// (a tela continua oferecendo o cadastro de forma opcional).
   Future<void> _irParaCheckout() async {
+    // Loja fechada não recebe pedido, mesmo que o carrinho já tenha itens.
+    final statusLoja = _statusLoja;
+    if (!statusLoja.aberta) {
+      _mostrarLojaFechada(statusLoja);
+      return;
+    }
+
     final clienteAuthService = Provider.of<ClienteAuthService>(context, listen: false);
 
     // Cliente logado continua sendo preenchido automaticamente no checkout;
@@ -282,6 +299,13 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   
   // Adiciona produto ao carrinho, verificando se tem variações
   void _adicionarProdutoAoCarrinho(Produto produto) {
+    // Loja fechada: não deixa nem montar o carrinho.
+    final statusLoja = _statusLoja;
+    if (!statusLoja.aberta) {
+      _mostrarLojaFechada(statusLoja);
+      return;
+    }
+
     // Fora da janela de disponibilidade temporária: some do e-commerce.
     if (!produto.disponivelAgora) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -315,7 +339,11 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final carrinhoService = Provider.of<CarrinhoService>(context, listen: false);
     
-    if (produto.temVariacoes && produto.variacoes.isNotEmpty) {
+    // Verificar se produto tem venda fracionada por grama
+    if (produto.vendaFracionada) {
+      // Mostrar diálogo para selecionar quantidade em gramas
+      _mostrarDialogQuantidadeGramas(produto, formatoMoeda, carrinhoService);
+    } else if (produto.temVariacoes && produto.variacoes.isNotEmpty) {
       // Produto tem variações - mostrar diálogo de seleção
       _mostrarDialogSelecaoVariacoes(produto, formatoMoeda);
     } else {
@@ -337,6 +365,77 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
         ),
       );
     }
+  }
+
+  /// Mostra diálogo para selecionar quantidade em gramas para venda fracionada
+  Future<void> _mostrarDialogQuantidadeGramas(
+      Produto produto, NumberFormat formatoMoeda, CarrinhoService carrinhoService) async {
+    final controller = TextEditingController();
+    final int pesoBase = produto.pesoBaseGramas;
+    final double precoPorGrama = produto.precoPorGrama;
+    
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('${produto.nome} - Venda Fracionada'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Preço por grama: ${precoPorGrama.toStringAsFixed(2)}'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Quantidade em gramas',
+                  hintText: 'Ex: 500 para meio quilo, 250 para quarto quilo',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text('Isso resultará em ${controller.text.isNotEmpty ? (double.tryParse(controller.text) ?? 0.0).toStringAsFixed(0) : '0'}g'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final qtdTexto = controller.text.trim();
+              if (qtdTexto.isEmpty) return;
+              final qtdGramas = double.tryParse(qtdTexto);
+              if (qtdGramas == null || qtdGramas <= 0) return;
+              
+              // Calcular quantidades
+              final qtdUnidades = qtdGramas / pesoBase;
+              final precoItem = qtdGramas * precoPorGrama;
+              
+              // Adicionar ao carrinho com a quantidade em gramas
+              carrinhoService.adicionarProduto(
+                produto,
+                quantidade: 1, // 1 item no carrinho
+                // Definir quantidadeGramas e vendaFracionada nos campos extras
+              );
+              
+              // Atualizar a quantidade para refletir as gramas
+              // Note: O campo quantidade no CarrinhoItem é o número de unidades,
+              // mas temos quantidadeGramas para o fracionado
+              
+              Navigator.of(dialogContext).pop(true);
+            },
+            child: const Text('Adicionar'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+          ),
+        ],
+      ),
+    ).then((_) {
+      // Limpar controlador após fechar
+      controller.clear();
+    });
   }
 
   
@@ -647,133 +746,15 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     }
     debugPrint('>>> [Loja] ========================================');
 
-    // Filtro de busca inteligente e precisa
-    if (_termoBusca.isNotEmpty) {
-      final termo = _termoBusca.trim();
-      if (termo.isEmpty) {
-        return filtrados;
+    // Filtro de busca por palavras em qualquer ordem, aceitando pedaço de
+    // palavra e pequenos erros de digitação — a MESMA regra do PDV.
+    final termoBusca = _termoBusca.trim();
+    if (termoBusca.isNotEmpty) {
+      final ehNumero = RegExp(r'^[0-9]+$').hasMatch(termoBusca);
+      // Número pode ter 1 dígito; texto precisa de pelo menos 2 letras.
+      if (ehNumero || termoBusca.length >= 2) {
+        filtrados = BuscaProdutos.filtrar(filtrados, termoBusca);
       }
-      
-      final termoLower = termo.toLowerCase();
-      final termoSemAcentos = _removerAcentos(termoLower);
-      final ehNumero = RegExp(r'^[0-9]+$').hasMatch(termo);
-      
-      // Se for número, permite busca com 1 caractere
-      // Se for texto, mínimo 2 caracteres
-      if (!ehNumero && termo.length < 2) {
-        return filtrados;
-      }
-      
-      // Separar termo em palavras para busca mais precisa
-      final palavrasTermo = termoLower.split(RegExp(r'\s+')).where((p) => p.length >= 2).toList();
-      
-      filtrados = filtrados.where((p) {
-        final nomeLower = p.nome.toLowerCase();
-        final nomeSemAcentos = _removerAcentos(nomeLower);
-        final descricaoLower = (p.descricao ?? '').toLowerCase();
-        final descricaoSemAcentos = _removerAcentos(descricaoLower);
-        final codigoLower = (p.codigo ?? '').toLowerCase();
-        final grupoLower = p.grupo.toLowerCase();
-        final grupoSemAcentos = _removerAcentos(grupoLower);
-        
-        // 1. BUSCA POR CÓDIGO EXATO (se for número)
-        if (ehNumero && p.codigo != null) {
-          final numCodigo = p.codigo!.replaceAll(RegExp(r'[^0-9]'), '');
-          if (numCodigo == termo) {
-            return true; // Match exato no código
-          }
-          // Também verifica se o código contém o número
-          if (numCodigo.contains(termo) || codigoLower.contains(termoLower)) {
-            return true;
-          }
-        }
-        
-        // 2. BUSCA POR CÓDIGO (texto ou número)
-        if (codigoLower.contains(termoLower) || codigoLower.startsWith(termoLower)) {
-          return true;
-        }
-        
-        // 3. BUSCA EXATA NO NOME (prioridade máxima)
-        if (nomeLower == termoLower || nomeSemAcentos == termoSemAcentos) {
-          return true;
-        }
-        
-        // 4. NOME COMEÇA COM O TERMO (alta prioridade)
-        if (nomeLower.startsWith(termoLower) || nomeSemAcentos.startsWith(termoSemAcentos)) {
-          return true;
-        }
-        
-        // 5. BUSCA POR MÚLTIPLAS PALAVRAS NO NOME
-        if (palavrasTermo.isNotEmpty) {
-          final palavrasNome = nomeLower.split(RegExp(r'\s+')).where((w) => w.length >= 2).toList();
-          final todasPalavrasEncontradas = palavrasTermo.every((palavra) {
-            final palavraSemAcento = _removerAcentos(palavra);
-            return palavrasNome.any((pn) {
-              final pnSemAcento = _removerAcentos(pn);
-              return pn.startsWith(palavra) || 
-                     pnSemAcento.startsWith(palavraSemAcento) ||
-                     pn.contains(palavra) ||
-                     pnSemAcento.contains(palavraSemAcento);
-            });
-          });
-          if (todasPalavrasEncontradas) {
-            return true;
-          }
-        }
-        
-        // 6. NOME CONTÉM O TERMO (com ou sem acentos)
-        if (nomeLower.contains(termoLower) || nomeSemAcentos.contains(termoSemAcentos)) {
-          return true;
-        }
-        
-        // 7. DESCRIÇÃO CONTÉM O TERMO (com ou sem acentos)
-        if (descricaoLower.isNotEmpty) {
-          if (descricaoLower.contains(termoLower) || descricaoSemAcentos.contains(termoSemAcentos)) {
-            return true;
-          }
-        }
-        
-        // 8. GRUPO/CATEGORIA CONTÉM O TERMO
-        if (grupoLower.contains(termoLower) || grupoSemAcentos.contains(termoSemAcentos)) {
-          return true;
-        }
-        
-        return false;
-      }).toList();
-      
-      // Ordenar por relevância: matches exatos primeiro, depois por início, depois por contém
-      filtrados.sort((a, b) {
-        final termoLower = _termoBusca.toLowerCase().trim();
-        final termoSemAcentos = _removerAcentos(termoLower);
-        
-        final aNome = a.nome.toLowerCase();
-        final aNomeSemAcentos = _removerAcentos(aNome);
-        final bNome = b.nome.toLowerCase();
-        final bNomeSemAcentos = _removerAcentos(bNome);
-        
-        // Prioridade 1: Nome exato
-        final aExato = aNome == termoLower || aNomeSemAcentos == termoSemAcentos;
-        final bExato = bNome == termoLower || bNomeSemAcentos == termoSemAcentos;
-        if (aExato && !bExato) return -1;
-        if (!aExato && bExato) return 1;
-        
-        // Prioridade 2: Nome começa com o termo
-        final aComeca = aNome.startsWith(termoLower) || aNomeSemAcentos.startsWith(termoSemAcentos);
-        final bComeca = bNome.startsWith(termoLower) || bNomeSemAcentos.startsWith(termoSemAcentos);
-        if (aComeca && !bComeca) return -1;
-        if (!aComeca && bComeca) return 1;
-        
-        // Prioridade 3: Código exato (se for número)
-        if (ehNumero) {
-          final aCodigo = a.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
-          final bCodigo = b.codigo?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
-          if (aCodigo == termo && bCodigo != termo) return -1;
-          if (aCodigo != termo && bCodigo == termo) return 1;
-        }
-        
-        // Prioridade 4: Ordenar alfabeticamente
-        return aNome.compareTo(bNome);
-      });
     }
 
     // Filtro de categoria
@@ -799,28 +780,178 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     return categorias;
   }
 
-  // Função auxiliar para remover acentos (busca inteligente)
-  String _removerAcentos(String texto) {
-    const acentos = {
-      'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
-      'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-      'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-      'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
-      'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
-      'ç': 'c',
-      'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A',
-      'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
-      'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
-      'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O',
-      'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
-      'Ç': 'C',
-    };
-    
-    String resultado = texto;
-    acentos.forEach((acento, semAcento) {
-      resultado = resultado.replaceAll(acento, semAcento);
+
+  /// A loja está aceitando pedidos agora?
+  ///
+  /// Duas travas: o interruptor "Aceitar pedidos agora" da personalização
+  /// (fecha na hora, mesmo com a loja dentro do horário) e o horário de cada
+  /// dia. Tudo que bloqueia pedido — banner, carrinho, checkout e a pílula do
+  /// cabeçalho — passa por aqui.
+  StatusLoja get _statusLoja {
+    final config = _obterConfigEcommerce();
+    if (config != null && config['aceitarPedidos'] == false) {
+      return const StatusLoja(
+        aberta: false,
+        proximaAbertura: 'A loja está fechada para pedidos no momento.',
+      );
+    }
+    return HorarioLojaService.status(ecommerce: config);
+  }
+
+  /// Aviso padrão quando o cliente tenta comprar com a loja fechada.
+  void _mostrarLojaFechada(StatusLoja status) {
+    final horarios = HorarioLojaService.doConfig(_obterConfigEcommerce());
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: Icon(Icons.storefront_outlined, size: 40, color: Colors.red[400]),
+        title: const Text('Loja fechada no momento'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              status.proximaAbertura ??
+                  'Não estamos aceitando pedidos agora.',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            if (horarios.isNotEmpty)
+              Text(
+                HorarioLojaService.resumoSemanal(horarios),
+                style: const TextStyle(fontSize: 12, height: 1.5),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Entendi'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Faixa fixa no topo do conteúdo avisando que a loja está fechada.
+  Widget _buildAvisoLojaFechada(StatusLoja status, Color textColor) {
+    final vermelho = Colors.red[400]!;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: vermelho.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: vermelho.withOpacity(0.35)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.lock_clock, color: vermelho, size: 26),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Loja fechada — não estamos aceitando pedidos agora',
+                  style: TextStyle(
+                    color: vermelho,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                if (status.detalhe.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    status.detalhe,
+                    style: TextStyle(
+                      color: textColor.withOpacity(0.7),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Coloca a logo da loja como ícone da aba e do atalho do celular.
+  void _atualizarFavicon(String? logoUrl) {
+    if (!kIsWeb) return;
+    if (logoUrl == null || logoUrl.isEmpty) return;
+    if (logoUrl == _faviconAplicado) return;
+    _faviconAplicado = logoUrl;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) html_helper.setFavicon(logoUrl);
     });
-    return resultado;
+  }
+
+  Widget _buildFooterLoja({
+    required String? logoUrl,
+    required String empresaNome,
+    required Color primaryColor,
+    required Color cardColor,
+    required Color textColor,
+    required Color textSecondaryColor,
+  }) {
+    final temLogo = logoUrl != null && logoUrl.isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.only(top: 8, bottom: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+      decoration: BoxDecoration(
+        color: cardColor.withOpacity(0.75),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: primaryColor.withOpacity(0.25)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  image: temLogo
+                      ? DecorationImage(
+                          image: NetworkImage(logoUrl),
+                          fit: BoxFit.contain,
+                        )
+                      : null,
+                ),
+                child: temLogo
+                    ? null
+                    : Icon(Icons.storefront, color: primaryColor, size: 26),
+              ),
+              const SizedBox(width: 14),
+              Flexible(
+                child: Text(
+                  empresaNome,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Loja online • ${DateTime.now().year}',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11, color: textSecondaryColor),
+          ),
+        ],
+      ),
+    );
   }
 
   Map<String, dynamic>? _obterConfigEcommerce() {
@@ -947,7 +1078,13 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final empresa = authService.empresaAtual;
     final configEcommerce = _obterConfigEcommerce();
-    final logoUrl = configEcommerce?['logoUrl'] as String? ?? empresa?.logoUrl;
+    // `??` não pegava string vazia: loja com logoUrl '' na config ficava sem
+    // logo mesmo tendo a imagem no cadastro da empresa.
+    final logoConfig = (configEcommerce?['logoUrl'] as String?)?.trim() ?? '';
+    final logoUrl = logoConfig.isNotEmpty ? logoConfig : empresa?.logoUrl;
+    _atualizarFavicon(logoUrl);
+    final horarioFuncionamento = configEcommerce?['horarioFuncionamento'] as String? ?? 'Não informado';
+    final statusLoja = _statusLoja;
     final bannerUrl = configEcommerce?['bannerUrl'] as String?;
     final textoBanner = configEcommerce?['textoBanner'] as String? ?? '';
     final linkBanner = configEcommerce?['linkBanner'] as String?;
@@ -958,7 +1095,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     final textoPromocional3 = configEcommerce?['textoPromocional3'] as String? ?? '';
     final descontoPixAtivo = configEcommerce?['descontoPixAtivo'] as bool? ?? true;
     final percentualDescontoPix = (configEcommerce?['percentualDescontoPix'] as num?)?.toDouble() ?? 5.0;
-    
+
     // Configurações de frete grátis
     final valorMinimoFreteGratis = (configEcommerce?['valorFreteGratis'] as num?)?.toDouble() ?? 399.90;
     final bannerFreteGratisAtivo = configEcommerce?['bannerFreteGratisAtivo'] as bool? ?? true;
@@ -1011,6 +1148,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                 // Header Flutuante (Premium Glassmorphism)
                 _buildHeaderPremium(
                   logoUrl: logoUrl,
+                  horarioFuncionamento: horarioFuncionamento,
                   empresaNome: empresa?.nomeExibicao ?? 'Loja',
                   primaryColor: primaryColor,
                   cardColor: cardColor,
@@ -1024,7 +1162,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                   child: SingleChildScrollView(
                     controller: _scrollController,
                     physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.only(bottom: 48),
+                    padding: const EdgeInsets.only(bottom: 132),
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 1200),
@@ -1038,6 +1176,10 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                                 _buildBannersPremium(configEcommerce, primaryColor),
 
                               const SizedBox(height: 20),
+
+                              // Aviso de loja fechada (não aceita pedidos)
+                              if (!statusLoja.aberta)
+                                _buildAvisoLojaFechada(statusLoja, textColor),
 
                               // Busca e Filtros Premium
                               _buildBuscaEFiltrosPremium(
@@ -1071,6 +1213,18 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                                   cardColor: cardColor,
                                   textColor: textColor,
                                 ),
+
+                              const SizedBox(height: 28),
+
+                              // Rodapé com a logo da loja
+                              _buildFooterLoja(
+                                logoUrl: logoUrl,
+                                empresaNome: empresa?.nomeExibicao ?? 'Loja',
+                                primaryColor: primaryColor,
+                                cardColor: cardColor,
+                                textColor: textColor,
+                                textSecondaryColor: textSecondaryColor,
+                              ),
                             ],
                           ),
                         ),
@@ -1080,9 +1234,125 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                 ),
               ],
             ),
+            // Sacola fixa: permanece visível durante toda a navegação pelo catálogo.
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 12,
+              child: SafeArea(
+                top: false,
+                child: _buildCarrinhoFlutuante(primaryColor),
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildCarrinhoFlutuante(Color primaryColor) {
+    return Consumer<CarrinhoService>(
+      builder: (context, carrinho, _) {
+        if (carrinho.isEmpty) return const SizedBox.shrink();
+        final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+        final resumo = carrinho.itens.take(2).map((item) =>
+          '${item.quantidade}x ${item.nome}'
+        ).join('  •  ');
+        final restantes = carrinho.itens.length - 2;
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1000),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(22),
+                onTap: () => _mostrarCarrinhoDrawer(moeda),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF111827).withOpacity(0.97),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: primaryColor.withOpacity(0.75), width: 1.4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.35),
+                        blurRadius: 24,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: primaryColor.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            const Icon(Icons.shopping_basket_outlined, color: Colors.white, size: 25),
+                            Positioned(
+                              right: 1,
+                              top: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle),
+                                child: Text(
+                                  '${carrinho.totalItens}',
+                                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Sua sacola', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            const SizedBox(height: 3),
+                            Text(
+                              '$resumo${restantes > 0 ? '  + $restantes outro(s)' : ''}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white70, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text('TOTAL', style: TextStyle(color: Colors.white54, fontSize: 9, letterSpacing: 1)),
+                          Text(
+                            moeda.format(carrinho.valorTotal),
+                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(color: primaryColor, borderRadius: BorderRadius.circular(13)),
+                        child: const Icon(Icons.arrow_forward_rounded, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1143,6 +1413,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
 
   Widget _buildHeaderPremium({
     required String? logoUrl,
+    required String horarioFuncionamento,
     required String empresaNome,
     required Color primaryColor,
     required Color cardColor,
@@ -1152,6 +1423,10 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     // Header fixo: mesmo alinhamento (container centralizado) do conteúdo
     // da página, para logo, título e botões ficarem simétricos com a grade.
     final paddingSuperior = 16.0 + MediaQuery.of(context).padding.top;
+    final statusHeader = _statusLoja;
+    final statusCor = !statusHeader.configurado
+        ? primaryColor
+        : (statusHeader.aberta ? const Color(0xFF15803D) : const Color(0xFFB91C1C));
 
     return ClipRRect(
       child: BackdropFilter(
@@ -1169,7 +1444,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
               constraints: const BoxConstraints(maxWidth: 1200),
               child: Row(
                 children: [
-                  if (logoUrl != null)
+                  if (logoUrl != null && logoUrl.isNotEmpty)
                     Container(
                       width: 50,
                       height: 50,
@@ -1186,6 +1461,59 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                       empresaNome,
                       style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
                       overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    constraints: const BoxConstraints(maxWidth: 210),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: statusCor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: statusCor.withOpacity(0.35)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          statusHeader.aberta
+                              ? Icons.storefront
+                              : Icons.lock_clock,
+                          size: 14,
+                          color: statusCor,
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                statusHeader.configurado
+                                    ? statusHeader.rotulo
+                                    : horarioFuncionamento,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: statusCor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (statusHeader.configurado)
+                                Text(
+                                  statusHeader.detalhe,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: statusCor.withOpacity(0.85),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
 
@@ -1345,9 +1673,9 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
           padding: EdgeInsets.zero,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: colunas,
-            childAspectRatio: 0.62, // Ajustado para não cortar o botão
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
+            childAspectRatio: 0.7, // Ajustado para não cortar o botão
+            crossAxisSpacing: 20,
+            mainAxisSpacing: 20,
           ),
           itemCount: produtos.length,
           itemBuilder: (context, index) {
@@ -1429,14 +1757,16 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        if (produto.descricao != null && produto.descricao!.isNotEmpty)
+                        if (produto.descricaoLoja != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 4),
                             child: Text(
-                              produto.descricao!,
-                              style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 12),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
+                              produto.descricaoLoja!,
+                              style: TextStyle(
+                                color: textColor.withOpacity(0.65),
+                                fontSize: 12,
+                                height: 1.35,
+                              ),
                             ),
                           ),
                         const SizedBox(height: 8),
@@ -1531,8 +1861,8 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                             const SizedBox(height: 8),
                             Text(produto.grupo, style: TextStyle(fontSize: 14, color: primary, fontWeight: FontWeight.w600)),
                             const SizedBox(height: 16),
-                            if (produto.descricao?.isNotEmpty ?? false)
-                              Text(produto.descricao!, style: TextStyle(fontSize: 16, color: text.withOpacity(0.7), height: 1.5)),
+                            if (produto.descricaoLoja != null)
+                              Text(produto.descricaoLoja!, style: TextStyle(fontSize: 16, color: text.withOpacity(0.7), height: 1.5)),
                             const SizedBox(height: 32),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2730,8 +3060,8 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 0.7,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
+        crossAxisSpacing: 20,
+        mainAxisSpacing: 20,
       ),
       itemCount: produtos.length,
       itemBuilder: (context, index) {

@@ -50,6 +50,7 @@ import 'package:sistema_exodo_novo/models/perfil_tributario.dart';
 import 'package:sistema_exodo_novo/models/departamento.dart';
 import 'package:sistema_exodo_novo/services/local_storage_service.dart';
 import 'package:sistema_exodo_novo/services/supabase_service.dart';
+import 'package:sistema_exodo_novo/services/licenca_emergencia_service.dart';
 import 'package:sistema_exodo_novo/services/realtime_sync_service.dart';
 import 'package:sistema_exodo_novo/services/lan_realtime_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -61,6 +62,7 @@ import 'package:sistema_exodo_novo/services/database_service.dart';
 import 'package:sistema_exodo_novo/services/backup_restore_service.dart';
 import 'package:sistema_exodo_novo/services/connection_logger_service.dart';
 import 'package:sistema_exodo_novo/services/sync_monitor_service.dart';
+import 'package:sistema_exodo_novo/services/pedido_pdf_service.dart';
 import 'package:uuid/uuid.dart';
 
 import 'dart:async';
@@ -252,6 +254,8 @@ class DataService extends ChangeNotifier {
   DateTime? _ultimaValidacaoOnline;
   DateTime? _ultimaDataExecucao;
   bool _liberacaoProvisoriaAtiva = false;
+  String? _licencaEmergenciaEmpresaId;
+  DateTime? _licencaEmergenciaExpiraEm;
   String? _responsavelAtivo;
 
   // Controle de Performance de Sincronização
@@ -1223,13 +1227,15 @@ class DataService extends ChangeNotifier {
         map.remove('eh_composto');
         map.remove('composicao');
         map.remove('cobrar_garcom');
-        // `codigos_barras_adicionais` foi adicionada só no banco LOCAL. Enviá-la
-        // fazia o PostgREST recusar o produto INTEIRO com PGRST204 ("Could not
-        // find the 'codigos_barras_adicionais' column") — por isso a edição
-        // feita no site não chegava à nuvem nem ao app. O filtro dinâmico de
-        // colunas também remove, mas aqui garantimos mesmo se ele falhar.
-        map.remove('codigos_barras_adicionais');
-        map.remove('codigosBarrasAdicionais');
+        // `codigos_barras_adicionais` NÃO é mais removida daqui.
+        //
+        // Antes ela era descartada porque a coluna não existia na nuvem e o
+        // PostgREST recusava o produto inteiro com PGRST204. O efeito colateral
+        // era o campo nunca sair do PC: os códigos de barras extras eram
+        // digitados, salvos e perdidos. Agora a coluna existe nos dois bancos
+        // (local: `_inicializarColunas`; nuvem: ADICIONAR_CODIGOS_BARRAS_ADICIONAIS.sql)
+        // e o filtro dinâmico de colunas continua protegendo instalações que
+        // ainda não rodaram a migração.
       }
 
       // 2. Injetar o ID real do usuário do Supabase apenas em tabelas que possuem a coluna usuario_id
@@ -1838,6 +1844,72 @@ class DataService extends ChangeNotifier {
       '>>> [Realtime] 🛒 Novo pedido do e-commerce ${avisoPedidoEcommerce!.numero}',
     );
     _tocarSomNotificacao();
+    try {
+      unawaited(_autoProcessarPedidoEcommerce(Pedido.fromMap(dados)));
+    } catch (e) {
+      debugPrint('>>> [E-commerce] Auto-confirmacao ignorada: $e');
+    }
+  }
+
+  /// O pedido do e-commerce chegou pela SINCRONIZAÇÃO (não pelo Realtime).
+  ///
+  /// Quando a nuvem está atrás do portal/Funnel o WebSocket pode ficar sem
+  /// evento, e o pedido novo entrava na lista sem avisar ninguém. Aqui toca o
+  /// mesmo som de notificação e deixa a faixa da tela de Pedidos — uma vez por
+  /// pedido, e nunca na primeira carga nem para pedidos antigos.
+  void _avisarSePedidoEcommerceNovo(Pedido pedido) {
+    if (!pedido.origemEcommerce) return;
+    if (_pedidosCriadosLocalmente.containsKey(pedido.id)) return;
+    if (_ultimaSincronizacaoSucesso == null) return;
+    if (DateTime.now().difference(pedido.dataPedido).inMinutes > 120) return;
+    if (avisoPedidoEcommerce?.numero == pedido.numero) return;
+
+    avisoPedidoEcommerce = (
+      numero: pedido.numero,
+      cliente: pedido.clienteNome ?? '',
+      total: pedido.totalGeral,
+    );
+    debugPrint(
+      '>>> [Sync] 🛒 Novo pedido do e-commerce ${pedido.numero} — avisando.',
+    );
+    _tocarSomNotificacao();
+    unawaited(_autoProcessarPedidoEcommerce(pedido));
+  }
+
+  Future<void> _autoProcessarPedidoEcommerce(Pedido pedido) async {
+    if (kIsWeb) return;
+    if (pedido.status.toLowerCase() != 'pendente') return;
+
+    final empresa = _empresaAtual;
+    final ecommerce = empresa?.configuracoes?['ecommerce'];
+    final ativo = ecommerce is Map && ecommerce['autoConfirmarPedidos'] == true;
+    if (!ativo || empresa == null) return;
+    if (!_pedidosAutoProcessados.add(pedido.id)) return;
+
+    final confirmado = pedido.copyWith(
+      status: 'Em Andamento',
+      updatedAt: DateTime.now(),
+    );
+    try {
+      await updatePedido(confirmado);
+      debugPrint(
+        '>>> [E-commerce] Pedido ${pedido.numero} confirmado automaticamente',
+      );
+    } catch (e) {
+      debugPrint('>>> [E-commerce] Falha ao confirmar ${pedido.numero}: $e');
+    }
+
+    try {
+      await PedidoPDFService.imprimirPDFTermico(
+        pedido: confirmado,
+        empresa: empresa,
+      );
+      debugPrint(
+        '>>> [E-commerce] Cupom impresso automaticamente: ${pedido.numero}',
+      );
+    } catch (e) {
+      debugPrint('>>> [E-commerce] Falha ao imprimir ${pedido.numero}: $e');
+    }
   }
 
   /// Helper genérico para aplicar INSERT/UPDATE/DELETE em qualquer lista em memória
@@ -2101,6 +2173,9 @@ class DataService extends ChangeNotifier {
   // INSERT para o próprio emissor; guardamos isso para não "anunciar" aqui um
   // pedido que acabou de ser lançado nesta mesma máquina.
   final Map<String, DateTime> _pedidosCriadosLocalmente = {};
+
+  /// Pedidos do site que ja passaram pela auto-confirmacao/impressao.
+  final Set<String> _pedidosAutoProcessados = <String>{};
 
   /// Último pedido do e-commerce recebido da nuvem/outra máquina.
   /// A tela de Pedidos exibe o aviso e o limpa com [limparAvisoPedidoEcommerce].
@@ -3135,6 +3210,10 @@ class DataService extends ChangeNotifier {
     if (_empresaAtual != empresa) {
       final nuvemEstavaHabilitada = nuvemHabilitada;
       _empresaAtual = empresa;
+      if (empresa != null && _currentEmpresaId == empresa.id) {
+        // Só renova a licença depois de obter resposta real do cadastro remoto.
+        unawaited(_validarLicencaNaNuvem(empresa));
+      }
       final nuvemEstaHabilitada = nuvemHabilitada;
       _syncQueue.setPaused(
         empresa == null ||
@@ -5784,6 +5863,8 @@ class DataService extends ChangeNotifier {
             (p) =>
                 p.nome.toLowerCase().contains(termo.toLowerCase()) ||
                 (p.codigo?.toLowerCase().contains(termo.toLowerCase()) ??
+                    false) ||
+                (p.descricao?.toLowerCase().contains(termo.toLowerCase()) ??
                     false),
           )
           .toList();
@@ -6284,6 +6365,11 @@ class DataService extends ChangeNotifier {
   Future<List<Cliente>> buscarClientePorTelefone(String telefone) async {
     final normalizado = telefone.replaceAll(RegExp(r'\D'), '');
     if (normalizado.length < 8) return [];
+    final sufixo = normalizado.length > 8
+        ? normalizado.substring(normalizado.length - 8)
+        : normalizado;
+    final sufixoInicio = sufixo.substring(0, sufixo.length - 4);
+    final sufixoFim = sufixo.substring(sufixo.length - 4);
 
     final idsVistos = <String>{};
     final resultadoFinal = <Cliente>[];
@@ -6322,13 +6408,20 @@ class DataService extends ChangeNotifier {
             .select()
             .eq('empresa_id', _currentEmpresaId!)
             .or(
-              'telefone.eq.$normalizado,telefone2.eq.$normalizado,whatsapp.eq.$normalizado',
+              'telefone.eq.$normalizado,telefone2.eq.$normalizado,whatsapp.eq.$normalizado,telefone.ilike.%$sufixoInicio%$sufixoFim%,telefone2.ilike.%$sufixoInicio%$sufixoFim%,whatsapp.ilike.%$sufixoInicio%$sufixoFim%',
             );
 
         final List<dynamic> remotosData = response;
         if (remotosData.isNotEmpty) {
           for (final map in remotosData) {
             final c = Cliente.fromMap(map as Map<String, dynamic>);
+            final telefonesCliente = [c.telefone, c.telefone2, c.whatsapp]
+                .whereType<String>()
+                .map((v) => v.replaceAll(RegExp(r'\D'), ''))
+                .where((v) => v.isNotEmpty);
+            final telefoneConfere = telefonesCliente.any((v) =>
+                v == normalizado || v.endsWith(sufixo) || normalizado.endsWith(v));
+            if (!telefoneConfere) continue;
             // Se já temos o cliente localmente, substituir pelo remoto (mais fresco)
             final indexLocal = resultadoFinal.indexWhere(
               (loc) => loc.id == c.id,
@@ -14340,6 +14433,7 @@ class DataService extends ChangeNotifier {
           } else {
             _pedidos.add(pedido);
             dirty = true;
+            _avisarSePedidoEcommerceNovo(pedido);
           }
         }
         if (dirty) {
@@ -17265,6 +17359,25 @@ class DataService extends ChangeNotifier {
         linhasDeOutrasEmpresas = await db.contarLinhasDeOutrasEmpresas(
           tabelasLocaisDaEmpresa,
         );
+      }
+
+      // 2b. Marcas d'água PERSISTIDAS da sincronização. Zerar só em memória não
+      //     bastava: ao reiniciar o app, `_carregarDadosSalvos` relia
+      //     `exodo_ultima_sincronizacao_sucesso` do disco e a próxima carga voltava
+      //     a ser DELTA — a nuvem só devolvia o que mudou desde então (nada, no caso
+      //     de uma limpeza), e a base limpa continuava vazia. Sem a chave, a próxima
+      //     carga é completa.
+      await _storage.remover(
+        _getEmpresaKey('exodo_ultima_sincronizacao_sucesso'),
+      );
+      await _storage.remover(_getEmpresaKey('exodo_ultimo_erro_sync'));
+
+      // 2c. Espelhos de emergência das listas (arquivos JSON fora do PostgreSQL):
+      //     um snapshot antigo com `pendente: true` era relido por `carregarLista`
+      //     e repovoava a empresa sem passar pela nuvem — era o "cache" que
+      //     sobrevivia ao Limpar Local.
+      for (final chave in tabelasLocaisDaEmpresa) {
+        await _storage.removerCacheEmergencia(_getEmpresaKey(chave));
       }
 
       // 3. _limparCacheLocalCompleto zerou _ultimaSincronizacao. Se ficasse nulo,
@@ -20285,19 +20398,24 @@ class DataService extends ChangeNotifier {
     SupabaseService.tableEstoqueHistorico,
   ];
 
-  /// Conta quantos registros existem na nuvem para a empresa atual (por tabela).
-  /// Usado no diálogo de confirmação do "Zerar Nuvem" para mostrar o que será apagado.
-  Future<Map<String, int>> contarDadosDaEmpresa() async {
+  /// Conta quantos registros existem na nuvem para [empresaId] (por tabela).
+  /// Usado no diálogo de confirmação do "Zerar Nuvem" para mostrar o que será
+  /// apagado.
+  ///
+  /// Recebe o id da empresa EM VEZ de usar `_currentEmpresaId`: o diálogo mostra
+  /// o nome de `empresaAtual`, então a contagem tem de ser da MESMA empresa que
+  /// vai ser apagada.
+  Future<Map<String, int>> contarDadosDaEmpresa(String empresaId) async {
     final resultado = <String, int>{};
-    final empresaId = _currentEmpresaId;
-    if (!nuvemHabilitada || empresaId == null || empresaId.isEmpty) {
+    final alvo = empresaId.trim();
+    if (!nuvemHabilitada || alvo.isEmpty) {
       return resultado;
     }
     for (final tabela in _tabelasParaZerarNuvem) {
       try {
         resultado[tabela] = await _supabaseService.contarRegistrosNaNuvem(
           tabela,
-          empresaId,
+          alvo,
         );
       } catch (e) {
         debugPrint('>>> [Supabase] ⚠️ Erro ao contar $tabela: $e');
@@ -20306,18 +20424,44 @@ class DataService extends ChangeNotifier {
     return resultado;
   }
 
-  /// Limpa TODOS os dados desta empresa no SUPABASE (Cuidado!)
+  /// Limpa os dados desta empresa no SUPABASE (Cuidado!).
   ///
-  /// PROTEÇÕES:
-  ///  - Exige empresa selecionada (nunca apaga com id vazio);
+  /// [empresaIdEsperada] é o id da empresa que a TELA mostrou no aviso de
+  /// confirmação. A exclusão só acontece se ele for ao mesmo tempo a empresa
+  /// em memória (`_empresaAtual`) e a empresa ativa da sincronização
+  /// (`_currentEmpresaId`). Antes o botão mostrava o nome de uma empresa
+  /// (vindo de `_empresaAtual`) e apagava com o id da outra
+  /// (`_currentEmpresaId`): quando os dois divergiam — troca de empresa,
+  /// boot com empresa antiga ativa — o catálogo da outra empresa ia embora.
+  ///
+  /// PROTEÇÕES (o acidente de apagar os produtos de outra empresa não pode se
+  /// repetir):
+  ///  - exige empresa conferida e nunca apaga com id vazio;
   ///  - BLOQUEIA o id '1' (empresa padrão legada que, neste banco, concentra
   ///    os dados de TODAS as empresas — apagar por esse id apagaria tudo);
-  ///  - Conta os registros ANTES de apagar e só apaga os da empresa atual;
-  ///  - Retorna um resumo (tabela -> qtd removida) para exibição na UI.
-  Future<Map<String, int>> deletarTudoNoSupabaseDestaEmpresa() async {
-    final empresaId = _currentEmpresaId;
-    if (empresaId == null || empresaId.isEmpty) {
+  ///  - ENUMERA os ids que existem na nuvem e apaga SÓ esses ids, com o
+  ///    filtro de empresa junto (nunca um "DELETE por empresa" que possa
+  ///    levar mais do que o previsto);
+  ///  - CONFERE cada id no banco LOCAL: se aqui ele pertence a OUTRA empresa,
+  ///    fica fora da exclusão e vai no relatório como preservado;
+  ///  - NÃO toca nos dados locais (o aviso diz que só a nuvem é limpa).
+  ///
+  /// Devolve `(removidos, preservados)` por tabela para a UI informar o que
+  /// saiu e o que foi protegido.
+  Future<({Map<String, int> removidos, Map<String, int> preservados})>
+  deletarTudoNoSupabaseDestaEmpresa({required String empresaIdEsperada}) async {
+    final empresaId = empresaIdEsperada.trim();
+    if (empresaId.isEmpty) {
       throw Exception('⚠️ Nenhuma empresa selecionada. Operação cancelada.');
+    }
+    final empresaEmMemoria = _empresaAtual?.id;
+    if (empresaEmMemoria != empresaId || _currentEmpresaId != empresaId) {
+      throw Exception(
+        '⚠️ A empresa aberta mudou durante a operação '
+        '(tela: ${empresaEmMemoria ?? "nenhuma"}, '
+        'ativa: ${_currentEmpresaId ?? "nenhuma"}, pedido: $empresaId). '
+        'Nada foi apagado.',
+      );
     }
     if (!nuvemHabilitada) {
       throw StateError(
@@ -20338,30 +20482,84 @@ class DataService extends ChangeNotifier {
     _mensagemLoading = 'Limpando dados na nuvem...';
     notifyListeners();
 
+    final removidosPorTabela = <String, int>{};
+    final preservadosPorTabela = <String, int>{};
     try {
-      final removidosPorTabela = <String, int>{};
-      for (var tabela in _tabelasParaZerarNuvem) {
-        debugPrint('>>> [Supabase] 🗑️ Deletando $tabela...');
-        final removidos = await _supabaseService.deleteByEmpresa(
+      final db = DatabaseService();
+
+      // ══ FASE 1 · SÓ LEITURA ══
+      // Enumerar o que existe na nuvem e conferir CADA id no banco local.
+      // Nada é apagado antes de a conferência terminar: se uma tabela não
+      // puder ser lida/conferida a operação inteira para, em vez de apagar
+      // metade dela.
+      final apagarPorTabela = <String, List<String>>{};
+      for (final tabela in _tabelasParaZerarNuvem) {
+        // 1) O que existe na nuvem para ESTA empresa (somente leitura).
+        final idsNaNuvem = await _supabaseService.listarIdsDaEmpresa(
           tabela,
           empresaId,
         );
+        if (idsNaNuvem.isEmpty) {
+          debugPrint('>>> [Supabase] ⏭️ $tabela: nada desta empresa na nuvem.');
+          continue;
+        }
+
+        // 2) Confronto com o banco local: um id que AQUI é de outra empresa
+        // não pode ser apagado (na nuvem ele pode estar com o empresa_id
+        // errado — foi assim que o catálogo de outra empresa desapareceu).
+        Map<String, String> donosLocais;
+        try {
+          donosLocais = await db.empresasLocaisDosIds(tabela, idsNaNuvem);
+        } catch (e) {
+          throw Exception(
+            'Não consegui conferir os registros de "$tabela" no banco local'
+            ' ($e). Nada foi apagado: sem essa conferência eu poderia apagar '
+            'dados de outra empresa.',
+          );
+        }
+        final apagar = <String>[];
+        var preservados = 0;
+        for (final id in idsNaNuvem) {
+          final dono = donosLocais[id] ?? '';
+          if (dono.isNotEmpty && dono != empresaId) {
+            preservados++;
+            continue;
+          }
+          apagar.add(id);
+        }
+        if (preservados > 0) {
+          preservadosPorTabela[tabela] = preservados;
+          debugPrint(
+            '>>> [Supabase] 🛡️ $tabela: $preservados id(s) NÃO apagados — '
+            'pertencem a outra empresa no banco local.',
+          );
+        }
+        if (apagar.isNotEmpty) apagarPorTabela[tabela] = apagar;
+      }
+
+      // ══ FASE 2 · EXCLUSÃO ══
+      // Só os ids conferidos, sempre com o filtro de empresa junto.
+      for (final entry in apagarPorTabela.entries) {
+        debugPrint('>>> [Supabase] 🗑️ Deletando ${entry.key}...');
+        final removidos = await _supabaseService.deleteByEmpresa(
+          entry.key,
+          empresaId,
+          somenteIds: entry.value,
+        );
         if (removidos > 0) {
-          removidosPorTabela[tabela] = removidos;
+          removidosPorTabela[entry.key] = removidos;
         }
       }
 
-      // Após limpar a nuvem, limpa o computador também (apenas listas da empresa atual)
-      _clientes.clear();
-      _produtos.clear();
-      _pedidos.clear();
-      _vendasBalcao.clear();
-      await _salvarTodosDados(aguardarSupabase: false);
-
+      // Os dados locais NÃO são apagados: o aviso de confirmação promete
+      // limpar só a nuvem, e apagar a cópia local aqui tirava do usuário a
+      // única forma simples de recuperar ("Restaurar Nuvem" reenvia o local).
       debugPrint(
-        '>>> [Supabase] ✅ Nuvem e Local limpos para a empresa $empresaId: $removidosPorTabela',
+        '>>> [Supabase] ✅ Nuvem limpa para a empresa $empresaId: '
+        'removidos=$removidosPorTabela preservados=$preservadosPorTabela',
       );
-      return removidosPorTabela;
+      notifyListeners();
+      return (removidos: removidosPorTabela, preservados: preservadosPorTabela);
     } catch (e) {
       debugPrint('>>> [Supabase] ❌ Erro ao limpar nuvem: $e');
       rethrow;
@@ -20398,7 +20596,63 @@ class DataService extends ChangeNotifier {
   // LICENCIAMENTO E VALIDAÇÃO ONLINE
   // ===========================================================================
 
-  /// Carrega o status de liberação provisória do armazenamento local
+  /// Consulta o registro oficial da empresa na nuvem. A data de validação
+  /// só é renovada quando o Supabase responde com a empresa correta.
+  Future<void> _validarLicencaNaNuvem(Empresa empresa) async {
+    if (!SupabaseService.isAvailable) return;
+    try {
+      final remota = await _supabaseService.buscarEmpresaPorSlug(empresa.slug);
+      if (remota == null || remota.id != empresa.id) return;
+
+      // Atualiza somente campos de cobrança vindos da fonte oficial; preserva
+      // configurações operacionais locais que ainda não foram sincronizadas.
+      final config = Map<String, dynamic>.from(empresa.configuracoes ?? {});
+      final configRemota = remota.configuracoes ?? {};
+      for (final chave in <String>[
+        'status_pagamento',
+        'ultimo_mes_pago',
+        'data_cobranca',
+        'dataCobranca',
+        'data_inicio_mensalidade',
+        'mensalidade_ativa',
+      ]) {
+        if (configRemota.containsKey(chave)) {
+          config[chave] = configRemota[chave];
+        }
+      }
+
+      final atualizada = empresa.copyWith(configuracoes: config);
+      _empresaAtual = atualizada;
+      await _storage.salvar('empresa_atual', atualizada.toMap());
+      if (!kIsWeb) {
+        await DatabaseService().salvarEmpresaLocal(atualizada.toMap());
+      }
+      await registrarValidacaoOnline();
+      onEmpresaAtualizada?.call(atualizada);
+      notifyListeners();
+      debugPrint(
+        '>>> [Licenca] ✓ Situação consultada na nuvem para ${empresa.id}.',
+      );
+    } catch (e) {
+      // Sem resposta remota, mantém o último carimbo salvo: o prazo offline
+      // continua correndo e não é renovado por sincronização apenas local.
+      debugPrint(
+        '>>> [Licenca] Nuvem indisponível; validação não renovada: $e',
+      );
+    }
+  }
+
+  /// Registra uma validação confirmada pela nuvem no armazenamento local.
+  Future<void> registrarValidacaoOnline() async {
+    final agora = DateTime.now();
+    _ultimaValidacaoOnline = agora;
+    await _storage.salvar('ultima_validacao_online', agora.toIso8601String());
+    notifyListeners();
+  }
+
+  /// Carrega o status de liberação provisória do armazenamento local.
+  /// Se for uma instalação antiga sem carimbo, inicia uma única tolerância
+  /// de 7 dias; nunca deixa o estado nulo liberar offline indefinidamente.
   Future<void> carregarLiberacaoProvisoria() async {
     try {
       final valor = await _storage.carregar('liberacao_provisoria_ativa');
@@ -20408,14 +20662,76 @@ class DataService extends ChangeNotifier {
       if (ultimaValid != null) {
         _ultimaValidacaoOnline = DateTime.tryParse(ultimaValid.toString());
       }
+      // Instalações antigas sem carimbo recebem uma única janela de tolerância.
+      // Depois disso, somente uma consulta remota bem-sucedida renova o prazo.
+      if (_ultimaValidacaoOnline == null) {
+        _ultimaValidacaoOnline = DateTime.now();
+        await _storage.salvar(
+          'ultima_validacao_online',
+          _ultimaValidacaoOnline!.toIso8601String(),
+        );
+      }
 
       final ultimaExec = await _storage.carregar('ultima_data_execucao');
       if (ultimaExec != null) {
         _ultimaDataExecucao = DateTime.tryParse(ultimaExec.toString());
       }
+      final agora = DateTime.now();
+      // Não sobrescreve um horário futuro: ele é necessário para detectar
+      // tentativa de voltar o relógio do computador.
+      if (_ultimaDataExecucao == null ||
+          !agora.isBefore(
+            _ultimaDataExecucao!.subtract(const Duration(minutes: 5)),
+          )) {
+        _ultimaDataExecucao = agora;
+        await _storage.salvar('ultima_data_execucao', agora.toIso8601String());
+      }
+
+      // A licença assinada é validada novamente a cada inicialização e fica
+      // vinculada ao ID físico desta máquina, sem depender da nuvem.
+      final documentoEmergencia = await _storage.carregar(
+        'licenca_emergencia_documento',
+      );
+      if (documentoEmergencia is String && documentoEmergencia.isNotEmpty) {
+        final licenca = await LicencaEmergenciaService.validar(
+          documentoEmergencia,
+        );
+        _licencaEmergenciaEmpresaId = licenca?.empresaId;
+        _licencaEmergenciaExpiraEm = licenca?.expiraEm;
+      }
     } catch (e) {
       debugPrint('>>> [Licenca] ⚠️ Erro ao carregar licenciamento: $e');
     }
+  }
+
+  /// A licença emergencial só libera a empresa e o computador para os quais
+  /// foi assinada, e somente até a data de expiração.
+  bool licencaEmergenciaValidaParaEmpresa(String empresaId) {
+    final expira = _licencaEmergenciaExpiraEm;
+    return _licencaEmergenciaEmpresaId == empresaId &&
+        expira != null &&
+        DateTime.now().toUtc().isBefore(expira);
+  }
+
+  Future<String> identificadorMaquinaLicenca() =>
+      LicencaEmergenciaService.identificadorMaquina();
+
+  /// Aplica um documento assinado pelo gerador offline do administrador.
+  /// Não altera a data da última validação online nem a situação de cobrança.
+  Future<bool> aplicarLicencaEmergencia(String documento) async {
+    final empresa = _empresaAtual;
+    if (empresa == null) return false;
+    final licenca = await LicencaEmergenciaService.validar(
+      documento,
+      empresaIdEsperada: empresa.id,
+    );
+    if (licenca == null) return false;
+
+    await _storage.salvar('licenca_emergencia_documento', documento.trim());
+    _licencaEmergenciaEmpresaId = licenca.empresaId;
+    _licencaEmergenciaExpiraEm = licenca.expiraEm;
+    notifyListeners();
+    return true;
   }
 
   /// Reseta as simulações de licenciamento para o estado real
@@ -20470,7 +20786,8 @@ class DataService extends ChangeNotifier {
       return; // Sem empresa definida, não há perfis a carregar
     _perfisTributarios.clear();
     final raw = _empresaAtual?.configuracoes?['perfis_tributarios'];
-    final chaveExiste = raw is List; // presente (mesmo que vazia = usuário apagou)
+    final chaveExiste =
+        raw is List; // presente (mesmo que vazia = usuário apagou)
     final temConfigValida = raw is List && raw.isNotEmpty;
     if (temConfigValida) {
       for (final item in raw) {

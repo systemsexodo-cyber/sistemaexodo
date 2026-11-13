@@ -149,6 +149,7 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   // Campos de promoção
   bool _temPromocao = false;
   double? _precoPromocional;
+  double? _precoOnline;
   DateTime? _promocaoInicio;
   DateTime? _promocaoFim;
 
@@ -4564,17 +4565,24 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
         _uploadingFotos = true;
       });
 
+      // `FileType.image` no Windows desktop nao abre o seletor em algumas
+      // versoes do file_picker (o clique parece nao fazer nada). Filtrar por
+      // extensao abre sempre e continua aceitando varias fotos de uma vez.
+      const extensoesImagem = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+
       FilePickerResult? result;
       
       if (kIsWeb) {
         result = await FilePicker.platform.pickFiles(
-          type: FileType.image,
+          type: FileType.custom,
+          allowedExtensions: extensoesImagem,
           allowMultiple: true,
           withData: true, // Obter bytes diretamente no web
         );
       } else {
         result = await FilePicker.platform.pickFiles(
-          type: FileType.image,
+          type: FileType.custom,
+          allowedExtensions: extensoesImagem,
           allowMultiple: true,
         );
       }
@@ -4681,6 +4689,14 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
             _fotosUrls.addAll(novasFotos);
             _uploadingFotos = false;
           });
+
+          // Grava no produto na hora: fechar o formulario sem clicar em
+          // "Salvar" nao perde mais a foto (o arquivo ja esta no storage).
+          if (novasFotos.isNotEmpty) {
+            // Sem aviso proprio: a mensagem "foto(s) adicionada(s)" logo abaixo
+            // ja confirma que foi para o produto.
+            await _persistirFotosNoProduto(avisar: false);
+          }
           
           if (novasFotos.isNotEmpty) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -4750,12 +4766,61 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent, size: 20),
-            onPressed: () => setState(() => _fotosUrls.clear()),
+            onPressed: () async {
+              setState(() => _fotosUrls.clear());
+              await _persistirFotosNoProduto();
+            },
             tooltip: 'Remover Todas',
           ),
         ],
       ],
     );
+  }
+
+  /// Grava as fotos no produto na hora, sem esperar o botao "Salvar".
+  ///
+  /// Quando este metodo roda o arquivo JA esta no storage: sem isso, fechar o
+  /// formulario perdia a referencia e a foto so existia na memoria da tela.
+  /// Produto novo ainda nao tem id, entao ali continua valendo o "Salvar"
+  /// (o cadastro precisa dos campos obrigatorios).
+  Future<void> _persistirFotosNoProduto({bool avisar = true}) async {
+    final atual = widget.item;
+    if (atual is! Produto || atual.id.isEmpty) return;
+
+    try {
+      final service = Provider.of<DataService>(context, listen: false);
+      final atualizado = atual.copyWith(
+        fotosUrls: List<String>.from(_fotosUrls),
+        fotoPrincipalUrl: _fotosUrls.isNotEmpty ? _fotosUrls.first : null,
+        limparFotoPrincipal: _fotosUrls.isEmpty,
+        updatedAt: DateTime.now(),
+      );
+      await service.updateProduto(atualizado);
+
+      if (!avisar || !mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _fotosUrls.isEmpty
+                ? 'Foto removida do produto.'
+                : 'Foto salva no produto (${_fotosUrls.length}).',
+          ),
+          backgroundColor: _fotosUrls.isEmpty ? Colors.orange : Colors.green,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      debugPrint('>>> [ProdutoForm] Erro ao gravar fotos no produto: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('A foto subiu, mas nao foi gravada no produto: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
   }
 
   Widget _buildGridFotos() {
@@ -4784,7 +4849,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               top: 2,
               right: 2,
               child: GestureDetector(
-                onTap: () => setState(() => _fotosUrls.removeAt(index)),
+                onTap: () async {
+                  setState(() => _fotosUrls.removeAt(index));
+                  await _persistirFotosNoProduto();
+                },
                 child: Container(
                   padding: const EdgeInsets.all(2),
                   decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
@@ -7364,7 +7432,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
                         final filtrados = dataService.produtos.where((p) {
                           if (p.id == widget.item?.id) return false;
                           return p.nome.toLowerCase().contains(query) ||
-                              (p.codigo ?? '').toLowerCase().contains(query);
+                              (p.codigo ?? '').toLowerCase().contains(query) ||
+                              (p.descricao ?? '').toLowerCase().contains(query);
                         }).take(15).toList();
 
                         if (filtrados.isEmpty) {
@@ -7597,7 +7666,8 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               final q = busca.trim().toLowerCase();
               if (q.isEmpty) return true;
               return p.nome.toLowerCase().contains(q) ||
-                  (p.codigo ?? '').toLowerCase().contains(q);
+                  (p.codigo ?? '').toLowerCase().contains(q) ||
+                  (p.descricao ?? '').toLowerCase().contains(q);
             }).toList();
 
             double somaItens = 0;
@@ -8687,7 +8757,8 @@ class _DialogoBuscarProdutoState extends State<_DialogoBuscarProduto> {
         ? widget.dataService.produtos.take(20).toList()
         : widget.dataService.produtos.where((p) {
             return p.nome.toLowerCase().contains(_query.toLowerCase()) ||
-                (p.codigo ?? '').toLowerCase().contains(_query.toLowerCase());
+                (p.codigo ?? '').toLowerCase().contains(_query.toLowerCase()) ||
+                (p.descricao ?? '').toLowerCase().contains(_query.toLowerCase());
           }).take(20).toList();
 
     return AlertDialog(

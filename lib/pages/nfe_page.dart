@@ -2811,7 +2811,7 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
   Widget _buildTabItens() {
     final produtos = widget.dataService.produtos.where((p) {
       final q = _buscaProduto.toLowerCase();
-      return q.isEmpty || p.nome.toLowerCase().contains(q) || (p.codigo?.toLowerCase().contains(q) ?? false);
+      return q.isEmpty || p.nome.toLowerCase().contains(q) || (p.codigo?.toLowerCase().contains(q) ?? false) || (p.descricao?.toLowerCase().contains(q) ?? false);
     }).toList()
       ..sort((a, b) => a.nome.compareTo(b.nome));
 
@@ -2834,7 +2834,7 @@ class _EmissaoManualPageState extends State<_EmissaoManualPage>
                     optionsBuilder: (v) {
                       if (v.text.isEmpty) return const [];
                       final q = v.text.toLowerCase();
-                      return produtos.where((p) => p.nome.toLowerCase().contains(q) || (p.codigo?.toLowerCase().contains(q) ?? false));
+                      return produtos.where((p) => p.nome.toLowerCase().contains(q) || (p.codigo?.toLowerCase().contains(q) ?? false) || (p.descricao?.toLowerCase().contains(q) ?? false));
                     },
                     onSelected: (p) {
                       setState(() {

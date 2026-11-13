@@ -60,6 +60,35 @@ void updateUrl(String path, {bool replace = false}) {
 /// Stream de foco da janela no navegador
 Stream<dynamic> get onWindowFocus => html.window.onFocus;
 
+/// Troca o favicon da aba (e o icone de atalho no celular) pela imagem dada.
+///
+/// A loja de cada cliente tem a sua logo; o favicon fixo do index.html mostrava
+/// sempre o icone do Exodo na aba e no atalho da tela inicial.
+void setFavicon(String url) {
+  try {
+    if (url.isEmpty) return;
+    final documento = html.document;
+
+    for (final antigo in documento.querySelectorAll('link[rel~="icon"]')) {
+      antigo.remove();
+    }
+    documento.head?.append(html.LinkElement()
+      ..rel = 'icon'
+      ..href = url);
+
+    // Atalho na tela inicial do iPhone/iPad
+    for (final antigo
+        in documento.querySelectorAll('link[rel~="apple-touch-icon"]')) {
+      antigo.remove();
+    }
+    documento.head?.append(html.LinkElement()
+      ..rel = 'apple-touch-icon'
+      ..href = url);
+  } catch (e) {
+    print('Erro ao trocar o favicon: $e');
+  }
+}
+
 /// Emite quando a página volta a ficar VISÍVEL para o usuário.
 ///
 /// `onWindowFocus` só dispara quando a JANELA do navegador ganha foco — trocar

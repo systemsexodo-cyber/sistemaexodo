@@ -37,6 +37,7 @@ import 'package:sistema_exodo_novo/services/taxa_pagamento_service.dart';
 import 'package:sistema_exodo_novo/models/venda_balcao.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/utils/units.dart';
+import 'package:sistema_exodo_novo/utils/busca_produtos.dart';
 import 'package:sistema_exodo_novo/models/delivery_info.dart';
 import 'package:sistema_exodo_novo/models/endereco_cliente.dart';
 import 'package:sistema_exodo_novo/models/entrega.dart';
@@ -349,11 +350,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     if (tipo == 'adicionar' && !_somAdicionarHabilitado) return;
     if (tipo == 'remover' && !_somRemoverHabilitado) return;
     if (tipo == 'finalizar' && !_somFinalizarHabilitado) return;
+    if (tipo == 'aceitar' && !_somAceitarHabilitado) return;
+    if (tipo == 'recusar' && !_somRecusarHabilitado) return;
 
     String audioFile = filename;
     if (tipo == 'adicionar') audioFile = 'add.wav';
     if (tipo == 'remover') audioFile = 'remove.wav';
     if (tipo == 'finalizar') audioFile = 'success.wav';
+    if (tipo == 'aceitar') audioFile = 'accept.wav';
+    if (tipo == 'recusar') audioFile = 'reject.wav';
 
     try {
       await _audioPlayerPDV.stop();
@@ -407,6 +412,8 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   bool _isDelivery = false;
   EnderecoCliente? _enderecoEntrega;
   double _taxaEntrega = 0.0;
+  /// Taxa de bairro marcada no diálogo de entrega (id de "taxa:" ou "zona:").
+  String? _taxaBairroSelecionada;
   String? _motoristaId;
   String? _motoristaNome;
   double _valorParaTroco = 0.0; // Valor informado pelo cliente para troco
@@ -440,14 +447,24 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   static const String _keySomAdicionar = 'exodo_som_adicionar';
   static const String _keySomRemover = 'exodo_som_remover';
   static const String _keySomFinalizar = 'exodo_som_finalizar';
+  static const String _keySomAceitar = 'exodo_som_aceitar';
+  static const String _keySomRecusar = 'exodo_som_recusar';
   static const String _keyAlertarLimiteGaveta = 'exodo_alertar_limite_gaveta';
   static const String _keyLimiteGavetaValor = 'exodo_limite_gaveta_valor';
+  static const String _keyLimiteValorVenda = 'exodo_limite_valor_venda';
   bool _somHabilitado = true;
   bool _somAdicionarHabilitado = true;
   bool _somRemoverHabilitado = true;
   bool _somFinalizarHabilitado = true;
+  bool _somAceitarHabilitado = true;
+  bool _somRecusarHabilitado = true;
   bool _alertarLimiteGaveta = false;
   double _limiteGavetaValor = 1000.0;
+  // Limite de AVISO do valor total da venda (0 = desativado). Apenas avisa,
+  // não bloqueia a finalização — evita erro de digitação de valor alto.
+  double _limiteValorVenda = 0.0;
+  // Evita dois avisos de limite abertos ao mesmo tempo (duplo F9/F10).
+  bool _avisandoLimiteVenda = false;
   bool _mostrarBarraLegenda =
       false; // Controle de visibilidade da legenda (hover)
   int _cardHoverIndex = -1; // Card do produto sob o mouse (hover manual)
@@ -587,6 +604,27 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           if (valDouble != null) {
             setState(() {
               _limiteGavetaValor = valDouble;
+            });
+          }
+        }
+      });
+      _storage.carregar(_chavePDV(_keyLimiteValorVenda)).then((value) {
+        if (value != null) {
+          final valDouble = double.tryParse(value.toString());
+          if (valDouble != null) {
+            setState(() {
+              _limiteValorVenda = valDouble;
+            });
+            return;
+          }
+        }
+        // Sem valor local: usa a configuração da empresa (vale p/ todos os terminais)
+        final cfgEmpresa = empresa?.configuracoes?['limiteAvisoValorVenda'];
+        if (cfgEmpresa != null) {
+          final valDouble = double.tryParse(cfgEmpresa.toString());
+          if (valDouble != null) {
+            setState(() {
+              _limiteValorVenda = valDouble;
             });
           }
         }
@@ -946,6 +984,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _isDelivery = false;
       _enderecoEntrega = null;
       _taxaEntrega = 0.0;
+      _taxaBairroSelecionada = null;
       _motoristaId = null;
       _motoristaNome = null;
     }
@@ -1266,6 +1305,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _isDelivery = false;
       _enderecoEntrega = null;
       _taxaEntrega = 0.0;
+      _taxaBairroSelecionada = null;
       _motoristaId = null;
       _motoristaNome = null;
       _valorParaTroco = 0.0;
@@ -1797,7 +1837,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                         produtosFiltrados = produtos
                             .where(
                               (produto) =>
-                                  produto.nome.toLowerCase().contains(busca),
+                                  produto.nome.toLowerCase().contains(busca) ||
+                                  (produto.codigo?.toLowerCase().contains(
+                                        busca,
+                                      ) ??
+                                      false) ||
+                                  (produto.descricao?.isNotEmpty ?? false) &&
+                                      produto.descricao!.toLowerCase().contains(
+                                        busca,
+                                      ) ||
+                                  (produto.codigoBarras?.isNotEmpty ?? false) &&
+                                      produto.codigoBarras!
+                                          .toLowerCase()
+                                          .contains(busca),
                             )
                             .toList();
                       });
@@ -3845,6 +3897,44 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _salvarCarrinho();
   }
 
+  /// Confirma antes de zerar a venda: a lixeira fica ao lado do cabeçalho e
+  /// um toque errado apagava o carrinho inteiro sem volta.
+  Future<void> _confirmarLimparVenda() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text(
+          'Limpar a venda?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          _mesaComandaVinculada != null
+              ? 'A ${_mesaComandaVinculada!.tipo == TipoControle.comanda ? 'comanda' : 'mesa'} será finalizada e o carrinho esvaziado.'
+              : 'Todos os itens do carrinho serão removidos.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Limpar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (_mesaComandaVinculada != null) {
+      _resetarTodaVenda();
+    } else {
+      _limparCarrinho();
+    }
+  }
+
   void _limparCarrinho() {
     if (_carrinho.isEmpty) return;
 
@@ -4803,8 +4893,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Listas de prioridade
     final exatos = <dynamic>[];
-    final parciais = <dynamic>[];
     final nomes = <dynamic>[];
+    final codigoPrefixo = <dynamic>[];
+    final codigoContem = <dynamic>[];
+
+    // Busca por PALAVRAS EM QUALQUER ORDEM, aceitando pedaço de palavra e
+    // pequenos erros de digitação ("primer racas pequeas" acha
+    // "PREMIER RACAS PEQUENAS FILHOTES"). A nota coloca os nomes mais
+    // parecidos no topo da lista.
+    final termosBusca = BuscaProdutos.termos(termoFinal);
+    final consultaNorm = BuscaProdutos.normalizar(termoFinal);
+    final notasPorProduto = <Produto, int>{};
 
     // Se o termo contiver vírgula, NÃO remove a vírgula para buscar códigos de produto (ex: 10,00 não deve virar código 1000)
     final bool temVirgula = termoFinal.contains(',');
@@ -4834,51 +4933,73 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           codigoLower.startsWith(buscaLower) ||
           codigoLower.startsWith('cod-$buscaLower');
 
-      final nome = produto.nome.toLowerCase().trim();
+      final descricao = (produto.descricao ?? '').toLowerCase().trim();
 
       // MATCH EXATO (PRIORIDADE 1)
       if (codigoLower == buscaLower ||
           codigoLower == 'cod-$buscaLower' ||
           codigo == termoFinal ||
-          todosBarras.contains(termoFinal)) {
+          todosBarras.contains(termoFinal) ||
+          descricao == buscaLower) {
         exatos.add(produto);
         continue;
       }
 
-      // MATCH CÓDIGO PARCIAL (PRIORIDADE 2)
-      if (codigoLower.startsWith(buscaLower) ||
-          codigoLower.startsWith('cod-$buscaLower') ||
-          (queryNumerosSemZeros.isNotEmpty &&
-              codigo.contains(queryNumerosSemZeros))) {
-        parciais.add(produto);
+      // MATCH NOME/DESCRIÇÃO (PRIORIDADE 2)
+      // Vem na frente dos códigos: digitando "51" o operador precisa ver o
+      // produto cuja DESCRIÇÃO é "51 ICE" perto do topo, e não depois de
+      // dezenas de códigos 510, 511, 512... ou 151, 251, 351...
+      // Aqui as palavras valem em qualquer ordem, valem pedaços de palavra e
+      // vale errar a digitação ("primer racas pequeas", "premier filhos").
+      final nota = BuscaProdutos.pontuar(produto, termosBusca, consultaNorm);
+      if (nota > 0) {
+        nomes.add(produto);
+        notasPorProduto[produto] = nota;
         continue;
       }
 
-      // MATCH NOME (PRIORIDADE 3)
-      if (nome.contains(buscaLower)) {
-        nomes.add(produto);
+      // MATCH CÓDIGO POR PREFIXO (PRIORIDADE 3)
+      if (codigoLower.startsWith(buscaLower) ||
+          codigoLower.startsWith('cod-$buscaLower')) {
+        codigoPrefixo.add(produto);
+        continue;
+      }
+
+      // MATCH CÓDIGO EM QUALQUER POSIÇÃO (PRIORIDADE 4)
+      if (queryNumerosSemZeros.isNotEmpty &&
+          codigo.contains(queryNumerosSemZeros)) {
+        codigoContem.add(produto);
       }
     }
 
-    // 2. FILTRAR SERVIÇOS
+    // 2. FILTRAR SERVIÇOS (mesma regra de palavras dos produtos)
     final servicosEncontrados = <dynamic>[];
     for (final servico in dataService.servicos) {
-      final nome = servico.nome.toLowerCase();
-      if (nome.contains(buscaLower)) {
+      if (BuscaProdutos.textoCorresponde(servico.nome, termosBusca)) {
         servicosEncontrados.add(servico);
       }
     }
 
     // 3. MONTAR LISTA FINAL (ORDEM DE IMPORTÂNCIA)
     // Ordenamos apenas dentro de cada grupo para manter a lógica
-    parciais.sort((a, b) => (a.codigo ?? '').compareTo(b.codigo ?? ''));
-    nomes.sort((a, b) => a.nome.compareTo(b.nome));
+    // Os nomes mais parecidos com o digitado primeiro; empate é alfabético.
+    nomes.sort((a, b) {
+      final notaA = notasPorProduto[a] ?? 0;
+      final notaB = notasPorProduto[b] ?? 0;
+      if (notaA != notaB) return notaB.compareTo(notaA);
+      return (a.nome as String)
+          .toLowerCase()
+          .compareTo((b.nome as String).toLowerCase());
+    });
+    codigoPrefixo.sort((a, b) => (a.codigo ?? '').compareTo(b.codigo ?? ''));
+    codigoContem.sort((a, b) => (a.codigo ?? '').compareTo(b.codigo ?? ''));
     servicosEncontrados.sort((a, b) => a.nome.compareTo(b.nome));
 
     final resultados = <dynamic>[];
     resultados.addAll(exatos);
-    resultados.addAll(parciais);
     resultados.addAll(nomes);
+    resultados.addAll(codigoPrefixo);
+    resultados.addAll(codigoContem);
     resultados.addAll(servicosEncontrados);
 
     return resultados;
@@ -5362,6 +5483,81 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
+  /// Aviso (apenas avisa — NÃO bloqueia) quando o total da venda está acima
+  /// do limite configurado em "Configurações do PDV". Serve para o operador
+  /// perceber um erro de digitação de valor alto antes de emitir a nota.
+  ///
+  /// Retorna `true` para prosseguir com a finalização e `false` quando o
+  /// operador escolhe corrigir a venda (ou já há um aviso em tela).
+  Future<bool> _avisarValorAcimaDoLimite(double total) async {
+    final limite = _limiteValorVenda;
+    if (limite <= 0 || total <= limite) return true;
+    if (!mounted || _avisandoLimiteVenda) return false;
+
+    _avisandoLimiteVenda = true;
+    try {
+      final formato = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+      final prosseguir = await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              const Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.amberAccent,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Valor da venda alto',
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            'O total desta venda é ${formato.format(total)} e está acima do '
+            'limite de aviso configurado (${formato.format(limite)}).\n\n'
+            'Confira os itens antes de finalizar. Deseja continuar mesmo assim?',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text(
+                'CORRIGIR',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amberAccent,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text(
+                'CONTINUAR',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+      return prosseguir ?? false;
+    } finally {
+      _avisandoLimiteVenda = false;
+    }
+  }
+
   void _finalizarVenda(DataService dataService) {
     if (_estaFinalizando) return; // Proteção contra múltiplos cliques
 
@@ -5409,7 +5605,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   /// Finalização ultra-rápida em Dinheiro (F10)
-  void _finalizarDinheiroDireto(DataService dataService) {
+  Future<void> _finalizarDinheiroDireto(DataService dataService) async {
     if (_estaFinalizando) return;
 
     if (_carrinho.isEmpty && _mesaComandaVinculada == null) {
@@ -5427,6 +5623,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       _solicitarAberturaCaixa(context, dataService);
       return;
     }
+
+    // Aviso de valor alto (apenas avisa) antes de lançar em dinheiro.
+    if (!await _avisarValorAcimaDoLimite(_totalCarrinho)) return;
+    if (!mounted) return;
 
     final total = _totalCarrinho;
     final pagamento = PagamentoPedido(
@@ -8135,15 +8335,19 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       bool encontrou = false;
 
-      // Se a busca for APENAS numérica, buscar SOMENTE pelo código (busca exata)
+      // Se a busca for APENAS numérica, buscar por código OU nome/descricao
       if (ehApenasNumerico) {
-        // Buscar APENAS por código ou código de barras (busca exata)
+        // Buscar por código OU nome/descricao (busca flexível)
+        final descricaoLower = (produto.descricao ?? '').toLowerCase();
         if (codigoNumerosSemZeros == queryNumerosSemZeros ||
             barrasNumerosSemZeros.contains(queryNumerosSemZeros) ||
             codigoLower == queryLower ||
             codigo == query ||
             barrasLower.contains(queryLower) ||
-            todosBarras.contains(query)) {
+            todosBarras.contains(query) ||
+            // Buscar também no nome e descrição
+            (nome.contains(queryLower) ||
+                descricaoLower.contains(queryLower))) {
           encontrou = true;
         }
       } else {
@@ -8358,6 +8562,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     DataService dataService, {
     List<PagamentoPedido>? pagamentosIniciais,
   }) async {
+    // Aviso de valor alto (apenas avisa): aparece ANTES do pagamento para o
+    // operador perceber um erro de digitação antes de emitir a nota.
+    if (!await _avisarValorAcimaDoLimite(_totalCarrinho)) return;
+    if (!mounted) return;
+
     // Limpar seleções de navegação do grid para que o foco fique apenas no diálogo
     setState(() {
       _gridSelectedIndex = -1;
@@ -8591,8 +8800,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       String statusPedido;
       if (totalRecebido >= totalVendaCapturado - 0.01) {
         statusPedido = 'Pago';
+        _tocarSomPDV('accept.wav', tipo: 'aceitar');
       } else {
         statusPedido = 'Pendente';
+        _tocarSomPDV('reject.wav', tipo: 'recusar');
       }
 
       TipoPagamento tipoPagamentoVenda = pagamentosAtualizados.isNotEmpty
@@ -8705,21 +8916,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       );
 
       // SALVAR DADOS (Snapshot garantido)
-      // Se estava editando um pedido/venda salva, remover o antigo ANTES de adicionar o novo
-      if (_pedidoOriginal != null) {
-        // dataService.deletePedido(_pedidoOriginal!.id);
-
-        final vendaOriginal = dataService.vendasBalcao
-            .where(
-              (v) =>
-                  v.id == _pedidoOriginal!.id ||
-                  v.numero == _pedidoOriginal!.numero,
-            )
-            .firstOrNull;
-        if (vendaOriginal != null) {
-          await dataService.deleteVendaBalcao(vendaOriginal.id);
-        }
-      }
+      // Se estava editando um pedido/venda salva, localiza a venda antiga —
+      // mas NÃO a apaga antes de gravar. Apagar primeiro abria uma janela em
+      // que a venda não existia (e, se a gravação falhasse, ela sumia de vez).
+      final vendaOriginal = _pedidoOriginal == null
+          ? null
+          : dataService.vendasBalcao
+                .where(
+                  (v) =>
+                      v.id == _pedidoOriginal!.id ||
+                      v.numero == _pedidoOriginal!.numero,
+                )
+                .firstOrNull;
 
       // O pedido original não deve ser excluído ao receber uma venda salva.
       // addOrUpdatePedido abaixo atualiza o mesmo ID e preserva o registro
@@ -8730,7 +8938,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       // A gravação local/memória acontece primeiro dentro do DataService;
       // a sincronização com Supabase pode continuar em segundo plano para
       // não travar o PDV esperando rede/Realtime.
-      unawaited(dataService.addVendaBalcao(vendaBalcao));
+      // Edição de venda existente: ATUALIZA no lugar (mesmo id). Antes era
+      // DELETE + INSERT, o que reaplicava baixa de estoque/cash back e, se o
+      // insert se perdesse, deixava a venda apagada.
+      if (vendaOriginal != null) {
+        await dataService.updateVendaBalcao(vendaBalcao);
+      } else {
+        unawaited(dataService.addVendaBalcao(vendaBalcao));
+      }
 
       // Impressão automática (configurável em Configurações da Empresa):
       //  * imprimirProducaoAoSalvar -> vias de produção (cozinha/bar)
@@ -9248,8 +9463,18 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         !isDeliveryCapturado &&
         _pedidoOriginal != null &&
         NumeracaoVenda.ehPedidoTradicional(_pedidoOriginal!.numero);
+    // Venda de PDV (VND-/CX-) convertida em pedido de delivery: o pedido
+    // precisa entrar na série PED-. Se herdasse o número da venda, a tela de
+    // Pedidos (que esconde números de PDV) não o exibiria — e, como a venda é
+    // removida nessa conversão, o registro parecia ter sumido.
+    final vendaViraPedidoDelivery =
+        isDeliveryCapturado &&
+        _pedidoOriginal != null &&
+        NumeracaoVenda.ehVendaPdv(_pedidoOriginal!.numero);
     final String numero =
-        _pedidoOriginal != null && !pedidoOriginalViraVendaSalva
+        _pedidoOriginal != null &&
+            !pedidoOriginalViraVendaSalva &&
+            !vendaViraPedidoDelivery
         ? _pedidoOriginal!.numero
         : isDeliveryCapturado
         ? await dataService.getProximoNumeroPedidoSeguro()
@@ -9356,7 +9581,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     // Criar pedido a partir da venda salva
     final pedidoVendaSalva = Pedido(
       id: _pedidoOriginal?.id ?? uuid.v4(),
-      numero: _pedidoOriginal?.numero ?? vendaBalcao.numero,
+      numero: numeroFinal,
       clienteId: _clienteSelecionado?.id,
       clienteNome: vendaBalcao.clienteNome?.trim().isEmpty == true
           ? 'Delivery'
@@ -9390,37 +9615,48 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       deliveryInfo: vendaBalcao.deliveryInfo,
     );
 
-    // Se estava editando um pedido/venda salva, remover o antigo ANTES de adicionar o novo
-    // Isso evita duplicados e garante que o novo registro (com mesmo ID se carregado) persista
-    if (_pedidoOriginal != null) {
-      // dataService.deletePedido(_pedidoOriginal!.id);
-      if (pedidoOriginalViraVendaSalva) {
-        dataService.deletePedido(_pedidoOriginal!.id);
-      }
-
-      final vendaOriginal = dataService.vendasBalcao
-          .where((v) => v.numero == _pedidoOriginal!.numero)
-          .firstOrNull;
-      if (vendaOriginal != null) {
-        await dataService.deleteVendaBalcao(vendaOriginal.id);
-      }
-      // O registro de entrega NÃO é mais apagado aqui: ele é atualizado no
-      // lugar (dataService.addOrUpdateEntregaDoPedido), preservando status,
-      // motorista e histórico da entrega ao editar o pedido.
-    }
+    // Venda antiga que este save substitui (se houver). Ela NÃO é apagada
+    // aqui: o novo registro é gravado primeiro, e só depois o antigo sai. Antes
+    // a exclusão vinha antes da gravação — qualquer falha no meio do caminho
+    // apagava a venda sem deixar nada no lugar.
+    final vendaOriginal = _pedidoOriginal == null
+        ? null
+        : dataService.vendasBalcao
+              .where(
+                (v) =>
+                    v.id == _pedidoOriginal!.id ||
+                    v.numero == _pedidoOriginal!.numero,
+              )
+              .firstOrNull;
 
     // =============== LOGIC SEPARATION (DELIVERY VS BALCÃO) ===============
     final isDelivery = vendaBalcao.deliveryInfo != null;
 
     if (isDelivery) {
-      // 1. DELIVERY: Salvar como Pedido para aparecer na Central de Pedidos
-      // Se o pedido já existia (edição), ATUALIZA mantendo o mesmo número.
-      await dataService.addOrUpdatePedido(pedidoVendaSalva);
+      // 1. DELIVERY: Salvar como Pedido para aparecer na Central de Pedidos.
+      // Se é uma venda de PDV virando pedido e já existe um pedido espelho com
+      // o número da venda (VND-/CX-), grava direto com o número PED- novo —
+      // `addOrUpdatePedido` preserva o número antigo de propósito (edição de
+      // pedido) e o registro continuaria escondido na lista de Pedidos.
+      final pedidoEspelhoExiste = dataService.pedidos.any(
+        (p) => p.id == pedidoVendaSalva.id,
+      );
+      if (vendaViraPedidoDelivery && pedidoEspelhoExiste) {
+        await dataService.updatePedido(pedidoVendaSalva);
+      } else {
+        await dataService.addOrUpdatePedido(pedidoVendaSalva);
+      }
+
+      // 2. A venda original só é removida DEPOIS que o pedido foi gravado
+      // (conversão venda -> pedido). Se a gravação falhar, a venda continua.
+      if (vendaOriginal != null) {
+        await dataService.deleteVendaBalcao(vendaOriginal.id);
+      }
 
       // IMPRIMIR TICKETS DE PRODUÇÃO (a própria função respeita a configuração)
       await _imprimirTicketsProducaoVendaDireta(pedidoVendaSalva);
 
-      // 2. CRIAR REGISTRO DE ENTREGA
+      // 3. CRIAR REGISTRO DE ENTREGA
       final registroEntrega = Entrega(
         id: uuid.v4(),
         pedidoId: pedidoVendaSalva.id,
@@ -9441,16 +9677,37 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       );
       await dataService.addOrUpdateEntregaDoPedido(registroEntrega);
 
-      // 3. Notificação de Sucesso Gourmet
-      _mostrarSucessoPedidoGerado(vendaBalcao.numero);
+      // 4. Notificação de Sucesso Gourmet
+      _mostrarSucessoPedidoGerado(pedidoVendaSalva.numero);
 
-      // 4. Diálogo de Impressão (Apenas para Delivery)
+      // 5. Diálogo de Impressão (Apenas para Delivery)
       if (mounted) {
         _mostrarDialogoTipoImpressaoPedido(context, pedidoVendaSalva);
       }
     } else {
-      // 1. BALCÃO: Salvar apenas como VendaBalcao (aparece na aba "Receber" do PDV)
-      dataService.addVendaBalcao(vendaBalcao);
+      // 1. BALCÃO: Salvar apenas como VendaBalcao (aparece na aba "Receber" do PDV).
+      // Se é uma venda que já existia, ATUALIZA no lugar (mesmo id): apagar e
+      // recriar abria uma janela em que a venda não existia e reaplicava a baixa
+      // de estoque/cash back do zero.
+      final vendaJaExiste = dataService.vendasBalcao.any(
+        (v) => v.id == vendaBalcao.id,
+      );
+      if (vendaJaExiste) {
+        await dataService.updateVendaBalcao(vendaBalcao);
+      } else {
+        await dataService.addVendaBalcao(vendaBalcao);
+      }
+
+      // Venda antiga com o MESMO número mas outro id (registro duplicado):
+      // sai só depois que a venda nova já está gravada.
+      if (vendaOriginal != null && vendaOriginal.id != vendaBalcao.id) {
+        await dataService.deleteVendaBalcao(vendaOriginal.id);
+      }
+
+      // O pedido que virou venda salva só é removido depois da venda gravada.
+      if (pedidoOriginalViraVendaSalva && _pedidoOriginal != null) {
+        dataService.deletePedido(_pedidoOriginal!.id);
+      }
 
       // 2. Notificação Simples
       _mostrarSucessoVendaSalva(vendaBalcao.numero);
@@ -10922,8 +11179,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       String statusPedido;
       if (totalRecebido >= totalPortion - 0.01) {
         statusPedido = 'Pago';
+        _tocarSomPDV('accept.wav', tipo: 'aceitar');
       } else {
         statusPedido = 'Pendente';
+        _tocarSomPDV('reject.wav', tipo: 'recusar');
       }
 
       TipoPagamento tipoPagamentoVenda = pagamentosAtualizados.isNotEmpty
@@ -11508,6 +11767,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }) {
     // Popup animado com dinheiro caindo
     _estaComPopupAberto = true;
+    // Botão em destaque na tela de venda finalizada (Configurações da Empresa).
+    final empresaConfig =
+        Provider.of<DataService>(context, listen: false).empresaAtual ??
+        Provider.of<AuthService>(context, listen: false).empresaAtual;
+    final botaoPadraoFinalizar = empresaConfig
+        ?.configuracoes?['botaoPadraoFinalizarVenda']
+        ?.toString();
     PopupSucessoVenda.mostrar(
       context,
       valor: valor,
@@ -11517,6 +11783,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       icone: icone,
       corBase: corBase,
       infoExtra: infoExtra,
+      botaoPadrao: botaoPadraoFinalizar,
       onDismiss: () {
         _estaComPopupAberto = false;
         // O estado já foi resetado em _concluirVendaComPagamentos antes de mostrar o popup.
@@ -12805,6 +13072,10 @@ recusando a emissão de NFC-e (erro 403).
       return;
     }
 
+    // Aviso de valor alto (apenas avisa) antes de finalizar o delivery.
+    if (!await _avisarValorAcimaDoLimite(_totalCarrinho)) return;
+    if (!mounted) return;
+
     setState(() => _estaFinalizando = true);
     final dataService = Provider.of<DataService>(context, listen: false);
     final vendedorSelecionadoCapturado = _vendedorSelecionado;
@@ -13103,6 +13374,7 @@ recusando a emissão de NFC-e (erro 403).
     bool somFinalizarLocal = _somFinalizarHabilitado;
     bool alertarLimiteLocal = _alertarLimiteGaveta;
     double limiteValorLocal = _limiteGavetaValor;
+    double limiteValorVendaLocal = _limiteValorVenda;
 
     // Estados locais da balança
     bool balancaAtiva = configBalanca['ativo'] == true;
@@ -13143,6 +13415,12 @@ recusando a emissão de NFC-e (erro 403).
     final TextEditingController limiteValorController = TextEditingController(
       text: limiteValorLocal.toStringAsFixed(2).replaceAll('.', ','),
     );
+    final TextEditingController limiteValorVendaController =
+        TextEditingController(
+          text: limiteValorVendaLocal > 0
+              ? limiteValorVendaLocal.toStringAsFixed(2).replaceAll('.', ',')
+              : '',
+        );
 
     if (!context.mounted) return;
 
@@ -13574,6 +13852,102 @@ recusando a emissão de NFC-e (erro 403).
                     ),
                     const SizedBox(height: 12),
                     Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: limiteValorVendaLocal > 0
+                              ? Colors.amberAccent.withOpacity(0.3)
+                              : Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          SwitchListTile(
+                            title: const Text(
+                              'Aviso de Valor Alto na Venda',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              'Mostra um alerta quando o valor total da venda ultrapassar o limite. Apenas avisa, não bloqueia a finalização.',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            ),
+                            value: limiteValorVendaLocal > 0,
+                            activeColor: Colors.amberAccent,
+                            activeTrackColor: Colors.amberAccent.withOpacity(
+                              0.3,
+                            ),
+                            inactiveThumbColor: Colors.grey,
+                            inactiveTrackColor: Colors.white10,
+                            onChanged: (value) {
+                              setDialogState(() {
+                                if (value && limiteValorVendaLocal <= 0) {
+                                  limiteValorVendaLocal = 1000.0;
+                                  limiteValorVendaController.text = '1000,00';
+                                } else if (!value) {
+                                  limiteValorVendaLocal = 0;
+                                  limiteValorVendaController.text = '';
+                                }
+                              });
+                            },
+                          ),
+                          if (limiteValorVendaLocal > 0) ...[
+                            const Divider(color: Colors.white10, height: 1),
+                            Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: TextFormField(
+                                controller: limiteValorVendaController,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                ),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                decoration: const InputDecoration(
+                                  labelText: 'Valor de Aviso da Venda (R\$)',
+                                  labelStyle: TextStyle(
+                                    color: Colors.amberAccent,
+                                    fontSize: 12,
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: Colors.white10,
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: Colors.amberAccent,
+                                    ),
+                                  ),
+                                  prefixText: 'R\$ ',
+                                  prefixStyle: TextStyle(color: Colors.white70),
+                                ),
+                                onChanged: (val) {
+                                  final clean = val
+                                      .replaceAll('.', '')
+                                      .replaceAll(',', '.');
+                                  final valDouble = double.tryParse(clean);
+                                  if (valDouble != null) {
+                                    limiteValorVendaLocal = valDouble;
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 8,
@@ -13974,10 +14348,45 @@ recusando a emissão de NFC-e (erro 403).
                                     activeColor: Colors.orangeAccent,
                                     activeTrackColor: Colors.orangeAccent
                                         .withOpacity(0.3),
-                                    onChanged: (value) {
+                                    // Grava na hora: antes o simulador só
+                                    // era salvo no "SALVAR ALTERAÇÕES" do fim
+                                    // do diálogo — quem desligava o switch e
+                                    // ia pesar seguia recebendo peso fictício.
+                                    onChanged: (value) async {
                                       setDialogState(() {
                                         usarMockBalanca = value;
                                       });
+                                      final cfg = Map<String, dynamic>.from(
+                                        await balancaService.obterConfiguracao(),
+                                      );
+                                      cfg['ativo'] = balancaAtiva;
+                                      cfg['porta'] = portaSelecionada;
+                                      cfg['baudRate'] = baudRateSelecionado;
+                                      cfg['usarMock'] = value;
+                                      cfg['pesoMock'] = pesoMockBalanca;
+                                      final ok = await balancaService
+                                          .salvarConfiguracao(cfg);
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            ok
+                                                ? (value
+                                                      ? 'Simulador de peso LIGADO — peso fixo de ${pesoMockBalanca.toStringAsFixed(3)} kg'
+                                                      : 'Simulador DESLIGADO — o PDV vai ler a balança na porta $portaSelecionada')
+                                                : 'Não consegui gravar a configuração da balança. Tente novamente.',
+                                          ),
+                                          backgroundColor: ok
+                                              ? (value
+                                                    ? Colors.orangeAccent
+                                                    : Colors.tealAccent)
+                                              : Colors.redAccent,
+                                          behavior:
+                                              SnackBarBehavior.floating,
+                                        ),
+                                      );
                                     },
                                     contentPadding: EdgeInsets.zero,
                                   ),
@@ -14267,6 +14676,7 @@ recusando a emissão de NFC-e (erro 403).
                   config['habilitarMesasComandas'] =
                       habilitarMesasComandasLocal;
                   config['habilitarCozinha'] = habilitarCozinhaLocal;
+                  config['limiteAvisoValorVenda'] = limiteValorVendaLocal;
 
                   final novaEmpresa = empresa.copyWith(configuracoes: config);
                   await authService.atualizarEmpresa(novaEmpresa);
@@ -14331,6 +14741,10 @@ recusando a emissão de NFC-e (erro 403).
                     _chavePDV(_keyLimiteGavetaValor),
                     limiteValorLocal,
                   );
+                  await _storage.salvar(
+                    _chavePDV(_keyLimiteValorVenda),
+                    limiteValorVendaLocal,
+                  );
 
                   // Atualizar o estado da própria VendaDiretaPage
                   if (mounted) {
@@ -14341,6 +14755,7 @@ recusando a emissão de NFC-e (erro 403).
                       _somFinalizarHabilitado = somFinalizarLocal;
                       _alertarLimiteGaveta = alertarLimiteLocal;
                       _limiteGavetaValor = limiteValorLocal;
+                      _limiteValorVenda = limiteValorVendaLocal;
                       _habilitarMesasComandas = habilitarMesasComandasLocal;
                       _habilitarCozinha = habilitarCozinhaLocal;
                     });
@@ -14388,6 +14803,84 @@ recusando a emissão de NFC-e (erro 403).
     );
   }
 
+  /// Opções de taxa de entrega por bairro disponíveis no PDV: as cadastradas
+  /// em "Taxas de Entrega" e as zonas criadas na Loja Pública
+  /// (Personalizar Loja > Frete > Zonas de Entrega).
+  List<Map<String, dynamic>> _opcoesTaxaBairro(DataService dataService) {
+    final opcoes = <Map<String, dynamic>>[];
+
+    for (final taxa in dataService.taxasEntrega) {
+      if (!taxa.ativo) continue;
+      final cidade = (taxa.cidade ?? '').trim();
+      opcoes.add({
+        'id': 'taxa:${taxa.id}',
+        'bairro': taxa.bairro,
+        'valor': taxa.valor,
+        'origem': 'Taxas de Entrega',
+        'label':
+            '${taxa.bairro}${cidade.isEmpty ? '' : ' ($cidade)'} — '
+            'R\$ ${taxa.valor.toStringAsFixed(2)}',
+      });
+    }
+
+    final ecommerce = dataService.empresaAtual?.configuracoes?['ecommerce'];
+    final frete = ecommerce is Map ? ecommerce['frete'] : null;
+    final zonasData = frete is Map
+        ? (frete['zonasEntrega'] as List<dynamic>? ?? const <dynamic>[])
+        : const <dynamic>[];
+
+    for (final item in zonasData) {
+      if (item is! Map) continue;
+      final zona = item.map((k, v) => MapEntry(k.toString(), v));
+      if (zona['ativo'] == false) continue;
+      final nome = (zona['nome'] ?? '').toString().trim();
+      final bairro = (zona['bairro'] ?? '').toString().trim();
+      final valor = zona['taxaFixa'] is num
+          ? (zona['taxaFixa'] as num).toDouble()
+          : double.tryParse('${zona['taxaFixa']}') ?? 0.0;
+      final descricao = [
+        if (nome.isNotEmpty) nome,
+        if (bairro.isNotEmpty && bairro != nome) bairro,
+      ].join(' • ');
+      opcoes.add({
+        'id': 'zona:${zona['id']}',
+        'bairro': bairro.isNotEmpty ? bairro : nome,
+        'valor': valor,
+        'origem': 'Loja Pública',
+        'label':
+            '${descricao.isEmpty ? 'Zona de entrega' : descricao} — '
+            'R\$ ${valor.toStringAsFixed(2)}',
+      });
+    }
+
+    return opcoes;
+  }
+
+  /// Procura a taxa cadastrada para o bairro do endereço (primeiro exato,
+  /// depois aproximado), incluindo as zonas criadas na Loja Pública.
+  Map<String, dynamic>? _taxaBairroParaEndereco(
+    DataService dataService,
+    EnderecoCliente end,
+  ) {
+    final alvo = end.bairro.trim().toLowerCase();
+    if (alvo.isEmpty) return null;
+
+    final opcoes = _opcoesTaxaBairro(dataService);
+    for (final opcao in opcoes) {
+      if ((opcao['bairro'] as String).trim().toLowerCase() == alvo) {
+        return opcao;
+      }
+    }
+    for (final opcao in opcoes) {
+      final bairro = (opcao['bairro'] as String).trim().toLowerCase();
+      if (bairro.isNotEmpty &&
+          (alvo.contains(bairro) || bairro.contains(alvo))) {
+        return opcao;
+      }
+    }
+    return null;
+  }
+
   Future<void> _calcularTaxaAutomatica(
     EnderecoCliente end,
     DataService dataService,
@@ -14402,10 +14895,28 @@ recusando a emissão de NFC-e (erro 403).
     if (taxaBairro != null) {
       setState(() {
         _taxaEntrega = taxaBairro.valor;
+        _taxaBairroSelecionada = 'taxa:${taxaBairro.id}';
         _infoCalculoTaxa = 'Automática por bairro: ${end.bairro}';
         _calculandoTaxa = false;
       });
       taxaController.text = _taxaEntrega.toStringAsFixed(2);
+      setDialogState(() {});
+      return;
+    }
+
+    // 1b. Zonas de entrega criadas na Loja Pública (Personalizar Loja > Frete)
+    final zonaBairro = _taxaBairroParaEndereco(dataService, end);
+    if (zonaBairro != null) {
+      final valorZona = (zonaBairro['valor'] as num).toDouble();
+      final origemZona = (zonaBairro['origem'] ?? 'bairro').toString();
+      setState(() {
+        _taxaEntrega = valorZona;
+        _taxaBairroSelecionada = zonaBairro['id'] as String?;
+        _infoCalculoTaxa =
+            'Automática por bairro ($origemZona): ${end.bairro}';
+        _calculandoTaxa = false;
+      });
+      taxaController.text = valorZona.toStringAsFixed(2);
       setDialogState(() {});
       return;
     }
@@ -14418,6 +14929,7 @@ recusando a emissão de NFC-e (erro 403).
 
     if (!habilitarKm) {
       setState(() {
+        _taxaBairroSelecionada = null;
         _infoCalculoTaxa = 'Bairro sem taxa cadastrada';
         _calculandoTaxa = false;
       });
@@ -14563,11 +15075,9 @@ recusando a emissão de NFC-e (erro 403).
   }
 
   void _abrirDialogDelivery() {
-    if (_clienteSelecionado == null) {
-      _mostrarErro('Selecione um cliente antes de configurar a Entrega.');
-      return;
-    }
-
+    // Abre o diálogo mesmo sem cliente selecionado: a taxa do bairro, o
+    // motorista e a previsão podem ser definidos antes de identificar o
+    // cliente. Antes o botão só avisava "selecione um cliente" e nada abria.
     final dataService = Provider.of<DataService>(context, listen: false);
     final taxaController = TextEditingController(
       text: _taxaEntrega > 0 ? _taxaEntrega.toStringAsFixed(2) : '',
@@ -14578,9 +15088,10 @@ recusando a emissão de NFC-e (erro 403).
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final cliente =
-              dataService.getClienteById(_clienteSelecionado!.id) ??
-              _clienteSelecionado!;
+          final cliente = _clienteSelecionado == null
+              ? null
+              : (dataService.getClienteById(_clienteSelecionado!.id) ??
+                    _clienteSelecionado!);
 
           if (_enderecoEntrega != null &&
               _taxaEntrega == 0.0 &&
@@ -14599,7 +15110,9 @@ recusando a emissão de NFC-e (erro 403).
           final List<EnderecoCliente> enderecos = [];
 
           // 1. Adicionar o endereço principal do cadastro base se existir
-          if (cliente.endereco != null && cliente.endereco!.trim().isNotEmpty) {
+          if (cliente != null &&
+              cliente.endereco != null &&
+              cliente.endereco!.trim().isNotEmpty) {
             enderecos.add(
               EnderecoCliente(
                 id: 'principal',
@@ -14617,7 +15130,7 @@ recusando a emissão de NFC-e (erro 403).
           }
 
           // 2. Adicionar os outros endereços cadastrados na lista adicional
-          for (final end in cliente.enderecos) {
+          for (final end in cliente?.enderecos ?? const <EnderecoCliente>[]) {
             // Evitar duplicar se o principal for igual a um da lista
             bool duplicado = enderecos.any(
               (e) =>
@@ -14708,12 +15221,45 @@ recusando a emissão de NFC-e (erro 403).
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: Colors.white10),
                           ),
-                          child: const Text(
-                            'Este cliente não possui endereços cadastrados.',
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: 13,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                cliente == null
+                                    ? 'Nenhum cliente selecionado. Você pode '
+                                          'definir a taxa de entrega agora e '
+                                          'escolher o cliente depois.'
+                                    : 'Este cliente não possui endereços '
+                                          'cadastrados.',
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              if (cliente == null)
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: () {
+                                      Navigator.pop(context);
+                                      _selecionarCliente(dataService);
+                                    },
+                                    icon: const Icon(
+                                      Icons.person_search_outlined,
+                                      size: 18,
+                                      color: Colors.orangeAccent,
+                                    ),
+                                    label: const Text(
+                                      'SELECIONAR CLIENTE',
+                                      style: TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         )
                       else
@@ -14783,8 +15329,21 @@ recusando a emissão de NFC-e (erro 403).
                       const SizedBox(height: 12),
                       // Botão Adicionar Endereço
                       TextButton.icon(
-                        onPressed: () =>
-                            _abrirDialogNovoEndereco(cliente, setDialogState),
+                        onPressed: cliente == null
+                            ? () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Selecione um cliente antes de '
+                                      'cadastrar um endereço.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            : () => _abrirDialogNovoEndereco(
+                                cliente,
+                                setDialogState,
+                              ),
                         icon: const Icon(
                           Icons.add_location_alt_outlined,
                           size: 18,
@@ -14812,13 +15371,132 @@ recusando a emissão de NFC-e (erro 403).
                       ),
                       const SizedBox(height: 12),
 
+                      // Taxas por bairro criadas na Loja Pública / Taxas de Entrega
+                      Builder(
+                        builder: (context) {
+                          final opcoes = _opcoesTaxaBairro(dataService);
+                          if (opcoes.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          final ids = opcoes
+                              .map((o) => o['id'] as String)
+                              .toSet();
+                          final selecionada =
+                              ids.contains(_taxaBairroSelecionada)
+                              ? _taxaBairroSelecionada
+                              : null;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: DropdownButtonFormField<String>(
+                              value: selecionada,
+                              isExpanded: true,
+                              hint: const Text(
+                                'Selecione a taxa do bairro',
+                                style: TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              dropdownColor: const Color(0xFF1E1E2E),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                              ),
+                              decoration: InputDecoration(
+                                labelText: 'Taxa por bairro',
+                                labelStyle: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.location_city,
+                                  color: Colors.orangeAccent,
+                                  size: 18,
+                                ),
+                                helperText:
+                                    'Taxas criadas na Loja Pública e no '
+                                    'cadastro de Taxas de Entrega',
+                                helperStyle: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 10,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                enabledBorder: const OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                    color: Colors.white10,
+                                  ),
+                                ),
+                                focusedBorder: const OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                    color: Colors.orangeAccent,
+                                  ),
+                                ),
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.02),
+                              ),
+                              items: opcoes
+                                  .map(
+                                    (o) => DropdownMenuItem<String>(
+                                      value: o['id'] as String,
+                                      child: Text(
+                                        o['label'] as String,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) {
+                                if (value == null) {
+                                  setState(() {
+                                    _taxaBairroSelecionada = null;
+                                  });
+                                  setDialogState(() {});
+                                  return;
+                                }
+                                final escolhida = opcoes.firstWhere(
+                                  (o) => o['id'] == value,
+                                );
+                                final valor = (escolhida['valor'] as num)
+                                    .toDouble();
+                                final origem = (escolhida['origem'] ?? '')
+                                    .toString();
+                                setState(() {
+                                  _taxaBairroSelecionada = value;
+                                  _taxaEntrega = valor;
+                                  _infoCalculoTaxa =
+                                      'Taxa do bairro ($origem): '
+                                      '${escolhida['bairro']}';
+                                });
+                                taxaController.text = valor.toStringAsFixed(
+                                  2,
+                                );
+                                setDialogState(() {});
+                              },
+                            ),
+                          );
+                        },
+                      ),
+
                       Row(
                         children: [
                           Expanded(
                             child: TextField(
                               onChanged: (value) {
+                                // Aceita vírgula: antes "10,00" virava 0.00 e a
+                                // taxa gravada no pedido saía zerada.
                                 setState(() {
-                                  _taxaEntrega = double.tryParse(value) ?? 0.0;
+                                  _taxaEntrega =
+                                      double.tryParse(
+                                        value.replaceAll(',', '.').trim(),
+                                      ) ??
+                                      0.0;
+                                  _taxaBairroSelecionada = null;
                                   _infoCalculoTaxa = 'Manual';
                                 });
                               },
@@ -18010,9 +18688,9 @@ recusando a emissão de NFC-e (erro 403).
                 setState(() {
                   _termoBusca = value;
 
-                  // Se terminar com '*' ou ' ', tenta extrair a quantidade
-                  if ((value.endsWith('*') || value.endsWith(' ')) &&
-                      value.length > 1) {
+                  // Se terminar com '*', tenta extrair a quantidade
+                  // (espaço não dispara quantidade, para não impedir busca numérica como "51")
+                  if (value.endsWith('*') && value.length > 1) {
                     final valorSemPrefixo = value
                         .substring(0, value.length - 1)
                         .replaceAll(',', '.');
@@ -18539,15 +19217,15 @@ recusando a emissão de NFC-e (erro 403).
                       onEnter: (_) => _mostrarGrupoPorHover('Todos', 0),
                       child: GestureDetector(
                         onTap: () {
-                          final desmarcandoTodos = _categoriaAtiva == 'Todos';
+                          // "Todos" é o estado neutro: mostra o catálogo
+                          // inteiro e limpa a busca.
                           setState(() {
-                            _categoriaAtiva = desmarcandoTodos ? null : 'Todos';
+                            _categoriaAtiva = 'Todos';
                             _termoBusca = '';
                             _buscaController.clear();
-                            _focoNasCategorias = !desmarcandoTodos;
-                            _categoriaSelectedIndex = desmarcandoTodos ? -1 : 0;
-                            _gridSelectedIndex =
-                                -1; // Evita RangeError com grade vazia
+                            _focoNasCategorias = true;
+                            _categoriaSelectedIndex = 0;
+                            _gridSelectedIndex = -1;
                             _focoNoCarrinho = false;
                           });
                           _buscaFocusNode.requestFocus();
@@ -18633,23 +19311,18 @@ recusando a emissão de NFC-e (erro 403).
                     onEnter: (_) => _mostrarGrupoPorHover(categoria, index),
                     child: GestureDetector(
                       onTap: () {
-                        if (_categoriaAtiva == categoria) {
-                          // Se já está selecionada, apenas foca mas não limpa busca nem reseta grid
-                          setState(() {
-                            _focoNasCategorias = true;
-                            _categoriaSelectedIndex = index;
-                          });
-                        } else {
-                          setState(() {
-                            _categoriaAtiva = categoria; // Remove toggle
-                            _termoBusca = '';
-                            _buscaController.clear();
-                            _focoNasCategorias = true;
-                            _categoriaSelectedIndex = index;
-                            _gridSelectedIndex = -1;
-                            _focoNoCarrinho = false;
-                          });
-                        }
+                        // Clicar no grupo que já está ativo DESMARCA: volta
+                        // para "Todos" e a grade mostra o catálogo inteiro.
+                        final desmarcando = _categoriaAtiva == categoria;
+                        setState(() {
+                          _categoriaAtiva = desmarcando ? 'Todos' : categoria;
+                          _termoBusca = '';
+                          _buscaController.clear();
+                          _focoNasCategorias = true;
+                          _categoriaSelectedIndex = desmarcando ? 0 : index;
+                          _gridSelectedIndex = -1;
+                          _focoNoCarrinho = false;
+                        });
                         _buscaFocusNode.requestFocus();
                       },
                       child: Container(
@@ -20547,277 +21220,279 @@ recusando a emissão de NFC-e (erro 403).
               borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
             ),
             decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: isDesativado
-                  ? (isDark
-                        ? [const Color(0xFF3A1E1E), const Color(0xFF2C2020)]
-                        : [const Color(0xFFFFF0F0), const Color(0xFFF5E5E5)])
-                  : (isProduto
-                        ? (isDark
-                              ? [
-                                  const Color(0xFF1E3A5F),
-                                  const Color(0xFF2C3E50),
-                                ]
-                              : [Colors.white, const Color(0xFFF1F5F9)])
-                        : (isDark
-                              ? [
-                                  const Color(0xFF4A1E5F),
-                                  const Color(0xFF3E2C50),
-                                ]
-                              : [Colors.white, const Color(0xFFF3E8FF)])),
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
-            border: Border.all(
-              color: isSelected
-                  ? Colors.cyanAccent
-                  : isDesativado
-                  ? Colors.redAccent.withOpacity(0.5)
-                  : (promocao
-                        ? Colors.orange.withOpacity(0.5)
-                        : (isDark ? Colors.transparent : Colors.black12)),
-              width: isSelected ? 4 : (isDark ? 2 : 1),
-            ),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: Colors.cyanAccent.withOpacity(0.65),
-                      blurRadius: 20,
-                      spreadRadius: 3,
-                    ),
-                    BoxShadow(
-                      color: Colors.white.withOpacity(0.12),
-                      blurRadius: 4,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : [
-                    if (!isDark)
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                  ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(5),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      isProduto ? Icons.inventory_2 : Icons.build,
-                      color: isProduto
+              gradient: LinearGradient(
+                colors: isDesativado
+                    ? (isDark
+                          ? [const Color(0xFF3A1E1E), const Color(0xFF2C2020)]
+                          : [const Color(0xFFFFF0F0), const Color(0xFFF5E5E5)])
+                    : (isProduto
                           ? (isDark
-                                ? Colors.lightBlueAccent
-                                : Colors.blue.shade700)
+                                ? [
+                                    const Color(0xFF1E3A5F),
+                                    const Color(0xFF2C3E50),
+                                  ]
+                                : [Colors.white, const Color(0xFFF1F5F9)])
                           : (isDark
-                                ? Colors.purpleAccent
-                                : Colors.purple.shade700),
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    if (codigo != null && codigo.isNotEmpty)
-                      Flexible(
-                        child: Text(
-                          codigo,
-                          style: TextStyle(
-                            color: isDark ? Colors.white70 : Colors.black87,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                                ? [
+                                    const Color(0xFF4A1E5F),
+                                    const Color(0xFF3E2C50),
+                                  ]
+                                : [Colors.white, const Color(0xFFF3E8FF)])),
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(isSmallHeight ? 10 : 12),
+              border: Border.all(
+                color: isSelected
+                    ? Colors.cyanAccent
+                    : isDesativado
+                    ? Colors.redAccent.withOpacity(0.5)
+                    : (promocao
+                          ? Colors.orange.withOpacity(0.5)
+                          : (isDark ? Colors.transparent : Colors.black12)),
+                width: isSelected ? 4 : (isDark ? 2 : 1),
+              ),
+              boxShadow: isSelected
+                  ? [
+                      BoxShadow(
+                        color: Colors.cyanAccent.withOpacity(0.65),
+                        blurRadius: 20,
+                        spreadRadius: 3,
                       ),
-                    if (isProduto && estoque != null) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 1,
+                      BoxShadow(
+                        color: Colors.white.withOpacity(0.12),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : [
+                      if (!isDark)
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
                         ),
-                        decoration: BoxDecoration(
-                          color: (estoque <= 0)
-                              ? Colors.red.withOpacity(0.2)
-                              : (isDark
-                                    ? Colors.white.withOpacity(0.05)
-                                    : Colors.black.withOpacity(0.04)),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: (estoque <= 0)
-                                ? Colors.redAccent.withOpacity(0.5)
-                                : (isDark ? Colors.white10 : Colors.black12),
-                            width: 1,
+                    ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        isProduto ? Icons.inventory_2 : Icons.build,
+                        color: isProduto
+                            ? (isDark
+                                  ? Colors.lightBlueAccent
+                                  : Colors.blue.shade700)
+                            : (isDark
+                                  ? Colors.purpleAccent
+                                  : Colors.purple.shade700),
+                        size: 14,
+                      ),
+                      const SizedBox(width: 4),
+                      if (codigo != null && codigo.isNotEmpty)
+                        Flexible(
+                          child: Text(
+                            codigo,
+                            style: TextStyle(
+                              color: isDark ? Colors.white70 : Colors.black87,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.inventory_2_outlined,
-                              size: 8,
+                      if (isProduto && estoque != null) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: (estoque <= 0)
+                                ? Colors.red.withOpacity(0.2)
+                                : (isDark
+                                      ? Colors.white.withOpacity(0.05)
+                                      : Colors.black.withOpacity(0.04)),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
                               color: (estoque <= 0)
-                                  ? (isDark
-                                        ? Colors.redAccent
-                                        : Colors.red.shade800)
-                                  : (isDark ? Colors.white54 : Colors.black54),
+                                  ? Colors.redAccent.withOpacity(0.5)
+                                  : (isDark ? Colors.white10 : Colors.black12),
+                              width: 1,
                             ),
-                            const SizedBox(width: 2),
-                            Text(
-                              estoque.toStringAsFixed(0),
-                              style: TextStyle(
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.inventory_2_outlined,
+                                size: 8,
                                 color: (estoque <= 0)
                                     ? (isDark
                                           ? Colors.redAccent
                                           : Colors.red.shade800)
                                     : (isDark
-                                          ? Colors.white70
-                                          : Colors.black87),
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
+                                          ? Colors.white54
+                                          : Colors.black54),
                               ),
+                              const SizedBox(width: 2),
+                              Text(
+                                estoque.toStringAsFixed(0),
+                                style: TextStyle(
+                                  color: (estoque <= 0)
+                                      ? (isDark
+                                            ? Colors.redAccent
+                                            : Colors.red.shade800)
+                                      : (isDark
+                                            ? Colors.white70
+                                            : Colors.black87),
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (promocao) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.orange,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'PROMO',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
                             ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    if (promocao) ...[
-                      const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.orange,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          'PROMO',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ),
-                    ],
-                    if (isDesativado) ...[
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent.withOpacity(0.8),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          'DESATIVADO',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 7,
-                            fontWeight: FontWeight.bold,
+                      ],
+                      if (isDesativado) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent.withOpacity(0.8),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'DESATIVADO',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 7,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                    if (indisponivel) ...[
-                      const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.orangeAccent.withOpacity(0.85),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          'INDISPONÍVEL',
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 7,
-                            fontWeight: FontWeight.bold,
+                      ],
+                      if (indisponivel) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.orangeAccent.withOpacity(0.85),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'INDISPONÍVEL',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontSize: 7,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
+                      ],
+                      const Spacer(),
+                      Icon(
+                        isDesativado
+                            ? Icons.lock_outline
+                            : (indisponivel
+                                  ? Icons.schedule_outlined
+                                  : Icons.add_circle),
+                        color: isDesativado
+                            ? Colors.redAccent.withOpacity(0.7)
+                            : (indisponivel
+                                  ? Colors.orangeAccent.withOpacity(0.8)
+                                  : (isDark
+                                        ? Colors.greenAccent.withOpacity(0.6)
+                                        : Colors.green.shade700)),
+                        size: 18,
                       ),
                     ],
-                    const Spacer(),
-                    Icon(
-                      isDesativado
-                          ? Icons.lock_outline
-                          : (indisponivel
-                                ? Icons.schedule_outlined
-                                : Icons.add_circle),
+                  ),
+                  const Spacer(),
+                  Text(
+                    nome.toUpperCase(),
+                    style: TextStyle(
                       color: isDesativado
-                          ? Colors.redAccent.withOpacity(0.7)
-                          : (indisponivel
-                                ? Colors.orangeAccent.withOpacity(0.8)
-                                : (isDark
-                                      ? Colors.greenAccent.withOpacity(0.6)
-                                      : Colors.green.shade700)),
-                      size: 18,
+                          ? Colors.white38
+                          : (isDark
+                                ? Colors.yellow.shade200
+                                : const Color(0xFF0F172A)),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                      height: 1.1,
+                      letterSpacing: 0.3,
+                      decoration: isDesativado
+                          ? TextDecoration.lineThrough
+                          : null,
+                      decorationColor: Colors.redAccent.withOpacity(0.6),
+                      shadows: isDark && !isDesativado
+                          ? const [
+                              Shadow(
+                                color: Colors.black87,
+                                blurRadius: 3,
+                                offset: Offset(0, 1),
+                              ),
+                            ]
+                          : null,
                     ),
-                  ],
-                ),
-                const Spacer(),
-                Text(
-                  nome.toUpperCase(),
-                  style: TextStyle(
-                    color: isDesativado
-                        ? Colors.white38
-                        : (isDark
-                              ? Colors.yellow.shade200
-                              : const Color(0xFF0F172A)),
-                    fontWeight: FontWeight.w900,
-                    fontSize: 15,
-                    height: 1.1,
-                    letterSpacing: 0.3,
-                    decoration: isDesativado
-                        ? TextDecoration.lineThrough
-                        : null,
-                    decorationColor: Colors.redAccent.withOpacity(0.6),
-                    shadows: isDark && !isDesativado
-                        ? const [
-                            Shadow(
-                              color: Colors.black87,
-                              blurRadius: 3,
-                              offset: Offset(0, 1),
-                            ),
-                          ]
-                        : null,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  isDesativado
-                      ? 'INDISPONÍVEL'
-                      : 'R\$ ${preco.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    color: isDesativado
-                        ? Colors.redAccent.withOpacity(0.6)
-                        : (promocao
-                              ? Colors.orange.shade800
-                              : (isDark
-                                    ? Colors.greenAccent
-                                    : const Color(0xFF15803D))),
-                    fontWeight: FontWeight.w900,
-                    fontSize: isDesativado ? 10 : 13,
-                    decoration: isDesativado
-                        ? TextDecoration.lineThrough
-                        : null,
+                  const SizedBox(height: 2),
+                  Text(
+                    isDesativado
+                        ? 'INDISPONÍVEL'
+                        : 'R\$ ${preco.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      color: isDesativado
+                          ? Colors.redAccent.withOpacity(0.6)
+                          : (promocao
+                                ? Colors.orange.shade800
+                                : (isDark
+                                      ? Colors.greenAccent
+                                      : const Color(0xFF15803D))),
+                      fontWeight: FontWeight.w900,
+                      fontSize: isDesativado ? 10 : 13,
+                      decoration: isDesativado
+                          ? TextDecoration.lineThrough
+                          : null,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
         ),
       ),
     );
@@ -21000,13 +21675,7 @@ recusando a emissão de NFC-e (erro 403).
                 Tooltip(
                   message: 'Resetar Venda / Limpar Tudo',
                   child: GestureDetector(
-                    onTap: () {
-                      if (_mesaComandaVinculada != null) {
-                        _resetarTodaVenda();
-                      } else {
-                        _limparCarrinho();
-                      }
-                    },
+                    onTap: _confirmarLimparVenda,
                     child: Container(
                       padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(
@@ -26451,6 +27120,11 @@ class PopupSucessoVenda extends StatefulWidget {
   final VoidCallback? onWhatsApp;
   final VoidCallback? onImprimir; // Novo callback para impressão
 
+  /// Botão que já abre em destaque (e recebe o Enter) nesta tela:
+  /// 'imprimir' (padrão), 'fechar', 'nfce' ou 'whatsapp'.
+  /// Definido em Configurações da Empresa -> "Botão em destaque ao finalizar".
+  final String? botaoPadrao;
+
   const PopupSucessoVenda({
     super.key,
     required this.valor,
@@ -26464,6 +27138,7 @@ class PopupSucessoVenda extends StatefulWidget {
     this.onEmitirNFCe,
     this.onWhatsApp,
     this.onImprimir,
+    this.botaoPadrao,
   });
 
   /// Mostra o popup de sucesso
@@ -26480,6 +27155,7 @@ class PopupSucessoVenda extends StatefulWidget {
     VoidCallback? onEmitirNFCe,
     VoidCallback? onWhatsApp,
     VoidCallback? onImprimir,
+    String? botaoPadrao,
   }) {
     showDialog(
       context: context,
@@ -26497,6 +27173,7 @@ class PopupSucessoVenda extends StatefulWidget {
         onEmitirNFCe: onEmitirNFCe,
         onWhatsApp: onWhatsApp,
         onImprimir: onImprimir,
+        botaoPadrao: botaoPadrao,
       ),
     );
   }
@@ -26545,16 +27222,10 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
       });
     }
 
-    // Ao abrir, o foco já fica no botão IMPRIMIR: assim o Enter do caixa
-    // dispara a impressão imediatamente, sem precisar mirar/clicar.
+    // Ao abrir, o foco já cai no botão escolhido em Configurações da Empresa
+    // ("Botão em destaque ao finalizar a venda"). Padrão: IMPRIMIR.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        if (widget.onImprimir != null) {
-          _imprimirNode.requestFocus();
-        } else {
-          _fecharNode.requestFocus();
-        }
-      }
+      if (mounted) _focarBotaoPadrao();
     });
 
     // Adicionar listeners para reconstruir quando o foco mudar (para atualizar estilos)
@@ -26566,6 +27237,41 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
 
   void _onFocusChange() {
     if (mounted) setState(() {});
+  }
+
+  /// Foca o botão configurado como padrão na finalização da venda.
+  ///
+  /// Se o botão escolhido não estiver visível neste popup (por exemplo
+  /// "WhatsApp" numa venda sem telefone), cai no Imprimir e, sem ele, no
+  /// Fechar — nunca fica sem foco.
+  void _focarBotaoPadrao() {
+    final disponiveis = <String, FocusNode>{
+      if (widget.onEmitirNFCe != null) 'nfce': _nfceNode,
+      if (widget.onWhatsApp != null) 'whatsapp': _whatsappNode,
+      if (widget.onImprimir != null) 'imprimir': _imprimirNode,
+      'fechar': _fecharNode,
+    };
+
+    final escolhido = (widget.botaoPadrao ?? 'imprimir').toLowerCase();
+    final no = disponiveis[escolhido] ?? disponiveis['imprimir'];
+    (no ?? _fecharNode).requestFocus();
+  }
+
+  /// Destaque visual do botão em foco.
+  ///
+  /// O contorno antigo era de 2px na cor do próprio botão e praticamente
+  /// desaparecia no cartão verde. Agora o botão em foco ganha um anel claro
+  /// de 3px, brilho na mesma cor e um leve aumento — visível em qualquer
+  /// combinação de cores dos botões.
+  static const Color _corFoco = Color(0xFFFFD54F);
+
+  Widget _comDestaqueFoco(FocusNode node, Widget botao) {
+    return AnimatedScale(
+      scale: node.hasFocus ? 1.05 : 1.0,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      child: botao,
+    );
   }
 
   /// Fecha a tela de venda finalizada.
@@ -26693,88 +27399,104 @@ class _PopupSucessoVendaState extends State<PopupSucessoVenda>
 
     return <Widget>[
       if (widget.onEmitirNFCe != null)
-        ElevatedButton.icon(
-          focusNode: _nfceNode,
-          onPressed: _emitir,
-          icon: const Icon(Icons.receipt, size: 20),
-          label: const Text(
-            'Emitir NFC-e',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.green.shade800,
-            elevation: _nfceNode.hasFocus ? 8 : 2,
-            padding: paddingNfce,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: _nfceNode.hasFocus
-                  ? BorderSide(color: Colors.green.shade900, width: 2)
-                  : BorderSide.none,
+        _comDestaqueFoco(
+          _nfceNode,
+          ElevatedButton.icon(
+            focusNode: _nfceNode,
+            onPressed: _emitir,
+            icon: const Icon(Icons.receipt, size: 20),
+            label: const Text(
+              'Emitir NFC-e',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.green.shade800,
+              elevation: _nfceNode.hasFocus ? 12 : 2,
+              shadowColor: _nfceNode.hasFocus ? _corFoco : null,
+              padding: paddingNfce,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: _nfceNode.hasFocus
+                    ? const BorderSide(color: _corFoco, width: 3)
+                    : BorderSide.none,
+              ),
             ),
           ),
         ),
       if (widget.onWhatsApp != null)
-        ElevatedButton.icon(
-          focusNode: _whatsappNode,
-          onPressed: _whatsApp,
-          icon: const Icon(Icons.chat_bubble_outline, size: 20),
-          label: const Text('WhatsApp'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF25D366),
-            foregroundColor: Colors.white,
-            elevation: _whatsappNode.hasFocus ? 8 : 2,
-            padding: paddingWhatsApp,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: _whatsappNode.hasFocus
-                  ? const BorderSide(color: Colors.white, width: 2)
-                  : BorderSide.none,
+        _comDestaqueFoco(
+          _whatsappNode,
+          ElevatedButton.icon(
+            focusNode: _whatsappNode,
+            onPressed: _whatsApp,
+            icon: const Icon(Icons.chat_bubble_outline, size: 20),
+            label: const Text('WhatsApp'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF25D366),
+              foregroundColor: Colors.white,
+              elevation: _whatsappNode.hasFocus ? 12 : 2,
+              shadowColor: _whatsappNode.hasFocus ? _corFoco : null,
+              padding: paddingWhatsApp,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: _whatsappNode.hasFocus
+                    ? const BorderSide(color: _corFoco, width: 3)
+                    : BorderSide.none,
+              ),
             ),
           ),
         ),
       // Botão Imprimir Cupom Simples
       if (widget.onImprimir != null)
-        ElevatedButton.icon(
-          focusNode: _imprimirNode,
-          onPressed: _imprimir,
-          icon: const Icon(Icons.print_rounded, size: 20),
-          label: const Text(
-            'Imprimir',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.white.withOpacity(0.9),
-            foregroundColor: Colors.blue.shade800,
-            elevation: _imprimirNode.hasFocus ? 8 : 2,
-            padding: paddingImprimir,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: _imprimirNode.hasFocus
-                  ? BorderSide(color: Colors.blue.shade900, width: 2)
-                  : BorderSide.none,
+        _comDestaqueFoco(
+          _imprimirNode,
+          ElevatedButton.icon(
+            focusNode: _imprimirNode,
+            onPressed: _imprimir,
+            icon: const Icon(Icons.print_rounded, size: 20),
+            label: const Text(
+              'Imprimir',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white.withOpacity(0.9),
+              foregroundColor: Colors.blue.shade800,
+              elevation: _imprimirNode.hasFocus ? 12 : 2,
+              shadowColor: _imprimirNode.hasFocus ? _corFoco : null,
+              padding: paddingImprimir,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: _imprimirNode.hasFocus
+                    ? const BorderSide(color: _corFoco, width: 3)
+                    : BorderSide.none,
+              ),
             ),
           ),
         ),
       // Botão Fechar - Com foco
-      ElevatedButton(
-        focusNode: _fecharNode,
-        onPressed: _fechar,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white.withOpacity(0.25),
-          foregroundColor: Colors.white,
-          elevation: _fecharNode.hasFocus ? 8 : 0,
-          padding: paddingFechar,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: _fecharNode.hasFocus
-                ? const BorderSide(color: Colors.white, width: 2)
-                : BorderSide(color: Colors.white.withOpacity(0.3), width: 1),
+      _comDestaqueFoco(
+        _fecharNode,
+        ElevatedButton(
+          focusNode: _fecharNode,
+          onPressed: _fechar,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white.withOpacity(0.25),
+            foregroundColor: Colors.white,
+            elevation: _fecharNode.hasFocus ? 12 : 0,
+            shadowColor: _fecharNode.hasFocus ? _corFoco : null,
+            padding: paddingFechar,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: _fecharNode.hasFocus
+                  ? const BorderSide(color: _corFoco, width: 3)
+                  : BorderSide(color: Colors.white.withOpacity(0.3), width: 1),
+            ),
           ),
-        ),
-        child: const Text(
-          'Fechar',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          child: const Text(
+            'Fechar',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
         ),
       ),
     ];

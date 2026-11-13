@@ -45,6 +45,7 @@ class _Cenario {
 Future<_Cenario> _abrir(
   WidgetTester tester, {
   bool comImprimir = true,
+  String? botaoPadrao,
 }) async {
   final cenario = _Cenario(0, false);
 
@@ -62,6 +63,7 @@ Future<_Cenario> _abrir(
                   subtitulo: 'CX1-0049',
                   onDismiss: () => cenario.fechou = true,
                   onImprimir: comImprimir ? () => cenario.impressoes++ : null,
+                  botaoPadrao: botaoPadrao,
                 );
               },
               child: const Text('abrir'),
@@ -78,16 +80,19 @@ Future<_Cenario> _abrir(
 }
 
 void main() {
-  testWidgets('ao abrir, o foco inicial já é o do botão Imprimir',
-      (tester) async {
+  testWidgets('ao abrir, o foco inicial já é o do botão Imprimir', (
+    tester,
+  ) async {
     await _abrir(tester);
 
     expect(find.text('VENDA FINALIZADA!'), findsOneWidget);
 
-    final botao = tester.widget<ElevatedButton>(find.ancestor(
-      of: find.text('Imprimir'),
-      matching: find.byType(ElevatedButton),
-    ));
+    final botao = tester.widget<ElevatedButton>(
+      find.ancestor(
+        of: find.text('Imprimir'),
+        matching: find.byType(ElevatedButton),
+      ),
+    );
     expect(botao.focusNode, isNotNull);
     expect(
       identical(FocusManager.instance.primaryFocus, botao.focusNode),
@@ -104,14 +109,18 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
 
-    expect(cenario.impressoes, 1,
-        reason: 'O Enter na finalização deve imprimir 1 única vez.');
+    expect(
+      cenario.impressoes,
+      1,
+      reason: 'O Enter na finalização deve imprimir 1 única vez.',
+    );
 
     await _vencerTimerAutoFechar(tester);
   });
 
-  testWidgets('Enter imprime E finaliza: a tela verde sai de cena',
-      (tester) async {
+  testWidgets('Enter imprime E finaliza: a tela verde sai de cena', (
+    tester,
+  ) async {
     final cenario = await _abrir(tester);
 
     expect(find.text('VENDA FINALIZADA!'), findsOneWidget);
@@ -120,17 +129,23 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(cenario.impressoes, 1);
-    expect(cenario.fechou, isTrue,
-        reason: 'Imprimir já finaliza a venda (onDismiss precisa rodar).');
-    expect(find.text('VENDA FINALIZADA!'), findsNothing,
-        reason: 'A tela verde não pode ficar aberta de fundo após imprimir.');
+    expect(
+      cenario.fechou,
+      isTrue,
+      reason: 'Imprimir já finaliza a venda (onDismiss precisa rodar).',
+    );
+    expect(
+      find.text('VENDA FINALIZADA!'),
+      findsNothing,
+      reason: 'A tela verde não pode ficar aberta de fundo após imprimir.',
+    );
 
     await _vencerTimerAutoFechar(tester);
   });
 
-  testWidgets(
-      'a tela que a impressão abre depois não é fechada pelo popup',
-      (tester) async {
+  testWidgets('a tela que a impressão abre depois não é fechada pelo popup', (
+    tester,
+  ) async {
     // Este é o defeito de ordem: se imprimíssemos ANTES de fechar a tela verde,
     // o `Navigator.pop` do fechamento cairia sobre a rota de cima (o diálogo de
     // impressora) e o fecharia no lugar da tela de venda finalizada. Aqui
@@ -179,34 +194,45 @@ void main() {
 
     expect(cenario.impressoes, 1);
     expect(cenario.fechou, isTrue, reason: 'A venda precisa ser finalizada.');
-    expect(find.text('DIALOGO IMPRESSORA'), findsOneWidget,
-        reason: 'O fechamento do popup não pode derrubar a impressão.');
+    expect(
+      find.text('DIALOGO IMPRESSORA'),
+      findsOneWidget,
+      reason: 'O fechamento do popup não pode derrubar a impressão.',
+    );
     expect(find.text('VENDA FINALIZADA!'), findsNothing);
 
     await _vencerTimerAutoFechar(tester);
   });
 
-  testWidgets('Enter com o Fechar em foco fecha em vez de imprimir',
-      (tester) async {
+  testWidgets('Enter com o Fechar em foco fecha em vez de imprimir', (
+    tester,
+  ) async {
     final cenario = await _abrir(tester);
 
     // Botões visíveis: [Imprimir, Fechar]. Uma seta à direita vai para Fechar.
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pump();
 
-    final botaoFechar = tester.widget<ElevatedButton>(find.ancestor(
-      of: find.text('Fechar'),
-      matching: find.byType(ElevatedButton),
-    ));
-    expect(identical(FocusManager.instance.primaryFocus, botaoFechar.focusNode),
-        isTrue,
-        reason: 'A seta à direita deve ir de Imprimir para Fechar.');
+    final botaoFechar = tester.widget<ElevatedButton>(
+      find.ancestor(
+        of: find.text('Fechar'),
+        matching: find.byType(ElevatedButton),
+      ),
+    );
+    expect(
+      identical(FocusManager.instance.primaryFocus, botaoFechar.focusNode),
+      isTrue,
+      reason: 'A seta à direita deve ir de Imprimir para Fechar.',
+    );
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
 
-    expect(cenario.impressoes, 0,
-        reason: 'Com o Fechar em foco, o Enter não pode imprimir.');
+    expect(
+      cenario.impressoes,
+      0,
+      reason: 'Com o Fechar em foco, o Enter não pode imprimir.',
+    );
     expect(cenario.fechou, isTrue, reason: 'O Enter no Fechar deve fechar.');
 
     await _vencerTimerAutoFechar(tester);
@@ -240,8 +266,9 @@ void main() {
     await _vencerTimerAutoFechar(tester);
   });
 
-  testWidgets('sem callback de impressão, o Enter inicial fecha o popup',
-      (tester) async {
+  testWidgets('sem callback de impressão, o Enter inicial fecha o popup', (
+    tester,
+  ) async {
     final cenario = await _abrir(tester, comImprimir: false);
 
     expect(find.text('Imprimir'), findsNothing);
@@ -254,4 +281,31 @@ void main() {
 
     await _vencerTimerAutoFechar(tester);
   });
+
+  testWidgets(
+    'botão padrão configurado como Fechar abre em foco e Enter não imprime',
+    (tester) async {
+      final cenario = await _abrir(tester, botaoPadrao: 'fechar');
+
+      final botaoFechar = tester.widget<ElevatedButton>(
+        find.ancestor(
+          of: find.text('Fechar'),
+          matching: find.byType(ElevatedButton),
+        ),
+      );
+      expect(
+        identical(FocusManager.instance.primaryFocus, botaoFechar.focusNode),
+        isTrue,
+        reason: 'O botão configurado como padrão precisa abrir já em foco.',
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(cenario.impressoes, 0);
+      expect(cenario.fechou, isTrue);
+
+      await _vencerTimerAutoFechar(tester);
+    },
+  );
 }

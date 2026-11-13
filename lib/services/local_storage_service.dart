@@ -115,6 +115,20 @@ class LocalStorageService {
     }
   }
 
+  /// Apaga o espelho de emergência de [key] (arquivo JSON fora do PostgreSQL).
+  ///
+  /// Sem isto, um snapshot antigo gravado quando o banco falhou ficava no disco
+  /// para sempre: `carregarLista` o devolvia mesmo depois de a tabela ser
+  /// apagada, e a limpeza parecia não ter funcionado.
+  Future<void> removerCacheEmergencia(String key) async {
+    try {
+      final arquivo = await _arquivoCacheEmergencia(key);
+      if (await arquivo.exists()) await arquivo.delete();
+    } catch (e) {
+      debugPrint('⚠️ Erro ao apagar cache de emergência ($key): $e');
+    }
+  }
+
   Future<void> _salvarConfigComFallback(String key, dynamic valor) async {
     try {
       await DatabaseService().salvarConfig(key, valor, lancarSeFalhar: true);
@@ -464,6 +478,9 @@ class LocalStorageService {
       } else {
         // Desktop: remover do PostgreSQL
         await DatabaseService().removerConfig('appcfg_$key');
+        // E o espelho de emergência, senão o valor "removido" volta na próxima
+        // leitura (ex.: marca d'água da sincronização continuava valendo).
+        await removerCacheEmergencia('appcfg_$key');
       }
       debugPrint('✓ Item removido: $key');
     } catch (e) {

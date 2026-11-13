@@ -29,6 +29,10 @@ class CarrinhoItem {
   
   // Peso do produto em gramas
   final int? pesoGramas;
+  // Quantidade em gramas (para venda fracionada)
+  final int? quantidadeGramas;
+  // Se true, este item foi adicionado com seleção de gramas
+  final bool? vendaFracionada;
 
   CarrinhoItem({
     required this.id,
@@ -47,6 +51,8 @@ class CarrinhoItem {
     this.descricaoAdicional,
     this.variacoesSelecionadas,
     this.pesoGramas,
+    this.quantidadeGramas,
+    this.vendaFracionada,
   }) : adicionadoEm = adicionadoEm ?? DateTime.now();
 
   // Cria um item do carrinho a partir de um produto
@@ -84,6 +90,8 @@ class CarrinhoItem {
       estoqueDisponivel: estoqueFinal?.toInt(),
       variacoesSelecionadas: variacoesSelecionadas,
       pesoGramas: produto.pesoGramas,
+      quantidadeGramas: produto.vendaFracionada ? quantidade : null,
+      vendaFracionada: produto.vendaFracionada,
     );
   }
 
@@ -137,6 +145,8 @@ class CarrinhoItem {
       'descricaoAdicional': descricaoAdicional,
       'variacoesSelecionadas': variacoesSelecionadas?.map((v) => v.toMap()).toList(),
       'pesoGramas': pesoGramas,
+      'quantidadeGramas': quantidadeGramas,
+      'vendaFracionada': vendaFracionada,
     };
   }
 
@@ -168,6 +178,8 @@ class CarrinhoItem {
               .toList()
           : null,
       pesoGramas: map['pesoGramas'] as int?,
+      quantidadeGramas: map['quantidadeGramas'] as int?,
+      vendaFracionada: map['vendaFracionada'] as bool?,
     );
   }
 
@@ -188,6 +200,8 @@ class CarrinhoItem {
     String? descricaoAdicional,
     List<VariacaoProduto>? variacoesSelecionadas,
     int? pesoGramas,
+    int? quantidadeGramas,
+    bool? vendaFracionada,
   }) {
     return CarrinhoItem(
       id: id ?? this.id,
@@ -206,6 +220,8 @@ class CarrinhoItem {
       descricaoAdicional: descricaoAdicional ?? this.descricaoAdicional,
       variacoesSelecionadas: variacoesSelecionadas ?? this.variacoesSelecionadas,
       pesoGramas: pesoGramas ?? this.pesoGramas,
+      quantidadeGramas: quantidadeGramas ?? this.quantidadeGramas,
+      vendaFracionada: vendaFracionada ?? this.vendaFracionada,
     );
   }
 }

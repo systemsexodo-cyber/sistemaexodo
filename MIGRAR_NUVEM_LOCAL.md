@@ -37,7 +37,7 @@ esperando a decisão em **Sincronia → Corrigir Conflitos**.
 | Portas (NAT) | `8001→8000` (API/Kong), `5434→5432` (Postgres), `6543→6543` (pooler), `2222→22` (SSH) |
 | SSH | `ssh -i %USERPROFILE%\.ssh\id_ed25519_vm -p 2222 charles@127.0.0.1` |
 | Funnel (roda no **Windows**, não na VM) | HTTPS → `127.0.0.1:8001`; TCP `10000` → `127.0.0.1:5434` |
-| Endereço público | `desktop-86ut1r1.tail9b4943.ts.net` |
+| Endereço público | `exodosystems.tail9b4943.ts.net` |
 | Script de subida | `INICIAR_FUNNEL_SUPABASE.bat` (atalho em `shell:startup`) |
 | Sincronizador | `C:\SistemaExodo\SincronizadorNuvem.exe` + `.env` (`SUPABASE_URL=http://localhost:8001`) |
 | Site/app | `assets/app.env` (aponta para o Funnel) |

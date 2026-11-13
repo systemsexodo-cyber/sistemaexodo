@@ -262,6 +262,13 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
             dataService.empresaAtual?.id != empresaDetectada.id) {
           dataService.setEmpresaAtual(empresaDetectada);
         }
+        // A loja e o checkout leem a personalização de `AuthService.empresaAtual`.
+        // Sem instalar aqui a empresa que acabou de vir do Supabase, eles usavam
+        // null (navegador do cliente) ou a cópia velha do boot (PC do lojista) e
+        // abriam com os valores padrão, como se nada tivesse sido salvo.
+        if (empresaDetectada != null) {
+          authService.definirEmpresaPublica(empresaDetectada);
+        }
       }
       
       if (mounted) {

@@ -49,17 +49,23 @@ class CarrinhoService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Erro ao salvar carrinho: $e');
     }
-  }
-
-  void adicionarProduto(Produto produto, {int quantidade = 1, List<VariacaoProduto>? variacoes}) {
+  }void adicionarProduto(Produto produto, {int quantidade = 1, List<VariacaoProduto>? variacoes}) {
     final index = _itens.indexWhere((item) => 
       item.itemId == produto.id && 
       item.isProduto && 
       _compararVariacoes(item.variacoesSelecionadas, variacoes)
     );
 
+    final vendaFracionada = produto.vendaFracionada ?? false;
+    final pesoBase = produto.pesoBaseGramas ?? 1000;
+    final quantidadeGramas = vendaFracionada ? (quantidade * pesoBase).toInt() : null;
+
     if (index >= 0) {
-      _itens[index] = _itens[index].copyWith(quantidade: _itens[index].quantidade + quantidade);
+      _itens[index] = _itens[index].copyWith(
+        quantidade: _itens[index].quantidade + quantidade,
+        quantidadeGramas: _itens[index].quantidadeGramas ?? quantidadeGramas,
+        vendaFracionada: true,
+      );
     } else {
       _itens.add(CarrinhoItem(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -70,9 +76,11 @@ class CarrinhoService extends ChangeNotifier {
         quantidade: quantidade,
         variacoesSelecionadas: variacoes,
         pesoGramas: produto.pesoGramas,
+        quantidadeGramas: quantidadeGramas,
+        vendaFracionada: vendaFracionada,
       ));
     }
-    
+
     _salvarCarrinho();
     notifyListeners();
   }

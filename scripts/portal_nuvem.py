@@ -4,7 +4,7 @@
 POR QUE ISSO EXISTE
 -------------------
 O site publicado no Firebase (https://exodosystems-1541d.web.app) chamava a
-Data API da nuvem local em https://servidorsupabase.tail9b4943.ts.net/rest/v1.
+Data API da nuvem local em https://exodosystems.tail9b4943.ts.net/rest/v1.
 Nos aparelhos com Tailscale esse hostname resolve para um endereco da rede
 local (100.x). A partir do Chrome 142 a permissao "Local Network Access" faz o
 navegador BLOQUEAR esse tipo de requisicao (site publico -> endereco local):
@@ -18,8 +18,8 @@ A CORRECAO
 ----------
 Este servidor entrega o build web e a API no MESMO host do Funnel:
 
-    https://servidorsupabase.tail9b4943.ts.net/            -> build/web
-    https://servidorsupabase.tail9b4943.ts.net/rest/v1/... -> Kong :8001
+    https://exodosystems.tail9b4943.ts.net/            -> build/web
+    https://exodosystems.tail9b4943.ts.net/rest/v1/... -> Kong :8001
 
 Como a pagina e a API passam a ter a mesma origem, nao existe mais a mudanca
 "publico -> local": o navegador nao bloqueia e o CORS deixa de ser necessario.
@@ -851,6 +851,109 @@ def _comprimir_arquivo(
             _cache_gzip.clear()
         _cache_gzip[chave] = (mtime, tamanho, comprimido)
     return comprimido, ok
+
+
+# ── Servicos do servidor (botoes da Central) ────────────────────────────────
+# A Central roda no mesmo processo deste portal, entao ela enxerga a maquina
+# onde a nuvem vive. Cada botao aqui corresponde a um passo do "subir tudo":
+# VM -> Kong/Postgres -> portal -> central -> sincronizador -> Funnel.
+VBOXMANAGE = r"C:\\Program Files\\Oracle\\VirtualBox\\VBoxManage.exe"
+TAILSCALE = r"C:\\Program Files\\Tailscale\\tailscale.exe"
+VM_NUVEM = "Ubuntu-Supabase"
+CENTRAL_MONITOR = r"F:\\supabase-local\\monitor_portal_nuvem.py"
+SINCRONIZADOR_EXE = r"C:\\SistemaExodo\\SincronizadorNuvem.exe"
+
+# Regras do Funnel que o site/central/realtime precisam. Ficam aqui para o
+# botao "Reparar Funnel" remontar tudo de uma vez (o .bat do Startup so
+# reaplica duas delas).
+FUNNEL_REGRAS = [
+    ["--https=443", "http://127.0.0.1:8090"],
+    ["--https=443", "--set-path=/central-nuvem", "http://127.0.0.1:8091"],
+    ["--https=443", "--set-path=/central-servidor", "http://127.0.0.1:8090/central-servidor"],
+    ["--tls-terminated-tcp=8443", "tcp://127.0.0.1:8001"],
+    ["--tls-terminated-tcp=10000", "tcp://127.0.0.1:5434"],
+]
+
+
+def _porta_aberta(porta: int, host: str = "127.0.0.1", timeout: float = 1.0) -> bool:
+    import socket
+    try:
+        with socket.create_connection((host, int(porta)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _rodar_oculto(comando, timeout: int = 60):
+    import subprocess
+    try:
+        resultado = subprocess.run(
+            comando, capture_output=True, text=True, timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return resultado.returncode, ((resultado.stdout or "") + (resultado.stderr or "")).strip()
+    except Exception as e:
+        return 1, str(e)
+
+
+def _processo_rodando(nome_exe: str) -> bool:
+    codigo, saida = _rodar_oculto(["tasklist", "/FI", "IMAGENAME eq " + nome_exe, "/NH"], 15)
+    return codigo == 0 and nome_exe.lower() in (saida or "").lower()
+
+
+def _estado_vm() -> str:
+    codigo, saida = _rodar_oculto([VBOXMANAGE, "showvminfo", VM_NUVEM, "--machinereadable"], 30)
+    if codigo != 0:
+        return "nao encontrada"
+    for linha in saida.splitlines():
+        if linha.startswith("VMState="):
+            return linha.split("=", 1)[1].strip().strip('"')
+    return "desconhecido"
+
+
+def _status_funnel() -> dict:
+    codigo, saida = _rodar_oculto([TAILSCALE, "funnel", "status"], 30)
+    if codigo != 0:
+        return {"ok": False, "detalhe": "tailscale nao respondeu (deslogado?)", "bruto": saida[:400]}
+    faltando = []
+    if "/central-nuvem" not in saida:
+        faltando.append("/central-nuvem")
+    if "/central-servidor" not in saida:
+        faltando.append("/central-servidor")
+    if ":8443" not in saida:
+        faltando.append("tcp 8443 (realtime)")
+    if ":10000" not in saida:
+        faltando.append("tcp 10000 (Postgres)")
+    if faltando:
+        return {"ok": False, "detalhe": "faltando: " + ", ".join(faltando), "bruto": saida[:400]}
+    return {"ok": True, "detalhe": "4 regras ativas", "bruto": saida[:400]}
+
+
+def _status_servicos() -> dict:
+    """Estado de cada peca do sistema, na ordem em que sobem."""
+    estado_vm = _estado_vm()
+    funnel = _status_funnel()
+    itens = [
+        {"chave": "vm", "nome": "VM da nuvem (VirtualBox)",
+         "ok": estado_vm == "running", "detalhe": estado_vm,
+         "acao": None if estado_vm == "running" else "subir_vm"},
+        {"chave": "pg_local", "nome": "PostgreSQL local (5432)",
+         "ok": _porta_aberta(5432), "detalhe": "porta 5432", "acao": None},
+        {"chave": "kong", "nome": "Supabase API (8001)",
+         "ok": _porta_aberta(8001), "detalhe": "porta 8001", "acao": "subir_vm"},
+        {"chave": "pg_nuvem", "nome": "Postgres da nuvem (5434)",
+         "ok": _porta_aberta(5434), "detalhe": "porta 5434", "acao": "subir_vm"},
+        {"chave": "portal", "nome": "Portal / site (8090)",
+         "ok": True, "detalhe": "porta 8090 (este processo)", "acao": None},
+        {"chave": "central", "nome": "Central / monitor (8091)",
+         "ok": _porta_aberta(8091), "detalhe": "porta 8091", "acao": "subir_central"},
+        {"chave": "sinc", "nome": "Sincronizador",
+         "ok": _processo_rodando("SincronizadorNuvem.exe"), "detalhe": "SincronizadorNuvem.exe",
+         "acao": "subir_sincronizador"},
+        {"chave": "funnel", "nome": "Funnel (site publico)",
+         "ok": funnel["ok"], "detalhe": funnel["detalhe"], "acao": "reparar_funnel"},
+    ]
+    return {"sucesso": True, "itens": itens, "todos_ok": all(i["ok"] for i in itens)}
 
 
 class ServidorPortal(BaseHTTPRequestHandler):
@@ -2190,6 +2293,20 @@ pre{background:#0f172a;border:1px solid #334155;padding:1rem;overflow:auto;max-h
                 self._json_response({"sucesso": False, "erro": str(e)}, 500)
             return
 
+        if api_path == "servicos" and metodo == "GET":
+            try:
+                self._json_response(_status_servicos())
+            except Exception as e:
+                self._json_response({"sucesso": False, "erro": str(e)}, 500)
+            return
+
+        if api_path == "servicos" and metodo == "GET":
+            try:
+                self._json_response(_status_servicos())
+            except Exception as e:
+                self._json_response({"sucesso": False, "erro": str(e)}, 500)
+            return
+
         if api_path == "acoes" and metodo == "GET":
             try:
                 import shutil as _shutil
@@ -2266,9 +2383,354 @@ pre{background:#0f172a;border:1px solid #334155;padding:1rem;overflow:auto;max-h
                         alvo.rename(alvo.with_name(alvo.name + ".old"))
                     self._json_response({"sucesso": True, "acao": "limpar_log", "roteado_para": roteado_para})
                     return
+                if acao == "subir_vm":
+                    estado = _estado_vm()
+                    if estado == "running":
+                        self._json_response({"sucesso": True, "acao": acao, "mensagem": "A VM ja estava rodando."})
+                        return
+                    codigo, saida = _rodar_oculto([VBOXMANAGE, "startvm", VM_NUVEM, "--type", "headless"], 180)
+                    self._json_response({
+                        "sucesso": codigo == 0,
+                        "acao": acao,
+                        "mensagem": "VM subindo; a API leva ~30-60s para responder." if codigo == 0 else None,
+                        "saida": saida[-400:] if codigo != 0 else "",
+                    })
+                    return
+                if acao == "subir_central":
+                    import subprocess as _sp
+                    if _porta_aberta(8091):
+                        self._json_response({"sucesso": True, "acao": acao, "mensagem": "A Central ja estava rodando na 8091."})
+                        return
+                    script = Path(CENTRAL_MONITOR)
+                    if not script.is_file():
+                        self._json_response({"sucesso": False, "acao": acao, "erro": "nao encontrei " + CENTRAL_MONITOR}, 500)
+                        return
+                    pythonw = Path(sys.executable).with_name("pythonw.exe")
+                    _sp.Popen(
+                        [str(pythonw if pythonw.is_file() else sys.executable), str(script)],
+                        cwd=str(script.parent), close_fds=True,
+                        creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0),
+                        stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    )
+                    for _ in range(15):
+                        if _porta_aberta(8091):
+                            break
+                        time.sleep(1)
+                    self._json_response({
+                        "sucesso": _porta_aberta(8091),
+                        "acao": acao,
+                        "mensagem": "Central na 8091." if _porta_aberta(8091) else None,
+                        "erro": None if _porta_aberta(8091) else "subiu mas nao abriu a 8091 em 15s",
+                    })
+                    return
+                if acao == "subir_sincronizador":
+                    import subprocess as _sp
+                    if _processo_rodando("SincronizadorNuvem.exe"):
+                        self._json_response({"sucesso": True, "acao": acao, "mensagem": "O sincronizador ja estava rodando."})
+                        return
+                    if not Path(SINCRONIZADOR_EXE).is_file():
+                        self._json_response({"sucesso": False, "acao": acao, "erro": "nao encontrei " + SINCRONIZADOR_EXE}, 500)
+                        return
+                    _sp.Popen(
+                        [SINCRONIZADOR_EXE], cwd=str(Path(SINCRONIZADOR_EXE).parent), close_fds=True,
+                        creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0),
+                        stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    )
+                    time.sleep(2)
+                    self._json_response({"sucesso": _processo_rodando("SincronizadorNuvem.exe"), "acao": acao})
+                    return
+                if acao == "reparar_funnel":
+                    # Remonta as 4 regras que o .bat do Startup nao reaplica:
+                    # rota da Central, rota do monitor, realtime (8443) e Postgres (10000).
+                    saidas = []
+                    for regra in FUNNEL_REGRAS:
+                        codigo, saida = _rodar_oculto([TAILSCALE, "funnel", "--bg", "--yes"] + regra, 120)
+                        saidas.append({"regra": " ".join(regra), "ok": codigo == 0, "saida": saida[-200:]})
+                    depois = _status_funnel()
+                    self._json_response({
+                        "sucesso": depois["ok"],
+                        "acao": acao,
+                        "mensagem": depois["detalhe"],
+                        "erro": None if depois["ok"] else depois["detalhe"],
+                        "regras": saidas,
+                    })
+                    return
                 self._json_response({"sucesso": False, "erro": "acao desconhecida: " + str(acao)}, 400)
             except Exception as e:
                 self._json_response({"sucesso": False, "erro": str(e)}, 500)
+            return
+
+        if api_path == "codigos-ativacao" and metodo == "GET":
+            # Lista os codigos de ativacao por venda (tabela `licencas_ativacao`)
+            # para a Central emitir/entregar sem abrir o terminal.
+            try:
+                import urllib.error
+                import urllib.parse
+                import urllib.request
+
+                env = _ler_env_local()
+                chave = (env.get("SUPABASE_SERVICE_ROLE_KEY")
+                         or env.get("SUPABASE_ANON_KEY") or "").strip()
+                if not chave:
+                    raise RuntimeError(
+                        "Sem SUPABASE_SERVICE_ROLE_KEY no .env do servidor."
+                    )
+                base = _base_supabase(env)
+                consulta = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                try:
+                    limite = int((consulta.get("limite") or ["100"])[0])
+                except (TypeError, ValueError):
+                    limite = 100
+                limite = max(1, min(limite, 1000))
+                empresa = (consulta.get("empresa") or [""])[0].strip()
+
+                alvo = (
+                    base + "/rest/v1/licencas_ativacao?select=codigo,empresa_id,"
+                    "observacao,revogado,expira_em,usada_por,usada_em,criado_em"
+                    "&order=criado_em.desc&limit=%d" % limite
+                )
+                if empresa:
+                    alvo += "&empresa_id=eq." + urllib.parse.quote(empresa, safe="")
+                req = urllib.request.Request(alvo, headers={
+                    "apikey": chave,
+                    "Authorization": "Bearer " + chave,
+                    "Accept": "application/json",
+                })
+                try:
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        codigos = json.loads(resp.read().decode("utf-8", "replace"))
+                except urllib.error.HTTPError as erro:
+                    if erro.code == 404:
+                        raise RuntimeError(
+                            "Tabela licencas_ativacao nao existe na nuvem: rode a "
+                            "migracao scripts/migrations/021_codigos_ativacao.sql."
+                        )
+                    raise
+                response = {"sucesso": True, "codigos": codigos or []}
+            except Exception as e:
+                response = {"sucesso": False, "erro": str(e), "codigos": []}
+            self._json_response(response)
+            return
+
+        if api_path == "codigos-ativacao" and metodo == "POST":
+            # Gera codigos novos (uso unico, um por computador) e grava direto na
+            # nuvem. Mesmo alfabeto/formato do gerador de terminal
+            # (tools/licencas/gerar_codigos_ativacao.js): sem 0/O/1/I.
+            try:
+                import datetime as _dt
+                import secrets as _secrets
+                import urllib.error
+                import urllib.request
+
+                body = self._corpo_da_requisicao()
+                params = json.loads(body.decode("utf-8")) if body else {}
+                try:
+                    quantidade = int(params.get("quantidade") or 1)
+                except (TypeError, ValueError):
+                    quantidade = 1
+                if quantidade < 1 or quantidade > 200:
+                    raise RuntimeError("Informe de 1 a 200 codigos por vez.")
+                empresa_id = str(params.get("empresa_id") or "").strip()
+                try:
+                    dias = int(params.get("dias") or 0)
+                except (TypeError, ValueError):
+                    dias = 0
+                expira_em = None
+                if dias > 0:
+                    expira_em = (
+                        datetime.now(timezone.utc) + _dt.timedelta(days=dias)
+                    ).isoformat()
+
+                # ID do computador (opcional): o operador cola o ID que aparece
+                # na tela de ativacao. Fica gravado no codigo (observacao) para
+                # a Central saber para qual maquina aquele codigo foi emitido;
+                # o vinculo de verdade acontece na ativacao, porque a licenca
+                # nasce com machine_id + a empresa do codigo.
+                import re as _re
+                maquina_id = "".join(
+                    ch for ch in str(params.get("machine_id") or "").lower()
+                    if ch.isalnum()
+                )
+                if maquina_id and not _re.fullmatch(r"[a-f0-9]{64}", maquina_id):
+                    raise RuntimeError(
+                        "ID do computador invalido: cole o ID completo da tela de "
+                        "ativacao (64 caracteres)."
+                    )
+
+                env = _ler_env_local()
+                chave = (env.get("SUPABASE_SERVICE_ROLE_KEY")
+                         or env.get("SUPABASE_ANON_KEY") or "").strip()
+                if not chave:
+                    raise RuntimeError(
+                        "Sem SUPABASE_SERVICE_ROLE_KEY no .env do servidor."
+                    )
+                base = _base_supabase(env)
+
+                alfabeto = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+                observacao = "venda com empresa vinculada" if empresa_id else ""
+                if maquina_id:
+                    observacao = ("maquina " + maquina_id +
+                                  (" | " + observacao if observacao else ""))
+                linhas = []
+                exibicao = []
+                for _ in range(quantidade):
+                    bruto = "".join(_secrets.choice(alfabeto) for _ in range(12))
+                    linhas.append({
+                        "codigo": bruto,
+                        "empresa_id": empresa_id or None,
+                        "expira_em": expira_em,
+                        "observacao": observacao,
+                    })
+                    exibicao.append(
+                        "EXO-%s-%s-%s" % (bruto[:4], bruto[4:8], bruto[8:])
+                    )
+
+                req = urllib.request.Request(
+                    base + "/rest/v1/licencas_ativacao",
+                    data=json.dumps(linhas).encode("utf-8"),
+                    method="POST",
+                    headers={
+                        "apikey": chave,
+                        "Authorization": "Bearer " + chave,
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal",
+                    },
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        resp.read()
+                except urllib.error.HTTPError as erro:
+                    detalhe = erro.read().decode("utf-8", "replace")[:400]
+                    if erro.code == 404:
+                        raise RuntimeError(
+                            "Tabela licencas_ativacao nao existe na nuvem: rode a "
+                            "migracao scripts/migrations/021_codigos_ativacao.sql."
+                        )
+                    raise RuntimeError(
+                        "A nuvem recusou os codigos (HTTP %s): %s"
+                        % (erro.code, detalhe)
+                    )
+                response = {
+                    "sucesso": True,
+                    "quantidade": quantidade,
+                    "empresa_id": empresa_id,
+                    "machine_id": maquina_id,
+                    "expira_em": expira_em,
+                    "codigos": exibicao,
+                    "texto": "\n".join(exibicao),
+                }
+            except Exception as e:
+                response = {"sucesso": False, "erro": str(e)}
+            self._json_response(response)
+            return
+
+        if api_path == "codigos-ativacao/revogar" and metodo == "POST":
+            # Revoga um codigo perdido/vazado sem precisar de SQL manual.
+            try:
+                import urllib.error
+                import urllib.parse
+                import urllib.request
+
+                body = self._corpo_da_requisicao()
+                params = json.loads(body.decode("utf-8")) if body else {}
+                codigo = "".join(
+                    ch for ch in str(params.get("codigo") or "").upper()
+                    if ch.isalnum()
+                )
+                if len(codigo) < 8:
+                    raise RuntimeError("Codigo invalido.")
+
+                env = _ler_env_local()
+                chave = (env.get("SUPABASE_SERVICE_ROLE_KEY")
+                         or env.get("SUPABASE_ANON_KEY") or "").strip()
+                if not chave:
+                    raise RuntimeError(
+                        "Sem SUPABASE_SERVICE_ROLE_KEY no .env do servidor."
+                    )
+                base = _base_supabase(env)
+                req = urllib.request.Request(
+                    base + "/rest/v1/licencas_ativacao?codigo=eq."
+                    + urllib.parse.quote(codigo, safe=""),
+                    data=json.dumps({"revogado": True}).encode("utf-8"),
+                    method="PATCH",
+                    headers={
+                        "apikey": chave,
+                        "Authorization": "Bearer " + chave,
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    resp.read()
+                response = {"sucesso": True, "codigo": codigo}
+            except Exception as e:
+                response = {"sucesso": False, "erro": str(e)}
+            self._json_response(response)
+            return
+
+        if api_path == "licencas-instalacao" and metodo == "GET":
+            # Maquinas ativadas: qual computador ficou preso a qual empresa.
+            # E o que o suporte confere depois que o cliente digita o codigo.
+            try:
+                import urllib.error
+                import urllib.request
+
+                env = _ler_env_local()
+                chave = (env.get("SUPABASE_SERVICE_ROLE_KEY")
+                         or env.get("SUPABASE_ANON_KEY") or "").strip()
+                if not chave:
+                    raise RuntimeError(
+                        "Sem SUPABASE_SERVICE_ROLE_KEY no .env do servidor."
+                    )
+                base = _base_supabase(env)
+                cabecalhos = {
+                    "apikey": chave,
+                    "Authorization": "Bearer " + chave,
+                    "Accept": "application/json",
+                }
+
+                def _buscar(caminho):
+                    req = urllib.request.Request(base + caminho, headers=cabecalhos)
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        return json.loads(resp.read().decode("utf-8", "replace"))
+
+                try:
+                    maquinas = _buscar(
+                        "/rest/v1/licencas_instalacao?select=machine_id,machine_name,"
+                        "empresa_id,emitida_em,expira_em,renovacoes,bloqueada"
+                        "&order=expira_em.desc&limit=200"
+                    ) or []
+                except urllib.error.HTTPError as erro:
+                    if erro.code == 404:
+                        raise RuntimeError(
+                            "Tabela licencas_instalacao nao existe na nuvem: rode a "
+                            "migracao scripts/migrations/020_licencas_instalacao.sql."
+                        )
+                    raise
+
+                try:
+                    empresas = _buscar(
+                        "/rest/v1/empresas?select=id,razao_social"
+                    ) or []
+                except Exception:
+                    empresas = []
+                nomes = {str(e.get("id")): (e.get("razao_social") or "")
+                         for e in empresas}
+
+                agora = datetime.now(timezone.utc)
+                for m in maquinas:
+                    m["empresa_nome"] = nomes.get(str(m.get("empresa_id")), "")
+                    try:
+                        expira = datetime.fromisoformat(
+                            str(m.get("expira_em")).replace("Z", "+00:00")
+                        )
+                        m["dias_restantes"] = (expira - agora).days
+                    except Exception:
+                        m["dias_restantes"] = None
+                response = {"sucesso": True, "maquinas": maquinas}
+            except Exception as e:
+                response = {"sucesso": False, "erro": str(e), "maquinas": []}
+            self._json_response(response)
             return
 
         self._erro(404, "Admin API endpoint nao encontrado: " + caminho)
@@ -2407,7 +2869,7 @@ def main() -> int:
         "Portal na porta %d | raiz=%s | api=http://%s:%d"
         % (args.porta, raiz, args.api_host, args.api_porta)
     )
-    _console("Abra https://servidorsupabase.tail9b4943.ts.net (Funnel HTTPS).")
+    _console("Abra https://exodosystems.tail9b4943.ts.net (Funnel HTTPS).")
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:

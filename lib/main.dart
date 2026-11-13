@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/pages/home_page.dart';
 import 'package:sistema_exodo_novo/pages/bloqueio_mensalidade_page.dart';
+import 'package:sistema_exodo_novo/pages/ativacao_licenca_page.dart';
 import 'package:sistema_exodo_novo/pages/login_page.dart';
+import 'package:sistema_exodo_novo/services/licenca_instalacao_service.dart';
 import 'package:sistema_exodo_novo/pages/selecionar_empresa_page.dart';
 import 'package:sistema_exodo_novo/pages/nfe_page.dart';
 import 'package:sistema_exodo_novo/pages/portal_contador_page.dart';
+import 'package:sistema_exodo_novo/pages/pedido_cliente_page.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
@@ -343,6 +346,9 @@ Future<void> _main() async {
 
   // Inicializa os serviços
   final dataService = DataService();
+  // Carrega o carimbo local antes de qualquer tela verificar a mensalidade.
+  // Sem isso, uma instalação offline poderia iniciar com validação nula.
+  await dataService.carregarLiberacaoProvisoria();
   final authService = AuthService();
   final clienteAuthService = ClienteAuthService();
   final carrinhoService = CarrinhoService();
@@ -487,8 +493,8 @@ Future<void> _main() async {
   // Régua do MENOR número livre usada pela fila de reenvio ao renumerar nota
   // que bateu em duplicidade: sem ela a busca continuava para baixo do número
   // rejeitado e terminava autorizando a nota lá em cima.
-  NfceContingenciaService.onProximoNumeroLivre =
-      (serie, numeroInicial) => dataService.getProximoNumeroNfce(
+  NfceContingenciaService.onProximoNumeroLivre = (serie, numeroInicial) =>
+      dataService.getProximoNumeroNfce(
         serie: serie,
         numeroInicial: numeroInicial,
       );
@@ -539,6 +545,8 @@ class AppRouter {
     'cozinha-bar',
     'mesas',
     'links-vendedores',
+    'pedidos-cliente',
+    'pedido',
     'vendedor-dashboard',
     'funcionarios',
     'personalizar-loja',
@@ -604,6 +612,24 @@ class AppRouter {
           'agenda': false,
           'loja': false,
           'interna': 'home',
+          'href': href,
+        };
+      }
+
+      // Acompanhamento do pedido pelo cliente: /pedido/<codigo>
+      if (segmentsLower.contains('pedido')) {
+        final idx = segmentsLower.indexOf('pedido');
+        final codigo = (idx != -1 && idx + 1 < segmentsOrig.length)
+            ? segmentsOrig[idx + 1]
+            : '';
+        debugPrint('    RESULTADO: Acompanhamento de Pedido | Codigo: $codigo');
+        return {
+          'publico': false,
+          'slug': null,
+          'agenda': false,
+          'loja': false,
+          'interna': 'pedido',
+          'link': codigo,
           'href': href,
         };
       }
@@ -811,6 +837,12 @@ class _MyAppState extends State<MyApp> {
                 )
               : (subRotaInterna == 'portal-contador'
                     ? const PortalContadorPage()
+                    : subRotaInterna == 'pedido'
+                    ? pedidoClientePageBuilder(
+                        (rotaMap['link'] ?? '').toString(),
+                      )
+                    : subRotaInterna == 'pedidos-cliente'
+                    ? pedidoClientePageBuilder(subRotaInterna!)
                     : AuthWrapper(subRota: subRotaInterna)),
           builder: (context, child) {
             if (child == null)
@@ -820,12 +852,157 @@ class _MyAppState extends State<MyApp> {
               data: MediaQuery.of(
                 context,
               ).copyWith(textScaler: TextScaler.noScaling),
-              child: child,
+              child: _LicencaGate(child: child),
             );
           },
         );
       },
     );
+  }
+}
+
+/// Mostra [child] dentro de uma Overlay própria.
+///
+/// O gate de licença substitui o `child` do `MaterialApp.builder`, e esse
+/// `child` é o Navigator do app — ou seja, ao bloquear a tela o Overlay do
+/// Navigator some. Sem Overlay, Tooltips, o menu de seleção de texto e os
+/// SnackBars quebram com "No Overlay widget found". Esta camada devolve a
+/// Overlay que os widgets Material esperam.
+class _CamadaOverlay extends StatefulWidget {
+  final Widget child;
+  const _CamadaOverlay({required this.child});
+
+  @override
+  State<_CamadaOverlay> createState() => _CamadaOverlayState();
+}
+
+class _CamadaOverlayState extends State<_CamadaOverlay> {
+  late final OverlayEntry _entrada;
+
+  @override
+  void initState() {
+    super.initState();
+    _entrada = OverlayEntry(builder: (_) => widget.child);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CamadaOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.child, widget.child)) {
+      _entrada.markNeedsBuild();
+    }
+  }
+
+  @override
+  void dispose() {
+    // A Overlay (filha) já foi desmontada antes daqui, então a entrada pode
+    // estar desanexada — remover nesse caso lançaria asserção.
+    if (_entrada.mounted) _entrada.remove();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Overlay(initialEntries: [_entrada]);
+  }
+}
+
+/// Trava do sistema instalado: sem licença de instalação válida (30 dias,
+/// amarrada a este computador) o app não passa daqui. Copiar o setup para
+/// outro PC não libera a licença, porque ela é vinculada ao MachineGuid.
+class _LicencaGate extends StatefulWidget {
+  final Widget child;
+  const _LicencaGate({required this.child});
+
+  @override
+  State<_LicencaGate> createState() => _LicencaGateState();
+}
+
+class _LicencaGateState extends State<_LicencaGate> {
+  bool _carregando = true;
+  ResultadoLicencaInstalacao? _resultado;
+
+  @override
+  void initState() {
+    super.initState();
+    _verificar();
+  }
+
+  Future<void> _verificar() async {
+    if (kIsWeb || !Platform.isWindows) {
+      if (mounted) setState(() => _carregando = false);
+      return;
+    }
+    ResultadoLicencaInstalacao resultado;
+    try {
+      resultado = await LicencaInstalacaoService.verificar();
+    } catch (e) {
+      debugPrint('>>> [LicencaGate] Falha ao verificar licença: $e');
+      resultado = ResultadoLicencaInstalacao(
+        estado: EstadoLicencaInstalacao.invalida,
+        mensagem:
+            'Não foi possível verificar a licença deste computador.\n$e',
+      );
+    }
+    if (!mounted) return;
+    setState(() {
+      _resultado = resultado;
+      _carregando = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Web (loja/agendamento) e celular não usam a licença de instalação.
+    if (kIsWeb || !Platform.isWindows) return widget.child;
+
+    if (_carregando) {
+      return _CamadaOverlay(
+        child: AppTheme.appBackground(
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                ExodoLogo(fontSize: 54, showSubtitle: true),
+                SizedBox(height: 32),
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      Color(0xFFFF9800),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 20),
+                Text(
+                  'Verificando licença deste computador...',
+                  style: TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final resultado = _resultado;
+    if (resultado == null || !resultado.podeUsar) {
+      return _CamadaOverlay(
+        child: AtivacaoLicencaPage(
+          resultado:
+              resultado ??
+              const ResultadoLicencaInstalacao(
+                estado: EstadoLicencaInstalacao.ausente,
+                mensagem: 'Este computador ainda não foi ativado.',
+              ),
+          aoLiberar: _verificar,
+        ),
+      );
+    }
+
+    return widget.child;
   }
 }
 
@@ -896,15 +1073,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
           final (
             success,
             motivo,
-          ) = await AppUpdateService.baixarEAplicarAtualizacao(downloadUrl, (
-            progress,
-          ) {
-            if (mounted) {
-              setState(() {
-                _progressoAtualizacao = progress;
-              });
-            }
-          });
+          ) = await AppUpdateService.baixarEAplicarAtualizacao(
+            downloadUrl,
+            (progress) {
+              if (mounted) {
+                setState(() {
+                  _progressoAtualizacao = progress;
+                });
+              }
+            },
+            // Marca da publicação: é o que libera uma nova tentativa quando o
+            // suporte republica o pacote (a trava vale por publicação).
+            publicadaEm: (config['publicada_em'] ?? '').toString(),
+          );
 
           if (!success && mounted) {
             setState(() {
@@ -1263,6 +1444,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
               });
             }
 
+            // Liga este computador à empresa logada: é o que permite a nuvem
+            // conferir a mensalidade certa quando a licença vencer.
+            if (empresaAtual != null) {
+              unawaited(
+                LicencaInstalacaoService.vincularEmpresa(empresaAtual.id),
+              );
+            }
+
             // Sincronizar o usuário logado no DataService para auditoria
             if (authService.isAuthenticated &&
                 authService.usuarioAtual != null) {
@@ -1291,8 +1480,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 ultimaValidacaoOnline: dataService.ultimaValidacaoOnline,
                 ultimaDataExecucao: dataService.ultimaDataExecucao,
               );
+              final licencaEmergencialDeContingencia =
+                  motivo == MotivoBloqueioEmpresa.excessoDiasOffline &&
+                  dataService.licencaEmergenciaValidaParaEmpresa(
+                    empresaLocal.id,
+                  );
               if (motivo != MotivoBloqueioEmpresa.nenhum &&
-                  !dataService.liberacaoProvisoriaAtiva) {
+                  !dataService.liberacaoProvisoriaAtiva &&
+                  !licencaEmergencialDeContingencia) {
                 return BloqueioMensalidadePage(
                   configs: empresaLocal.configuracoes ?? {},
                   motivoBloqueio: motivo,

@@ -65,7 +65,9 @@ class _PedidosPageState extends State<PedidosPage> {
     'Todos',
     'Pendente',
     'Parcialmente Pago',
-    'Em Andamento',
+    'Em Preparo',
+    'Saiu para Entrega',
+    'Entregue',
     'Pago',
     'Cancelado',
   ];
@@ -940,10 +942,18 @@ class _PedidosPageState extends State<PedidosPage> {
     Pedido pedidoAtualizado = pedido.copyWith(status: novoStatus);
 
     // Se for um delivery e o status for "Entregue", atualizar também o status do delivery
-    if (novoStatus.toLowerCase() == 'entregue' && pedido.deliveryInfo != null) {
-      pedidoAtualizado = pedidoAtualizado.copyWith(
-        deliveryInfo: pedido.deliveryInfo!.copyWith(status: 'entregue'),
-      );
+    if (pedido.deliveryInfo != null) {
+      final statusEntrega = switch (novoStatus.toLowerCase()) {
+        'saiu para entrega' => 'em_entrega',
+        'entregue' => 'entregue',
+        'cancelado' => 'cancelado',
+        _ => null,
+      };
+      if (statusEntrega != null) {
+        pedidoAtualizado = pedidoAtualizado.copyWith(
+          deliveryInfo: pedido.deliveryInfo!.copyWith(status: statusEntrega),
+        );
+      }
     }
 
     dataService.updatePedido(pedidoAtualizado);
@@ -2439,6 +2449,29 @@ class _PedidosPageState extends State<PedidosPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        // Confirmar o pedido pendente em um clique
+                        if (pedido.status == 'Pendente')
+                          Tooltip(
+                            message: 'Confirmar pedido',
+                            child: IconButton(
+                              onPressed: () => _alterarStatus(
+                                pedido,
+                                'Em Preparo',
+                                dataService,
+                              ),
+                              icon: const Icon(
+                                Icons.check_circle,
+                                color: Colors.greenAccent,
+                                size: 20,
+                              ),
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
+                              padding: EdgeInsets.zero,
+                            ),
+                          ),
+                        const SizedBox(width: 8),
                         // Status badge
                         if (!isPago)
                           PopupMenuButton<String>(
@@ -2449,7 +2482,8 @@ class _PedidosPageState extends State<PedidosPage> {
                                 [
                                       'Pendente',
                                       'Parcialmente Pago',
-                                      'Em Andamento',
+                                      'Em Preparo',
+                                      'Saiu para Entrega',
                                       'Entregue',
                                       'Pago',
                                       'Cancelado',
@@ -2790,7 +2824,8 @@ class _PedidosPageState extends State<PedidosPage> {
                             [
                                   'Pendente',
                                   'Parcialmente Pago',
-                                  'Em Andamento',
+                                  'Em Preparo',
+                                  'Saiu para Entrega',
                                   'Entregue',
                                   'Pago',
                                   'Cancelado',
@@ -4140,6 +4175,10 @@ class _PedidosPageState extends State<PedidosPage> {
         return Colors.orange;
       case 'Parcialmente Pago':
         return Colors.amber;
+      case 'Em Preparo':
+        return Colors.blue;
+      case 'Saiu para Entrega':
+        return Colors.deepPurple;
       case 'Em Andamento':
         return Colors.blue;
       case 'Entregue':
