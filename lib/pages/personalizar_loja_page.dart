@@ -10,11 +10,14 @@ import 'dart:io';
 import '../theme.dart';
 import 'package:intl/intl.dart';
 import '../models/empresa.dart';
+import '../models/produto.dart';
 import '../models/forma_pagamento.dart';
 import '../services/data_service.dart';
 import '../services/horario_loja_service.dart';
 import '../utils/perfis_tributarios_merge.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
+import '../services/sons_pedido.dart';
 import '../widgets/sync_status_widget.dart';
 import 'taxas_entrega_page.dart';
 // Import condicional para Web
@@ -95,9 +98,36 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
 
   /// Confirma e imprime sozinho os pedidos que chegam da loja online.
   bool _autoConfirmarPedidos = false;
+
+  /// Toque escolhido para avisar de pedido novo da loja online.
+  String _somPedidoNovo = somPedidoPadrao;
+
+  /// Player só da prévia dos toques nesta tela.
+  final AudioPlayer _somPreviewPlayer = AudioPlayer();
   bool _exibirLojaAberto = true;
   bool _exibirEnderecoLoja = true;
   String _modoExibicao = 'ecommerce'; // ecommerce, delivery
+
+  /// Controle de estoque na loja online: quando desligado (padrão), itens sem
+  /// estoque podem ser vendidos normalmente e o selo "Esgotado" não aparece.
+  /// Só lojas que realmente controlam o estoque ligam isso.
+  bool _controlarEstoqueLoja = false;
+
+  /// Cross-sell da loja: sugere produtos que combinam com o item aberto.
+  bool _exibirSugestoesComplementares = true;
+
+  /// Destaques da vitrine: faixa no topo da loja com os itens escolhidos.
+  bool _destaquesLojaAtivo = true;
+  String _tamanhoDestaquesLoja = 'grande'; // grande, compacto
+
+  /// Colunas do catálogo na vitrine: auto, 2, 3 ou 4.
+  String _colunasCatalogoLoja = '2';
+  final Set<String> _produtosDestaqueLoja = {};
+
+  /// Itens escolhidos pelo lojista para aparecer nas sugestões de complemento
+  /// ("Combina com este produto"). Vazio = sugestão automática por
+  /// grupo/subgrupo (comportamento antigo).
+  final Set<String> _produtosSugestaoLoja = {};
   
   // Configurações do banner de frete grátis
   bool _bannerFreteGratisAtivo = true;
@@ -125,6 +155,10 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   final _melhorEnvioTokenController = TextEditingController();
   final _melhorEnvioEmailController = TextEditingController();
   final _slugController = TextEditingController();
+  final _tituloSugestoesComplementaresController =
+      TextEditingController(text: 'Combina com este produto');
+  final _tituloDestaquesLojaController =
+      TextEditingController(text: 'Destaques');
   final _novoBairroTaxiDogController = TextEditingController();
   
   // Opções de Frete Fixas Personalizadas
@@ -145,6 +179,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
   @override
   void dispose() {
     _tabController.dispose();
+    _somPreviewPlayer.dispose();
     _textoPromocional1Controller.dispose();
     _textoPromocional2Controller.dispose();
     _textoPromocional3Controller.dispose();
@@ -173,6 +208,8 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _melhorEnvioTokenController.dispose();
       _melhorEnvioEmailController.dispose();
       _slugController.dispose();
+      _tituloSugestoesComplementaresController.dispose();
+      _tituloDestaquesLojaController.dispose();
       _novoBairroTaxiDogController.dispose();
       super.dispose();
   }
@@ -274,6 +311,8 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _tamanhoLogo = ecommerceConfig['tamanhoLogo'] as String? ?? 'medio';
       _posicaoLogo = ecommerceConfig['posicaoLogo'] as String? ?? 'esquerda';
       _estiloCards = ecommerceConfig['estiloCards'] as String? ?? 'padrao';
+      _colunasCatalogoLoja =
+          ecommerceConfig['colunasCatalogoLoja'] as String? ?? '2';
       _exibirRedesSociais = ecommerceConfig['exibirRedesSociais'] as bool? ?? true;
       _slugController.text = empresa.slug;
       _exibirHorarioFuncionamento = ecommerceConfig['exibirHorarioFuncionamento'] as bool? ?? true;
@@ -283,8 +322,45 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       _aceitarPedidos = ecommerceConfig['aceitarPedidos'] as bool? ?? true;
       _autoConfirmarPedidos =
           ecommerceConfig['autoConfirmarPedidos'] as bool? ?? false;
+      _somPedidoNovo =
+          somPedidoValido(ecommerceConfig['somPedidoNovo'] as String?);
       _exibirEnderecoLoja = ecommerceConfig['exibirEnderecoLoja'] as bool? ?? true;
       _modoExibicao = ecommerceConfig['modoExibicao'] as String? ?? 'ecommerce';
+      _controlarEstoqueLoja =
+          _boolDeConfig(ecommerceConfig['controlarEstoque']);
+      _exibirSugestoesComplementares =
+          ecommerceConfig['exibirSugestoesComplementares'] as bool? ?? true;
+      final tituloSugestoes =
+          (ecommerceConfig['tituloSugestoesComplementares'] as String?)?.trim() ?? '';
+      _tituloSugestoesComplementaresController.text =
+          tituloSugestoes.isEmpty ? 'Combina com este produto' : tituloSugestoes;
+      _destaquesLojaAtivo =
+          ecommerceConfig['destaquesLojaAtivo'] as bool? ?? true;
+      _tamanhoDestaquesLoja =
+          ecommerceConfig['tamanhoDestaquesLoja'] as String? ?? 'grande';
+      final tituloDestaques =
+          (ecommerceConfig['tituloDestaquesLoja'] as String?)?.trim() ?? '';
+      _tituloDestaquesLojaController.text =
+          tituloDestaques.isEmpty ? 'Destaques' : tituloDestaques;
+      _produtosDestaqueLoja.clear();
+      final destaquesSalvos =
+          ecommerceConfig['produtosDestaqueLoja'] as List<dynamic>? ?? [];
+      _produtosDestaqueLoja
+          .addAll(destaquesSalvos.map((e) => e.toString()));
+      if (_produtosDestaqueLoja.isEmpty) {
+        // Lojas que ja marcavam "Em Destaque" no cadastro do produto
+        // continuam aparecendo aqui ate a primeira escolha nesta tela.
+        _produtosDestaqueLoja.addAll(
+          Provider.of<DataService>(context, listen: false)
+              .produtos
+              .where((p) => p.emDestaque)
+              .map((p) => p.id),
+        );
+      }
+      _produtosSugestaoLoja.clear();
+      final sugestoesSalvas =
+          ecommerceConfig['produtosSugestaoLoja'] as List<dynamic>? ?? [];
+      _produtosSugestaoLoja.addAll(sugestoesSalvas.map((e) => e.toString()));
       
       _emailContatoController.text = ecommerceConfig['emailContato'] as String? ?? empresa.email ?? '';
       _facebookController.text = ecommerceConfig['facebook'] as String? ?? '';
@@ -727,6 +803,18 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     return '#${color.value.toRadixString(16).substring(2, 8).toUpperCase()}';
   }
 
+  /// Lê um booleano da configuração tolerando o que o banco devolve (bool,
+  /// 1/0 ou "true"/"false"). O `as bool` cru estourava com texto.
+  static bool _boolDeConfig(Object? valor) {
+    if (valor is bool) return valor;
+    if (valor is num) return valor != 0;
+    if (valor is String) {
+      final v = valor.trim().toLowerCase();
+      return v == 'true' || v == '1' || v == 'sim';
+    }
+    return false;
+  }
+
   /// Carimba a personalização da loja em `configuracoes`.
   ///
   /// É o que permite ao merge (AuthService) escolher a cópia MAIS NOVA entre o
@@ -756,9 +844,29 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     // Esses são os toggles que o usuário pode alterar na interface
     ecommerceExistente['aceitarPedidos'] = _aceitarPedidos;
     ecommerceExistente['autoConfirmarPedidos'] = _autoConfirmarPedidos;
+    ecommerceExistente['somPedidoNovo'] = _somPedidoNovo;
     ecommerceExistente['exibirLojaAberto'] = _exibirLojaAberto;
     ecommerceExistente['exibirEnderecoLoja'] = _exibirEnderecoLoja;
     ecommerceExistente['modoExibicao'] = _modoExibicao;
+    ecommerceExistente['controlarEstoque'] = _controlarEstoqueLoja;
+    ecommerceExistente['exibirSugestoesComplementares'] =
+        _exibirSugestoesComplementares;
+    final tituloSugestoes =
+        _tituloSugestoesComplementaresController.text.trim();
+    ecommerceExistente['tituloSugestoesComplementares'] =
+        tituloSugestoes.isEmpty ? 'Combina com este produto' : tituloSugestoes;
+    ecommerceExistente['destaquesLojaAtivo'] = _destaquesLojaAtivo;
+    ecommerceExistente['tamanhoDestaquesLoja'] = _tamanhoDestaquesLoja;
+    ecommerceExistente['colunasCatalogoLoja'] = _colunasCatalogoLoja;
+    ecommerceExistente['tamanhoLogo'] = _tamanhoLogo;
+    ecommerceExistente['posicaoLogo'] = _posicaoLogo;
+    ecommerceExistente['estiloCards'] = _estiloCards;
+    ecommerceExistente['tituloDestaquesLoja'] =
+        _tituloDestaquesLojaController.text.trim();
+    ecommerceExistente['produtosDestaqueLoja'] =
+        _produtosDestaqueLoja.toList();
+    ecommerceExistente['produtosSugestaoLoja'] =
+        _produtosSugestaoLoja.toList();
     
     // Atualizar a seção ecommerce no config
     config['ecommerce'] = ecommerceExistente;
@@ -771,6 +879,84 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     );
     
     await authService.atualizarEmpresa(empresaAtualizada);
+
+    // Propagar para o DataService: é ele que lê autoConfirmarPedidos no
+    // _autoProcessarPedidoEcommerce. Sem isso, a auto-impressão usa a
+    // configuração antiga e o pedido online nunca é processado sozinho.
+    if (context.mounted) {
+      Provider.of<DataService>(context, listen: false)
+          .setEmpresaAtual(empresaAtualizada);
+    }
+  }
+
+  /// Uma linha da lista de toques: radio, nome, explicacao e botao de ouvir.
+  Widget _buildOpcaoSomPedido(SomPedidoOpcao opcao) {
+    final selecionado = _somPedidoNovo == opcao.arquivo;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () {
+        setState(() => _somPedidoNovo = opcao.arquivo);
+        _tocarPreviewSom(opcao.arquivo);
+        _salvarConfigEcommerceImediato();
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Icon(
+              selecionado
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: selecionado ? Colors.greenAccent : Colors.white54,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    opcao.nome,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight:
+                          selecionado ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  Text(
+                    opcao.descricao,
+                    style: const TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.play_circle_outline, color: Colors.white70),
+              tooltip: 'Ouvir',
+              onPressed: () => _tocarPreviewSom(opcao.arquivo),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Toca a previa do toque, no volume do proprio aviso (80%).
+  Future<void> _tocarPreviewSom(String arquivo) async {
+    try {
+      await _somPreviewPlayer.stop();
+      await _somPreviewPlayer.setVolume(0.8);
+      if (kIsWeb) {
+        await _somPreviewPlayer.play(
+          UrlSource('${html_helper.getWindowOrigin()}/assets/sounds/$arquivo'),
+        );
+      } else {
+        await _somPreviewPlayer.play(AssetSource('sounds/$arquivo'));
+      }
+    } catch (e) {
+      debugPrint('>>> [Som] Falha ao tocar previa de $arquivo: $e');
+    }
   }
 
   Future<void> _salvar() async {
@@ -841,6 +1027,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
           HorarioLojaService.paraConfig(_horariosLoja);
       ecommerceExistente['aceitarPedidos'] = _aceitarPedidos;
       ecommerceExistente['autoConfirmarPedidos'] = _autoConfirmarPedidos;
+      ecommerceExistente['somPedidoNovo'] = _somPedidoNovo;
       ecommerceExistente['formasPagamentoLoja'] = TipoPagamento.values
           .map((t) => t.name)
           .where(_formasPagamentoLoja.contains)
@@ -887,11 +1074,28 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       ecommerceExistente['tamanhoLogo'] = _tamanhoLogo;
       ecommerceExistente['posicaoLogo'] = _posicaoLogo;
       ecommerceExistente['estiloCards'] = _estiloCards;
+      ecommerceExistente['colunasCatalogoLoja'] = _colunasCatalogoLoja;
+      ecommerceExistente['exibirSugestoesComplementares'] =
+          _exibirSugestoesComplementares;
+      final tituloSugestoes =
+          _tituloSugestoesComplementaresController.text.trim();
+      ecommerceExistente['tituloSugestoesComplementares'] =
+          tituloSugestoes.isEmpty ? 'Combina com este produto' : tituloSugestoes;
+      ecommerceExistente['destaquesLojaAtivo'] = _destaquesLojaAtivo;
+      ecommerceExistente['tamanhoDestaquesLoja'] = _tamanhoDestaquesLoja;
+      final tituloDestaques = _tituloDestaquesLojaController.text.trim();
+      ecommerceExistente['tituloDestaquesLoja'] =
+          tituloDestaques.isEmpty ? 'Destaques' : tituloDestaques;
+      ecommerceExistente['produtosDestaqueLoja'] =
+          _produtosDestaqueLoja.toList();
+      ecommerceExistente['produtosSugestaoLoja'] =
+          _produtosSugestaoLoja.toList();
       ecommerceExistente['exibirRedesSociais'] = _exibirRedesSociais;
       ecommerceExistente['exibirHorarioFuncionamento'] = _exibirHorarioFuncionamento;
       ecommerceExistente['exibirLojaAberto'] = _exibirLojaAberto;
       ecommerceExistente['exibirEnderecoLoja'] = _exibirEnderecoLoja;
       ecommerceExistente['modoExibicao'] = _modoExibicao;
+      ecommerceExistente['controlarEstoque'] = _controlarEstoqueLoja;
       ecommerceExistente['emailContato'] = _emailContatoController.text.trim();
       ecommerceExistente['facebook'] = _facebookController.text.trim();
       ecommerceExistente['instagram'] = _instagramController.text.trim();
@@ -936,6 +1140,34 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
       );
       
       await authService.atualizarEmpresa(empresaAtualizada);
+
+      // Propagar para o DataService (ver comentário em _salvarConfigEcommerceImediato):
+      // é a única forma de o auto-processamento de pedidos online enxergar
+      // a configuração recém-salva e imprimir o cupom automaticamente.
+      if (mounted) {
+        Provider.of<DataService>(context, listen: false)
+            .setEmpresaAtual(empresaAtualizada);
+      }
+
+      // As escolhas de destaque sao gravadas tambem no cadastro do produto
+      // (`emDestaque`): e esse campo que a vitrine, a edicao em massa e a
+      // sincronizacao ja leem. So grava os itens que realmente mudaram.
+      // DEPOIS do save da empresa: um erro aqui nao pode mais impedir a
+      // personalização (logo, colunas, controle de estoque) de ser gravada.
+      if (mounted) {
+        final dataService = Provider.of<DataService>(context, listen: false);
+        final produtosDaLoja =
+            dataService.produtos.where((p) => p.exibirNaLoja).toList();
+        for (final p in produtosDaLoja) {
+          final deveDestacar = _produtosDestaqueLoja.contains(p.id);
+          if (p.emDestaque != deveDestacar) {
+            await dataService.updateProduto(
+              p.copyWith(emDestaque: deveDestacar, updatedAt: DateTime.now()),
+              registrarMovimento: false,
+            );
+          }
+        }
+      }
       
       // Aguardar um pouco para garantir que a atualização foi processada
       await Future.delayed(const Duration(milliseconds: 500));
@@ -2649,7 +2881,9 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                     subtitle: const Text(
                       'Quando um pedido da loja online chegar, ele ja entra '
                       'como Em Andamento e o cupom e impresso automaticamente '
-                      'neste computador.',
+                      'neste computador, sem abrir o aviso de Confirmar/Rejeitar. '
+                      'Escolha a impressora em Perifericos do Terminal para a '
+                      'via sair direto.',
                       style: TextStyle(color: Colors.white60, fontSize: 12),
                     ),
                     value: _autoConfirmarPedidos,
@@ -2659,6 +2893,29 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                     },
                     activeColor: Colors.green,
                   ),
+                  const Divider(color: Colors.white24, height: 28),
+                  Row(
+                    children: [
+                      const Icon(Icons.notifications_active, color: Colors.white, size: 20),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Som de pedido novo do site',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Toca neste computador quando um pedido da loja online '
+                    'chegar. Toque no play para ouvir antes de escolher.',
+                    style: TextStyle(color: Colors.white60, fontSize: 12, height: 1.4),
+                  ),
+                  const SizedBox(height: 8),
+                  ...sonsPedidoDisponiveis.map(_buildOpcaoSomPedido),
                   if (_exibirHorarioFuncionamento) ...[
                     const SizedBox(height: 16),
                     _buildTextField(
@@ -2871,6 +3128,377 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
     );
   }
 
+  /// Abre a lista de produtos da loja para escolher os destaques da vitrine.
+  Future<void> _escolherProdutosDestaque() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final produtos = dataService.produtos
+        .where((p) => p.exibirNaLoja)
+        .toList()
+      ..sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
+    final selecionados = Set<String>.from(_produtosDestaqueLoja);
+    final buscaController = TextEditingController();
+    String termo = '';
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          // Busca por nome, grupo, subgrupo e código, aceitando as palavras
+          // em qualquer ordem (antes era só "nome contém").
+          bool combina(Produto p) {
+            if (termo.isEmpty) return true;
+            final alvo = [
+              p.nome,
+              p.grupo,
+              p.subgrupo,
+              p.codigo ?? '',
+              p.codigoBarras ?? '',
+            ].join(' ').toLowerCase();
+            return termo
+                .split(RegExp(r'\s+'))
+                .where((t) => t.isNotEmpty)
+                .every(alvo.contains);
+          }
+
+          // Já escolhidos primeiro: o lojista confere a seleção sem rolar a
+          // lista inteira.
+          final filtrados = <Produto>[
+            ...produtos.where((p) => combina(p) && selecionados.contains(p.id)),
+            ...produtos.where((p) => combina(p) && !selecionados.contains(p.id)),
+          ];
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            title: const Text(
+              'Produtos em destaque',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            content: SizedBox(
+              width: 460,
+              height: 470,
+              child: Column(
+                children: [
+                  TextField(
+                    controller: buscaController,
+                    style: const TextStyle(color: Colors.white),
+                    onChanged: (v) =>
+                        setDialogState(() => termo = v.trim().toLowerCase()),
+                    decoration: const InputDecoration(
+                      hintText: 'Buscar por nome, grupo ou código...',
+                      hintStyle: TextStyle(color: Colors.white38),
+                      prefixIcon: Icon(Icons.search, color: Colors.white54),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: filtrados.isEmpty
+                            ? null
+                            : () => setDialogState(() {
+                                  for (final p in filtrados) {
+                                    selecionados.add(p.id);
+                                  }
+                                }),
+                        child: const Text('Selecionar todos'),
+                      ),
+                      TextButton(
+                        onPressed: selecionados.isEmpty
+                            ? null
+                            : () => setDialogState(selecionados.clear),
+                        child: const Text('Limpar'),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${filtrados.length} item(ns)',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Expanded(
+                    child: filtrados.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Nenhum produto encontrado.',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: filtrados.length,
+                            itemBuilder: (context, index) {
+                              final produto = filtrados[index];
+                              return CheckboxListTile(
+                                dense: true,
+                                value: selecionados.contains(produto.id),
+                                activeColor: Colors.green,
+                                onChanged: (marcado) => setDialogState(() {
+                                  if (marcado == true) {
+                                    selecionados.add(produto.id);
+                                  } else {
+                                    selecionados.remove(produto.id);
+                                  }
+                                }),
+                                title: Text(
+                                  produto.nome,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  [
+                                    produto.grupo,
+                                    if (produto.subgrupo.isNotEmpty)
+                                      produto.subgrupo,
+                                  ].join(' › ') +
+                                      ' • R\$ '
+                                          '${produto.preco.toStringAsFixed(2)}' +
+                                      (produto.estoqueTotal <= 0
+                                          ? ' • sem saldo'
+                                          : '') +
+                                      (produto.naLojaAgora
+                                          ? ''
+                                          : ' • fora do período da loja'),
+                                  style: const TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${selecionados.length} selecionado(s)',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: Text('Confirmar (${selecionados.length})'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    buscaController.dispose();
+
+    if (confirmado == true) {
+      setState(() {
+        _produtosDestaqueLoja
+          ..clear()
+          ..addAll(selecionados);
+      });
+    }
+  }
+
+  /// Abre a lista de produtos da loja para escolher quais itens a vitrine
+  /// sugere na seção "Combina com este produto". Sem escolha (lista vazia),
+  /// a loja continua sugerindo sozinha pelo grupo/subgrupo.
+  Future<void> _escolherProdutosSugestao() async {
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final produtos = dataService.produtos
+        .where((p) => p.exibirNaLoja)
+        .toList()
+      ..sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
+    final selecionados = Set<String>.from(_produtosSugestaoLoja);
+    final buscaController = TextEditingController();
+    String termo = '';
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          // Busca por nome, grupo, subgrupo e código, aceitando as palavras
+          // em qualquer ordem (antes era só "nome contém").
+          bool combina(Produto p) {
+            if (termo.isEmpty) return true;
+            final alvo = [
+              p.nome,
+              p.grupo,
+              p.subgrupo,
+              p.codigo ?? '',
+              p.codigoBarras ?? '',
+            ].join(' ').toLowerCase();
+            return termo
+                .split(RegExp(r'\s+'))
+                .where((t) => t.isNotEmpty)
+                .every(alvo.contains);
+          }
+
+          // Já escolhidos primeiro: o lojista confere a seleção sem rolar a
+          // lista inteira.
+          final filtrados = <Produto>[
+            ...produtos.where((p) => combina(p) && selecionados.contains(p.id)),
+            ...produtos.where((p) => combina(p) && !selecionados.contains(p.id)),
+          ];
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            title: const Text(
+              'Itens sugeridos',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            content: SizedBox(
+              width: 460,
+              height: 470,
+              child: Column(
+                children: [
+                  TextField(
+                    controller: buscaController,
+                    style: const TextStyle(color: Colors.white),
+                    onChanged: (v) =>
+                        setDialogState(() => termo = v.trim().toLowerCase()),
+                    decoration: const InputDecoration(
+                      hintText: 'Buscar por nome, grupo ou código...',
+                      hintStyle: TextStyle(color: Colors.white38),
+                      prefixIcon: Icon(Icons.search, color: Colors.white54),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: filtrados.isEmpty
+                            ? null
+                            : () => setDialogState(() {
+                                  for (final p in filtrados) {
+                                    selecionados.add(p.id);
+                                  }
+                                }),
+                        child: const Text('Selecionar todos'),
+                      ),
+                      TextButton(
+                        onPressed: selecionados.isEmpty
+                            ? null
+                            : () => setDialogState(selecionados.clear),
+                        child: const Text('Limpar'),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${filtrados.length} item(ns)',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Expanded(
+                    child: filtrados.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Nenhum produto encontrado.',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: filtrados.length,
+                            itemBuilder: (context, index) {
+                              final produto = filtrados[index];
+                              return CheckboxListTile(
+                                dense: true,
+                                value: selecionados.contains(produto.id),
+                                activeColor: Colors.green,
+                                onChanged: (marcado) => setDialogState(() {
+                                  if (marcado == true) {
+                                    selecionados.add(produto.id);
+                                  } else {
+                                    selecionados.remove(produto.id);
+                                  }
+                                }),
+                                title: Text(
+                                  produto.nome,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  [
+                                    produto.grupo,
+                                    if (produto.subgrupo.isNotEmpty)
+                                      produto.subgrupo,
+                                  ].join(' › ') +
+                                      ' • R\$ '
+                                          '${produto.preco.toStringAsFixed(2)}' +
+                                      (produto.estoqueTotal <= 0
+                                          ? ' • sem saldo'
+                                          : '') +
+                                      (produto.naLojaAgora
+                                          ? ''
+                                          : ' • fora do período da loja'),
+                                  style: const TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${selecionados.length} selecionado(s)',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: Text('Confirmar (${selecionados.length})'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    buscaController.dispose();
+
+    if (confirmado == true) {
+      setState(() {
+        _produtosSugestaoLoja
+          ..clear()
+          ..addAll(selecionados);
+      });
+      // Grava na hora: a sugestão escolhida tem que valer para a vitrine
+      // mesmo que o lojista saia da tela sem clicar em "Salvar Tudo".
+      _salvarConfigEcommerceImediato();
+    }
+  }
+
   Widget _buildAbaLayout() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -2937,7 +3565,56 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
               ),
             ),
           ),
-          
+
+          const SizedBox(height: 24),
+
+          // Controle de estoque na loja online
+          Card(
+            color: Colors.orange.withOpacity(0.12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Colors.orangeAccent.withOpacity(0.3)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.inventory_2_outlined, color: Colors.orangeAccent),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Controle de estoque',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ),
+                      Switch(
+                        value: _controlarEstoqueLoja,
+                        onChanged: (valor) {
+                          setState(() => _controlarEstoqueLoja = valor);
+                          // Grava na hora: sem isto o valor só ia para o banco
+                          // no "Salvar Tudo" e a vitrine continuava com o
+                          // selo "Esgotado" ligado.
+                          _salvarConfigEcommerceImediato();
+                        },
+                        activeColor: Colors.orangeAccent,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _controlarEstoqueLoja
+                        ? '✅ Loja controla o estoque: itens sem estoque mostram o selo "Esgotado" e a venda é bloqueada.'
+                        : '💡 Desligado (padrão): itens sem estoque podem ser vendidos e o selo "Esgotado" não aparece. Ligue só se a sua loja controla o estoque de verdade.',
+                    style: TextStyle(color: Colors.orange[100], fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           const SizedBox(height: 24),
           Card(
             color: Colors.white.withOpacity(0.1),
@@ -2966,6 +3643,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                     selected: {_tamanhoLogo},
                     onSelectionChanged: (Set<String> newSelection) {
                       setState(() => _tamanhoLogo = newSelection.first);
+                      _salvarConfigEcommerceImediato();
                     },
                   ),
                 ],
@@ -3002,6 +3680,7 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                     selected: {_posicaoLogo},
                     onSelectionChanged: (Set<String> newSelection) {
                       setState(() => _posicaoLogo = newSelection.first);
+                      _salvarConfigEcommerceImediato();
                     },
                   ),
                 ],
@@ -3038,8 +3717,209 @@ class _PersonalizarLojaPageState extends State<PersonalizarLojaPage> with Single
                     selected: {_estiloCards},
                     onSelectionChanged: (Set<String> newSelection) {
                       setState(() => _estiloCards = newSelection.first);
+                      _salvarConfigEcommerceImediato();
                     },
                   ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Card(
+            color: Colors.white.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.grid_view_rounded, color: Colors.white),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Colunas do catálogo',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Quantos produtos por linha na vitrine. Com 2 colunas os cards ficam maiores; '
+                    '"Automático" volta à grade antiga, que se ajusta ao tamanho da tela.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'auto', label: Text('Automático')),
+                      ButtonSegment(value: '2', label: Text('2')),
+                      ButtonSegment(value: '3', label: Text('3')),
+                      ButtonSegment(value: '4', label: Text('4')),
+                    ],
+                    selected: {_colunasCatalogoLoja},
+                    onSelectionChanged: (Set<String> newSelection) {
+                      setState(() => _colunasCatalogoLoja = newSelection.first);
+                      _salvarConfigEcommerceImediato();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          Card(
+            color: Colors.white.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.star_rounded, color: Colors.white),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Destaques na vitrine',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Coloca os produtos escolhidos numa faixa no topo da loja, antes da grade, '
+                    'sem mexer no restante do layout.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  SwitchListTile(
+                    title: const Text('Exibir destaques no topo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    subtitle: const Text('Desligado: os itens voltam para a grade normal', style: TextStyle(color: Colors.white70)),
+                    value: _destaquesLojaAtivo,
+                    onChanged: (value) => setState(() => _destaquesLojaAtivo = value),
+                    activeColor: Colors.green,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildTextField(
+                    _tituloDestaquesLojaController,
+                    'Título da seção',
+                    hint: 'Destaques',
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Tamanho dos destaques',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'grande', label: Text('Grande'), icon: Icon(Icons.view_carousel, size: 18)),
+                      ButtonSegment(value: 'compacto', label: Text('Compacto'), icon: Icon(Icons.view_agenda, size: 18)),
+                    ],
+                    selected: {_tamanhoDestaquesLoja},
+                    onSelectionChanged: (Set<String> newSelection) {
+                      setState(() => _tamanhoDestaquesLoja = newSelection.first);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _escolherProdutosDestaque,
+                      icon: const Icon(Icons.playlist_add_check, color: Colors.green),
+                      label: Text(
+                        'Escolher produtos em destaque (${_produtosDestaqueLoja.length})',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          Card(
+            color: Colors.white.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.auto_awesome, color: Colors.white),
+
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Produtos que combinam',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Na tela do produto, a loja sugere itens para o cliente '
+                    'levar mais junto. Escolha abaixo quais itens são '
+                    'sugeridos — sem escolha, ela sugere automaticamente '
+                    'os do mesmo grupo/subgrupo.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    title: const Text('Exibir sugestões na loja', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    subtitle: const Text('Mostra a seção de produtos que combinam com o item aberto', style: TextStyle(color: Colors.white70)),
+                    value: _exibirSugestoesComplementares,
+                    onChanged: (value) => setState(() => _exibirSugestoesComplementares = value),
+                    activeColor: Colors.green,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  if (_exibirSugestoesComplementares) ...[
+                    _buildTextField(
+                      _tituloSugestoesComplementaresController,
+                      'Título da seção',
+                      hint: 'Combina com este produto',
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _escolherProdutosSugestao,
+                        icon: const Icon(Icons.playlist_add_check, color: Colors.green),
+                        label: Text(
+                          _produtosSugestaoLoja.isEmpty
+                              ? 'Escolher itens sugeridos (automático)'
+                              : 'Escolher itens sugeridos (${_produtosSugestaoLoja.length})',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                    if (_produtosSugestaoLoja.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: TextButton(
+                          onPressed: () {
+                            setState(() => _produtosSugestaoLoja.clear());
+                            _salvarConfigEcommerceImediato();
+                          },
+                          child: const Text(
+                            'Limpar e voltar à sugestão automática',
+                            style: TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ),
+                      ),
+                  ],
                 ],
               ),
             ),

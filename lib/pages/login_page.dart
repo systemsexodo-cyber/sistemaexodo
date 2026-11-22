@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../widgets/exodo_logo.dart';
@@ -39,6 +41,9 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _fazerLogin() async {
+    // Fecha o teclado antes de entrar: no celular ele ficaria aberto por cima
+    // da tela seguinte durante a troca de página.
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -138,9 +143,16 @@ class _LoginPageState extends State<LoginPage> {
           // ANTERIOR — era assim que estoques de uma empresa iam para a outra.
           if (mounted) setState(() => _isLoading = true);
           try {
+            // No celular o banco do PC pode estar fora de alcance: não deixa o
+            // botão "Entrar" preso por 30 s. A carga continua em segundo plano
+            // e a Home mostra o próprio progresso.
+            final bool celular =
+                !kIsWeb &&
+                (defaultTargetPlatform == TargetPlatform.android ||
+                    defaultTargetPlatform == TargetPlatform.iOS);
             await dataService
                 .definirEmpresaAtual(empresaSelecionada.id)
-                .timeout(const Duration(seconds: 30));
+                .timeout(Duration(seconds: celular ? 8 : 30));
             dataService.setEmpresaAtual(empresaSelecionada);
           } catch (e) {
             debugPrint('>>> [Login] ⚠️ Erro ao carregar dados da empresa: $e');
@@ -187,7 +199,15 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // A tela de login é sempre escura: fixa ícones claros nas barras do
+    // sistema (senão o relógio/bateria do celular some no fundo).
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light.copyWith(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarDividerColor: Colors.transparent,
+      ),
+      child: Scaffold(
       backgroundColor: const Color(0xFF0F172A),
       body: Stack(
         children: [
@@ -224,7 +244,15 @@ class _LoginPageState extends State<LoginPage> {
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                // Arrastar a tela fecha o teclado (gesto natural no celular).
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: EdgeInsets.symmetric(
+                  horizontal: MediaQuery.sizeOf(context).width < 700
+                      ? 16.0
+                      : 24.0,
+                  vertical: 16.0,
+                ),
                 child: Column(
                   children: [
                     _buildLogoPremium(),
@@ -269,6 +297,7 @@ class _LoginPageState extends State<LoginPage> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -339,6 +368,10 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Widget _buildLogoPremium() {
+    // No celular o logo ocupa menos altura, para o card de login (e o botão
+    // de entrar) caberem na tela sem rolar.
+    final bool celular = MediaQuery.sizeOf(context).width < 700;
+    final double ladoLogo = celular ? 96 : 120;
     return Hero(
       tag: 'logo_exodo',
       child: Column(
@@ -347,8 +380,8 @@ class _LoginPageState extends State<LoginPage> {
             alignment: Alignment.center,
             children: [
               Container(
-                width: 120,
-                height: 120,
+                width: ladoLogo,
+                height: ladoLogo,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   boxShadow: [
@@ -360,7 +393,7 @@ class _LoginPageState extends State<LoginPage> {
                   ],
                 ),
               ),
-              const ExodoLogo(fontSize: 80, showSubtitle: false),
+              ExodoLogo(fontSize: celular ? 64 : 80, showSubtitle: false),
             ],
           ),
           const SizedBox(height: 10),
@@ -384,8 +417,9 @@ class _LoginPageState extends State<LoginPage> {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
-          width: 400,
-          padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 700 ? 24 : 40),
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 400),
+          padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 700 ? 22 : 40),
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(32),

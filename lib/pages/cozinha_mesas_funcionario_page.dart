@@ -103,6 +103,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
   void _mostrarConfiguracoes(BuildContext context) {
     bool modoToqueLocal = _modoToque;
+    bool atrelarLocal = _atrelarComandaAMesa;
 
     showDialog(
       context: context,
@@ -128,13 +129,27 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                   const Divider(color: Colors.white10, height: 1),
                   SwitchListTile(
                     title: const Text('Atrelar Comandas às Mesas', style: TextStyle(color: Colors.white, fontSize: 14)),
-                    subtitle: const Text('Exige vincular a comanda a uma mesa física ao abrir', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                    subtitle: const Text('Exige vincular a comanda a uma mesa física ao abrir. Afeta o comportamento ao criar novas mesas/comandas.', style: TextStyle(color: Colors.grey, fontSize: 11)),
                     activeColor: Colors.orange,
-                    value: _atrelarComandaAMesa,
+                    value: atrelarLocal,
                     onChanged: (value) async {
+                      setDialogState(() => atrelarLocal = value);
                       await _salvarConfigAtrelar(value);
-                      setDialogState(() {});
                     },
+                  ),
+                  const Divider(color: Colors.white10, height: 1),
+                  // Nova opção: Vincular na hora
+                  ListTile(
+                    title: const Text('Vincular ao abrir', style: TextStyle(color: Colors.white, fontSize: 14)),
+                    subtitle: const Text('Sugere automaticamente o vínculo ao nova mesa/comanda', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                    trailing: Switch(
+                      value: atrelarLocal,
+                      activeColor: Colors.orange,
+                      onChanged: (value) async {
+                        setDialogState(() => atrelarLocal = value);
+                        await _salvarConfigAtrelar(value);
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -332,10 +347,32 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     );
   }
 
+  /// Conta os itens da mesa incluindo as comandas vinculadas a ela, para o
+  /// card exibir a mesma quantidade que o total mostrado.
+  int _contarItensMesa(MesaComanda item, DataService dataService) {
+    if (item.tipo != TipoControle.mesa) return item.itens.length;
+    var n = item.itens.length;
+    for (final c in dataService.mesasComandas) {
+      if (c.tipo == TipoControle.comanda && c.mesaId == item.id) {
+        n += c.itens.length;
+      }
+    }
+    return n;
+  }
+
   Widget _buildQuadroMesaComanda(MesaComanda item, DataService dataService) {
     final temPendentes = item.temItensPendentes;
     final temProntos = item.temItensProntos;
-    final total = item.totalCalculado;
+    // O total do card precisa refletir a mesa + as comandas vinculadas a ela,
+    // senão fica menor que o total mostrado ao abrir a mesa (que soma as duas).
+    double total = item.totalCalculado;
+    if (item.tipo == TipoControle.mesa) {
+      for (final c in dataService.mesasComandas) {
+        if (c.tipo == TipoControle.comanda && c.mesaId == item.id) {
+          total += c.totalCalculado;
+        }
+      }
+    }
     
     Color accentColor = _tipoSelecionado == TipoControle.mesa ? Colors.orange : Colors.purpleAccent;
     if (temPendentes) accentColor = Colors.redAccent;
@@ -454,7 +491,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                               Icon(Icons.layers_outlined, color: Colors.grey[500], size: 12),
                               const SizedBox(width: 4),
                               Text(
-                                '${item.itens.length} it.', 
+                                '${_contarItensMesa(item, dataService)} it.', 
                                 style: TextStyle(color: Colors.grey[500], fontSize: 11),
                               ),
                             ],
@@ -594,6 +631,20 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                   label: const Text('Receber'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Novo botão para receber por valor (não apenas por itens)
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _mostrarDialogoReceberPorValor(isComandaIndependente ? mesa : null, isComandaIndependente),
+                  icon: const Icon(Icons.attach_money),
+                  label: const Text('Receber por Valor'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
@@ -2291,9 +2342,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     ),
                     const SizedBox(height: 8),
                     Container(
-                      constraints: const BoxConstraints(maxHeight: 400),
                       child: ListView.builder(
                         shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
                         itemCount: itensPorOrigem.length,
                         itemBuilder: (context, origemIndex) {
                           final origem = itensPorOrigem.keys.elementAt(origemIndex);
@@ -2315,6 +2366,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                           });
                           
                           return ExpansionTile(
+                            initiallyExpanded: true,
                             title: Text(
                               origem,
                               style: TextStyle(
@@ -2522,7 +2574,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     if (itensSelecionados.isNotEmpty || quantidadePessoasCouvertSelecionada > 0) ...[
                       const Divider(),
                       Text(
-                        'Valor selecionado: ${formatoMoeda.format(valorSelecionado)}',
+                        'Valor selecionado: ${formatoMoeda.format(valorSelecionado)}'
+                        ' • ${itensSelecionados.length} item(ns)',
                         style: const TextStyle(color: Colors.green, fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
@@ -2584,6 +2637,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                               'itens': itensSelecionados.toList(),
                               'valor': valorTotalComGarcom, // Retornar o valor total com garçom para validação correta
                               'valorBase': valorSelecionado, // Valor sem garçom (para referência)
+                              'valorItens': valorItensSelecionados, // Só itens (base do garçom)
                               'pagamentos': pagamentos,
                               'pessoaPagou': pessoaPagouController.text.trim(),
                               'couvertSelecionado': quantidadePessoasCouvertSelecionada > 0,
@@ -2703,10 +2757,13 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         // valorPago = itens + couvert + (itens * 0.10)
         // Não podemos calcular precisamente sem saber o valor dos itens separado do couvert
         // Mas podemos usar o valorBase do resultado se disponível
-        final valorBaseDoResultado = resultado['valorBase'] as double?;
-        if (valorBaseDoResultado != null) {
-          // Garçom é 10% apenas dos itens (valorBase)
-          final valorGarcomCalculado = valorBaseDoResultado * 0.10;
+        // Garçom = 10% apenas dos ITENS (sem couvert). Usar o valor
+        // selecionado inteiro recusava o recebimento parcial com couvert.
+        final valorItensDoResultado =
+            (resultado['valorItens'] as double?) ??
+            (resultado['valorBase'] as double?);
+        if (valorItensDoResultado != null) {
+          final valorGarcomCalculado = valorItensDoResultado * 0.10;
           valorEsperado = valorPago - valorGarcomCalculado;
         } else {
           // Fallback: tentar estimar removendo aproximadamente 10% do total
@@ -3209,9 +3266,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     ),
                     const SizedBox(height: 8),
                     Container(
-                      constraints: const BoxConstraints(maxHeight: 400),
                       child: ListView.builder(
                         shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
                         itemCount: itensNaoPagos.length,
                         itemBuilder: (context, index) {
                           final item = itensNaoPagos[index];
@@ -3380,7 +3437,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     if (itensSelecionados.isNotEmpty || quantidadePessoasCouvertSelecionada > 0) ...[
                       const Divider(),
                       Text(
-                        'Valor selecionado: ${formatoMoeda.format(valorSelecionado)}',
+                        'Valor selecionado: ${formatoMoeda.format(valorSelecionado)}'
+                        ' • ${itensSelecionados.length} item(ns)',
                         style: const TextStyle(color: Colors.green, fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
@@ -3733,12 +3791,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             content: Text('Erro ao processar pagamento: $e'),
             backgroundColor: Colors.red,
           ),
-        );
-      }
-    }
+        );    }
   }
+}
 
-  Future<MesaComanda?> _abrirNovaMesa(BuildContext context, DataService dataService) async {
+  /// Mostra um diálogo para receber por valor (valor total), não apenas marcar itens como recebidos\n  Future<void> _mostrarDialogoReceberPorValor(MesaComanda? mesa, bool isComanda) async {\n    if (mesa == null) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Nenhuma mesa/comanda selecionada'),\n            backgroundColor: Colors.orange,\n          ),\n        );\n      }\n      return;\n    }\n\n    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');\n    final totalDisponivel = mesa.totalCalculado - mesa.totalPago;\n\n    if (totalDisponivel <= 0.01) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Nenhum valor pendente para receber'),\n            backgroundColor: Colors.orange,\n          ),\n        );\n      }\n      return;\n    }\n\n    // Para mesas, buscar comandas vinculadas\n    List<MesaComanda> comandasVinculadas = [];\n    if (!isComanda) {\n      comandasVinculadas = dataService.mesasComandas\n          .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)\n          .toList();\n    }\n\n    double totalMesaEComandas = mesa.totalCalculado;\n    for (final c in comandasVinculadas) {\n      totalMesaEComandas += c.totalCalculado;\n    }\n\n    // Coleta itens não pagos\n    final itensNaoPagos = <ItemPedido>[];\n    for (final item in mesa.itens) {\n      if (item.status != StatusItem.pago && item.status != StatusItem.cancelado) {\n        itensNaoPagos.add(item);\n      }\n    }\n    // Adicionar itens das comandas vinculadas\n    for (final comanda in comandasVinculadas) {\n      for (final item in comanda.itens) {\n        if (item.status != StatusItem.pago && item.status != StatusItem.cancelado) {\n          itensNaoPagos.add(item);\n        }\n      }\n    }\n\n    if (itensNaoPagos.isEmpty) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Nenhum item pendente para receber'),\n            backgroundColor: Colors.orange,\n          ),\n        );\n      }\n      return;\n    }\n\n    // Calcular valores\n    double valorItensSelecionados = 0.0;\n    int quantidadePessoasCouvertSelecionada = 0;\n    double valorPorPessoa = mesa.valorCouvertPorPessoa ?? 0.0;\n\n    // Mostrar diálogo de seleção\n    final resultado = await showDialog<Map<String, dynamic>>(\n      context: context,\n      builder: (context) => StatefulBuilder(\n        builder: (context, setDialogState) {\n          return AlertDialog(\n            backgroundColor: const Color(0xFF1E1E2E),\n            insetPadding: EdgeInsets.symmetric(\n              horizontal: 16,\n              vertical: MediaQuery.of(context).viewInsets.bottom + 24,\n            ),\n            title: const Text(\n              'Receber por Valor',\n              style: TextStyle(color: Colors.white),\n            ),\n            content: SingleChildScrollView(\n              child: Column(\n                mainAxisSize: MainAxisSize.min,\n                crossAxisAlignment: CrossAxisAlignment.start,\n                children: [\n                  // Informações da mesa/comanda\n                  Text(\n                    'Comanda: ${mesa.numero}',\n                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),\n                  ),\n                  const SizedBox(height: 8),\n                  Text(\n                    'Total Pendente: ${formatoMoeda.format(totalMesaEComandas - mesa.totalPago)}',\n                    style: const TextStyle(color: Colors.orange, fontSize: 14),\n                  ),\n                  const SizedBox(height: 16),\n\n                  // Seção de itens\n                  const Text(\n                    'Itens Pendentes:',\n                    style: TextStyle(color: Colors.white70, fontSize: 14),\n                  ),\n                  const SizedBox(height: 8),\n                  SingleChildScrollView(\n                    physics: const NeverScrollableScrollPhysics(),\n                    scrollDirection: Axis.horizontal,\n                    child: DataTable(\n                      columns: [\n                        DataColumn(label: const Text('Item', style: TextStyle(color: Colors.white))),\n                        DataColumn(label: const Text('Qtd', style: TextStyle(color: Colors.white))),\n                        DataColumn(label: const Text('Valor Unit.', style: TextStyle(color: Colors.white))),\n                        DataColumn(label: const Text('Total', style: TextStyle(color: Colors.white))),\n                      ],\n                      rows: itensNaoPagos.map((item) {\n                        final itemTotal = item.preco * item.quantidade;\n                        return DataRow(cells: [\n                          DataCell(Text(item.nome, style: const TextStyle(color: Colors.white))),\n                          DataCell(Text(item.quantidade.toString(), style: const TextStyle(color: Colors.white))),\n                          DataCell(Text(formatoMoeda.format(item.preco), style: const TextStyle(color: Colors.white))),\n                          DataCell(Text(formatoMoeda.format(itemTotal), style: const TextStyle(color: Colors.white))),\n                        ]);\n                      }).toList(),\n                    ),\n                  ),\n\n                  const SizedBox(height: 16),\n\n                  // Seção de couvert\n                  if (totalMesaEComandas > mesa.totalCalculado) {\n                    const Text(\n                      'Couvert Artístico:',\n                      style: TextStyle(color: Colors.white70, fontSize: 14),\n                    ),\n                    const SizedBox(height: 8),\n                    Row(\n                      children: [\n                        Expanded(\n                          child: TextField(\n                            decoration: InputDecoration(\n                              labelText: 'Pessoas',\n                              labelStyle: const TextStyle(color: Colors.grey),\n                              hintText: 'Quantidade de pessoas',\n                              hintStyle: const TextStyle(color: Colors.grey),\n                              filled: true,\n                              fillColor: Colors.white.withOpacity(0.1),\n                              border: OutlineInputBorder(\n                                borderRadius: BorderRadius.circular(8),\n                              ),\n                            ),\n                            style: const TextStyle(color: Colors.white),\n                            onChanged: (value) {\n                              final q = double.tryParse(value) ?? 0.0;\n                              if (q < 0) q = 0.0;\n                              if (q > quantidadePessoasPendente) q = quantidadePessoasPendente;\n                              setDialogState(() => quantidadePessoasCouvertSelecionada = q.toInt());\n                            },\n                          ),\n                        ),\n                        const SizedBox(width: 8),\n                        Text(\n                          '${formatoMoeda.format(valorPorPessoa)} por pessoa',\n                          style: const TextStyle(color: Colors.grey),\n                        ),\n                      ],\n                    ),\n                    const SizedBox(height: 8),\n                    Text(\n                      'Total Couvert: ${formatoMoeda.format(quantidadePessoasCouvertSelecionada * valorPorPessoa)}',\n                      style: const TextStyle(color: Colors.orange, fontSize: 12),\n                    ),\n                  } else {\n                    const Text(\n                      'Não há couvert pendente nesta comanda/mesa.',\n                      style: TextStyle(color: Colors.grey, fontSize: 12),\n                    ),\n                  },\n\n                  const SizedBox(height: 16),\n\n                  // Linha de valor selecionado\n                  const Text(\n                    'Valor Selecionado:',\n                    style: TextStyle(color: Colors.white70, fontSize: 14),\n                  ),\n                  const SizedBox(height: 8),\n                  Row(\n                    children: [\n                      Expanded(\n                        child: Text(\n                          '${formatoMoeda.format(valorItensSelecionados)}' + ' • ${itensSelecionados.length > 0 ? itensSelecionados.length + ' item(ns)' : ''}',\n                          style: const TextStyle(color: Colors.orange, fontSize: 16, fontWeight: FontWeight.bold),\n                        ),\n                      ),\n                    ],\n                  ),\n\n                  const SizedBox(height: 16),\n\n                  // Campo para nome quem paga\n                  TextField(\n                    controller: TextEditingController(),\n                    decoration: InputDecoration(\n                      labelText: 'Nome de quem está pagando (opcional)',\n                      labelStyle: const TextStyle(color: Colors.grey),\n                      hintText: 'Ex: João Silva',\n                      hintStyle: const TextStyle(color: Colors.grey),\n                      filled: true,\n                      fillColor: Colors.white.withOpacity(0.1),\n                      border: OutlineInputBorder(\n                        borderRadius: BorderRadius.circular(8),\n                      ),\n                    ),\n                    style: const TextStyle(color: Colors.white),\n                  ),\n\n                  const SizedBox(height: 24),\n\n                  // Ações\n                  Row(\n                    mainAxisAlignment: MainAxisAlignment.end,\n                    children: [\n                      TextButton(\n                        onPressed: () => Navigator.pop(context),\n                        child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),\n                      ),\n                      const SizedBox(width: 8),\n                      ElevatedButton(\n                        onPressed: () async {\n                          // Calcular valor total\n                          double valorBaseSelecionado = valorItensSelecionados;\n                          final valorCouvertSelecionado = quantidadePessoasCouvertSelecionada * valorPorPessoa;\n                          double valorGarcomSelecionado = 0.0;\n                          double valorTotalComGarcom = valorSelecionado;\n\n                          if (!mesa.garcomRetirado) {\n                            // Garçom é 10% apenas do valor base (itens selecionados)\n                            valorGarcomSelecionado = valorBaseSelecionado * 0.10;\n                            // Valor total com garçom\n                            valorTotalComGarcom = valorSelecionado + valorGarcomSelecionado;\n                          }\n\n                          // Mostrar tela de pagamento do PDV (até 2 formas)\n                          final pagamentos = await _mostrarTelaPagamentoPDV(\n                            context,\n                            valorTotalComGarcom,\n                            '',\n                            mesaComanda: mesa,\n                            valorBase: valorBaseSelecionado,\n                          );\n\n                          if (pagamentos != null && pagamentos.isNotEmpty && context.mounted) {\n                            // Retornar itens selecionados e valores\n                            final itensIds = itensNaoPagos.map((i) => i.id).toList();\n                            Navigator.pop(context, {\n                              'itens': itensIds,\n                              'valor': valorTotalComGarcom, \n                              'valorBase': valorSelecionado, \n                              'couvertSelecionado': quantidadePessoasCouvertSelecionada > 0, \n                              'valorCouvert': valorCouvertSelecionado, \n                              'quantidadePessoasCouvert': quantidadePessoasCouvertSelecionada, \n                            });\n                          }\n                        },\n                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),\n                        child: const Text('Continuar'),\n                      ),\n                    ],\n                  ),\n                ],\n              ),\n            ),\n          );\n        },\n      ),\n    );\n\n    if (resultado == null) return;\n\n    final itensIds = resultado['itens'] as List<String>;\n    final pagamentos = resultado['pagamentos'] as List<Map<String, dynamic>>?;\n    final pessoaPagou = resultado['pessoaPagou'] as String?;\n    final couvertSelecionadoResult = resultado['couvertSelecionado'] as bool? ?? false;\n    final valorCouvert = resultado['valorCouvert'] as double? ?? 0.0;\n\n    if (pagamentos == null || pagamentos.isEmpty) {\n      return;\n    }\n\n    // Processar pagamento\n    try {\n      // Recarregar dados atualizados\n      final comandaAtual = dataService.mesasComandas.firstWhere(\n        (c) => c.id == mesa.id,\n        orElse: () => mesa,\n      );\n\n      // Criar registros de pagamento\n      final registrosPagamento = pagamentos.map((pagamentoData) {\n        String observacaoPagamento = 'Pagamento parcial';\n        if (itensIds.isNotEmpty && couvertSelecionadoResult) {\n          observacaoPagamento = '${itensIds.length} item(ns) + Couvert';\n        } else if (itensIds.isNotEmpty) {\n          observacaoPagamento = '${itensIds.length} item(ns)';\n        } else if (couvertSelecionadoResult) {\n          observacaoPagamento = 'Couvert Artístico';\n        }\n\n        return RegistroPagamento(\n          id: uuid.v4(),\n          valor: pagamentoData['valor'] as double,\n          dataPagamento: DateTime.now(),\n          formaPagamento: (pagamentoData['tipo'] as TipoPagamento).nome,\n          observacao: observacaoPagamento + (pagamentoData['observacao'] != null ? ' - ${pagamentoData['observacao']}' : ''),\n          itensPagos: itensIds,\n          pessoaPagou: pessoaPagou,\n        );\n      }).toList();\n\n      // Adicionar itens aos pagos\n      final novosItensPagos = [...comandaAtual.itensPagos, ...itensIds];\n\n      // Atualizar histórico de pagamentos\n      final novoHistorico = [...comandaAtual.historicoPagamentos, ...registrosPagamento];\n\n      // Verificar se o garçom foi retirado (vem do resultado do pagamento)\n      bool garcomFoiRetirado = false;\n      if (pagamentos.isNotEmpty) {\n        final primeiroPagamento = pagamentos.first;\n        garcomFoiRetirado = primeiroPagamento['garcomRetirado'] as bool? ?? false;\n      }\n\n      // Atualizar couvert pago se foi selecionado\n      double novoCouvertPago = comandaAtual.couvertPago;\n      if (couvertSelecionadoResult && valorCouvert > 0) {\n        novoCouvertPago = (comandaAtual.couvertPago + valorCouvert).clamp(0.0, comandaAtual.valorCouvertCalculado);\n      }\n\n      // Atualizar comanda\n      final comandaAtualizada = comandaAtual.copyWith(\n        itensPagos: novosItensPagos,\n        historicoPagamentos: novoHistorico,\n        couvertPago: novoCouvertPago,\n        garcomRetirado: garcomFoiRetirado || comandaAtual.garcomRetirado,\n      );\n      await dataService.updateMesaComanda(comandaAtualizada);\n      // Atualizar _mesaSelecionada DEPOIS de updateMesaComanda para que\n      // reflita os dados já atualizados no dataService.\n      if (mounted && _mesaSelecionada != null) {\n        setState(() {\n          _mesaSelecionada = dataService.mesasComandas.firstWhere(\n            (m) => m.id == _mesaSelecionada!.id,\n            orElse: () => _mesaSelecionada!,\n          );\n        });\n      }\n\n      // Verificar se está totalmente paga\n      final novoTotalPago = comandaAtualizada.totalPago;\n      final novoTotal = comandaAtualizada.totalCalculado;\n      final estaPago = novoTotalPago >= novoTotal - 0.01;\n\n      if (estaPago) {\n        // Criar venda balcão e pedido antes de limpar a comanda\        final todosItensVenda = <ItemVendaBalcao>[];\n        for (final item in comandaAtualizada.itens) {\n          if (item.status != StatusItem.cancelado) {\n            todosItensVenda.add(ItemVendaBalcao(\n              id: item.itemId,\n              nome: item.nome,\n              precoUnitario: item.preco,\n              quantidade: item.quantidade.toDouble(),\n              isServico: item.isServico,\n            ));\n          }\n        }\n\n        // Converter todos os pagamentos da comanda em PagamentoPedido\n        // para preservar TODAS as formas de pagamento no histórico (split/parcial)\n        final pagamentosVenda = <PagamentoPedido>[];\n        TipoPagamento _parseForma(String? f) {\n          final lower = f?.toLowerCase() ?? '';\n          if (lower.contains('pix')) return TipoPagamento.pix;\n          if (lower.contains('dinheiro')) return TipoPagamento.dinheiro;\n          if (lower.contains('débito') || lower.contains('debito')) return TipoPagamento.cartaoDebito;\n          if (lower.contains('crédito') || lower.contains('credito') || lower.contains('cart')) return TipoPagamento.cartaoCredito;\n          if (lower.contains('boleto')) return TipoPagamento.boleto;\n          if (lower.contains('crediário') || lower.contains('crediario')) return TipoPagamento.crediario;\n          if (lower.contains('fiado')) return TipoPagamento.fiado;\n          return TipoPagamento.outro;\n        }\n        for (final rp in comandaAtualizada.historicoPagamentos) {\n          pagamentosVenda.add(PagamentoPedido(\n            id: rp.id,\n            tipo: _parseForma(rp.formaPagamento),\n            valor: rp.valor,\n            recebido: true,\n            dataRecebimento: rp.dataPagamento,\n            observacao: rp.observacao,\n          ));\n        }\n        if (pagamentosVenda.isEmpty && pagamentos.isNotEmpty) {\n          for (final p in pagamentos) {\n            pagamentosVenda.add(PagamentoPedido(\n              id: uuid.v4(),\n              tipo: p['tipo'] as TipoPagamento,\n              valor: p['valor'] as double,\n              recebido: true,\n              dataRecebimento: DateTime.now(),\n            ));\n          }\n        }\n\n        final numeroVenda = await dataService.getProximoNumeroVendaSeguro();\n        final vendaId = uuid.v4();\n\n        final vendaBalcao = VendaBalcao(\n          id: vendaId,\n          numero: numeroVenda,\n          dataVenda: DateTime.now(),\n          clienteId: comandaAtualizada.clienteId,\n          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',\n          itens: todosItensVenda,\n          tipoPagamento: pagamentos.first['tipo'] as TipoPagamento,\n          pagamentos: pagamentosVenda,\n          valorTotal: novoTotal,\n          valorRecebido: novoTotalPago,\n          troco: null,\n          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',\n          origem: 'Mesa/Comanda',\n        );\n\n        final pedidoHistorico = Pedido(\n          id: vendaId,\n          numero: numeroVenda,\n          dataPedido: DateTime.now(),\n          clienteId: comandaAtualizada.clienteId,\n          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',\n          produtos: comandaAtualizada.itens.map((i) => ItemPedido(\n            id: uuid.v4(),\n            nome: i.nome,\n            quantidade: i.quantidade,\n            preco: i.preco,\n          )).toList(),\n          servicos: [],\n          total: novoTotal,\n          status: 'Pago',\n          pagamentos: [],\n          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',\n          origem: 'Mesa/Comanda',\n        );\n\n        await dataService.addPedido(pedidoHistorico);\n        await dataService.addVendaBalcao(vendaBalcao);\n\n        final bool isComanda = comandaAtualizada.tipo == TipoControle.comanda;\n\n        if (isComanda) {\n          // Se for comanda, definimos status como Fechada (mantendo os itens intactos para histórico)\n          final comandaFechada = comandaAtualizada.copyWith(\n            status: 'Fechada',\n            dataFechamento: DateTime.now(),\n            updatedAt: DateTime.now(),\n          );\n          await dataService.updateMesaComanda(comandaFechada);\n        } else {\n          // Se for mesa física, limpamos os itens e mantemos aberta/disponível\n          final mesaLiberada = comandaAtualizada.copyWith(\n            status: 'Aberta', \n            dataFechamento: null,\n            dataAbertura: DateTime.now(), // Nova data de abertura para novo uso\n            itens: [], // Limpar itens\n            itensPagos: [],\n            historicoPagamentos: [],\n            valorCouvert: null,\n            quantidadePessoasCouvert: null,\n            valorCouvertPorPessoa: null,\n            valorGarcom: null,\n            garcomRetirado: false,\n            clienteNome: null,\n            clienteId: null,\n            observacao: null, // Limpar observações\n            updatedAt: DateTime.now(),\n          );\n          await dataService.updateMesaComanda(mesaLiberada);\n        }\n\n        // IMPORTANTE: Não verificar nem fechar a mesa aqui\n        // A mesa só deve ser fechada quando o usuário clicar no botão "Receber" da mesa\n        // Mesmo que a mesa toda esteja paga, não fechar automaticamente\n      }\n\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n              content: Text('Comanda ${comanda.numero} totalmente paga e fechada!'),\n            backgroundColor: Colors.green,\n            duration: const Duration(seconds: 3),\n          ),\n        );\n        setState(() {\n            _comandasExpandidas.remove(mesa.id);\n            // Recarregar mesa atualizada se houver uma selecionada\n            if (_mesaSelecionada != null && mesa.mesaId == _mesaSelecionada!.id) {\n              final mesaRecarregada = dataService.mesasComandas.firstWhere(\n                (m) => m.id == _mesaSelecionada!.id,\n                orElse: () => _mesaSelecionada!,\n              );\n              _mesaSelecionada = mesaRecarregada;\n            }\n          });\n        }\n      } else {\n        // Pagamento parcial\n        if (context.mounted) {\n          final valorTotalPago = registrosPagamento.fold<double>(0.0, (sum, p) => sum + p.valor);\n          ScaffoldMessenger.of(context).showSnackBar(\n            SnackBar(\n              content: Text('Pagamento de ${formatoMoeda.format(valorTotalPago)} registrado na comanda ${comanda.numero}.')\n,              backgroundColor: Colors.green,\n              duration: const Duration(seconds: 3),\n            ),\n          );\n          setState(() {\n            // Recarregar mesa atualizada se houver uma selecionada\n            if (_mesaSelecionada != null && mesa.mesaId == _mesaSelecionada!.id) {\n              final mesaRecarregada = dataService.mesasComandas.firstWhere(\n                (m) => m.id == _mesaSelecionada!.id,\n                orElse: () => _mesaSelecionada!,\n              );\n              _mesaSelecionada = mesaRecarregada;\n            }\n          });\n        }\n      }\n    } catch (e) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Erro ao processar pagamento: $e'),\n            backgroundColor: Colors.red,\n          ),\n        );\n      }\n    }\n  }\n\n  Future<MesaComanda?> _abrirNovaMesa(BuildContext context, DataService dataService) async {
     final numeroController = TextEditingController();
     final clienteController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -4828,8 +4885,13 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
               ? dataService.produtos
               : dataService.produtos.where((p) {
                   final buscaLower = termoBusca.toLowerCase();
-                  return p.nome.toLowerCase().contains(buscaLower) ||
-                      (p.codigo != null && p.codigo!.toLowerCase().contains(buscaLower));
+                  if (p.nome.toLowerCase().contains(buscaLower)) return true;
+                  return [
+                    if (p.codigo != null) p.codigo!,
+                    if (p.codigoBarras != null) p.codigoBarras!,
+                    ...p.codigosBarrasAdicionais,
+                    ...p.codigosFornecedor,
+                  ].any((c) => c.toLowerCase().contains(buscaLower));
                 }).toList();
 
           // Determinar destino final para exibição
@@ -5775,11 +5837,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
   /// Imprime os tickets de produção dos itens recém-lançados na mesa/comanda.
   ///
-  /// Os itens são agrupados pelo SETOR (local) escolhido no lançamento e cada
-  /// grupo imprime na impressora configurada NAQUELE departamento (o garçom
-  /// escolhe o setor uma vez e a impressão sai no setor certo). Itens sem setor
-  /// ("Outros") caem na resolução por produto. Silencioso: falhas de impressão
-  /// não impedem o lançamento.
+  /// Cada item sai na impressora DETERMINADA NO PRODUTO (departamento de
+  /// preparação + departamentos extras do cadastro do produto). O setor
+  /// escolhido no lançamento é usado apenas como fallback para produtos que
+  /// não têm impressora configurada. Silencioso: falhas de impressão não
+  /// impedem o lançamento.
   Future<void> _imprimirProducao(
     List<ItemMesaComanda> novosItens,
     MesaComanda mesa,
@@ -5798,53 +5860,88 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         debugPrint('>>> [Producao]   → ${i.nome} (itemId: ${i.itemId}, local: ${i.local}, isServico: ${i.isServico})');
       }
 
-      // Agrupar por setor (local) para imprimir na impressora do departamento
-      final porSetor = <String, List<ItemMesaComanda>>{};
+      // A impressora de cada item é a DETERMINADA NO PRODUTO (departamento de
+      // preparação do produto + departamentos extras). O setor escolhido no
+      // lançamento é só fallback para produto SEM impressora configurada.
+      final produtosPorId = <String, Produto>{
+        for (final p in dataService.produtos) p.id: p,
+      };
+      final itensComImpressora = <ItemProducaoInput>[];
+      final semImpressoraPorSetor = <String, List<ItemProducaoInput>>{};
+
       for (final i in novosItens) {
         if (i.isServico) continue;
-        final setor = i.local;
-        porSetor.putIfAbsent(setor ?? 'Outros', () => []).add(i);
+        final input = ItemProducaoInput(
+          id: i.itemId,
+          nome: i.nome,
+          quantidade: i.quantidade,
+          observacao: i.observacao,
+          adicionais: i.adicionais.map((a) => a.nome).toList(),
+          // Hora em que o item foi lançado + garçom (para a cozinha)
+          dataHora: i.dataHora,
+          usuarioCriou: i.usuarioCriou,
+        );
+
+        final produto = produtosPorId[i.itemId];
+        final destinos = produto == null
+            ? const <DestinoProducao>[]
+            : ProducaoPdfService.destinosDoProduto(
+                produto: produto,
+                dataService: dataService,
+              );
+
+        if (destinos.isEmpty) {
+          semImpressoraPorSetor
+              .putIfAbsent(i.local ?? 'Outros', () => [])
+              .add(input);
+        } else {
+          itensComImpressora.add(input);
+        }
       }
 
-      debugPrint('>>> [Producao] 🗂️ Setores: ${porSetor.keys.toList()}');
       debugPrint('>>> [Producao] 🏭 Departamentos disponíveis: ${dataService.departamentos.map((d) => '${d.nome} (imp: ${d.impressoraProducao})').toList()}');
 
-      var totalImpressos = 0;
-      for (final entry in porSetor.entries) {
-        debugPrint('>>> [Producao] Imprimindo setor "${entry.key}" com ${entry.value.length} itens...');
-        final inputs = entry.value
-            .map((i) => ItemProducaoInput(
-                  id: i.itemId,
-                  nome: i.nome,
-                  quantidade: i.quantidade,
-                  observacao: i.observacao,
-                  adicionais: i.adicionais.map((a) => a.nome).toList(),
-                  // Hora em que o item foi lançado + garçom (para a cozinha)
-                  dataHora: i.dataHora,
-                  usuarioCriou: i.usuarioCriou,
-                ))
-            .toList();
+      final detalhes = DetalhesTicketProducao(
+        mesaComanda:
+            '${mesa.tipo == TipoControle.mesa ? "MESA" : "COMANDA"} ${mesa.numero}',
+        observacoesGerais: mesa.observacao,
+        // Hora da abertura da mesa/comanda = hora aproximada do pedido
+        dataPedido: mesa.dataAbertura,
+        usuarioCriou: dataService.responsavelAtivo ?? dataService.usuarioAtualNome,
+      );
 
-        final qtd = await ProducaoPdfService.imprimirTicketsProducao(
-          itens: inputs,
+      var totalImpressos = 0;
+
+      // Itens com impressora configurada no produto: imprime por destino do
+      // produto (é essa a impressora determinada no cadastro do produto).
+      if (itensComImpressora.isNotEmpty) {
+        debugPrint('>>> [Producao] Imprimindo ${itensComImpressora.length} '
+            'item(ns) nas impressoras configuradas nos produtos...');
+        totalImpressos += await ProducaoPdfService.imprimirTicketsProducao(
+          itens: itensComImpressora,
           dataService: dataService,
           empresa: empresa,
           numeroDocumento: mesa.numero,
           clienteNome: mesa.clienteNome,
-          detalhes: DetalhesTicketProducao(
-            mesaComanda:
-                '${mesa.tipo == TipoControle.mesa ? "MESA" : "COMANDA"} ${mesa.numero}',
-            observacoesGerais: mesa.observacao,
-            // Hora da abertura da mesa/comanda = hora aproximada do pedido
-            dataPedido: mesa.dataAbertura,
-            usuarioCriou: dataService.responsavelAtivo ?? dataService.usuarioAtualNome,
-          ),
-          // Impressora do DEPARTAMENTO correspondente ao setor escolhido
+          detalhes: detalhes,
+        );
+      }
+
+      // Fallback: produtos sem impressora configurada usam o setor escolhido.
+      for (final entry in semImpressoraPorSetor.entries) {
+        debugPrint('>>> [Producao] Produto sem impressora: setor '
+            '"${entry.key}" (${entry.value.length} item(ns))');
+        totalImpressos += await ProducaoPdfService.imprimirTicketsProducao(
+          itens: entry.value,
+          dataService: dataService,
+          empresa: empresa,
+          numeroDocumento: mesa.numero,
+          clienteNome: mesa.clienteNome,
+          detalhes: detalhes,
           setorForcado: entry.key == 'Outros' ? null : entry.key,
         );
-        debugPrint('>>> [Producao] Setor "${entry.key}": $qtd impresso(s)');
-        totalImpressos += qtd;
       }
+
       if (totalImpressos > 0) {
         debugPrint('>>> [Producao] ✓ $totalImpressos ticket(s) de produção impressos (${mesa.numero})');
       } else {
@@ -9699,7 +9796,9 @@ class _TelaLancarItensToque extends StatefulWidget {
 
 class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
   final _buscaController = TextEditingController();
+  final _buscaFocus = FocusNode();
   String _termo = '';
+  bool _setorExpandido = false;
   // produtosSelecionados: id -> { produto, quantidade, categoria, observacao, adicionais }
   final Map<String, Map<String, dynamic>> _produtosSelecionados = {};
   // Destino: mesa ou uma das comandas vinculadas
@@ -9755,7 +9854,83 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
   @override
   void dispose() {
     _buscaController.dispose();
+    _buscaFocus.dispose();
     super.dispose();
+  }
+
+  /// Códigos que identificam o produto: interno, código de barras principal,
+  /// códigos de barras extras e códigos do fornecedor.
+  List<String> _codigosDoProduto(Produto produto) {
+    return <String>[
+      if (produto.codigo != null) produto.codigo!,
+      if (produto.codigoBarras != null) produto.codigoBarras!,
+      ...produto.codigosBarrasAdicionais,
+      ...produto.codigosFornecedor,
+    ].where((c) => c.trim().isNotEmpty).toList();
+  }
+
+  bool _produtoTemCodigo(Produto produto, String termo) {
+    final alvo = termo.trim().toLowerCase();
+    if (alvo.isEmpty) return false;
+    return _codigosDoProduto(produto).any(
+      (c) => c.trim().toLowerCase() == alvo,
+    );
+  }
+
+  /// Lança direto pelo código digitado/lido pelo leitor (Enter do scanner).
+  ///
+  /// Procura primeiro um código exato (interno, barras, extras ou fornecedor).
+  /// Sem código exato, lança quando a busca deixa um único produto.
+  void _lancarPorCodigo(String valor) {
+    final termo = valor.trim();
+    if (termo.isEmpty) return;
+
+    Produto? escolhido;
+    final porCodigo = widget.dataService.produtos
+        .where((p) => _produtoTemCodigo(p, termo))
+        .toList();
+    if (porCodigo.length == 1) {
+      escolhido = porCodigo.first;
+    } else if (porCodigo.isEmpty) {
+      final filtrados = _produtosFiltrados;
+      if (filtrados.length == 1) escolhido = filtrados.first;
+    }
+
+    if (escolhido == null) {
+      _avisar(
+        porCodigo.length > 1
+            ? 'Mais de um produto usa o código "$termo". Toque no produto desejado.'
+            : 'Nenhum produto encontrado com o código "$termo".',
+        cor: Colors.orange,
+      );
+      return;
+    }
+
+    final antes =
+        _produtosSelecionados[escolhido.id]?['quantidade'] as int? ?? 0;
+    _adicionarProduto(escolhido);
+    final depois =
+        _produtosSelecionados[escolhido.id]?['quantidade'] as int? ?? 0;
+
+    _buscaController.clear();
+    setState(() => _termo = '');
+    _buscaFocus.requestFocus();
+
+    if (depois > antes) {
+      _avisar('✓ ${escolhido.nome} adicionado (cód. $termo)');
+    }
+  }
+
+  void _avisar(String mensagem, {Color cor = const Color(0xFF2E7D32)}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: cor,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   /// Grupos únicos dos produtos, ordenados por nome.
@@ -9792,10 +9967,11 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
     final termo = _termo.toLowerCase().trim();
     if (termo.isNotEmpty) {
       lista = lista.where((p) {
-        return p.nome.toLowerCase().contains(termo) ||
-            (p.codigo != null && p.codigo!.toLowerCase().contains(termo)) ||
-            p.grupo.toLowerCase().contains(termo) ||
-            p.subgrupo.toLowerCase().contains(termo);
+        if (p.nome.toLowerCase().contains(termo)) return true;
+        if (p.grupo.toLowerCase().contains(termo)) return true;
+        if (p.subgrupo.toLowerCase().contains(termo)) return true;
+        return _codigosDoProduto(p)
+            .any((c) => c.trim().toLowerCase().contains(termo));
       }).toList();
     } else {
       if (_filtroGrupo != null) {
@@ -10112,85 +10288,111 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
               ),
             ),
           ],
-          // Setor padrão (o garçom escolhe uma vez; vale para os próximos lançamentos)
+          // Setor/impressão: cada produto imprime na impressora determinada no
+          // SEU cadastro (departamento do produto). O setor escolhido aqui é
+          // usado só para itens cujo produto não tem impressora configurada.
+          // Fica recolhido para não roubar espaço da grade no celular.
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.print_outlined,
-                        color: Colors.orangeAccent.withOpacity(0.9), size: 16),
-                    const SizedBox(width: 6),
-                    Text(
-                      'SETOR DE IMPRESSÃO',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.6),
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _setorPadrao == null
-                            ? 'Automático (departamento do produto)'
-                            : 'Imprime na impressora de $_setorPadrao',
-                        style: TextStyle(
-                          color: _setorPadrao == null
-                              ? Colors.white.withOpacity(0.4)
-                              : Colors.orangeAccent.withOpacity(0.9),
-                          fontSize: 11,
+                InkWell(
+                  onTap: () =>
+                      setState(() => _setorExpandido = !_setorExpandido),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.print_outlined,
+                            color: Colors.orangeAccent.withOpacity(0.9),
+                            size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          'IMPRESSÃO',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _setorPadraoChip(
-                        label: 'Automático',
-                        ativo: _setorPadrao == null,
-                        onTap: () {
-                          setState(() => _setorPadrao = null);
-                          _salvarSetorPadrao(null);
-                        },
-                      ),
-                      ..._departamentosUnicos().map((dep) => Padding(
-                            padding: const EdgeInsets.only(left: 8),
-                            child: _setorPadraoChip(
-                              label: dep.nome,
-                              ativo: _setorPadrao == dep.nome,
-                              onTap: () {
-                                setState(() => _setorPadrao = dep.nome);
-                                _salvarSetorPadrao(dep.nome);
-                              },
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _setorPadrao == null
+                                ? 'Impressora do produto (automático)'
+                                : 'Sem impressora no produto: $_setorPadrao',
+                            style: TextStyle(
+                              color: _setorPadrao == null
+                                  ? Colors.white.withOpacity(0.4)
+                                  : Colors.orangeAccent.withOpacity(0.9),
+                              fontSize: 11,
                             ),
-                          )),
-                    ],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Icon(
+                          _setorExpandido
+                              ? Icons.expand_less
+                              : Icons.expand_more,
+                          color: Colors.white54,
+                          size: 20,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
+                if (_setorExpandido) ...[
+                  const SizedBox(height: 2),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _setorPadraoChip(
+                          label: 'Automático',
+                          ativo: _setorPadrao == null,
+                          onTap: () {
+                            setState(() => _setorPadrao = null);
+                            _salvarSetorPadrao(null);
+                          },
+                        ),
+                        ..._departamentosUnicos().map((dep) => Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: _setorPadraoChip(
+                                label: dep.nome,
+                                ativo: _setorPadrao == dep.nome,
+                                onTap: () {
+                                  setState(() => _setorPadrao = dep.nome);
+                                  _salvarSetorPadrao(dep.nome);
+                                },
+                              ),
+                            )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
               ],
             ),
           ),
-          // Busca
+          // Busca por nome ou código (o leitor de código de barras digita e
+          // manda Enter — aí o item é lançado direto, sem tocar na grade).
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: TextField(
               controller: _buscaController,
+              focusNode: _buscaFocus,
+              textInputAction: TextInputAction.search,
+              onSubmitted: _lancarPorCodigo,
               onChanged: (value) => setState(() => _termo = value),
               style: const TextStyle(color: Colors.white, fontSize: 16),
               decoration: InputDecoration(
-                hintText: 'Buscar produto...',
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Colors.orange, size: 24),
+                hintText: 'Nome ou código (Enter lança o item)',
+                hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                prefixIcon: const Icon(Icons.qr_code_scanner, color: Colors.orange, size: 24),
                 suffixIcon: _termo.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear, color: Colors.grey),
@@ -10199,7 +10401,11 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
                           setState(() => _termo = '');
                         },
                       )
-                    : null,
+                    : IconButton(
+                        icon: const Icon(Icons.keyboard_return, color: Colors.greenAccent, size: 22),
+                        tooltip: 'Lançar código',
+                        onPressed: () => _lancarPorCodigo(_buscaController.text),
+                      ),
                 filled: true,
                 fillColor: const Color(0xFF1E1E2E),
                 border: OutlineInputBorder(
@@ -10270,7 +10476,11 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: crossAxisCount,
-                      childAspectRatio: screenWidth > 480 ? 1.05 : 0.95,
+                      // Altura fixa: a barra de quantidade/ações SEMPRE cabe,
+                      // sem cortar o botão de "+" no rodapé do card.
+                      mainAxisExtent: screenWidth > 750
+                          ? 184
+                          : (screenWidth > 480 ? 180 : 176),
                       crossAxisSpacing: 10,
                       mainAxisSpacing: 10,
                     ),
@@ -10297,9 +10507,29 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      '$_totalItens item(ns) selecionado(s)',
-                      style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13),
+                    InkWell(
+                      onTap: _abrirCarrinho,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '$_totalItens item(ns) selecionado(s)',
+                            style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 13),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(Icons.edit_note,
+                              color: Colors.orangeAccent, size: 20),
+                          Text(
+                            'ver itens',
+                            style: TextStyle(
+                                color: Colors.orangeAccent.withOpacity(0.9),
+                                fontSize: 11),
+                          ),
+                        ],
+                      ),
                     ),
                     Text(
                       NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_totalValor),
@@ -10326,6 +10556,264 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Carrinho do lançamento: mostra os itens já escolhidos com botões GRANDES
+  /// de quantidade, observação, setor e remoção. No celular o card da grade é
+  /// estreito demais para ajustar quantidades com conforto.
+  Future<void> _abrirCarrinho() async {
+    if (_produtosSelecionados.isEmpty) {
+      _avisar('Nenhum item lançado ainda. Toque nos produtos para adicionar.',
+          cor: Colors.orange);
+      return;
+    }
+
+    final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          void atualizar(VoidCallback acao) {
+            setState(acao);
+            setSheetState(() {});
+            if (_produtosSelecionados.isEmpty && sheetContext.mounted) {
+              Navigator.pop(sheetContext);
+            }
+          }
+
+          final itens = _produtosSelecionados.values.toList()
+            ..sort((a, b) => (a['produto'] as Produto)
+                .nome
+                .compareTo((b['produto'] as Produto).nome));
+
+          return SafeArea(
+            child: SizedBox(
+              height: MediaQuery.of(context).size.height * 0.75,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 6, 6),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.receipt_long,
+                            color: Colors.orangeAccent),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Itens lançados ($_totalItens)',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white54),
+                          onPressed: () => Navigator.pop(sheetContext),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                      itemCount: itens.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final item = itens[index];
+                        final produto = item['produto'] as Produto;
+                        final qtd = item['quantidade'] as int;
+                        final adicionais = (item['adicionais'] as List?)
+                                ?.cast<AdicionalProduto>() ??
+                            [];
+                        final totalAdicionais =
+                            adicionais.fold(0.0, (s, a) => s + a.preco);
+                        final subtotal =
+                            (produto.precoAtual + totalAdicionais) * qtd;
+                        final obs = item['observacao']?.toString().trim() ?? '';
+
+                        return Container(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                produto.nome,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '$qtd x ${moeda.format(produto.precoAtual + totalAdicionais)}'
+                                ' = ${moeda.format(subtotal)}',
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (adicionais.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    '+ ${adicionais.map((a) => a.nome).join(', ')}',
+                                    style: const TextStyle(
+                                        color: Colors.greenAccent,
+                                        fontSize: 11),
+                                  ),
+                                ),
+                              if (obs.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    obs,
+                                    style: const TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 11),
+                                  ),
+                                ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  _botaoAcaoCarrinho(
+                                    icone: Icons.add_comment_outlined,
+                                    cor: obs.isEmpty
+                                        ? Colors.white54
+                                        : Colors.orangeAccent,
+                                    onTap: () async {
+                                      await _editarObservacao(produto);
+                                      setSheetState(() {});
+                                    },
+                                  ),
+                                  _botaoAcaoCarrinho(
+                                    icone: Icons.category_outlined,
+                                    cor: Colors.white54,
+                                    onTap: () async {
+                                      await _editarCategoria(produto);
+                                      setSheetState(() {});
+                                    },
+                                  ),
+                                  const Spacer(),
+                                  _botaoQuantidade(
+                                    icone: Icons.remove,
+                                    onTap: () => atualizar(
+                                        () => _removerProduto(produto.id)),
+                                  ),
+                                  SizedBox(
+                                    width: 44,
+                                    child: Text(
+                                      '$qtd',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  _botaoQuantidade(
+                                    icone: Icons.add,
+                                    onTap: () => atualizar(
+                                        () => _adicionarProduto(produto)),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  _botaoAcaoCarrinho(
+                                    icone: Icons.delete_outline,
+                                    cor: Colors.redAccent,
+                                    onTap: () => atualizar(
+                                        () => _produtosSelecionados
+                                            .remove(produto.id)),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '$_totalItens item(ns)',
+                                style: TextStyle(
+                                    color: Colors.white.withOpacity(0.7),
+                                    fontSize: 12),
+                              ),
+                              Text(
+                                moeda.format(_totalValor),
+                                style: const TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: const Icon(Icons.check, size: 20),
+                          label: const Text('OK',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 24, vertical: 16),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _botaoAcaoCarrinho({
+    required IconData icone,
+    required Color cor,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: SizedBox(
+        width: 38,
+        height: 38,
+        child: Icon(icone, color: cor, size: 21),
       ),
     );
   }
@@ -10488,16 +10976,22 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
   Widget _buildProdutoTile(Produto produto) {
     final item = _produtosSelecionados[produto.id];
     final qtd = item == null ? 0 : (item['quantidade'] as int);
-    final adicionais = (item?['adicionais'] as List?)?.cast<AdicionalProduto>() ?? [];
+    final adicionais =
+        (item?['adicionais'] as List?)?.cast<AdicionalProduto>() ?? [];
     final temObs = item?['observacao']?.toString().trim().isNotEmpty == true;
     final corDestaque = item != null ? Colors.greenAccent : Colors.white;
+    final codigo = (produto.codigo ?? produto.codigoBarras ?? '').trim();
 
     return Container(
       decoration: BoxDecoration(
-        color: item != null ? Colors.green.withOpacity(0.08) : const Color(0xFF1E1E2E),
+        color: item != null
+            ? Colors.green.withOpacity(0.08)
+            : const Color(0xFF1E1E2E),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: item != null ? Colors.greenAccent.withOpacity(0.5) : Colors.white10,
+          color: item != null
+              ? Colors.greenAccent.withOpacity(0.5)
+              : Colors.white10,
           width: item != null ? 2 : 1,
         ),
       ),
@@ -10509,7 +11003,7 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
               borderRadius: BorderRadius.circular(14),
               onTap: () => _adicionarProduto(produto),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -10523,9 +11017,23 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if (codigo.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1),
+                        child: Text(
+                          'Cód. $codigo',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.35),
+                            fontSize: 9.5,
+                          ),
+                        ),
+                      ),
                     const Spacer(),
                     Text(
-                      NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(produto.precoAtual),
+                      NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
+                          .format(produto.precoAtual),
                       style: TextStyle(
                         color: corDestaque,
                         fontSize: 14,
@@ -10537,63 +11045,100 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
                         '+ ${adicionais.map((a) => a.nome).join(', ')}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.greenAccent, fontSize: 10),
+                        style: const TextStyle(
+                            color: Colors.greenAccent, fontSize: 10),
                       ),
                   ],
                 ),
               ),
             ),
           ),
-          // Barra de quantidade / ações
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          // Barra de quantidade / ações — compacta para caber no card
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
             child: item == null
                 ? SizedBox(
-                    height: 48,
+                    height: 40,
                     child: ElevatedButton.icon(
                       onPressed: () => _adicionarProduto(produto),
-                      icon: const Icon(Icons.add, size: 20),
-                      label: const Text('Adicionar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Adicionar',
+                          style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green.shade700,
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                       ),
                     ),
                   )
-                : Row(
-                    children: [
-                      // Observação
-                      IconButton(
-                        onPressed: () => _editarObservacao(produto),
-                        icon: Icon(
-                          temObs ? Icons.comment : Icons.add_comment_outlined,
-                          color: temObs ? Colors.orange : Colors.white54,
-                          size: 20,
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Card estreito (celular em 2 colunas): os icones
+                      // secundarios saem da linha para o "- qtd +" caber.
+                      final compacto = constraints.maxWidth < 150;
+                      return Row(
+                        children: [
+                          if (!compacto) ...[
+                            _botaoMini(
+                              icone: temObs
+                                  ? Icons.comment
+                                  : Icons.add_comment_outlined,
+                              cor: temObs ? Colors.orange : Colors.white54,
+                              onTap: () => _editarObservacao(produto),
+                            ),
+                            _botaoMini(
+                              icone: Icons.category_outlined,
+                              cor: Colors.white54,
+                              onTap: () => _editarCategoria(produto),
+                            ),
+                          ],
+                          const Spacer(),
+                      _botaoQuantidade(
+                          icone: Icons.remove,
+                          onTap: () => _removerProduto(produto.id)),
+                      SizedBox(
+                        width: 30,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            '$qtd',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold),
+                          ),
                         ),
-                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                       ),
-                      // Setor
-                      IconButton(
-                        onPressed: () => _editarCategoria(produto),
-                        icon: const Icon(Icons.category_outlined, color: Colors.white54, size: 20),
-                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                      ),
-                      const Spacer(),
-                      _botaoQuantidade(icone: Icons.remove, onTap: () => _removerProduto(produto.id)),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        child: Text(
-                          '$qtd',
-                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      _botaoQuantidade(icone: Icons.add, onTap: () => _adicionarProduto(produto)),
-                    ],
+                      _botaoQuantidade(
+                          icone: Icons.add,
+                          onTap: () => _adicionarProduto(produto)),
+                        ],
+                      );
+                    },
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Ícone secundário compacto do card (observação/setor), sem estourar a
+  /// largura em telas de 2 colunas.
+  Widget _botaoMini({
+    required IconData icone,
+    required Color cor,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: SizedBox(
+        width: 26,
+        height: 32,
+        child: Icon(icone, color: cor, size: 17),
       ),
     );
   }
@@ -10603,14 +11148,14 @@ class _TelaLancarItensToqueState extends State<_TelaLancarItensToque> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(30),
       child: Container(
-        width: 40,
-        height: 40,
+        width: 32,
+        height: 32,
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.08),
           shape: BoxShape.circle,
           border: Border.all(color: Colors.white24),
         ),
-        child: Icon(icone, color: Colors.white, size: 22),
+        child: Icon(icone, color: Colors.white, size: 19),
       ),
     );
   }

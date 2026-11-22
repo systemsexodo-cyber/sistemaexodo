@@ -2771,6 +2771,38 @@ pre{background:#0f172a;border:1px solid #334155;padding:1rem;overflow:auto;max-h
             return alvo
         return None
 
+    def _cache_control_de(self, arquivo: Path) -> str:
+        """Cache-Control do arquivo.
+
+        Os do SEM_CACHE continuam `no-cache, no-store` (nunca podem ficar
+        guardados), mas AGORA tambem mandam ETag: o navegador revalida com
+        304 em vez de baixar de novo. O `no-store` so proibia o ARMazenamento
+        reutilizavel; com `no-cache` o 304 ja e permitido, entao o custo da
+        visita seguinte cai de ~7,9 MB para ~0.
+        """
+        if arquivo.name in SEM_CACHE:
+            return "no-cache, no-store, must-revalidate"
+        if arquivo.suffix.lower() in {".js", ".json", ".wasm", ".html"}:
+            # Arquivos do app mudam a cada publicacao. Com max-age=3600 o
+            # navegador continuava executando o main.dart.js VELHO por ate 1h
+            # depois de uma correcao (sintoma: edito, salvo, recarrego e volta).
+            # `no-cache` + ETag = revalida sempre, mas so baixa o corpo se
+            # o arquivo tiver mudado de verdade.
+            return "no-cache"
+        return "public, max-age=3600"
+
+    def _nao_modificado(self, etag: str) -> bool:
+        """O cliente ja tem esta versao (If-None-Match / If-Modified-Since)?"""
+        if_none_match = self.headers.get("If-None-Match")
+        if if_none_match:
+            # Aceita lista ("a", "b") e `*`; compara sem o `W/` (fraco).
+            alvos = [
+                t.strip().lstrip("W/").strip('"')
+                for t in if_none_match.split(",")
+            ]
+            return etag.strip('"') in alvos
+        return False
+
     def _estatico(self, caminho: str, com_corpo: bool) -> None:
         arquivo = self._resolver_arquivo(caminho)
 
@@ -2788,6 +2820,28 @@ pre{background:#0f172a;border:1px solid #334155;padding:1rem;overflow:auto;max-h
         if tipo is None:
             tipo = mimetypes.guess_type(arquivo.name)[0] or "application/octet-stream"
 
+        # ETag derivado do arquivo em disco (mtime + tamanho): muda so quando
+        # o arquivo muda, entao uma publicacao nova continua aparecendo na hora.
+        #
+        # SEM isto o `no-cache` abaixo nao servia para nada: o navegador pedia
+        # de novo o arquivo INTEIRO a cada visita (main.dart.js + canvaskit
+        # somam ~7,9 MB gzip) porque nao havia como revalidar com 304. E o
+        # `no-store` do SEM_CACHE impedia ate o 304.
+        st = arquivo.stat()
+        etag = '"%x-%x"' % (int(st.st_mtime), st.st_size)
+        cache = self._cache_control_de(arquivo)
+
+        # Revalidacao barata: o navegador manda If-None-Match e, se nao mudou,
+        # devolvemos 304 sem corpo — a visita seguinte custa ~0 bytes.
+        if self._nao_modificado(etag):
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", cache)
+            self.send_header("Vary", "Accept-Encoding")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            return
+
         dados, comprimido = _comprimir_arquivo(
             arquivo, dados, tipo, self._aceita_gzip()
         )
@@ -2798,17 +2852,8 @@ pre{background:#0f172a;border:1px solid #334155;padding:1rem;overflow:auto;max-h
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(dados)))
-        if arquivo.name in SEM_CACHE:
-            self.send_header(
-                "Cache-Control", "no-cache, no-store, must-revalidate"
-            )
-        elif arquivo.suffix.lower() in {".js", ".json", ".wasm", ".html"}:
-            # Arquivos do app mudam a cada publicacao. Com max-age=3600 o
-            # navegador continuava executando o main.dart.js VELHO por ate 1h
-            # depois de uma correcao (sintoma: edito, salvo, recarrego e volta).
-            self.send_header("Cache-Control", "no-cache")
-        else:
-            self.send_header("Cache-Control", "public, max-age=3600")
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         if com_corpo:

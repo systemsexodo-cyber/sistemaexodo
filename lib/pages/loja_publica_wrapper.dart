@@ -90,6 +90,24 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
       updatedAtLocal: local.updatedAt,
       updatedAtRemota: remota.updatedAt,
     );
+    // Personalização da loja (logo, colunas, controle de estoque...) também
+    // pelo carimbo: sem isto a cópia que veio do Supabase por cima da local
+    // reativava configuração velha — ex. o selo "Esgotado" voltava a aparecer
+    // depois de desligar o controle de estoque em Personalizar Loja.
+    aplicarEcommerceMaisRecente(
+      merged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
+    aplicarAgendamentoMaisRecente(
+      merged,
+      configLocal,
+      configRemota,
+      updatedAtLocal: local.updatedAt,
+      updatedAtRemota: remota.updatedAt,
+    );
     return remota.copyWith(configuracoes: merged);
   }
 
@@ -130,21 +148,31 @@ class _LojaPublicaWrapperState extends State<LojaPublicaWrapper> {
     try {
       // 1. Tentar encontrar a empresa solicitada IMEDIATAMENTE (Otimizado)
       if (currentSlug != null && currentSlug.isNotEmpty) {
-        final detectada = await authService.buscarEmpresaPorSlugAsync(currentSlug);
+        // Retenta algumas vezes antes de dizer que a loja não existe: a nuvem
+        // local (PostgREST atrás do Funnel) devolve 502/503 de vez em quando
+        // enquanto carrega, e uma falha passageira NÃO pode virar a tela
+        // "Empresa não encontrada" para o cliente.
+        Empresa? detectada;
+        const tentativas = 4;
+        for (var tentativa = 1; tentativa <= tentativas; tentativa++) {
+          detectada = await authService.buscarEmpresaPorSlugAsync(currentSlug);
+          if (detectada != null) break;
+          if (tentativa == tentativas) break;
+          debugPrint(
+            '>>> [LojaPublica] ⏳ Slug não encontrado (tentativa $tentativa/'
+            '$tentativas) — retentando...',
+          );
+          await Future.delayed(Duration(milliseconds: 700 * tentativa));
+        }
         if (detectada != null) {
           print('>>> [LojaPublica] ✅ Empresa detectada via Busca Direta: ${detectada.nomeExibicao}');
           empresaIdParaUsar = detectada.id;
           empresaDetectada = _preservarConfigsLocais(dataService, detectada);
         } else {
-          // Retentativa rápida para casos de latência do Firebase (o "não encontrada ainda" do usuário)
-          debugPrint('>>> [LojaPublica] ⏳ Slug não encontrado de primeira, aguardando 1.5s para retentar...');
-          await Future.delayed(const Duration(milliseconds: 1500));
-          final detectada2 = await authService.buscarEmpresaPorSlugAsync(currentSlug);
-          if (detectada2 != null) {
-            print('>>> [LojaPublica] ✅ Empresa detectada na Retentativa: ${detectada2.nomeExibicao}');
-            empresaIdParaUsar = detectada2.id;
-            empresaDetectada = _preservarConfigsLocais(dataService, detectada2);
-          }
+          debugPrint(
+            '>>> [LojaPublica] ⚠ Slug "$currentSlug" não encontrado após '
+            '$tentativas tentativas.',
+          );
         }
       }
 

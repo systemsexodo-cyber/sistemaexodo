@@ -224,6 +224,7 @@ function normalizarCodigo(valor: unknown): string {
 type CodigoAtivacao = {
   codigo: string;
   empresa_id: string | null;
+  machine_id: string | null;
   revogado: boolean | null;
   expira_em: string | null;
   usada_por: string | null;
@@ -329,11 +330,24 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const { data: codigoBruto, error: erroCodigo } = await supabase
+      // `machine_id` só existe depois da migração 023. Se ela ainda não rodou,
+      // o SELECT falha com 42703 (undefined_column): nesse caso repetimos sem
+      // a coluna e o código continua valendo para qualquer computador, como
+      // antes — uma migração esquecida derruba a ATIVAÇÃO inteira.
+      let { data: codigoBruto, error: erroCodigo } = await supabase
         .from("licencas_ativacao")
-        .select("codigo, empresa_id, revogado, expira_em, usada_por")
+        .select("codigo, empresa_id, machine_id, revogado, expira_em, usada_por")
         .eq("codigo", codigoAtivacao)
         .maybeSingle();
+      if (erroCodigo && erroCodigo.code === "42703") {
+        const semVinculo = await supabase
+          .from("licencas_ativacao")
+          .select("codigo, empresa_id, revogado, expira_em, usada_por")
+          .eq("codigo", codigoAtivacao)
+          .maybeSingle();
+        codigoBruto = semVinculo.data as typeof codigoBruto;
+        erroCodigo = semVinculo.error;
+      }
       if (erroCodigo) throw new Error("Não foi possível conferir o código.");
       const codigoRow = codigoBruto as CodigoAtivacao | null;
 
@@ -355,6 +369,18 @@ Deno.serve(async (req: Request) => {
       if (codigoRow.expira_em && new Date(codigoRow.expira_em).getTime() <= Date.now()) {
         return jsonResponse(
           { erro: "Este código de ativação venceu.", codigo: "codigo_vencido" },
+          403,
+        );
+      }
+      // Emitido com `--maquina`: só o computador informado na geração pode
+      // usá-lo. Código antigo (machine_id nulo) continua valendo para
+      // qualquer um, mas continua sendo de uso único.
+      if (codigoRow.machine_id && codigoRow.machine_id.toLowerCase() !== machineId) {
+        return jsonResponse(
+          {
+            erro: "Este código foi emitido para outro computador.",
+            codigo: "codigo_outra_maquina",
+          },
           403,
         );
       }

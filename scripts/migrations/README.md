@@ -35,6 +35,8 @@ fazem sentido na nuvem se auto-pulam no banco local, e vice-versa).
 | `017_storage_imagens_nuvem.sql` | nuvem | Garante os buckets públicos (`imagens`, `atualizacoes`, `backups`, `dumps`, `xmls`) e as políticas de `anon`/`authenticated` — resolve o 403 no upload de logo/foto |
 | `020_licencas_instalacao.sql` | nuvem | Licença de instalação de 30 dias por computador + histórico de ativações/renovações (usada pela função `licenca-instalacao`) |
 | `021_codigos_ativacao.sql` | nuvem | Códigos de ativação por venda (uso único, um computador), opcionalmente presos a uma empresa |
+| `023_codigos_ativacao_maquina.sql` | nuvem | Vincula o código de ativação a um computador (`machine_id`): com `--maquina` no gerador, só aquela máquina o consome |
+| `024_fila_impressao.sql` | local + nuvem | Cria `fila_impressao`: vendas/pedidos feitos no celular (LAN ou 4G) e impressos automaticamente no PC do caixa |
 
 > A numeração 005–009 é a mesma das migrações originais do Supabase, para não
 > embaralhar o histórico. O baseline (`init_db.sql`) equivale à

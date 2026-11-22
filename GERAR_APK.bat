@@ -36,8 +36,8 @@ echo ==================================================
 echo.
 
 if /I "%~1"=="release" (
-  echo Modo: RELEASE ^(producao^)
-  call flutter build apk --release
+  echo Modo: RELEASE ^(producao - um APK por arquitetura^)
+  call flutter build apk --release --split-per-abi
 ) else (
   echo Modo: DEBUG ^(teste - instala direto no celular^)
   call flutter build apk --debug
@@ -51,6 +51,8 @@ if exist "build\app\outputs\flutter-apk\*.apk" (
   dir /b "build\app\outputs\flutter-apk\*.apk"
   echo.
   echo Local: build\app\outputs\flutter-apk\
+  echo No celular instale o app-arm64-v8a-release.apk (quase todos os aparelhos).
+  echo Use o armeabi-v7a so em aparelhos antigos (32 bits).
   echo Copie o .apk para o celular e instale.
 ) else (
   echo [ERRO] O APK nao foi gerado. Veja as mensagens acima.

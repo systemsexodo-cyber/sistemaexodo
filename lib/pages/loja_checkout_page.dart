@@ -24,9 +24,9 @@ import 'package:sistema_exodo_novo/services/frete_service.dart';
 import 'package:sistema_exodo_novo/services/horario_loja_service.dart';
 import 'package:sistema_exodo_novo/models/opcao_frete.dart';
 import 'package:sistema_exodo_novo/models/zona_entrega.dart';
-import 'package:sistema_exodo_novo/pages/cliente_cadastro_page.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/services/carrinho_service.dart';
+import 'package:sistema_exodo_novo/services/pedidos_cliente_local_service.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -79,6 +79,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
 
   /// Retirada na loja Ã© o padrÃ£o: garante que o cliente consiga concluir o pedido mesmo quando a loja nÃ£o tem frete/transportadora configurada.
   bool _retiradaNaLoja = true;
+  bool _autoConfirmarPedidos = false;
   TipoPagamento _tipoPagamento = TipoPagamento.pix;
   @override
   void initState() {
@@ -149,8 +150,6 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
     }
   }
 
-  /// Navega para pÃ¡gina de cadastro e retorna com dados preenchidos
-
   /// Procura o cadastro existente pelo telefone e reaproveita o mesmo cliente.
   Future<void> _buscarClientePeloTelefone(String valor) async {
     if (_clienteLogado) { return; }
@@ -219,28 +218,6 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
         setState(() => _buscandoClienteTelefone = false);
         debugPrint('Erro ao localizar cliente pelo telefone: $e');
       }
-    }
-  }
-
-  Future<void> _irParaCadastro() async {
-    final resultado = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ClienteCadastroPage(),
-      ),
-    );
-
-    if (resultado == true) {
-      // Recarregar dados do cliente apÃ³s cadastro
-      _carregarDadosCliente();
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Conta criada com sucesso! Seus dados foram preenchidos automaticamente.'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 3),
-        ),
-      );
     }
   }
 
@@ -452,6 +429,11 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
       // Obter configuraÃ§Ãµes de frete do e-commerce
       final configFrete = empresa?.configuracoes?['ecommerce']?['frete'] as Map<String, dynamic>?;
       
+      // Modo cardápio/delivery: só valem os fretes por bairro (zonas de entrega
+      // e taxas por bairro). Correios/transportadoras ("dia útil") são ignorados.
+      final modoLoja = empresa?.configuracoes?['ecommerce']?['modoExibicao'] as String? ?? 'ecommerce';
+      final apenasPorBairro = modoLoja == 'delivery';
+      
       // Carregar Zonas de Entrega Inteligentes
       final zonasData = configFrete?['zonasEntrega'] as List<dynamic>? ?? [];
       final zonasEntrega = zonasData
@@ -490,6 +472,7 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
         valorMinimoFreteGratis: valorMinimoFreteGratis.toDouble(),
         configFrete: configFrete,
         zonasEntrega: zonasEntrega.isNotEmpty ? zonasEntrega : null,
+        apenasPorBairro: apenasPorBairro,
       );
 
       if (mounted) {
@@ -997,6 +980,36 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
     }
   }
 
+  /// Guarda o pedido no aparelho do cliente: a loja mostra um balao com o
+  /// pedido e o atalho "Meus pedidos", entao fechar o aviso de confirmacao
+  /// (ou a aba de acompanhamento) nao faz mais o cliente perder o pedido.
+  Future<void> _guardarCodigoAcompanhamento(Pedido pedido) async {
+    final codigo = pedido.linkCliente ?? '';
+    if (codigo.isEmpty) return;
+    await PedidosClienteLocalService.registrar(
+      PedidoClienteLocal(
+        codigo: codigo,
+        numero: pedido.numero,
+        total: pedido.totalGeral,
+        data: pedido.dataPedido,
+        status: pedido.status,
+        // Guarda o que foi comprado: depois que o pedido termina (ou passa
+        // de um dia), a loja usa esta lista para repetir a compra.
+        itens: pedido.produtos
+            .map((item) => PedidoClienteLocalItem(
+                  id: item.id,
+                  nome: item.nome,
+                  quantidade: item.quantidade.round() < 1
+                      ? 1
+                      : item.quantidade.round(),
+                  preco: item.preco,
+                ))
+            .toList(),
+      ),
+    );
+  }
+
+
   Future<void> _mostrarConfirmacaoPedido(Pedido pedido) async {
     final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     await showDialog<void>(
@@ -1055,6 +1068,12 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
                   'Guarde o nÃºmero acima. Se quiser, envie o resumo no WhatsApp para agilizar o atendimento.',
                   style: TextStyle(color: Colors.white60, fontSize: 13),
                 ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Pode fechar este aviso sem medo: o pedido fica no balao '
+                  '"Pedido ..." da loja, em "Meus pedidos".',
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
               ],
             ),
           ),
@@ -1101,6 +1120,109 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
       );
     }
   }
+
+  /// Pergunta ao cliente se ele precisa de troco e para quanto ele vai
+  /// pagar. Devolve o valor que o cliente vai entregar em dinheiro (o
+  /// "troco para"), ou `totalFinal` quando ele nao precisa de troco.
+  /// Retorna `null` quando o cliente desiste da compra.
+  Future<double?> _mostrarDialogTroco(double totalFinal) async {
+    final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final controller = TextEditingController();
+    double valorDigitado = totalFinal;
+    bool semTroco = false;
+
+    double converter(String texto) {
+      var limpo = texto.replaceAll('R\$', '').replaceAll(' ', '').trim();
+      if (limpo.contains(',')) {
+        limpo = limpo.replaceAll('.', '').replaceAll(',', '.');
+      }
+      return double.tryParse(limpo) ?? 0.0;
+    }
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final troco = valorDigitado - totalFinal;
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E293B),
+              title: const Text('Precisa de troco?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Se precisar, digite para quanto vai pagar (ex.: 100,00). '
+                    'O troco sai calculado aqui.',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Troco para',
+                      prefixText: 'R\$ ',
+                      labelStyle: TextStyle(color: Colors.white70),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        valorDigitado = converter(value);
+                        semTroco = false;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Total do pedido: ${moeda.format(totalFinal)}',
+                    style: TextStyle(
+                        color: Colors.green[300],
+                        fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Troco: ${moeda.format(troco > 0 ? troco : 0)}',
+                    style: TextStyle(
+                        color: Colors.blue[300],
+                        fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    semTroco = true;
+                    valorDigitado = totalFinal;
+                    Navigator.pop(dialogContext, true);
+                  },
+                  child: const Text('Nao preciso'),
+                ),
+                ElevatedButton(
+                  onPressed: troco >= -0.001
+                      ? () => Navigator.pop(dialogContext, true)
+                      : null,
+                  child: const Text('Confirmar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmado != true) return null;
+    if (semTroco) return totalFinal;
+    return valorDigitado < totalFinal ? totalFinal : valorDigitado;
+  }
+
 
   Future<void> _finalizarPedido() async {
     // Ãšltima barreira: a loja pode ter fechado com o checkout jÃ¡ aberto.
@@ -1304,22 +1426,33 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
 
       // O estoque pode ter mudado desde que o item entrou no carrinho (outro
       // cliente comprou antes). Confere tudo ANTES de criar o pedido, senÃ£o o
-      // lojista recebe uma venda que nÃ£o pode atender.
+      // lojista recebe uma venda que nÃ£o pode atender. Loja sem controle de
+      // estoque na loja online vende mesmo com saldo zerado.
+      final valorControlarEstoque = _configEcommerce?['controlarEstoque'];
+      final controlarEstoque = valorControlarEstoque is bool
+          ? valorControlarEstoque
+          : (valorControlarEstoque is num
+              ? valorControlarEstoque != 0
+              : (valorControlarEstoque?.toString().trim().toLowerCase() ==
+                      'true' ||
+                  valorControlarEstoque?.toString().trim() == '1'));
       final faltasDeEstoque = <String>[];
-      for (final item in carrinhoService.itens.where((i) => i.isProduto)) {
-        Produto? produto;
-        for (final p in dataService.produtos) {
-          if (p.id == item.itemId) {
-            produto = p;
-            break;
+      if (controlarEstoque) {
+        for (final item in carrinhoService.itens.where((i) => i.isProduto)) {
+          Produto? produto;
+          for (final p in dataService.produtos) {
+            if (p.id == item.itemId) {
+              produto = p;
+              break;
+            }
           }
+          if (produto == null) continue;
+          final falta = dataService.validarEstoqueDisponivel(
+            produto,
+            quantidade: item.quantidade.toDouble(),
+          );
+          if (falta != null) faltasDeEstoque.add('${item.nome}: $falta');
         }
-        if (produto == null) continue;
-        final falta = dataService.validarEstoqueDisponivel(
-          produto,
-          quantidade: item.quantidade.toDouble(),
-        );
-        if (falta != null) faltasDeEstoque.add('${item.nome}: $falta');
       }
       if (faltasDeEstoque.isNotEmpty) {
         if (mounted) {
@@ -1368,13 +1501,28 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
       final formasAtuais = _formasPagamentoDisponiveis;
       final tipoPagamentoFinal = formasAtuais.contains(_tipoPagamento)
           ? _tipoPagamento
-          : formasAtuais.first;
+          : formasAtuais.first;      // Pagamento em dinheiro: pergunta ao cliente se ele precisa de troco.
+      // Vale também no modo auto-confirmar — a pergunta é do cliente, não da
+      // impressora; sem ela o pedido sairia sem troco nenhum.
+      double valorRecebido = totalFinal;
+      if (tipoPagamentoFinal == TipoPagamento.dinheiro) {
+        final recebido = await _mostrarDialogTroco(totalFinal);
+        if (recebido == null) return; // operador cancelou o pedido
+        valorRecebido = recebido;
+      }
+      final double troco = tipoPagamentoFinal == TipoPagamento.dinheiro
+          ? (valorRecebido - totalFinal)
+          : 0.0;
 
       final pagamento = PagamentoPedido(
         id: const Uuid().v4(),
         tipo: tipoPagamentoFinal,
         valor: totalFinal,
         recebido: false,
+        valorRecebido: tipoPagamentoFinal == TipoPagamento.dinheiro
+            ? valorRecebido
+            : null,
+        troco: troco > 0 ? troco : null,
         observacao: _retiradaNaLoja
             ? 'Pagamento na retirada'
             : 'Pagamento na entrega',
@@ -1392,6 +1540,9 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
           'R\$ ${_opcaoFreteSelecionada!.valor.toStringAsFixed(2)} '
           '(${_opcaoFreteSelecionada!.prazo} dia${_opcaoFreteSelecionada!.prazo == 1 ? '' : 's'} Ãºtil${_opcaoFreteSelecionada!.prazo == 1 ? '' : 'eis'})',
         );
+      }
+      if (troco > 0) {
+        observacoesPartes.add('Troco: R\$ ${troco.toStringAsFixed(2)}');
       }
       if (_observacoesController.text.trim().isNotEmpty) {
         observacoesPartes.add(_observacoesController.text.trim());
@@ -1434,9 +1585,21 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
         updatedAt: DateTime.now(),
       );
 
+      if (_autoConfirmarPedidos) {
+        debugPrint(
+          '>>> [Checkout] Auto-confirmar ativo: pedido ${pedido.numero} '
+          'segue sem tela de confirmacao/impressora.',
+        );
+      }
+
       // Salvar pedido (local + nuvem). A tela de Pedidos escuta o DataService
       // e recebe o pedido automaticamente.
       await dataService.addPedido(pedido);
+
+      // Guarda o codigo no aparelho do cliente: a loja tem um atalho
+      // "Acompanhar pedido" e um balao com o pedido que continuam valendo
+      // depois de fechar o aviso.
+      await _guardarCodigoAcompanhamento(pedido);
 
       // Criar registro de entrega para o controle de entregas, quando houver.
       if (deliveryInfo != null) {
@@ -1499,7 +1662,11 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
 
       if (mounted) {
         carrinhoService.limparCarrinho();
-        await _mostrarConfirmacaoPedido(pedido);
+        // No modo auto-confirmar o cliente volta direto para a loja: o pedido
+        // ja foi para a tela de Pedidos e nenhuma impressora e escolhida aqui.
+        if (!_autoConfirmarPedidos) {
+          await _mostrarConfirmacaoPedido(pedido);
+        }
         if (mounted) {
           Navigator.of(context).pop(pedido);
         }
@@ -2115,57 +2282,6 @@ class _LojaCheckoutPageState extends State<LojaCheckoutPage> {
                       ),
 
                       const SizedBox(height: 24),
-
-                      // Banner de cadastro (se nÃ£o estiver logado)
-                      if (!_clienteLogado) ...[
-                        Card(
-                          color: Colors.blue.withOpacity(0.2),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
-                              children: [
-                                Icon(Icons.info_outline, color: Colors.blue[300], size: 24),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Cadastro pelo telefone',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'Informe seu telefone: se ja existir cadastro, seus dados serao preenchidos automaticamente. Voce pode informar outro endereco para esta entrega.',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          color: Colors.white70,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                ElevatedButton.icon(
-                                  onPressed: _irParaCadastro,
-                                  icon: const Icon(Icons.person_add, size: 18),
-                                  label: const Text('Cadastrar'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                      ],
 
                       // Dados do cliente
                       Card(

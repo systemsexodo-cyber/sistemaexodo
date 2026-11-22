@@ -26,6 +26,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Desliga o Impeller (renderizador Vulkan) e volta para o Skia/OpenGL.
+             Impeller e' o padrao no Android API 29+, mas em varios aparelhos reais
+             (Samsung A51, Oppo, Huawei, Redmi...) o driver Vulkan trava no primeiro
+             quadro: o app fica preso no splash/icone e nao carrega nada — enquanto
+             no emulador (MuMu, AVD) abre normalmente. Era exatamente esse o caso.
+             Custo: desempenho grafico um pouco menor em aparelhos que funcionavam. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

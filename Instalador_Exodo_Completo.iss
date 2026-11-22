@@ -17,7 +17,7 @@
 ; ============================================================================
 
 #define MyAppName "Sistema Êxodo"
-#define MyAppVersion "1.0.81"
+#define MyAppVersion "1.0.91"
 #define MyAppPublisher "Sistema Êxodo Tecnologia"
 #define MyAppURL "https://febffvlpvxtiihvnfuts.supabase.co"
 #define MyAppExeName "sistema_exodo_novo.exe"
@@ -194,6 +194,10 @@ Source: "scripts\migrations\*"; DestDir: "{app}\scripts\migrations"; Flags: igno
 Source: "scripts\configurar_lan_postgres.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 ; Ativa a licenca de 30 dias deste computador durante a instalacao.
 Source: "scripts\ativar_instalacao.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+; Copia o banco ANTES de o desinstalador apagar {app}\pgdata (ver [UninstallDelete]
+; e InitializeUninstall). Sem este arquivo o desinstalador ainda avisa e deixa
+; o usuario decidir, mas nao ha como salvar os dados automaticamente.
+Source: "scripts\backup_antes_desinstalar.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 ; Atalho de 1 clique para liberar ESTE PC na rede (o PC da loja cujo servico
 ; PostgreSQL ficou parado era o que impedia a sincronizacao entre os caixas).
 ; Ele roda o PS1 acima, sobe o servico e confere a porta 5432 no final.
@@ -218,8 +222,11 @@ Source: ".env.example"; DestDir: "{app}"; DestName: ".env"; Flags: ignoreversion
 Source: ".env.neon.example"; DestDir: "{app}"; DestName: ".env.neon"; Flags: ignoreversion onlyifdoesntexist
 
 ; ============================================================================
-; CONFIGURACAO DA REDE LAN NO INSTALADOR; ============================================================================
-; O instalador copia o .env.example (com valores vazios). O usuario deve; depois usar a tela "Rede LAN" no app para descobrir e salvar os PCs.; Opcional: preencher LAN_PEERS no .env antes de rodar o sincronizador.
+; CONFIGURACAO DA REDE LAN NO INSTALADOR
+; ============================================================================
+; O instalador copia o .env.example (com valores vazios). O usuario deve
+; depois usar a tela "Rede LAN" no app para descobrir e salvar os PCs.
+; Opcional: preencher LAN_PEERS no .env antes de rodar o sincronizador.
 ; Veja o arquivo .env.example para o novo formato LAN_PEERS.
 ; ============================================================================
 ; ATALHOS
@@ -300,6 +307,11 @@ Filename: "sc.exe"; Parameters: "delete PostgreSQL_Exodo"; Flags: runhidden
 ; Remover tarefas de backup agendadas
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Unregister-ScheduledTask -TaskName 'Exodo Backup Diario' -Confirm:$false -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'Exodo Backup Inicializacao' -Confirm:$false -ErrorAction SilentlyContinue"""; Flags: runhidden
 
+; ATENCAO: esta secao apaga o BANCO (pgdata), a configuracao e os logs. E o
+; unico ponto do sistema que remove dados do cliente - a atualizacao por cima
+; (reinstalar) nao passa por aqui. Para nao perder a loja, o InitializeUninstall
+; ([Code]) pede confirmacao explicita e gera um backup em
+; {commondocuments}\Sistema Exodo Backups antes de o uninstaller chegar aqui.
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\data"
 Type: filesandordirs; Name: "{app}\pgdata"
@@ -439,9 +451,72 @@ begin
 end;
 
 // Verificar se pode desinstalar
-function InitializeUninstall: Boolean;
+// ---------------------------------------------------------------------------
+// O desinstalador apaga {app}\pgdata (banco inteiro), {app}\data, os logs e o
+// .env. Aqui, antes disso:
+//   1. pedimos confirmacao explicita (padrao do dialogo = "Nao");
+//   2. geramos um dump do banco numa pasta FORA de {app} (que sera apagada);
+//   3. se o backup falhar, o usuario decide se continua mesmo assim.
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+  Script, Destino, Args, Aviso: String;
 begin
   Result := True;
+
+  Destino := ExpandConstant('{commondocuments}\Sistema Exodo Backups');
+
+  if not UninstallSilent then
+  begin
+    Aviso := 'A desinstalacao vai APAGAR os dados desta loja:' + #13#10#13#10 +
+      '  ' + ExpandConstant('{app}\pgdata') + '  (banco PostgreSQL)' + #13#10 +
+      '  ' + ExpandConstant('{app}\data') + #13#10 +
+      '  ' + ExpandConstant('{app}\logs') + #13#10 +
+      '  ' + ExpandConstant('{app}\.env') + '  (senha do banco e chaves da nuvem)' + #13#10#13#10 +
+      'Antes de apagar, o instalador tenta copiar o banco para:' + #13#10 +
+      '  ' + Destino + #13#10#13#10 +
+      'Se voce quer apenas ATUALIZAR o sistema, cancele: nao e preciso desinstalar.' + #13#10#13#10 +
+      'Deseja continuar com a desinstalacao?';
+    if MsgBox(Aviso, mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES then
+    begin
+      Result := False;
+      exit;
+    end;
+  end;
+
+  Script := ExpandConstant('{app}\scripts\backup_antes_desinstalar.ps1');
+  if not FileExists(Script) then
+  begin
+    if UninstallSilent then exit;
+    Result := MsgBox('O script de backup nao foi encontrado em:' + #13#10 + Script + #13#10#13#10 +
+      'Sem ele o banco (' + ExpandConstant('{app}\pgdata') + ') sera apagado SEM copia.' + #13#10 +
+      'Deseja continuar mesmo assim?', mbError, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+    exit;
+  end;
+
+  if not UninstallSilent then
+    MsgBox('O backup do banco sera gerado agora em:' + #13#10 + Destino + #13#10#13#10 +
+      'Clique em OK e aguarde alguns instantes (nao feche esta janela).', mbInformation, MB_OK);
+
+  Args := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -AppDir "' +
+    ExpandConstant('{app}') + '" -Destino "' + Destino + '"';
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Args, '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  if ResultCode <> 0 then
+  begin
+    if UninstallSilent then exit;
+    Result := MsgBox('O BACKUP FALHOU (codigo ' + IntToStr(ResultCode) + ').' + #13#10#13#10 +
+      'Veja o log em:' + #13#10 + Destino + '\backup_desinstalacao.log' + #13#10#13#10 +
+      'Deseja continuar e APAGAR o banco mesmo assim? (recomendado: NAO)',
+      mbError, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+    exit;
+  end;
+
+  if not UninstallSilent then
+    MsgBox('Backup do banco concluido em:' + #13#10 + Destino + #13#10#13#10 +
+      'Guarde esta pasta. Para restaurar depois de reinstalar, abra o RESTAURAR_BACKUP.ps1 ' +
+      'e aponte para o arquivo .dump mais recente dela.', mbInformation, MB_OK);
 end;
 
 // Mostrar mensagem ao desinstalar

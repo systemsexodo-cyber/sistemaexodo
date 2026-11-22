@@ -158,6 +158,14 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
   bool _temDisponibilidade = false;
   DateTime? _disponivelDe;
   DateTime? _disponivelAte;
+
+  // Permanência na loja online: janela de datas e dias da semana em que o
+  // item aparece na vitrine. Fora dela ele some da loja, mas continua normal
+  // no PDV e no estoque.
+  bool _temPermanenciaLoja = false;
+  DateTime? _lojaInicio;
+  DateTime? _lojaFim;
+  final Set<int> _diasSemanaLoja = {}; // 1=seg ... 7=dom
   // Regras avançadas de promoção (empilháveis): por data, dia da semana,
   // quantidade mínima ou valor mínimo no carrinho.
   List<RegraPromocao> _promocoes = [];
@@ -323,6 +331,15 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _disponivelDe = widget.item?.disponivelDe;
       _disponivelAte = widget.item?.disponivelAte;
       _temDisponibilidade = _disponivelDe != null || _disponivelAte != null;
+      final produtoLido = widget.item is Produto ? widget.item as Produto : null;
+      _lojaInicio = produtoLido?.lojaInicio;
+      _lojaFim = produtoLido?.lojaFim;
+      _diasSemanaLoja
+        ..clear()
+        ..addAll(produtoLido?.diasSemanaLoja ?? const <int>[]);
+      _temPermanenciaLoja = _lojaInicio != null ||
+          _lojaFim != null ||
+          _diasSemanaLoja.isNotEmpty;
       _temPromocao = _precoPromocional != null;
       if (_precoPromocional != null) {
         _precoPromocionalController.text = _precoPromocional.toString();
@@ -413,6 +430,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       _temDisponibilidade = false;
       _disponivelDe = null;
       _disponivelAte = null;
+      _temPermanenciaLoja = false;
+      _lojaInicio = null;
+      _lojaFim = null;
+      _diasSemanaLoja.clear();
       
       // Inicializar campos de impostos
       // PADRÃO CORRETO: Tributado (CFOP 5102, CSOSN 102 no Simples / CST 00 no
@@ -1086,6 +1107,25 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       return;
     }
 
+    // Permanência na loja: o "até" não pode ser antes do "de" (senão o item
+    // nunca apareceria na vitrine).
+    if (_temPermanenciaLoja &&
+        _lojaInicio != null &&
+        _lojaFim != null &&
+        _lojaFim!.isBefore(
+            DateTime(_lojaInicio!.year, _lojaInicio!.month, _lojaInicio!.day))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              '⚠️ Na permanência da loja, o "Até" precisa ser igual ou depois do "De".'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     // Processar tags (separar por vírgula e limpar espaços)
     final tagsProcessadas = _tagsController.text
         .split(',')
@@ -1217,6 +1257,10 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
       // Campos de E-commerce
       exibirNaLoja: _exibirNaLoja,
       emDestaque: _emDestaque,
+      lojaInicio: _temPermanenciaLoja ? _lojaInicio : null,
+      lojaFim: _temPermanenciaLoja ? _lojaFim : null,
+      diasSemanaLoja:
+          _temPermanenciaLoja ? _diasSemanaLoja.toList() : const <int>[],
       fotosUrls: _fotosUrls,
       fotoPrincipalUrl: fotoPrincipalUrl,
       descricaoEcommerce: _descricaoEcommerceController.text.isNotEmpty
@@ -3977,6 +4021,77 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
     });
   }
 
+  /// Campo compacto de DATA (sem hora) para a permanência na loja online.
+  Widget _buildDataLojaField({
+    required String label,
+    required DateTime? data,
+    required VoidCallback onTap,
+    VoidCallback? onClear,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.event_available,
+                size: 14, color: data == null ? Colors.white38 : Colors.tealAccent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                  const SizedBox(height: 2),
+                  Text(
+                    data == null ? '—' : DateFormat('dd/MM/yyyy').format(data),
+                    style: TextStyle(
+                      color: data == null ? Colors.white54 : Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (data != null)
+              InkWell(
+                onTap: onClear,
+                child: const Icon(Icons.close, size: 14, color: Colors.white38),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Seleciona a data de início ou de fim da permanência na loja online.
+  Future<void> _selecionarDataLoja({required bool inicio}) async {
+    final agora = DateTime.now();
+    final base = inicio ? (_lojaInicio ?? agora) : (_lojaFim ?? agora);
+    final data = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      helpText: inicio ? 'Na loja a partir de' : 'Na loja até',
+    );
+    if (data == null) return;
+    setState(() {
+      if (inicio) {
+        _lojaInicio = data;
+      } else {
+        _lojaFim = data;
+      }
+    });
+  }
+
   /// Campo compacto de data+hora para a janela de disponibilidade.
   Widget _buildDataHoraField({
     required String label,
@@ -4467,6 +4582,99 @@ class _ProdutoServicoFormState extends State<ProdutoServicoForm> with SingleTick
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.event_note_outlined, size: 16, color: Colors.tealAccent),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('Permanência na Loja Online', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ),
+              Switch(
+                value: _temPermanenciaLoja,
+                activeColor: Colors.tealAccent,
+                onChanged: _exibirNaLoja ? (v) => setState(() => _temPermanenciaLoja = v) : null,
+              ),
+            ],
+          ),
+          if (_temPermanenciaLoja) ...[
+            const SizedBox(height: 4),
+            const Text(
+              'O item aparece na vitrine só no período e/ou nos dias marcados abaixo. Fora disso ele some da loja — o PDV e o estoque continuam normais.',
+              style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.4),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDataLojaField(
+                    label: 'De',
+                    data: _lojaInicio,
+                    onTap: () => _selecionarDataLoja(inicio: true),
+                    onClear: () => setState(() => _lojaInicio = null),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDataLojaField(
+                    label: 'Até',
+                    data: _lojaFim,
+                    onTap: () => _selecionarDataLoja(inicio: false),
+                    onClear: () => setState(() => _lojaFim = null),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Deixe um dos lados vazio para não ter limite nele. O dia do "Até" vale inteiro.',
+              style: TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final dias in const [7, 15, 30])
+                  ActionChip(
+                    label: Text('$dias dias', style: const TextStyle(fontSize: 11)),
+                    onPressed: () => setState(() {
+                      final hoje = DateTime.now();
+                      _lojaInicio = DateTime(hoje.year, hoje.month, hoje.day);
+                      _lojaFim = _lojaInicio!.add(Duration(days: dias - 1));
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Dias da semana (nenhum marcado = todos os dias):',
+              style: TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (var dia = 1; dia <= 7; dia++)
+                  FilterChip(
+                    label: Text(
+                      const ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'][dia - 1],
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    selected: _diasSemanaLoja.contains(dia),
+                    selectedColor: Colors.tealAccent.withOpacity(0.25),
+                    checkmarkColor: Colors.tealAccent,
+                    onSelected: (marcado) => setState(() {
+                      if (marcado) {
+                        _diasSemanaLoja.add(dia);
+                      } else {
+                        _diasSemanaLoja.remove(dia);
+                      }
+                    }),
+                  ),
+              ],
+            ),
+          ],
         ]),
 
         _buildSection('Logística (Frete)', [

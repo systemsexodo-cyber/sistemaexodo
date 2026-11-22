@@ -98,6 +98,14 @@ class Produto {
   final double? larguraCm; // Largura em centímetros
   final double? profundidadeCm; // Profundidade em centímetros
   final List<String> tags; // Tags para busca e categorização na loja
+
+  // Permanência na LOJA ONLINE: por quanto tempo e/ou em que dias o item
+  // aparece na vitrine. Fora da janela (ou fora dos dias marcados) ele some
+  // da loja — o cadastro, o PDV e o estoque não são afetados. Nulo = sem
+  // limite naquele lado; lista de dias vazia = todos os dias.
+  final DateTime? lojaInicio; // Primeiro dia em que aparece na loja
+  final DateTime? lojaFim; // Último dia em que aparece (vale o dia inteiro)
+  final List<int> diasSemanaLoja; // 1=seg ... 7=dom (DateTime.weekday)
   
   // Campos para variações de produto (tamanhos, cores, sabores, etc)
   final List<VariacaoProduto> variacoes; // Lista de variações disponíveis
@@ -206,6 +214,9 @@ class Produto {
     this.impressoraProducaoExtra = const [],
     this.exibirNaLoja = false,
     this.emDestaque = false,
+    this.lojaInicio,
+    this.lojaFim,
+    List<int>? diasSemanaLoja,
     this.enviaBalanca = false,
     this.ativo = true,
     this.cobrarGarcom = true,
@@ -245,6 +256,7 @@ class Produto {
        codigosBarrasAdicionais = codigosBarrasAdicionais ?? [],
        fotosUrls = fotosUrls ?? [],
        tags = tags ?? [],
+       diasSemanaLoja = diasSemanaLoja ?? [],
        variacoes = variacoes ?? [],
        temVariacoes = temVariacoes ?? false,
        adicionais = adicionais ?? [],
@@ -469,6 +481,37 @@ class Produto {
     return 'Indisponível no momento';
   }
 
+  /// True se o produto tem alguma regra de permanência na loja online
+  /// configurada (janela de datas e/ou dias da semana).
+  bool get temPermanenciaLoja =>
+      lojaInicio != null || lojaFim != null || diasSemanaLoja.isNotEmpty;
+
+  /// O produto deve aparecer na VITRINE no momento informado (padrão: agora)?
+  ///
+  /// Regra separada da disponibilidade de venda: serve para o item ficar na
+  /// loja só por um período (ex.: 7 dias) ou só em alguns dias da semana.
+  /// O dia final vale inteiro. Sem nada configurado, aparece sempre.
+  bool naLojaEm([DateTime? agora]) {
+    final a = agora ?? DateTime.now();
+    if (lojaInicio != null) {
+      final inicio =
+          DateTime(lojaInicio!.year, lojaInicio!.month, lojaInicio!.day);
+      if (a.isBefore(inicio)) return false;
+    }
+    if (lojaFim != null) {
+      final fim = DateTime(
+          lojaFim!.year, lojaFim!.month, lojaFim!.day, 23, 59, 59, 999);
+      if (a.isAfter(fim)) return false;
+    }
+    if (diasSemanaLoja.isNotEmpty && !diasSemanaLoja.contains(a.weekday)) {
+      return false;
+    }
+    return true;
+  }
+
+  /// True se o produto está dentro da permanência configurada agora.
+  bool get naLojaAgora => naLojaEm();
+
   /// Retorna o preço atual considerando as promoções ativas no momento,
   /// sem contexto de carrinho (quantidade 1). No PDV, o preço real é calculado
   /// com [aplicarPromocoes] usando a quantidade/subtotal do item.
@@ -547,7 +590,18 @@ class Produto {
     }
     return estoque;
   }
-  
+
+  /// Composto que baixa só os ingredientes (`baixarEstoqueProprio = false`,
+  /// ex.: chop controlado pelo barril) NÃO depende do saldo dele mesmo — é
+  /// vendido sem "esgotar". É a regra que a loja online usa para não marcar
+  /// como indisponível um item cujo saldo próprio é zero de propósito.
+  bool get vendeSemSaldoProprio => !baixarEstoqueProprio;
+
+  /// Tem saldo PRÓPRIO para vender (contando as variações)? Composto com
+  /// `baixarEstoqueProprio = false` sempre retorna true.
+  bool get temSaldoProprioParaVenda =>
+      vendeSemSaldoProprio || estoqueTotal > 0;
+
   // Retorna o estoque de uma variação específica
   double? estoqueVariacao(List<VariacaoProduto>? variacoesSelecionadas) {
     if (!temVariacoes || variacoesSelecionadas == null || variacoesSelecionadas.isEmpty) {
@@ -640,6 +694,9 @@ class Produto {
       'impressora_producao_extra': impressoraProducaoExtra,
       'exibir_na_loja': exibirNaLoja,
       'em_destaque': emDestaque,
+      'loja_inicio': lojaInicio?.toIso8601String(),
+      'loja_fim': lojaFim?.toIso8601String(),
+      'dias_semana_loja': diasSemanaLoja,
       'envia_balanca': enviaBalanca,
       'ativo': ativo,
       'cobrar_garcom': cobrarGarcom,
@@ -777,6 +834,13 @@ class Produto {
           .toList(),
       exibirNaLoja: getBool('exibirNaLoja', 'exibir_na_loja') ?? false,
       emDestaque: getBool('emDestaque', 'em_destaque') ?? false,
+      lojaInicio: getDate('lojaInicio', 'loja_inicio'),
+      lojaFim: getDate('lojaFim', 'loja_fim'),
+      diasSemanaLoja: (getList('diasSemanaLoja', 'dias_semana_loja') ?? [])
+          .map((e) => int.tryParse(e.toString()))
+          .whereType<int>()
+          .where((d) => d >= 1 && d <= 7)
+          .toList(),
       enviaBalanca: getBool('enviaBalanca', 'envia_balanca') ?? false,
       ativo: getBool('ativo', 'ativo') ?? true,
       cobrarGarcom: getBool('cobrarGarcom', 'cobrar_garcom') ?? true,
@@ -879,6 +943,9 @@ class Produto {
     List<String>? impressoraProducaoExtra,
     bool? exibirNaLoja,
     bool? emDestaque,
+    DateTime? lojaInicio,
+    DateTime? lojaFim,
+    List<int>? diasSemanaLoja,
     List<String>? fotosUrls,
     String? fotoPrincipalUrl,
     /// Limpa a foto principal. O `null` sozinho significa "nao mexer", entao
@@ -968,6 +1035,9 @@ class Produto {
       impressoraProducaoExtra: impressoraProducaoExtra ?? this.impressoraProducaoExtra,
       exibirNaLoja: exibirNaLoja ?? this.exibirNaLoja,
       emDestaque: emDestaque ?? this.emDestaque,
+      lojaInicio: lojaInicio ?? this.lojaInicio,
+      lojaFim: lojaFim ?? this.lojaFim,
+      diasSemanaLoja: diasSemanaLoja ?? this.diasSemanaLoja,
       fotosUrls: fotosUrls ?? this.fotosUrls,
       fotoPrincipalUrl: limparFotoPrincipal
           ? null

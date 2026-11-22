@@ -194,3 +194,6 @@ tool/central_conexoes.json
 # Dumps/backups locais de banco de clientes e rascunhos de código
 temp/restore_*.sql
 temp/*.bak*
+
+# Provedor de nuvem escolhido neste PC (estado local)
+.nuvem_ativa

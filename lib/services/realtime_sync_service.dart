@@ -80,6 +80,10 @@ class RealtimeSyncService {
   /// Avisa que uma tabela mudou na nuvem (ver [NeonRealtimeService]).
   OnMudancaNaNuvem? aoMudarNaNuvem;
 
+  /// Lista pública das tabelas críticas (usada por quem liga o Neon Realtime
+  /// diretamente, sem passar pelo [RealtimeSyncService]).
+  static List<String> get tabelasCriticas => List<String>.unmodifiable(_tabelasCriticas);
+
   bool get ativo => _ativo;
   DateTime? get lastSyncAt => _lastSyncAt;
 

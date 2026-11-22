@@ -1,4 +1,5 @@
 import os
+import socket
 import sys
 import threading
 import time
@@ -259,6 +260,14 @@ class SyncTrayApp:
         except Exception:
             return False
 
+    @staticmethod
+    def _segundos_do_env(nome, padrao):
+        """Lê um intervalo em segundos do .env, com o padrão em caso de erro."""
+        try:
+            return max(1.0, float(os.getenv(nome) or padrao))
+        except Exception:
+            return float(padrao)
+
     def sync_cycle(self, force=False):
         if not all([self.supabase_url, self.api_key, self.db_name, self.db_user, self.db_password]):
             self.status = "Erro: .env incompleto!"
@@ -344,6 +353,9 @@ class SyncTrayApp:
                 else:
                     self.status = f"Online | Ultima: {self.last_sync}{sufixo_lan}"
             self.update_icon_tooltip()
+            # Devolvido ao background_loop para decidir o espaçamento do próximo
+            # ciclo completo (rodada sem movimento = menos egress).
+            return enviados, recebidos
 
         except Exception as e:
             self.update_status_icon('offline', "Erro na sincronizacao (Off)")
@@ -541,7 +553,17 @@ class SyncTrayApp:
         # não deve esperar esse ciclo terminar: a fila pendente é pequena e
         # pode ser escoada em um caminho rápido, separado do download pesado.
         INTERVALO = 3  # segundos entre verificações rápidas da fila local
-        CICLO_COMPLETO = 30  # segundos entre downloads/varreduras completas
+        # EGRESS: o ciclo completo é o maior consumidor da cota da nuvem — uma
+        # consulta por tabela (~46) a cada rodada. Com 30 s isso virava mais de
+        # 100 mil requisições por dia POR PROCESSO e estourou a cota do Supabase
+        # (HTTP 402 exceed_egress_quota em 21/11/2026). Agora o padrão é 90 s e,
+        # quando a rodada não envia nem recebe nada, o intervalo dobra sozinho até
+        # o teto. O catálogo continua no loop rápido (PRODUTOS_INTERVALO) e a fila
+        # local sobe pelo sync_pending_uploads (a cada 3 s).
+        CICLO_BASE = self._segundos_do_env('CICLO_NUVEM_SEGUNDOS', 90)
+        CICLO_MAX = max(CICLO_BASE,
+                        self._segundos_do_env('CICLO_NUVEM_MAX_SEGUNDOS', 240))
+        ciclo_atual = CICLO_BASE
         last_sync_time = 0
         while self.running:
             agora = time.time()
@@ -554,9 +576,15 @@ class SyncTrayApp:
             self.sync_pending_uploads()
 
             agora = time.time()
-            if agora - last_sync_time >= CICLO_COMPLETO:
+            if agora - last_sync_time >= ciclo_atual:
                 last_sync_time = agora
-                self.sync_cycle()
+                resultado = self.sync_cycle()
+                # Rodada sem movimento: espaça a próxima (menos egress).
+                # Qualquer envio/recebimento volta ao intervalo base.
+                if resultado and (resultado[0] or resultado[1]):
+                    ciclo_atual = CICLO_BASE
+                else:
+                    ciclo_atual = min(ciclo_atual * 2, CICLO_MAX)
             if not self.running:
                 break
             # Aguarda eventos locais via LISTEN/NOTIFY ou timeout curto. O
@@ -671,6 +699,10 @@ class SyncTrayApp:
         self.running = False
         self.descoberta_lan.parar()
         icon.stop()
+        # Libera a porta da instância única ANTES de subir o filho: sem isso o
+        # novo processo encontraria a porta ocupada e encerraria, deixando o PC
+        # sem sincronizador nenhum.
+        liberar_instancia_unica()
         # Relança o proprio executavel de forma independente para evitar travar a pasta temporaria no Windows
         import subprocess
         creationflags = 0
@@ -850,6 +882,50 @@ class SyncTrayApp:
         
         self.icon.run()
 
+# ─── Instância única ────────────────────────────────────────────────────────
+# Dois SincronizadorNuvem.exe rodando ao mesmo tempo DOBRAM todas as consultas
+# feitas à nuvem (e cada processo tem seu próprio estado de pausa, repetindo o
+# aviso de bloqueio). O socket abaixo fica aberto enquanto o processo vive: um
+# segundo processo não consegue abrir a mesma porta e encerra.
+PORTA_INSTANCIA_UNICA = 48765
+_socket_instancia = None
+
+
+def garantir_instancia_unica():
+    """Reserva a porta local da instância. False = já existe uma rodando."""
+    global _socket_instancia
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(('127.0.0.1', PORTA_INSTANCIA_UNICA))
+        s.listen(1)
+        _socket_instancia = s
+        return True
+    except OSError:
+        try:
+            s.close()
+        except Exception:
+            pass
+        return False
+
+
+def liberar_instancia_unica():
+    """Fecha a porta reservada (usado antes de reiniciar o processo)."""
+    global _socket_instancia
+    if _socket_instancia is not None:
+        try:
+            _socket_instancia.close()
+        except Exception:
+            pass
+        _socket_instancia = None
+
+
 if __name__ == "__main__":
+    if not garantir_instancia_unica():
+        sincronizar_local_supabase.print_log(
+            "[TRAY] Ja existe um SincronizadorNuvem rodando neste PC "
+            f"(porta {PORTA_INSTANCIA_UNICA}). Esta instancia sera encerrada "
+            "para nao duplicar o consumo da nuvem.",
+            sincronizar_local_supabase.Colors.YELLOW)
+        sys.exit(0)
     app = SyncTrayApp()
     app.run()

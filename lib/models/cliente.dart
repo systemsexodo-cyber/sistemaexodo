@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:sistema_exodo_novo/utils/date_parser.dart';
 import 'pet.dart';
 import 'endereco_cliente.dart';
@@ -19,6 +20,7 @@ extension TipoPessoaExtension on TipoPessoa {
 
 class Cliente {
   final String id;
+  final String? codigo;
   final String nome;
   final String? nomeFantasia; // Para PJ
   final TipoPessoa tipoPessoa;
@@ -74,6 +76,7 @@ class Cliente {
 
   Cliente({
     required this.id,
+    this.codigo,
     required this.nome,
     this.nomeFantasia,
     this.tipoPessoa = TipoPessoa.fisica,
@@ -206,9 +209,27 @@ class Cliente {
     }
 
     final tipoPessoaStr = getStr('tipoPessoa', 'tipo_pessoa');
+
+    Map? extrasMap = getMap('dadosExtras', 'dados_extras');
+    if (extrasMap == null) {
+      final rawExtras = map['dadosExtras'] ?? map['dados_extras'];
+      if (rawExtras is String && rawExtras.trim().startsWith('{')) {
+        try {
+          final decoded = jsonDecode(rawExtras);
+          if (decoded is Map) extrasMap = decoded;
+        } catch (_) {}
+      }
+    }
+
+    final rawCodigo = getStr('codigo', 'codigo')?.trim();
+    final extrasCodigo = extrasMap?['codigo']?.toString().trim();
+    final codigoFinal = (rawCodigo != null && rawCodigo.isNotEmpty)
+        ? rawCodigo
+        : ((extrasCodigo != null && extrasCodigo.isNotEmpty) ? extrasCodigo : null);
     
     return Cliente(
       id: map['id']?.toString() ?? '',
+      codigo: codigoFinal,
       nome: map['nome']?.toString() ?? '',
       nomeFantasia: getStr('nomeFantasia', 'nome_fantasia'),
       tipoPessoa: tipoPessoaStr != null
@@ -237,8 +258,8 @@ class Cliente {
       profissao: map['profissao']?.toString(),
       observacoes: map['observacoes']?.toString(),
       fotoPath: getStr('fotoPath', 'foto_path'),
-      dadosExtras: getMap('dadosExtras', 'dados_extras') != null 
-          ? Map<String, dynamic>.from(getMap('dadosExtras', 'dados_extras')!) 
+      dadosExtras: extrasMap != null 
+          ? Map<String, dynamic>.from(extrasMap) 
           : null,
       pets: getList('pets', 'pets') != null
           ? getList('pets', 'pets')!.map((p) => Pet.fromMap(p as Map<String, dynamic>)).toList()
@@ -264,8 +285,14 @@ class Cliente {
 
 
   Map<String, dynamic> toMap() {
+    final Map<String, dynamic> extras = Map<String, dynamic>.from(dadosExtras ?? {});
+    if (codigo != null && codigo!.isNotEmpty) {
+      extras['codigo'] = codigo;
+    }
+
     return {
       'id': id,
+      'codigo': codigo,
       'nome': nome,
       'nome_fantasia': nomeFantasia,
       'tipo_pessoa': tipoPessoa.name,
@@ -287,7 +314,7 @@ class Cliente {
       'profissao': profissao,
       'observacoes': observacoes,
       'foto_path': fotoPath,
-      'dados_extras': dadosExtras,
+      'dados_extras': extras.isEmpty ? null : extras,
       'pets': pets.map((p) => p.toMap()).toList(),
       'enderecos': enderecos.map((e) => e.toMap()).toList(),
       'limite_credito': limiteCredito,
@@ -308,6 +335,7 @@ class Cliente {
 
   Cliente copyWith({
     String? id,
+    String? codigo,
     String? nome,
     String? nomeFantasia,
     TipoPessoa? tipoPessoa,
@@ -347,6 +375,7 @@ class Cliente {
   }) {
     return Cliente(
       id: id ?? this.id,
+      codigo: codigo ?? this.codigo,
       nome: nome ?? this.nome,
       nomeFantasia: nomeFantasia ?? this.nomeFantasia,
       tipoPessoa: tipoPessoa ?? this.tipoPessoa,

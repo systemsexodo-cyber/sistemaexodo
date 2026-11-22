@@ -23,6 +23,7 @@ import 'package:sistema_exodo_novo/widgets/cash_back_badge.dart';
 import 'package:sistema_exodo_novo/services/local_storage_service.dart';
 import 'package:sistema_exodo_novo/services/balanca_service.dart';
 import 'package:sistema_exodo_novo/services/impressao_service.dart';
+import 'package:sistema_exodo_novo/services/fila_impressao_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:sistema_exodo_novo/models/produto.dart';
 import 'package:sistema_exodo_novo/models/forma_venda.dart';
@@ -393,6 +394,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   int _segundosSemFullscreen = 0;
   final ScrollController _carrinhoScrollController = ScrollController();
   final ScrollController _gridScrollController = ScrollController();
+  // Controla a faixa horizontal de grupos/categorias do catálogo.
+  final ScrollController _categoriasScrollController = ScrollController();
+
+  // Novo pedido do e-commerce aguardando decisão do lojista no PDV Central.
+  VoidCallback? _ouvinteAvisoPedidoEcommerce;
+  DataService? _dataServicePDV;
+  bool _mostrandoPopupPedidoEcommerce = false;
   String?
   _ultimoItemAdicionadoId; // ID do último item adicionado (para destaque)
   bool _dialogAberto =
@@ -423,6 +431,10 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       ''; // Previsão de entrega informada (ex: 30-45 min ou 18:30)
   String _infoCalculoTaxa = '';
   bool _calculandoTaxa = false;
+
+  // Captura o setDialogState do dialog de delivery para reconstruí-lo quando
+  // o cliente for selecionado, sem fechar o dialog de entrega.
+  StateSetter? _dialogSetStateDelivery;
 
   bool _estaFinalizando =
       false; // Flag para evitar duplos cliques e concorrência
@@ -561,6 +573,28 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
       // Carregar empresaId para isolar preferências
       _empresaIdStorage = dataService.currentEmpresaId;
+
+      // Ouvir novo pedido do e-commerce no PDV: ao chegar, abre o popup de
+      // Confirmar/Rejeitar (Central) com prioridade sobre abrir a Central.
+      _ouvinteAvisoPedidoEcommerce = () {
+        if (!mounted) return;
+        if (_mostrandoPopupPedidoEcommerce) return;
+        final aviso = dataService.avisoPedidoEcommerce;
+        if (aviso == null) return;
+        // Modo automatico: o DataService ja confirmou e mandou o cupom para a
+        // impressora. Nao abre o popup de Confirmar/Rejeitar.
+        if (dataService.autoConfirmarPedidosSite) {
+          dataService.limparAvisoPedidoEcommerce();
+          return;
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_mostrandoPopupPedidoEcommerce) {
+            _abrirPopupConfirmarRejeitarPedidoEcommerce(aviso);
+          }
+        });
+      };
+      _dataServicePDV = dataService;
+      dataService.addListener(_ouvinteAvisoPedidoEcommerce!);
 
       // Carregar configurações de som (isoladas por empresa)
       _storage.carregar(_chavePDV(_keySomPDV)).then((value) {
@@ -1033,7 +1067,11 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     _atalhosFocusNode.dispose();
     _carrinhoScrollController.dispose();
     _gridScrollController.dispose();
+    _categoriasScrollController.dispose();
     HardwareKeyboard.instance.removeHandler(_globalKeyHandler);
+    if (_ouvinteAvisoPedidoEcommerce != null && _dataServicePDV != null) {
+      _dataServicePDV!.removeListener(_ouvinteAvisoPedidoEcommerce!);
+    }
     super.dispose();
   }
 
@@ -3192,9 +3230,15 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     if (!mounted) return;
 
+    // Produto vendido por kilo/fracionado: o campo abre VAZIO com o aviso
+    // "Lendo o peso..." até a balança responder. Antes abria com "1" e dava a
+    // impressão de que o peso já tinha sido lido.
+    final bool aguardandoPeso = balancaAtiva;
+    if (aguardandoPeso) qtdController.text = '';
+
     bool iniciouLeitura = false;
-    bool lendo = false;
-    String? statusText;
+    bool lendo = aguardandoPeso;
+    String? statusText = aguardandoPeso ? "Lendo o peso..." : null;
     bool pesoSimulado = false;
 
     showDialog(
@@ -3206,7 +3250,9 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           Future<void> lerDaBalanca() async {
             setDialogState(() {
               lendo = true;
-              statusText = "Lendo peso da balança...";
+              statusText = "Lendo o peso...";
+              // Enquanto lê de novo, não deixa o peso anterior no campo.
+              if (aguardandoPeso) qtdController.text = '';
             });
 
             final res = await balancaService.lerPeso();
@@ -3218,15 +3264,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               lendo = false;
               pesoSimulado = simulado;
               if (peso > 0) {
-                qtdController.text = peso
-                    .toStringAsFixed(3)
-                    .replaceAll('.', ',');
+                // Peso sempre nas 3 casas da balança (0,200 kg): com uma casa
+                // o operador lia "0,2" e achava que a leitura estava errada.
+                final pesoTexto = BalancaService.formatarPesoKg(peso);
+                qtdController.text = pesoTexto;
                 statusText = simulado
-                    ? "Peso Simulado: ${peso.toStringAsFixed(3)} kg"
-                    : "Peso Lido: ${peso.toStringAsFixed(3)} kg";
+                    ? "Peso Simulado: $pesoTexto kg"
+                    : "Peso Lido: $pesoTexto kg";
                 if (erro != null) {
                   statusText =
-                      "Simulado: ${peso.toStringAsFixed(3)} kg\n(Porta COM indisponível)";
+                      "Simulado: $pesoTexto kg\n(Porta COM indisponível)";
                 }
               } else {
                 statusText = erro ?? "Erro ao ler peso da balança.";
@@ -7232,11 +7279,230 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     );
   }
 
-  void _abrirPedidos() {
-    Navigator.push(
+  Future<void> _abrirPedidos() async {
+    // Guarda o número do aviso para não apagar um pedido ainda mais novo
+    // que chegue enquanto a Central estiver aberta.
+    final avisoAntes = Provider.of<DataService>(
+      context,
+      listen: false,
+    ).avisoPedidoEcommerce?.numero;
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const PedidosPage()),
     );
+    if (!mounted) return;
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final aviso = dataService.avisoPedidoEcommerce;
+    // Voltou da Central: o pedido novo já foi conferido — apaga o ponto.
+    if (aviso != null && aviso.numero == avisoAntes) {
+      dataService.limparAvisoPedidoEcommerce();
+    }
+  }
+
+  /// Popup Confirmar/Rejeitar para um novo pedido da loja online.
+  ///
+  /// Confirmar -> status "Em Andamento" + imprime cupom térmico.
+  /// Rejeitar  -> status "Cancelado".
+  /// Ambas as ações limpam o aviso (some o ponto vermelho no Central) e
+  /// evitam dupla impressão com o _autoProcessarPedidoEcommerce.
+  Future<void> _abrirPopupConfirmarRejeitarPedidoEcommerce(
+      ({String numero, String cliente, double total}) aviso) async {
+    final dataServiceInicial = Provider.of<DataService>(context, listen: false);
+    if (dataServiceInicial.autoConfirmarPedidosSite) {
+      // Pedido ja aceito/impresso automaticamente: nada a decidir aqui.
+      dataServiceInicial.limparAvisoPedidoEcommerce();
+      return;
+    }
+    _mostrandoPopupPedidoEcommerce = true;
+    final dataService = Provider.of<DataService>(context, listen: false);
+    // Pedido completo (cliente, telefone, endereco, itens) para o resumo.
+    final pedidoAviso = dataService.pedidos.firstWhereOrNull(
+      (p) => p.numero == aviso.numero,
+    );
+    try {
+      final confirmado = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.shopping_bag, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Novo pedido da loja online'),
+            ],
+          ),
+          content: SizedBox(
+            width: 420,
+            child: _buildResumoPedidoEcommerce(aviso, pedidoAviso),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Rejeitar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirmar'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+
+      // Busca o pedido completo pelo número para alterar o status e imprimir.
+      final pedido = pedidoAviso ?? dataService.pedidos.firstWhere(
+        (p) => p.numero == aviso.numero,
+        orElse: () => throw Exception('Pedido ${aviso.numero} não encontrado'),
+      );
+
+      if (confirmado == true) {
+        // Confirmar: "Em Andamento" + imprimir cupom térmico.
+        final pedidoConfirmado = pedido.copyWith(status: 'Em Andamento');
+        await dataService.updatePedido(pedidoConfirmado);
+        final empresa = dataService.empresaAtual;
+        if (empresa != null) {
+          await PedidoPDFService.imprimirPDFTermico(
+            pedido: pedidoConfirmado,
+            empresa: empresa,
+            context: context,
+          );
+        }
+      } else {
+        // Rejeitar: "Cancelado".
+        await dataService.updatePedido(pedido.copyWith(status: 'Cancelado'));
+      }
+
+      // Somente depois de decidir (e imprimir, se confirmado) limpa o aviso,
+      // para o ponto vermelho sumir e não re-processar no auto.
+      dataService.limparAvisoPedidoEcommerce();
+    } catch (e) {
+      debugPrint('>>> [E-commerce] Erro ao confirmar/rejeitar pedido: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao processar pedido ${aviso.numero}: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        _mostrandoPopupPedidoEcommerce = false;
+      }
+    }
+  }
+
+  /// Resumo completo do pedido da loja online exibido no popup de
+  /// Confirmar/Rejeitar: cliente, telefone, endereco (ou retirada), itens.
+  Widget _buildResumoPedidoEcommerce(
+    ({String numero, String cliente, double total}) aviso,
+    Pedido? pedido,
+  ) {
+    final delivery = pedido?.deliveryInfo;
+    final cliente = (pedido?.clienteNome ?? aviso.cliente).trim();
+    final telefone = _formatarTelefonePedido(pedido?.clienteTelefone);
+    final endereco = (pedido?.clienteEndereco ?? '').trim();
+    final itens = pedido?.produtos ?? const <ItemPedido>[];
+    final taxaEntrega = delivery?.taxaEntrega ?? 0.0;
+    final total = pedido?.total ?? aviso.total;
+    final retirada = pedido?.origem == 'E-commerce - Retirada' ||
+        (pedido != null && delivery == null);
+
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _linhaResumoPedido('Número', aviso.numero),
+          _linhaResumoPedido(
+            'Cliente',
+            cliente.isEmpty ? '(não informado)' : cliente,
+          ),
+          if (telefone.isNotEmpty) _linhaResumoPedido('Telefone', telefone),
+          if (delivery != null)
+            _linhaResumoPedido('Endereço', delivery.enderecoCompleto)
+          else if (retirada)
+            _linhaResumoPedido(
+              'Retirada',
+              endereco.isEmpty ? 'na loja' : endereco,
+            )
+          else if (endereco.isNotEmpty)
+            _linhaResumoPedido('Endereço', endereco),
+          if (taxaEntrega > 0)
+            _linhaResumoPedido(
+              'Taxa entrega',
+              'R\$ ${taxaEntrega.toStringAsFixed(2)}',
+            ),
+          const Divider(height: 20),
+          const Text(
+            'Produtos',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
+          if (itens.isEmpty)
+            const Text(
+              '(itens não encontrados neste aparelho)',
+              style: TextStyle(fontStyle: FontStyle.italic),
+            )
+          else
+            ...itens.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '${_quantidadePedido(item.quantidade)}x ${item.nome} — '
+                  'R\$ ${(item.preco * item.quantidade).toStringAsFixed(2)}',
+                ),
+              ),
+            ),
+          const Divider(height: 20),
+          _linhaResumoPedido('Total', 'R\$ ${total.toStringAsFixed(2)}'),
+          if ((pedido?.observacoes ?? '').trim().isNotEmpty)
+            _linhaResumoPedido('Obs.', pedido!.observacoes!.trim()),
+        ],
+      ),
+    );
+  }
+
+  Widget _linhaResumoPedido(String rotulo, String valor) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              '$rotulo:',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Expanded(child: Text(valor)),
+        ],
+      ),
+    );
+  }
+
+  /// 2.0 -> "2"; 1.5 -> "1,5".
+  String _quantidadePedido(double qtd) {
+    if (qtd == qtd.roundToDouble()) return qtd.toStringAsFixed(0);
+    return qtd
+        .toStringAsFixed(2)
+        .replaceAll('.', ',')
+        .replaceAll(RegExp(r',?0+$'), '');
+  }
+
+  /// 11987654321 -> (11) 98765-4321. Mantem o texto original se nao casar.
+  String _formatarTelefonePedido(String? telefone) {
+    final digitos = (telefone ?? '').replaceAll(RegExp(r'\D'), '');
+    if (digitos.length == 11) {
+      return '(${digitos.substring(0, 2)}) '
+          '${digitos.substring(2, 7)}-${digitos.substring(7)}';
+    }
+    if (digitos.length == 10) {
+      return '(${digitos.substring(0, 2)}) '
+          '${digitos.substring(2, 6)}-${digitos.substring(6)}';
+    }
+    return (telefone ?? '').trim();
   }
 
   void _abrirDialogPagamento() {
@@ -8637,6 +8903,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
     List<PagamentoPedido> pagamentos,
   ) async {
     if (_estaFinalizando) return;
+    if (_vendaBloqueadaPorCliente()) return;
 
     // BLOQUEIO DE CAIXA NA HORA DE GRAVAR: entre abrir o pagamento e confirmar,
     // o caixa pode ter sido FECHADO no outro PC — o fechamento chega pela rede
@@ -8797,6 +9064,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
           .where((p) => p.recebido)
           .fold(0.0, (sum, p) => sum + p.valor);
 
+      // Acréscimos lançados junto dos pagamentos (ex: juros no fiado) também
+      // fazem parte do total da venda: sem isso a venda/pedido era gravada com
+      // o valor sem o acréscimo enquanto o pagamento já trazia o valor cheio.
+      final double acrescimoPagamentos = pagamentosAtualizados.fold(
+        0.0,
+        (sum, p) => sum + (p.acrescimo ?? 0.0),
+      );
+      final double totalVendaComAcrescimo =
+          totalVendaCapturado + acrescimoPagamentos;
+
       String statusPedido;
       if (totalRecebido >= totalVendaCapturado - 0.01) {
         statusPedido = 'Pago';
@@ -8885,7 +9162,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         itens: itensVenda,
         tipoPagamento: tipoPagamentoVenda,
         pagamentos: pagamentosAtualizados,
-        valorTotal: totalVendaCapturado,
+        valorTotal: totalVendaComAcrescimo,
         valorRecebido: totalRecebido > 0 ? totalRecebido : null,
         troco: pagamentosAtualizados
             .where((p) => p.troco != null && p.troco! > 0)
@@ -8992,7 +9269,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               vendaBalcao.clienteTelefone,
           dataPedido: vendaBalcao.dataVenda,
           status: 'Pago',
-          total: totalVendaCapturado,
+          total: totalVendaComAcrescimo,
           produtos: produtosParaImprimir,
           servicos: [],
           pagamentos: pagamentosAtualizados,
@@ -9055,7 +9332,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
               vendaBalcao.clienteTelefone,
           dataPedido: vendaBalcao.dataVenda,
           status: statusPedido,
-          total: totalVendaCapturado,
+          total: totalVendaComAcrescimo,
           produtos: produtosPedido,
           servicos: servicosPedido,
           pagamentos: pagamentosAtualizados,
@@ -9161,7 +9438,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
       if (mounted) {
         _tocarSomPDV('notification.mp3', tipo: 'finalizar');
         _mostrarSucessoVenda(
-          totalVendaCapturado,
+          totalVendaComAcrescimo,
           numero,
           vendaBalcao,
           troco: trocoTotal,
@@ -9171,9 +9448,17 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         );
       }
 
+      // No celular (Android/iOS): se o operador fechou a venda, enviar para o Caixa Físico imprimir
+      if (FilaImpressaoService.ehDispositivoMovel) {
+        unawaited(FilaImpressaoService.enfileirarVendaParaImpressao(
+          venda: vendaBalcao,
+          empresaId: empresaConfigImpressao?.id ?? dataService.currentEmpresaId ?? '',
+        ));
+      }
+
       // IMPRESSÃO AUTOMÁTICA DO CUPOM (configurável) — o operador não precisa
       // clicar em "Imprimir": ao concluir a venda o cupom sai sozinho.
-      if (imprimirCupomAuto && empresaConfigImpressao != null) {
+      if (!FilaImpressaoService.ehDispositivoMovel && imprimirCupomAuto && empresaConfigImpressao != null) {
         try {
           await VendaPDFService.imprimirPDFTermico(
             venda: vendaBalcao,
@@ -9339,11 +9624,43 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
   }
 
   // Salvar venda pendente para receber depois
+  /// Cliente bloqueado não pode comprar: bloqueia a venda e avisa o motivo.
+  /// Retorna `true` quando a venda deve ser abortada.
+  bool _vendaBloqueadaPorCliente() {
+    final cliente = _clienteSelecionado;
+    if (cliente == null || !cliente.bloqueado) return false;
+
+    final motivo = cliente.motivoBloqueio?.trim();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.block, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${cliente.nome} está bloqueado para vendas.'
+                '${motivo != null && motivo.isNotEmpty ? ' Motivo: $motivo' : ''}'
+                ' Desbloqueie o cliente no cadastro para vender.',
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 6),
+      ),
+    );
+    return true;
+  }
+
   Future<void> _salvarVendaPendente(
     DataService dataService,
     List<PagamentoPedido> pagamentosDoDialog, {
     bool mostrarPromptImpressao = false,
   }) async {
+    if (_vendaBloqueadaPorCliente()) return;
+
     String? nomeIdentificacao;
     final vendedorSelecionadoCapturado = _vendedorSelecionado;
 
@@ -9653,6 +9970,14 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
         await dataService.deleteVendaBalcao(vendaOriginal.id);
       }
 
+      // No celular (Android/iOS): se salvou pedido/delivery, enviar para o Caixa Físico imprimir
+      if (FilaImpressaoService.ehDispositivoMovel) {
+        unawaited(FilaImpressaoService.enfileirarPedidoParaImpressao(
+          pedido: pedidoVendaSalva,
+          empresaId: dataService.currentEmpresaId ?? '',
+        ));
+      }
+
       // IMPRIMIR TICKETS DE PRODUÇÃO (a própria função respeita a configuração)
       await _imprimirTicketsProducaoVendaDireta(pedidoVendaSalva);
 
@@ -9786,6 +10111,16 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
 
     // Limpar carrinho salvo após finalizar venda
     // _limparCarrinhoSalvo();
+  }
+
+  /// Formata a quantidade sem arredondar para inteiro (ex: 2,5 em vez de 3).
+  /// Itens vendidos por peso (kg) têm quantidade fracionada e o arredondamento
+  /// fazia a parte selecionada ficar menor que o valor real do item.
+  String _formatarQuantidadeDividir(double qtd) {
+    final texto = qtd == qtd.truncateToDouble()
+        ? qtd.toStringAsFixed(0)
+        : qtd.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '');
+    return texto.replaceAll('.', ',');
   }
 
   void _abrirDialogDividirConta() {
@@ -10064,6 +10399,13 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                             itemBuilder: (context, index) {
                               final item = _carrinho[index];
                               final qtySelecionada = selecionados[index] ?? 0.0;
+                              final String qtdDisponivel =
+                                  _formatarQuantidadeDividir(item.quantidade);
+                              // Passo do +/-: nunca maior que a quantidade do
+                              // item (fracionada em produtos por peso).
+                              final double passo = item.quantidade >= 1.0
+                                  ? 1.0
+                                  : item.quantidade;
 
                               return Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -10089,7 +10431,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                           ),
                                           const SizedBox(height: 2),
                                           Text(
-                                            'Disponível: ${item.quantidade.toStringAsFixed(0)}x • R\$ ${item.preco.toStringAsFixed(2)} cada',
+                                            'Disponível: $qtdDisponivel • R\$ ${item.preco.toStringAsFixed(2)} cada • Total R\$ ${item.subtotal.toStringAsFixed(2)}',
                                             style: TextStyle(
                                               color: Colors.white.withOpacity(
                                                 0.5,
@@ -10113,7 +10455,7 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                               ? () {
                                                   setDialogState(() {
                                                     selecionados[index] =
-                                                        (qtySelecionada - 1.0)
+                                                        (qtySelecionada - passo)
                                                             .clamp(
                                                               0.0,
                                                               item.quantidade,
@@ -10122,19 +10464,42 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                                 }
                                               : null,
                                         ),
-                                        Container(
-                                          constraints: const BoxConstraints(
-                                            minWidth: 30,
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            qtySelecionada.toStringAsFixed(0),
-                                            style: TextStyle(
-                                              color: qtySelecionada > 0.0
-                                                  ? Colors.greenAccent
-                                                  : Colors.white24,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
+                                        Tooltip(
+                                          message:
+                                              'Clique para marcar o item todo ($qtdDisponivel)',
+                                          child: InkWell(
+                                            onTap: () {
+                                              setDialogState(() {
+                                                selecionados[index] =
+                                                    qtySelecionada >=
+                                                        item.quantidade - 0.0001
+                                                    ? 0.0
+                                                    : item.quantidade;
+                                              });
+                                            },
+                                            child: Container(
+                                              constraints:
+                                                  const BoxConstraints(
+                                                    minWidth: 40,
+                                                  ),
+                                              alignment: Alignment.center,
+                                              child: Text(
+                                                qtySelecionada > 0.0
+                                                    ? _formatarQuantidadeDividir(
+                                                        qtySelecionada,
+                                                      )
+                                                    : 'TUDO',
+                                                style: TextStyle(
+                                                  color: qtySelecionada > 0.0
+                                                      ? Colors.greenAccent
+                                                      : Colors.white38,
+                                                  fontSize:
+                                                      qtySelecionada > 0.0
+                                                      ? 16
+                                                      : 11,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -10145,11 +10510,12 @@ class _VendaDiretaPageState extends State<VendaDiretaPage> {
                                             size: 20,
                                           ),
                                           onPressed:
-                                              qtySelecionada < item.quantidade
+                                              qtySelecionada <
+                                                  item.quantidade - 0.0001
                                               ? () {
                                                   setDialogState(() {
                                                     selecionados[index] =
-                                                        (qtySelecionada + 1.0)
+                                                        (qtySelecionada + passo)
                                                             .clamp(
                                                               0.0,
                                                               item.quantidade,
@@ -13067,6 +13433,7 @@ recusando a emissão de NFC-e (erro 403).
       _mostrarErro('Carrinho está vazio.');
       return;
     }
+    if (_vendaBloqueadaPorCliente()) return;
     if (_enderecoEntrega == null) {
       _mostrarErro('Selecione um endereço para o Delivery.');
       return;
@@ -15088,6 +15455,7 @@ recusando a emissão de NFC-e (erro 403).
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+          _dialogSetStateDelivery = setDialogState;
           final cliente = _clienteSelecionado == null
               ? null
               : (dataService.getClienteById(_clienteSelecionado!.id) ??
@@ -15105,6 +15473,7 @@ recusando a emissão de NFC-e (erro 403).
               );
             });
           }
+
 
           // Combinar endereços da lista com o endereço principal se este estiver preenchido
           final List<EnderecoCliente> enderecos = [];
@@ -15199,6 +15568,139 @@ recusando a emissão de NFC-e (erro 403).
                     ),
                     const Divider(color: Colors.white10),
 
+                    // ===== SELEÇÃO DE CLIENTE (dentro do dialog de delivery) =====
+                    // Permite escolher o cliente sem fechar o dialog de entrega.
+                    const Text(
+                      'CLIENTE DA ENTREGA',
+                      style: TextStyle(
+                        color: Colors.orangeAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (cliente != null) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: Colors.green.withOpacity(0.4),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.person,
+                              color: Colors.greenAccent,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    cliente.nome,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  if (cliente.telefone.isNotEmpty)
+                                    Text(
+                                      cliente.telefone,
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.7),
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.close,
+                                color: Colors.white54,
+                                size: 18,
+                              ),
+                              onPressed: () {
+                                setDialogState(() {
+                                  _clienteSelecionado = null;
+                                });
+                                _salvarClienteSelecionado();
+                              },
+                              tooltip: 'Remover cliente',
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => _selecionarCliente(dataService),
+                          icon: const Icon(
+                            Icons.edit,
+                            color: Colors.orangeAccent,
+                            size: 16,
+                          ),
+                          label: const Text(
+                            'TROCAR CLIENTE',
+                            style: TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ] else ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _selecionarCliente(dataService),
+                          icon: const Icon(
+                            Icons.person_search_outlined,
+                            color: Colors.black,
+                            size: 18,
+                          ),
+                          label: const Text(
+                            'SELECIONAR CLIENTE',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orangeAccent,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Selecione o cliente para carregar seus endereços cadastrados.',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                    const Divider(color: Colors.white10),
+
                     if (_isDelivery) ...[
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 8.0),
@@ -15226,9 +15728,9 @@ recusando a emissão de NFC-e (erro 403).
                             children: [
                               Text(
                                 cliente == null
-                                    ? 'Nenhum cliente selecionado. Você pode '
-                                          'definir a taxa de entrega agora e '
-                                          'escolher o cliente depois.'
+                                    ? 'Nenhum cliente selecionado. Use o '
+                                          'seletor de cliente acima para '
+                                          'carregar os endereços cadastrados.'
                                     : 'Este cliente não possui endereços '
                                           'cadastrados.',
                                 style: const TextStyle(
@@ -15236,29 +15738,6 @@ recusando a emissão de NFC-e (erro 403).
                                   fontSize: 13,
                                 ),
                               ),
-                              if (cliente == null)
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: TextButton.icon(
-                                    onPressed: () {
-                                      Navigator.pop(context);
-                                      _selecionarCliente(dataService);
-                                    },
-                                    icon: const Icon(
-                                      Icons.person_search_outlined,
-                                      size: 18,
-                                      color: Colors.orangeAccent,
-                                    ),
-                                    label: const Text(
-                                      'SELECIONAR CLIENTE',
-                                      style: TextStyle(
-                                        color: Colors.orangeAccent,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
                         )
@@ -16390,6 +16869,14 @@ recusando a emissão de NFC-e (erro 403).
         _salvarClienteSelecionado();
         _salvarTabelaPreco();
         _recalcularPrecosCarrinho();
+        // Seleciona automaticamente o endereço principal do cliente (se houver)
+        // para evitar mais um clique no fluxo de delivery.
+        if (_enderecoEntrega == null && cliente.enderecos.isNotEmpty) {
+          _enderecoEntrega = cliente.enderecos.first;
+        }
+        // Reconstrói o dialog de delivery para mostrar o cliente selecionado
+        // e seus endereços, sem fechar o dialog.
+        _dialogSetStateDelivery?.call(() {});
       },
       onRemoverCliente: () {
         setState(() => _clienteSelecionado = null);
@@ -17796,7 +18283,7 @@ recusando a emissão de NFC-e (erro 403).
               body: Column(
                 children: [
                   _buildBarraSuperior(dataService),
-                  _buildBarraResumoFiscal(dataService),
+                  if (!ehCelular) _buildBarraResumoFiscal(dataService),
                   _buildAlertaLimiteDinheiro(dataService),
                   Expanded(
                     child: DefaultTabController(
@@ -18897,6 +19384,9 @@ recusando a emissão de NFC-e (erro 403).
               label: 'Central',
               color: Colors.blueAccent,
               onTap: () => _abrirPedidos(),
+              // Pedido novo da loja online aguardando receber: acende o
+              // ponto vermelho pulsante no botão.
+              alertaNovoPedido: dataService.avisoPedidoEcommerce != null,
             ),
             const SizedBox(width: 8),
           ],
@@ -18938,26 +19428,38 @@ recusando a emissão de NFC-e (erro 403).
       ),
       child: isMobile
           ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
                   children: [
-                    if (habilitarMesasComandas) ...[
-                      _buildBotaoMapaMesas(dataService, compact: true),
-                      const SizedBox(width: 4),
-                      _buildBotaoComandas(dataService, compact: true),
-                      const SizedBox(width: 4),
-                      _buildBotaoAbrirPorNumero(dataService, compact: true),
-                      const SizedBox(width: 4),
-                    ],
-                    if (habilitarCozinha) ...[
-                      _buildBotaoCozinha(dataService, compact: true),
-                      const SizedBox(width: 8),
-                    ],
                     searchField,
+                    const SizedBox(width: 6),
+                    _buildBotaoOrdenacao(dataService),
                   ],
                 ),
-                const SizedBox(height: 8),
-                actionButtons,
+                if (habilitarMesasComandas || habilitarCozinha || actionButtons != null) ...[
+                  const SizedBox(height: 6),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        if (habilitarMesasComandas) ...[
+                          _buildBotaoMapaMesas(dataService, compact: true),
+                          const SizedBox(width: 6),
+                          _buildBotaoComandas(dataService, compact: true),
+                          const SizedBox(width: 6),
+                          _buildBotaoAbrirPorNumero(dataService, compact: true),
+                          const SizedBox(width: 6),
+                        ],
+                        if (habilitarCozinha) ...[
+                          _buildBotaoCozinha(dataService, compact: true),
+                          const SizedBox(width: 6),
+                        ],
+                        actionButtons,
+                      ],
+                    ),
+                  ),
+                ],
               ],
             )
           : Row(
@@ -18993,6 +19495,7 @@ recusando a emissão de NFC-e (erro 403).
     required String label,
     required Color color,
     required VoidCallback onTap,
+    bool alertaNovoPedido = false,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -19004,7 +19507,18 @@ recusando a emissão de NFC-e (erro 403).
         ),
         child: Row(
           children: [
-            Icon(icon, color: color, size: 18),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(icon, color: color, size: 18),
+                if (alertaNovoPedido)
+                  const Positioned(
+                    top: -3,
+                    right: -4,
+                    child: _PontoPedidoNovo(),
+                  ),
+              ],
+            ),
             const SizedBox(width: 6),
             Text(
               label,
@@ -19171,6 +19685,23 @@ recusando a emissão de NFC-e (erro 403).
     });
   }
 
+  /// Rola a faixa de grupos para a esquerda (direcao -1) ou para a direita
+  /// (direcao 1). Sem isso, os grupos que passam da largura da tela so eram
+  /// alcançáveis arrastando com o mouse — as setas ao lado eram só enfeite.
+  void _rolarCategorias(double direcao) {
+    if (!_categoriasScrollController.hasClients) return;
+    final posicao = _categoriasScrollController.position;
+    final alvo = (posicao.pixels + (direcao * 280)).clamp(
+      0.0,
+      posicao.maxScrollExtent,
+    );
+    _categoriasScrollController.animateTo(
+      alvo,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
+  }
+
   Widget _buildCategorias(List<String> categorias) {
     final isSmallHeight = MediaQuery.of(context).size.height < 750;
 
@@ -19183,13 +19714,20 @@ recusando a emissão de NFC-e (erro 403).
       ),
       child: Row(
         children: [
-          // Ícone indicando scroll
-          Container(
-            padding: const EdgeInsets.only(right: 8),
-            child: Icon(
-              Icons.chevron_left_rounded,
-              color: Colors.white.withOpacity(0.3),
-              size: 20,
+          // Seta que rola a faixa de grupos para a esquerda
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _rolarCategorias(-1),
+              child: Container(
+                padding: const EdgeInsets.only(right: 8),
+                child: Icon(
+                  Icons.chevron_left_rounded,
+                  color: Colors.white.withOpacity(0.5),
+                  size: 24,
+                ),
+              ),
             ),
           ),
           // Lista de categorias com scroll
@@ -19202,7 +19740,17 @@ recusando a emissão de NFC-e (erro 403).
                   PointerDeviceKind.trackpad,
                 },
               ),
-              child: ListView.builder(
+              child: Listener(
+                // Roda do mouse sobre a faixa também rola os grupos.
+                onPointerSignal: (event) {
+                  if (event is! PointerScrollEvent) return;
+                  final delta = event.scrollDelta.dy != 0
+                      ? event.scrollDelta.dy
+                      : event.scrollDelta.dx;
+                  if (delta != 0) _rolarCategorias(delta > 0 ? 1 : -1);
+                },
+                child: ListView.builder(
+                controller: _categoriasScrollController,
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
                 itemCount: categorias.length + 1,
@@ -19383,15 +19931,23 @@ recusando a emissão de NFC-e (erro 403).
                   );
                 },
               ),
+              ),
             ),
           ),
-          // Ícone indicando mais itens à direita
-          Container(
-            padding: const EdgeInsets.only(left: 8),
-            child: Icon(
-              Icons.chevron_right_rounded,
-              color: Colors.white.withOpacity(0.3),
-              size: 20,
+          // Seta que rola a faixa de grupos para a direita
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _rolarCategorias(1),
+              child: Container(
+                padding: const EdgeInsets.only(left: 8),
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  color: Colors.white.withOpacity(0.5),
+                  size: 24,
+                ),
+              ),
             ),
           ),
         ],
@@ -22665,6 +23221,57 @@ recusando a emissão de NFC-e (erro 403).
   }
 }
 
+/// Ponto vermelho pulsante que sinaliza um pedido novo da loja online
+/// aguardando ser recebido na Central de Pedidos (botão "Central" do PDV).
+class _PontoPedidoNovo extends StatefulWidget {
+  const _PontoPedidoNovo();
+
+  @override
+  State<_PontoPedidoNovo> createState() => _PontoPedidoNovoState();
+}
+
+class _PontoPedidoNovoState extends State<_PontoPedidoNovo>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 750),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        // 0 -> 1 -> 0: o ponto respira (tamanho + brilho).
+        final t = Curves.easeInOut.transform(_controller.value);
+        final tamanho = 7.0 + 3.0 * t;
+        return Container(
+          width: tamanho,
+          height: tamanho,
+          decoration: BoxDecoration(
+            color: Color.lerp(Colors.redAccent, Colors.orangeAccent, t),
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFF1E1E2E), width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.redAccent.withValues(alpha: 0.25 + 0.55 * t),
+                blurRadius: 3 + 5 * t,
+                spreadRadius: 1 + 2 * t,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Widget de notificação de sucesso elegante no canto superior direito
 class _NotificacaoSucesso extends StatefulWidget {
   final IconData icone;
@@ -23826,7 +24433,12 @@ class _ItemCarrinhoComHoverState extends State<_ItemCarrinhoComHover> {
                       SizedBox(
                         width: isSmallHeight ? 24 : 28,
                         child: Text(
-                          '${item.quantidade}',
+                          // Quantidade pesada aparece nas 3 casas da balança
+                          // (0,200) em vez de "0.2"; itens em unidade
+                          // continuam inteiros.
+                          item.quantidade == item.quantidade.roundToDouble()
+                              ? '${item.quantidade.toStringAsFixed(0)}'
+                              : BalancaService.formatarPesoKg(item.quantidade),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: isDark ? Colors.white : Colors.black87,
@@ -24292,10 +24904,70 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
   }
 
   void _selecionarCliente(Cliente cliente) {
+    // Cliente bloqueado não pode ser usado em vendas.
+    if (cliente.bloqueado) {
+      _mostrarAvisoClienteBloqueado(cliente);
+      return;
+    }
     Navigator.of(context).pop();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.onClienteSelecionado(cliente);
     });
+  }
+
+  void _mostrarAvisoClienteBloqueado(Cliente cliente) {
+    final motivo = cliente.motivoBloqueio?.trim();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.block, color: Colors.red, size: 26),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Cliente bloqueado',
+                style: TextStyle(color: Colors.white, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          '${cliente.nome} está bloqueado e não pode ser usado em vendas.'
+          '${motivo != null && motivo.isNotEmpty ? '\n\nMotivo: $motivo' : ''}'
+          '\n\nDesbloqueie o cliente no cadastro para vender para ele.',
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text(
+              'ENTENDI',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _removerCliente() {
@@ -24440,6 +25112,27 @@ class _SeletorClienteWidgetState extends State<_SeletorClienteWidget> {
                           fontSize: 14,
                         ),
                       ),
+                      if (cliente.bloqueado) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'BLOQUEADO - não vender',
+                            style: TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -25184,9 +25877,26 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     String? nomeFormaCustom,
     bool recebidoImediato = false,
   }) {
+    final bool ehFiado = tipo == TipoPagamento.fiado;
+    // Acréscimo lançado junto com o fiado (juros/taxa): ao editar mostra o que
+    // já está gravado; ao lançar começa com o automático configurado na empresa.
+    final double acrescimoInicial = pagamentoExistente != null
+        ? (pagamentoExistente.acrescimo ?? 0.0)
+        : (ehFiado ? acrescimoCalc : 0.0);
+    final double valorBaseSugerido = valorSugerido - acrescimoInicial;
+
     final valorFocusNode = FocusNode();
     final valorController = TextEditingController(
-      text: valorSugerido.toStringAsFixed(2),
+      text: (pagamentoExistente != null
+              ? (ehFiado
+                    ? pagamentoExistente.valor -
+                          (pagamentoExistente.acrescimo ?? 0.0)
+                    : pagamentoExistente.valor)
+              : (valorBaseSugerido > 0 ? valorBaseSugerido : 0.0))
+          .toStringAsFixed(2),
+    );
+    final acrescimoController = TextEditingController(
+      text: acrescimoInicial > 0 ? acrescimoInicial.toStringAsFixed(2) : '0,00',
     );
     final valorRecebidoController = TextEditingController();
     final observacaoController = TextEditingController(
@@ -25198,9 +25908,12 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
     DateTime primeiroVencimento = DateTime.now().add(const Duration(days: 30));
     int intervaloVencimento = 30;
     bool isDinheiro = tipo == TipoPagamento.dinheiro;
-    bool isFiado = tipo == TipoPagamento.fiado;
+    bool isFiado = ehFiado;
     DateTime dataVencimentoFiado = DateTime.now().add(const Duration(days: 7));
     double troco = 0.0;
+    // Acréscimo do fiado pode ser digitado em DINHEIRO (R$) ou em
+    // PORCENTAGEM (%) sobre o valor do fiado. Padrão: dinheiro.
+    bool acrescimoPorCento = false;
 
     final suportaParcelamento = [
       TipoPagamento.boleto,
@@ -25214,6 +25927,16 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+          // Converte o que foi digitado no acréscimo para R$: em modo dinheiro
+          // é o próprio número; em modo porcentagem é base * pct / 100.
+          double acrescimoEmReais(double base) {
+            final digitado =
+                double.tryParse(acrescimoController.text.replaceAll(',', '.')) ??
+                0.0;
+            final bruto = acrescimoPorCento ? base * digitado / 100 : digitado;
+            return bruto.clamp(0.0, double.infinity);
+          }
+
           void calcularTroco() {
             final valorPagar =
                 double.tryParse(valorController.text.replaceAll(',', '.')) ?? 0;
@@ -25305,7 +26028,14 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
               Navigator.pop(context);
               return;
             }
-            ;
+
+            // Acréscimo digitado no lançamento do fiado (juros/taxa). Ele entra
+            // no valor que o cliente fica devendo e é gravado no pagamento.
+            // Em porcentagem o valor é calculado sobre o que está sendo fiado
+            // (valorALancar), que é o que o cliente vai dever.
+            final double acrescimoDoFiado = isFiado
+                ? acrescimoEmReais(valorALancar)
+                : 0.0;
 
             // Update auto discount/acrescimo
             _descontoAutomatico += descontoCalc;
@@ -25363,7 +26093,9 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                   id: DateTime.now().millisecondsSinceEpoch.toString(),
                   tipo: tipo,
                   nomeForma: nomeFormaCustom,
-                  valor: valorALancar,
+                  // No fiado o acréscimo é somado ao valor devido pelo cliente.
+                  valor: valorALancar + acrescimoDoFiado,
+                  acrescimo: acrescimoDoFiado > 0.01 ? acrescimoDoFiado : null,
                   recebido: isRecebido,
                   dataRecebimento: isRecebido ? DateTime.now() : null,
                   dataVencimento: dataVenc,
@@ -25388,6 +26120,52 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
           double valorParcela = parcelas > 0
               ? valorTotal / parcelas
               : valorTotal;
+
+          // Acréscimo digitado para o fiado (usado no resumo exibido)
+          final double acrescimoFiado = isFiado
+              ? acrescimoEmReais(valorTotal)
+              : 0.0;
+          final double totalFiado = valorTotal + acrescimoFiado;
+
+          // Botãozinho do seletor R$ / % do acréscimo.
+          Widget botaoModoAcrescimo(String texto, bool ativo, bool porCento) {
+            return InkWell(
+              onTap: () {
+                if (acrescimoPorCento == porCento) return;
+                setDialogState(() {
+                  acrescimoPorCento = porCento;
+                  // Zera o campo: "R$ 10" não pode virar "10%" sem o usuário
+                  // perceber (muda completamente o valor).
+                  acrescimoController.text = porCento ? '0' : '0,00';
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 13,
+                ),
+                decoration: BoxDecoration(
+                  color: ativo
+                      ? Colors.red.withOpacity(0.25)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: ativo ? Colors.red : Colors.transparent,
+                  ),
+                ),
+                child: Text(
+                  texto,
+                  style: TextStyle(
+                    color: ativo ? Colors.red : Colors.white54,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            );
+          }
 
           return Focus(
             autofocus: true,
@@ -25938,6 +26716,134 @@ class _DialogPagamentoPDVState extends State<_DialogPagamentoPDV> {
                                 fontSize: 11,
                               ),
                             ),
+                            const SizedBox(height: 12),
+                            const Divider(color: Colors.white24, height: 1),
+                            const SizedBox(height: 12),
+                            const Row(
+                              children: [
+                                Icon(
+                                  Icons.trending_up,
+                                  color: Colors.red,
+                                  size: 18,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Acréscimo (juros/taxa)',
+                                  style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: acrescimoController,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    onChanged: (_) => setDialogState(() {}),
+                                    decoration: InputDecoration(
+                                      prefixText: acrescimoPorCento
+                                          ? null
+                                          : 'R\$ ',
+                                      suffixText: acrescimoPorCento ? '%' : null,
+                                      prefixStyle: const TextStyle(
+                                        color: Colors.redAccent,
+                                        fontSize: 16,
+                                      ),
+                                      suffixStyle: const TextStyle(
+                                        color: Colors.redAccent,
+                                        fontSize: 16,
+                                      ),
+                                      hintText: acrescimoPorCento ? '0' : '0,00',
+                                      hintStyle: const TextStyle(
+                                        color: Colors.white30,
+                                      ),
+                                      isDense: true,
+                                      filled: true,
+                                      fillColor: Colors.black26,
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black26,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      botaoModoAcrescimo(
+                                        'R\$',
+                                        !acrescimoPorCento,
+                                        false,
+                                      ),
+                                      botaoModoAcrescimo(
+                                        '%',
+                                        acrescimoPorCento,
+                                        true,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (acrescimoPorCento && acrescimoFiado > 0.001) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                '${acrescimoController.text.replaceAll('.', ',')}% de ${_formatoMoeda.format(valorTotal)} = ${_formatoMoeda.format(acrescimoFiado)}',
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Total do fiado',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  _formatoMoeda.format(totalFiado),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (acrescimoFiado > 0.01) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Fiado ${_formatoMoeda.format(valorTotal)} + acréscimo ${_formatoMoeda.format(acrescimoFiado)}${acrescimoPorCento ? ' (${acrescimoController.text.replaceAll('.', ',')}%)' : ''}',
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),

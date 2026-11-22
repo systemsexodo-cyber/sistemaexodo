@@ -5376,7 +5376,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
         builder: (context, setStateDialog) => AlertDialog(
           backgroundColor: const Color(0xFF1E1E2E),
           title: const Text(
-            'Importar Clientes do Excel',
+            'Importar Clientes (Excel ou CSV)',
             style: TextStyle(color: Colors.white),
           ),
           content: SingleChildScrollView(
@@ -5384,6 +5384,11 @@ class _EmpresasPageState extends State<EmpresasPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Arquivo: Excel (.xlsx/.xls) ou CSV (.csv), com a 1ª linha de cabeçalho.',
+                  style: TextStyle(color: Colors.cyanAccent, fontSize: 12),
+                ),
+                const SizedBox(height: 12),
                 const Text(
                   'Formato esperado (qualquer ordem, o sistema detecta pelo cabeçalho):',
                   style: TextStyle(
@@ -5472,7 +5477,7 @@ class _EmpresasPageState extends State<EmpresasPage> {
     try {
       result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['xlsx', 'xls'],
+        allowedExtensions: ['xlsx', 'xls', 'csv', 'txt'],
         withData: true,
       );
     } catch (e) {

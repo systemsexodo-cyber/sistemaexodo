@@ -6299,7 +6299,7 @@ END $$;
       );
     } catch (e) {
       debugPrint('>>> [BackupRestore] ❌ Erro ao baixar backup completo: $e');
-      return (false, 'Erro ao baixar backup completo: $_mensagemErroStorage(e)', null);
+      return (false, 'Erro ao baixar backup completo: ${_mensagemErroStorage(e)}', null);
     }
   }
 

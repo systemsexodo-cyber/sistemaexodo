@@ -16,10 +16,11 @@ Proteções:
 
 ## Publicar
 
-1. Aplique a migração no banco da nuvem:
+1. Aplique a migração no banco da nuvem (`020`, `021` e `023` — a `023` cria o
+   vínculo do código com a máquina; rode-a **antes** de publicar a função):
 
    ```bash
-   supabase db push          # ou rode scripts/migrations/020_licencas_instalacao.sql
+   supabase db push          # ou cole scripts/migrations/020, 021 e 023 no SQL Editor
    ```
 
 2. Configure a chave privada como segredo (a MESMA da licença emergencial,
@@ -63,10 +64,14 @@ na tabela `licencas_ativacao` (migração `021`). O código:
   não passam as duas);
 - pode estar preso a uma empresa (`empresa_id`) — a licença já nasce vinculada,
   e a renovação confere a mensalidade dessa empresa;
+- pode estar preso a um computador (`machine_id`, migração `023`) — emitido com
+  `--maquina`, só aquela máquina o consome; nas demais a função responde
+  `403 codigo_outra_maquina`. Sem `machine_id` (código antigo ou gerado sem
+  `--maquina`) ele continua valendo para qualquer computador, sempre uso único;
 - pode ser revogado (`revogado`) ou ter prazo (`expira_em`).
 
 Gere os códigos com `tools/licencas/gerar_codigos_ativacao.js`
-(`--quantidade`, `--empresa`, `--dias`, `--sql`).
+(`--quantidade`, `--empresa`, `--maquina`, `--dias`, `--sql`).
 
 Reinstalar/atualizar no computador já ativado **não** pede código: a função
 reconhece a licença existente daquele `machine_id`. Se ela estiver vencida,
@@ -87,6 +92,7 @@ lida bem com o PEM multilinha.
    ```bash
    docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1 < 020_licencas_instalacao.sql
    docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1 < 021_codigos_ativacao.sql
+   docker exec -i supabase-db psql -U postgres -v ON_ERROR_STOP=1 < 023_codigos_ativacao_maquina.sql
    ```
 
 2. Copie a função para o volume servido pelo Edge Runtime:
@@ -135,4 +141,6 @@ A primeira ativação exige um código por venda, mas ainda não existe controle
 de **quantidade de computadores por empresa** no Portal Êxodo: quem tiver um
 código válido ativa um computador, e o suporte revoga código perdido pelo SQL
 (`update licencas_ativacao set revogado = true where codigo = '...'`). Boa
-prática: um código por venda, sempre com `--empresa`.
+prática: um código por venda, sempre com `--empresa` e, quando o suporte já
+conhece o ID do computador, também com `--maquina` — assim o código não serve
+para outra máquina nem que vazasse.

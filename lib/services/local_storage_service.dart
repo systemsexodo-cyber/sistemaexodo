@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -131,7 +132,19 @@ class LocalStorageService {
 
   Future<void> _salvarConfigComFallback(String key, dynamic valor) async {
     try {
-      await DatabaseService().salvarConfig(key, valor, lancarSeFalhar: true);
+      final gravacao = DatabaseService().salvarConfig(
+        key,
+        valor,
+        lancarSeFalhar: true,
+      );
+      // Celular: se o banco não confirmar no prazo, a gravação vira espelho
+      // `pendente` (mesmo caminho do banco fora) em vez de prender a tela —
+      // login, por exemplo, grava `usuario_atual` antes de abrir o sistema.
+      if (_semBancoLocalProprio) {
+        await gravacao.timeout(_prazoComEspelho);
+      } else {
+        await gravacao;
+      }
     } catch (erroBanco) {
       try {
         await salvarCacheEmergencia(key, valor, pendente: true);
@@ -155,13 +168,37 @@ class LocalStorageService {
     }
   }
 
+  /// Celular (Android/iOS) NÃO tem PostgreSQL próprio: o "banco local" é o do
+  /// PC da loja, alcançado pela rede. Quando ele não responde, esperar a
+  /// tentativa inteira (4 s + 4 s + 15 s de timeouts) em CADA leitura ou
+  /// gravação segurava o boot no "Carregando módulos do sistema..." e fazia o
+  /// login nunca terminar. Com o espelho de emergência em mãos, o valor local
+  /// é devolvido/imediato após um curto prazo e a operação no banco continua
+  /// em segundo plano (e é gravada no espelho como `pendente`, como já
+  /// acontecia quando o banco está fora). No PC o comportamento continua o
+  /// mesmo: o PostgreSQL local responde em milissegundos.
+  static bool get _semBancoLocalProprio =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  /// Prazo máximo de uma leitura/gravação de banco quando o espelho local
+  /// já está em mãos (só no celular).
+  static const Duration _prazoComEspelho = Duration(seconds: 2);
+
   Future<dynamic> _carregarConfigComFallback(String key) async {
     final cache = await carregarCacheEmergencia(key);
     try {
-      final valor = await DatabaseService().carregarConfig(
+      final leitura = DatabaseService().carregarConfig(
         key,
         lancarSeFalhar: true,
       );
+      // Celular com espelho em mãos: não segura a tela esperando um banco que
+      // pode estar fora. Se não responder no prazo, o TimeoutException cai no
+      // catch abaixo e o valor do espelho é devolvido na hora; a leitura
+      // abandonada segue na fila em segundo plano.
+      final valor =
+          cache != null && _semBancoLocalProprio
+              ? await leitura.timeout(_prazoComEspelho)
+              : await leitura;
       if (cache?['pendente'] == true) {
         final valorPendente = cache?['valor'];
         await DatabaseService().salvarConfig(
@@ -278,7 +315,30 @@ class LocalStorageService {
             .toList();
 
         try {
-          await _salvarListaNoPostgres(key, data, isSync: isSync);
+          // Celular: não prende a tela esperando o banco do PC. Sem resposta
+          // no prazo, a gravação vira espelho `pendente` e sobe depois (mesmo
+          // caminho usado quando o banco está fora).
+          final gravacao = _salvarListaNoPostgres(
+            key,
+            data,
+            isSync: isSync,
+          );
+          await (_semBancoLocalProprio
+              ? gravacao.timeout(_prazoComEspelho)
+              : gravacao);
+        } on TimeoutException {
+          try {
+            await salvarCacheEmergencia(key, data, pendente: true);
+            debugPrint(
+              '⚠️ Banco não respondeu em ${_prazoComEspelho.inSeconds}s; '
+              '$key salvo no cache local de emergência (pendente).',
+            );
+          } catch (erroCache) {
+            throw StateError(
+              'Falha no PostgreSQL e no cache local para $key: $erroCache',
+            );
+          }
+          return;
         } catch (erroBanco) {
           if (lancarSeFalhar) rethrow;
           try {
@@ -331,10 +391,49 @@ class LocalStorageService {
       } else {
         // Carregar do PostgreSQL (fonte única de dados)
         final database = DatabaseService();
-        final dados = _databaseListReader == null
-            ? await database.carregarLista(key)
-            : await _databaseListReader!(key);
+        // Espelho ANTES da leitura do banco: no celular o banco do PC pode
+        // estar inalcançável e o espelho é o que libera a tela na hora.
         final cache = await carregarCacheEmergencia(key);
+        final leitura = _databaseListReader == null
+            ? database.carregarLista(key)
+            : _databaseListReader!(key);
+        // CELULAR COM ESPELHO: devolve o espelho NA HORA e deixa a leitura do
+        // banco rodando em segundo plano (só para atualizar o espelho).
+        //
+        // Sem isto, cada uma das ~30 listas do boot esperava o banco do PC —
+        // que no celular pode estar fora de alcance — e a abertura ficava
+        // dezenas de segundos em "Carregando". O espelho é a última cópia que
+        // este aparelho gravou; a nuvem complementa em segundo plano.
+        if (_semBancoLocalProprio && cache != null && cache['valor'] is List) {
+          unawaited(
+            leitura
+                .then((dadosBanco) async {
+                  if (dadosBanco.isEmpty) return;
+                  try {
+                    await salvarCacheEmergencia(key, dadosBanco);
+                  } catch (_) {}
+                })
+                .catchError((_) {}),
+          );
+          final listaEspelho = (cache['valor'] as List)
+              .whereType<Map>()
+              .map((linha) => Map<String, dynamic>.from(linha))
+              .toList();
+          // Gravação que ficou pendente (banco fora na hora de salvar): tenta
+          // de novo em segundo plano, sem segurar a tela.
+          if (cache['pendente'] == true) {
+            unawaited(
+              _salvarListaNoPostgres(
+                key,
+                listaEspelho,
+                isSync: true,
+              ).catchError((_) {}),
+            );
+          }
+          return listaEspelho;
+        }
+
+        final dados = await leitura;
 
         if (_databaseListReader == null && database.bancoLocalFalhou) {
           final emergencial = cache?['valor'];

@@ -25,6 +25,7 @@ import 'package:sistema_exodo_novo/utils/perfis_tributarios_merge.dart';
 // nomes do pacote não entram no arquivo inteiro para não colidir com os do app.
 import 'package:postgres/postgres.dart' show Session, Sql;
 import 'package:sistema_exodo_novo/services/env_config.dart';
+import 'package:sistema_exodo_novo/services/neon_config.dart';
 import 'package:sistema_exodo_novo/models/lote_produto.dart';
 import 'package:sistema_exodo_novo/models/produto_historico.dart';
 import 'package:sistema_exodo_novo/models/nota_entrada.dart';
@@ -53,6 +54,7 @@ import 'package:sistema_exodo_novo/services/supabase_service.dart';
 import 'package:sistema_exodo_novo/services/licenca_emergencia_service.dart';
 import 'package:sistema_exodo_novo/services/realtime_sync_service.dart';
 import 'package:sistema_exodo_novo/services/lan_realtime_service.dart';
+import 'package:sistema_exodo_novo/services/neon_realtime_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:sistema_exodo_novo/services/sync_queue_service.dart';
 import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
@@ -71,6 +73,7 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'dart:math';
 import 'package:audioplayers/audioplayers.dart';
+import 'sons_pedido.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -1835,6 +1838,15 @@ class DataService extends ChangeNotifier {
     }
     if (dados['origem_ecommerce'] != true) return;
 
+    // Modo automatico ligado: o pedido entra como Em Andamento e o cupom sai
+    // sozinho. Nada de aviso de Confirmar/Rejeitar — era ele que segurava o
+    // pedido esperando o lojista clicar (e so depois abria a impressora).
+    if (autoConfirmarPedidosSite) {
+      _tocarSomNotificacao(arquivo: somPedidoNovoArquivo);
+      unawaited(_autoProcessarPedidoEcommerce(Pedido.fromMap(dados)));
+      return;
+    }
+
     avisoPedidoEcommerce = (
       numero: (dados['numero'] ?? '').toString(),
       cliente: (dados['cliente_nome'] ?? '').toString(),
@@ -1843,7 +1855,7 @@ class DataService extends ChangeNotifier {
     debugPrint(
       '>>> [Realtime] 🛒 Novo pedido do e-commerce ${avisoPedidoEcommerce!.numero}',
     );
-    _tocarSomNotificacao();
+    _tocarSomNotificacao(arquivo: somPedidoNovoArquivo);
     try {
       unawaited(_autoProcessarPedidoEcommerce(Pedido.fromMap(dados)));
     } catch (e) {
@@ -1862,6 +1874,15 @@ class DataService extends ChangeNotifier {
     if (_pedidosCriadosLocalmente.containsKey(pedido.id)) return;
     if (_ultimaSincronizacaoSucesso == null) return;
     if (DateTime.now().difference(pedido.dataPedido).inMinutes > 120) return;
+
+    if (autoConfirmarPedidosSite) {
+      if (!_pedidosAutoProcessados.contains(pedido.id)) {
+        _tocarSomNotificacao(arquivo: somPedidoNovoArquivo);
+      }
+      unawaited(_autoProcessarPedidoEcommerce(pedido));
+      return;
+    }
+
     if (avisoPedidoEcommerce?.numero == pedido.numero) return;
 
     avisoPedidoEcommerce = (
@@ -1872,8 +1893,24 @@ class DataService extends ChangeNotifier {
     debugPrint(
       '>>> [Sync] 🛒 Novo pedido do e-commerce ${pedido.numero} — avisando.',
     );
-    _tocarSomNotificacao();
+    _tocarSomNotificacao(arquivo: somPedidoNovoArquivo);
     unawaited(_autoProcessarPedidoEcommerce(pedido));
+  }
+
+  /// Arquivo do toque escolhido para pedido novo do site. Cai no sino grave
+  /// quando a loja nunca escolheu ou o arquivo salvo nao existe mais.
+  String get somPedidoNovoArquivo {
+    final ecommerce = _empresaAtual?.configuracoes?['ecommerce'];
+    final escolhido = ecommerce is Map
+        ? (ecommerce['somPedidoNovo'] as String?)
+        : null;
+    return somPedidoValido(escolhido);
+  }
+
+  /// A loja online esta configurada para aceitar e imprimir pedidos sozinha?
+  bool get autoConfirmarPedidosSite {
+    final ecommerce = _empresaAtual?.configuracoes?['ecommerce'];
+    return ecommerce is Map && ecommerce['autoConfirmarPedidos'] == true;
   }
 
   Future<void> _autoProcessarPedidoEcommerce(Pedido pedido) async {
@@ -1881,9 +1918,7 @@ class DataService extends ChangeNotifier {
     if (pedido.status.toLowerCase() != 'pendente') return;
 
     final empresa = _empresaAtual;
-    final ecommerce = empresa?.configuracoes?['ecommerce'];
-    final ativo = ecommerce is Map && ecommerce['autoConfirmarPedidos'] == true;
-    if (!ativo || empresa == null) return;
+    if (!autoConfirmarPedidosSite || empresa == null) return;
     if (!_pedidosAutoProcessados.add(pedido.id)) return;
 
     final confirmado = pedido.copyWith(
@@ -1899,17 +1934,35 @@ class DataService extends ChangeNotifier {
       debugPrint('>>> [E-commerce] Falha ao confirmar ${pedido.numero}: $e');
     }
 
+    var impresso = false;
     try {
       await PedidoPDFService.imprimirPDFTermico(
         pedido: confirmado,
         empresa: empresa,
       );
+      impresso = true;
       debugPrint(
         '>>> [E-commerce] Cupom impresso automaticamente: ${pedido.numero}',
       );
     } catch (e) {
       debugPrint('>>> [E-commerce] Falha ao imprimir ${pedido.numero}: $e');
     }
+
+    // Se o aviso (ponto vermelho) chegou a ser criado antes do modo automatico
+    // entrar em vigor, some com ele: o pedido ja foi processado.
+    if (avisoPedidoEcommerce?.numero == pedido.numero) {
+      limparAvisoPedidoEcommerce();
+    }
+
+    // Faixa na tela de Pedidos: no modo automatico nao existe popup, entao o
+    // lojista precisa de algum sinal visivel de que o pedido caiu e foi
+    // aceito/impresso (ou de que a impressora falhou).
+    _mostrarAvisoPedidoAutoEcommerce(
+      numero: pedido.numero,
+      cliente: pedido.clienteNome ?? '',
+      total: pedido.totalGeral,
+      impresso: impresso,
+    );
   }
 
   /// Helper genérico para aplicar INSERT/UPDATE/DELETE em qualquer lista em memória
@@ -2002,10 +2055,12 @@ class DataService extends ChangeNotifier {
   @override
   void dispose() {
     _descartado = true;
+    _timerAvisoPedidoAuto?.cancel();
     _cancelarTodasSubscriptions();
     _debounceSalvamento?.cancel();
     _syncQueue.dispose();
     _realtimeSync.parar();
+    unawaited(NeonRealtimeService.instance.parar());
     _lanRefreshTimer?.cancel();
     unawaited(_lanRealtime.parar());
     super.dispose();
@@ -2187,6 +2242,46 @@ class DataService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Último pedido do site que o modo automático aceitou (e tentou imprimir).
+  /// A tela de Pedidos mostra a faixa de confirmação — o aviso de
+  /// Confirmar/Rejeitar não existe nesse modo, então esta é a única forma de o
+  /// lojista ver que o pedido caiu e o cupom saiu.
+  ({String numero, String cliente, double total, bool impresso})?
+      avisoPedidoAutoEcommerce;
+
+  Timer? _timerAvisoPedidoAuto;
+
+  /// Descarta a faixa de "pedido aceito automaticamente".
+  void limparAvisoPedidoAutoEcommerce() {
+    _timerAvisoPedidoAuto?.cancel();
+    if (avisoPedidoAutoEcommerce == null) return;
+    avisoPedidoAutoEcommerce = null;
+    notifyListeners();
+  }
+
+  /// Publica a faixa por alguns minutos: tempo de o lojista abrir a tela de
+  /// Pedidos e ver que o pedido entrou e foi impresso sem ele clicar em nada.
+  void _mostrarAvisoPedidoAutoEcommerce({
+    required String numero,
+    required String cliente,
+    required double total,
+    required bool impresso,
+  }) {
+    avisoPedidoAutoEcommerce = (
+      numero: numero,
+      cliente: cliente,
+      total: total,
+      impresso: impresso,
+    );
+    _timerAvisoPedidoAuto?.cancel();
+    _timerAvisoPedidoAuto = Timer(const Duration(minutes: 5), () {
+      if (_descartado) return;
+      avisoPedidoAutoEcommerce = null;
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
   /// Piso entre cargas de download da nuvem no pulso automático.
   ///
   /// Com o delta ligado (`deltaCatalogo`), produtos/clientes descem só o que
@@ -2194,7 +2289,21 @@ class DataService extends ChangeNotifier {
   /// novidades sem rebaixar o catálogo inteiro. O FULL SYNC automático do
   /// catálogo (quando as coleções estão vazias) continua limitado a 1×/6h por
   /// `_ultimaFullSyncCatalogoAutomatico`, que é o que protege a cota de egress.
-  static const Duration _intervaloMinimoCargaPesada = Duration(seconds: 10);
+  /// No PC (rede local/cabo) 10 s dá conta. No CELULAR cada carga completa são
+  /// ~31 tabelas pela rede móvel: a 10 s o app praticamente nunca saía do ciclo
+  /// de sincronização, e era isso que deixava tudo travado. Lá o piso passa a
+  /// 60 s — as novidades pontuais continuam chegando em segundos pelo Realtime.
+  static const Duration _intervaloMinimoCargaPesadaDesktop = Duration(seconds: 10);
+  static const Duration _intervaloMinimoCargaPesadaCelular = Duration(seconds: 60);
+
+  /// `true` no Android/iOS (no PC e no portal web quem manda é o `.env`/Neon).
+  static bool get _plataformaCelular =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  static Duration get _intervaloMinimoCargaPesada => _plataformaCelular
+      ? _intervaloMinimoCargaPesadaCelular
+      : _intervaloMinimoCargaPesadaDesktop;
+
   DateTime? _ultimaCargaPesadaNuvem;
 
   /// Último FULL SYNC do catálogo disparado AUTOMATICAMENTE pelo safeguard de
@@ -3164,8 +3273,12 @@ class DataService extends ChangeNotifier {
   // Player de Áudio para Notificações
   final AudioPlayer _audioPlayer = AudioPlayer();
 
-  /// Toca o som de notificação quando chega um agendamento novo
-  Future<void> _tocarSomNotificacao() async {
+  /// Toca o som de notificação quando chega um agendamento novo.
+  /// [arquivo] permite usar outro som no mesmo player (ex.: o sino alegre de
+  /// pedido novo da loja online). O padrão continua sendo o notification.mp3.
+  Future<void> _tocarSomNotificacao({
+    String arquivo = 'notification.mp3',
+  }) async {
     debugPrint('>>> [Audio] 🔊 Tentando tocar som de notificação...');
 
     // NO WEB: Muitos navegadores bloqueiam som sem interação prévia.
@@ -3180,11 +3293,11 @@ class DataService extends ChangeNotifier {
       if (kIsWeb) {
         // No Web, tentamos descobrir o caminho correto dos assets
         final origin = html_helper.getWindowOrigin();
-        final url = '$origin/assets/sounds/notification.mp3';
+        final url = '$origin/assets/sounds/$arquivo';
         debugPrint('>>> [Audio] 🌐 Web: Tentando carregar via URL: $url');
         await _audioPlayer.play(UrlSource(url));
       } else {
-        await _audioPlayer.play(AssetSource('sounds/notification.mp3'));
+        await _audioPlayer.play(AssetSource('sounds/$arquivo'));
       }
 
       debugPrint('>>> [Audio] ✅ Comando de reprodução enviado');
@@ -3197,7 +3310,7 @@ class DataService extends ChangeNotifier {
           debugPrint(
             '>>> [Audio] 🔄 Tentando fallback via HTML AudioElement...',
           );
-          html_helper.playAudio('assets/sounds/notification.mp3', volume: 0.8);
+          html_helper.playAudio('assets/sounds/$arquivo', volume: 0.8);
         } catch (e2) {
           debugPrint('>>> [Audio] ❌ Falha no fallback: $e2');
         }
@@ -3223,6 +3336,7 @@ class DataService extends ChangeNotifier {
 
       if (!nuvemEstaHabilitada) {
         unawaited(_realtimeSync.parar());
+        unawaited(NeonRealtimeService.instance.parar());
       } else if (!nuvemEstavaHabilitada &&
           empresa != null &&
           _currentEmpresaId == empresa.id &&
@@ -3234,6 +3348,18 @@ class DataService extends ChangeNotifier {
             aoMudarNaNuvem: _aoMudarPelaNuvem,
           ),
         );
+        // Neon Realtime (PC-independente): push da nuvem direto, sem depender
+        // do Supabase local/Tailscale Funnel. Garante que lançamentos feitos
+        // pelo celular apareçam no PC em ~1-2 s.
+        if (NeonConfig.realtimeDisponivel) {
+          unawaited(
+            NeonRealtimeService.instance.iniciar(
+              empresa.id,
+              tabelas: RealtimeSyncService.tabelasCriticas,
+              onMudanca: _aoMudarPelaNuvem,
+            ),
+          );
+        }
       }
 
       _carregarPerfisTributariosDaEmpresa();
@@ -3465,7 +3591,25 @@ class DataService extends ChangeNotifier {
   // é espelho e não segura a abertura. O limite abaixo só vale se o banco
   // local falhou e ainda estamos tentando a nuvem como fallback.
   bool _sincronizandoInicial = false;
-  static const Duration _limiteEsperaNuvemInicial = Duration(seconds: 15);
+
+  /// Celular (Android/iOS) NÃO tem PostgreSQL próprio: o "banco local" é o do
+  /// PC da loja, alcançado pela rede. Quando ele não responde, repetir a
+  /// leitura custa outra rodada inteira de timeouts (4s + 4s + 15s) antes de o
+  /// usuário ver qualquer coisa — é isso que fazia a abertura "demorar muito"
+  /// no celular. No PC a repetição continua útil (o serviço pode estar subindo).
+  static bool get _semBancoLocalProprio =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  /// Tempo máximo que a tela de abertura espera antes de liberar o sistema.
+  ///
+  /// No celular a rede é a do cliente (Wi-Fi da loja ou 4G): 8 s já é bastante
+  /// para o banco do PC/nuvem responder, e o que faltar termina de carregar em
+  /// segundo plano. No computador vale o limite antigo (15 s).
+  static Duration get _limiteEsperaNuvemInicial => _semBancoLocalProprio
+      ? const Duration(seconds: 8)
+      : const Duration(seconds: 15);
 
   // Controle de Paginação (Infinite Scroll)
   bool _temMaisClientes = true;
@@ -4089,8 +4233,23 @@ class DataService extends ChangeNotifier {
                 '>>> [Realtime] ⚠️ Erro ao iniciar Realtime (não bloqueante): $e',
               );
             });
+        // Neon Realtime (PC-independente) — push da nuvem direto.
+        if (NeonConfig.realtimeDisponivel) {
+          NeonRealtimeService.instance
+              .iniciar(
+                empresaId,
+                tabelas: RealtimeSyncService.tabelasCriticas,
+                onMudanca: _aoMudarPelaNuvem,
+              )
+              .catchError((e) {
+                debugPrint(
+                  '>>> [Neon-Realtime] ⚠️ Erro ao iniciar (não bloqueante): $e',
+                );
+              });
+        }
       } else if (!nuvemHabilitada) {
         unawaited(_realtimeSync.parar());
+        unawaited(NeonRealtimeService.instance.parar());
       }
 
       // ✅ LAN EM TEMPO REAL: independente da nuvem. O sincronizador da rede
@@ -4663,6 +4822,9 @@ class DataService extends ChangeNotifier {
       // antes de desistir do banco local.
       if (cargaInicial &&
           !_cacheLocalTemDados &&
+          // No celular a leitura repetida só faria esperar mais: o banco é o do
+          // PC e, se ele não respondeu agora, não vai responder 400 ms depois.
+          !_semBancoLocalProprio &&
           DatabaseService().bancoLocalFalhou) {
         addSyncLog(
           '⚠️ Banco local não atendeu a primeira leitura. '
@@ -6009,6 +6171,19 @@ class DataService extends ChangeNotifier {
 
       // Notificar listeners IMEDIATAMENTE para atualizar a UI
       notifyListeners();
+
+      // Salvar localmente IMEDIATAMENTE (sem debounce para clientes)
+      try {
+        await _storage.salvarLista(
+          _getChaveComEmpresa(LocalStorageService.keyClientes),
+          _clientes,
+        );
+        debugPrint(
+          '>>> [Cliente] ✅ Atualizado localmente: ${cliente.nome} (ID: ${cliente.id}, Cód: ${cliente.codigo})',
+        );
+      } catch (e) {
+        debugPrint('>>> [Cliente] ❌ Erro ao atualizar localmente: $e');
+      }
 
       // Marcar a lista de clientes como suja para salvamento automático
       _marcarSujo(LocalStorageService.keyClientes);
@@ -14152,9 +14327,13 @@ class DataService extends ChangeNotifier {
       if (DataService.falhaTotalDoSupabase(result)) {
         final servidorIndisponivel = result['servidorIndisponivel'] == true;
         final totalTabelas = (result['totalTabelas'] as int?) ?? dados.length;
+        final tabelasFalhadas =
+            (result['tabelasFalhadas'] as List?)?.cast<String>() ?? const [];
+        final amostraFalhas = tabelasFalhadas.take(5).join(', ');
         final detalhe = servidorIndisponivel
             ? 'Supabase indisponível (PGRST002/503/504).'
-            : 'Não foi possível baixar nenhuma das $totalTabelas tabelas.';
+            : 'Não foi possível baixar nenhuma das $totalTabelas tabelas.'
+                  '${amostraFalhas.isEmpty ? '' : ' Falhas: $amostraFalhas.'}';
         _ultimoErroSync = detalhe;
         if (_currentEmpresaId != null) {
           await _storage.salvar(
@@ -14545,6 +14724,7 @@ class DataService extends ChangeNotifier {
           Entrega.fromMap,
           nomeColecao: 'Entregas',
         );
+        bool dirty = false;
         for (final entrega in novasEntregas) {
           final index = _entregas.indexWhere((e) => e.id == entrega.id);
           if (index >= 0) {
@@ -14553,11 +14733,17 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _entregas[index] = entrega;
+            dirty = true;
           } else {
             _entregas.add(entrega);
+            dirty = true;
           }
         }
-        _marcarSujo(LocalStorageService.keyEntregas);
+        // Só marca sujo o que mudou: marcar sempre fazia o pulso reescrever a
+        // tabela inteira no banco local a cada 10 s mesmo sem novidade.
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyEntregas);
+        }
         print('>>> ✓ ${novasEntregas.length} entregas carregadas do Supabase');
       }
 
@@ -14568,6 +14754,7 @@ class DataService extends ChangeNotifier {
           Motorista.fromMap,
           nomeColecao: 'Motoristas',
         );
+        bool dirty = false;
         for (final motorista in novosMotoristas) {
           final index = _motoristas.indexWhere((m) => m.id == motorista.id);
           if (index >= 0) {
@@ -14576,11 +14763,15 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _motoristas[index] = motorista;
+            dirty = true;
           } else {
             _motoristas.add(motorista);
+            dirty = true;
           }
         }
-        _marcarSujo(LocalStorageService.keyMotoristas);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyMotoristas);
+        }
         print(
           '>>> ✓ ${novosMotoristas.length} motoristas carregados do Supabase',
         );
@@ -14651,6 +14842,7 @@ class DataService extends ChangeNotifier {
           TrocaDevolucao.fromMap,
           nomeColecao: 'Trocas/Devoluções',
         ).where(_isTrocaDevolucaoValida).toList();
+        bool dirty = false;
         for (final troca in novasTrocas) {
           final index = _trocasDevolucoes.indexWhere((t) => t.id == troca.id);
           if (index >= 0) {
@@ -14659,11 +14851,15 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _trocasDevolucoes[index] = troca;
+            dirty = true;
           } else {
             _trocasDevolucoes.add(troca);
+            dirty = true;
           }
         }
-        _marcarSujo(LocalStorageService.keyTrocasDevolucoes);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyTrocasDevolucoes);
+        }
         print(
           '>>> ✓ ${novasTrocas.length} trocas/devoluções carregadas do Supabase',
         );
@@ -14677,6 +14873,7 @@ class DataService extends ChangeNotifier {
           EstoqueHistorico.fromMap,
           nomeColecao: 'Estoque Histórico',
         );
+        bool dirty = false;
         for (final registro in novosRegistros) {
           final index = _estoqueHistorico.indexWhere(
             (e) => e.id == registro.id,
@@ -14687,11 +14884,15 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _estoqueHistorico[index] = registro;
+            dirty = true;
           } else {
             _estoqueHistorico.add(registro);
+            dirty = true;
           }
         }
-        _marcarSujo(LocalStorageService.keyEstoqueHistorico);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyEstoqueHistorico);
+        }
         print(
           '>>> ✓ ${novosRegistros.length} registros de estoque carregados do Supabase',
         );
@@ -14705,6 +14906,7 @@ class DataService extends ChangeNotifier {
           AjusteEstoqueLote.fromMap,
           nomeColecao: 'Ajustes de Estoque em Massa',
         );
+        bool dirty = false;
         for (final lote in novosLotes) {
           final index = _ajustesEstoqueLote.indexWhere((l) => l.id == lote.id);
           if (index >= 0) {
@@ -14713,12 +14915,16 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _ajustesEstoqueLote[index] = lote;
+            dirty = true;
           } else {
             _ajustesEstoqueLote.add(lote);
+            dirty = true;
           }
         }
         _ajustesEstoqueLote.sort((a, b) => b.data.compareTo(a.data));
-        _marcarSujo(LocalStorageService.keyAjustesEstoqueLote);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyAjustesEstoqueLote);
+        }
         print(
           '>>> ✓ ${novosLotes.length} lote(s) de ajuste carregados do Supabase',
         );
@@ -14734,6 +14940,7 @@ class DataService extends ChangeNotifier {
           PedidoCompra.fromMap,
           nomeColecao: 'Pedidos de Compra',
         );
+        bool dirty = false;
         for (final pedido in novosPedidos) {
           final index = _pedidosCompra.indexWhere((p) => p.id == pedido.id);
           if (index >= 0) {
@@ -14741,11 +14948,15 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _pedidosCompra[index] = pedido;
+            dirty = true;
           } else {
             _pedidosCompra.add(pedido);
+            dirty = true;
           }
         }
-        _marcarSujo(LocalStorageService.keyPedidosCompra);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyPedidosCompra);
+        }
         print(
           '>>> ✓ ${novosPedidos.length} pedido(s) de compra carregados do Supabase',
         );
@@ -14758,6 +14969,7 @@ class DataService extends ChangeNotifier {
           LoteProduto.fromMap,
           nomeColecao: 'Lotes de Produto',
         );
+        bool dirty = false;
         for (final lote in novosLotes) {
           final index = _lotesProdutos.indexWhere((l) => l.id == lote.id);
           if (index >= 0) {
@@ -14766,11 +14978,15 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _lotesProdutos[index] = lote;
+            dirty = true;
           } else {
             _lotesProdutos.add(lote);
+            dirty = true;
           }
         }
-        _marcarSujo(LocalStorageService.keyLotesProdutos);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyLotesProdutos);
+        }
         print(
           '>>> ✓ ${novosLotes.length} lotes de produtos carregados do Supabase',
         );
@@ -14784,6 +15000,7 @@ class DataService extends ChangeNotifier {
           AberturaCaixa.fromMap,
           nomeColecao: 'Aberturas de Caixa',
         );
+        bool dirty = false;
         for (final abertura in novasAberturas) {
           final index = _aberturasCaixa.indexWhere((a) => a.id == abertura.id);
           if (index >= 0) {
@@ -14792,14 +15009,18 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _aberturasCaixa[index] = abertura;
+            dirty = true;
           } else {
             _aberturasCaixa.add(abertura);
+            dirty = true;
           }
         }
         _aberturasCaixa.sort(
           (a, b) => a.dataAbertura.compareTo(b.dataAbertura),
         );
-        _marcarSujo(LocalStorageService.keyAberturasCaixa);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyAberturasCaixa);
+        }
         // Recalcular o status do caixa após sincronizar aberturas da nuvem
         _caixaAberto = aberturaCaixaAtual != null;
         print(
@@ -14815,6 +15036,7 @@ class DataService extends ChangeNotifier {
           FechamentoCaixa.fromMap,
           nomeColecao: 'Fechamentos de Caixa',
         );
+        bool dirty = false;
         for (final fechamento in novosFechamentos) {
           final index = _fechamentosCaixa.indexWhere(
             (f) => f.id == fechamento.id,
@@ -14825,14 +15047,18 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _fechamentosCaixa[index] = fechamento;
+            dirty = true;
           } else {
             _fechamentosCaixa.add(fechamento);
+            dirty = true;
           }
         }
         _fechamentosCaixa.sort(
           (a, b) => a.dataFechamento.compareTo(b.dataFechamento),
         );
-        _marcarSujo(LocalStorageService.keyFechamentosCaixa);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyFechamentosCaixa);
+        }
         print(
           '>>> ✓ ${novosFechamentos.length} fechamentos de caixa carregadas do Supabase',
         );
@@ -14846,8 +15072,9 @@ class DataService extends ChangeNotifier {
           MesaComanda.fromMap,
           nomeColecao: 'Mesas/Comandas',
         ).where((m) => !_idsMesaRemovidosRecentemente.contains(m.id)).toList();
-        _mesclarMesasComandas(novasMesasRaw, isDelta: isDeltaSync);
-        _marcarSujo(LocalStorageService.keyMesasComandas);
+        if (_mesclarMesasComandas(novasMesasRaw, isDelta: isDeltaSync)) {
+          _marcarSujo(LocalStorageService.keyMesasComandas);
+        }
         print(
           '>>> ✓ ${novasMesasRaw.length} mesas/comandas carregadas do Supabase',
         );
@@ -14860,6 +15087,7 @@ class DataService extends ChangeNotifier {
           Romaneio.fromMap,
           nomeColecao: 'Romaneios',
         );
+        bool dirty = false;
         for (final item in novos) {
           // REGRA "a nuvem nunca sobrescreve o local".
           final indexLocal = _romaneios.indexWhere((r) => r.id == item.id);
@@ -14869,8 +15097,11 @@ class DataService extends ChangeNotifier {
           }
           _romaneios.removeWhere((r) => r.id == item.id);
           _romaneios.add(item);
+          dirty = true;
         }
-        _marcarSujo(LocalStorageService.keyRomaneios);
+        if (dirty) {
+          _marcarSujo(LocalStorageService.keyRomaneios);
+        }
         print('>>> ✓ ${novos.length} romaneios carregados do Supabase');
       }
 
@@ -15006,6 +15237,7 @@ class DataService extends ChangeNotifier {
             nomeColecao: 'Agendamentos',
           ).map((a) => _vincularReferenciasAgendamento(a)).toList();
 
+          bool dirty = false;
           for (final agendamento in novosAgendamentos) {
             // REGRA "a nuvem nunca sobrescreve o local".
             final indexLocal = _agendamentosServico.indexWhere(
@@ -15019,8 +15251,11 @@ class DataService extends ChangeNotifier {
               continue;
             }
             _upsertAgendamentoLocal(agendamento);
+            dirty = true;
           }
-          _marcarSujo(LocalStorageService.keyAgendamentosServico);
+          if (dirty) {
+            _marcarSujo(LocalStorageService.keyAgendamentosServico);
+          }
           print(
             '>>> ✓ ${novosAgendamentos.length} agendamentos processados com sucesso',
           );
@@ -16150,8 +16385,11 @@ class DataService extends ChangeNotifier {
   /// local: remover o que não veio apagaria TODO o histórico de mesas/comandas
   /// (abertas, fechadas e deletadas). Deleções feitas em outros dispositivos são
   /// propagadas pelo Realtime (evento DELETE), então aqui apenas adicionamos/atualizamos.
-  void _mesclarMesasComandas(List<MesaComanda> novos, {bool isDelta = false}) {
-    if (novos.isEmpty) return;
+  /// Devolve `true` quando a lista local mudou de fato — o chamador só marca a
+  /// coleção como suja (e portanto só reescreve a tabela no banco local) nesse
+  /// caso, em vez de reescrever mesas/comandas a cada pulso de sincronização.
+  bool _mesclarMesasComandas(List<MesaComanda> novos, {bool isDelta = false}) {
+    if (novos.isEmpty) return false;
 
     bool houveMudanca = false;
     for (final novo in novos) {
@@ -16186,7 +16424,7 @@ class DataService extends ChangeNotifier {
       if (houveMudanca) {
         notifyListeners();
       }
-      return;
+      return houveMudanca;
     }
 
     // Identificar itens que sumiram do Supabase mas estão no local (apenas carga completa)
@@ -16234,6 +16472,7 @@ class DataService extends ChangeNotifier {
     if (houveMudanca) {
       notifyListeners();
     }
+    return houveMudanca;
   }
 
   /// Salva todos os dados no localStorage e Supabase

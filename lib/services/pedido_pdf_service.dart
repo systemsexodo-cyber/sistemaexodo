@@ -2887,6 +2887,21 @@ class PedidoPDFService {
       );
     }
   }
+
+  /// Impressão silenciosa de pedido para o monitor do Caixa (sem diálogo ou preview).
+  static Future<void> imprimirPedidoSilenciosoTermico({
+    required Pedido pedido,
+    required Empresa empresa,
+  }) async {
+    final pdfBytes = await gerarPDFTermico(pedido: pedido, empresa: empresa);
+    await ImpressaoService.imprimirPdf(
+      bytes: pdfBytes,
+      empresa: empresa,
+      name: 'Pedido_Termico_${pedido.numero}',
+      termico: true,
+      forcarPreview: false,
+    );
+  }
 }
 
 /// Classe auxiliar para itens

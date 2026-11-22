@@ -21,6 +21,7 @@ class _SelecionaClienteModalState extends State<SelecionaClienteModal> {
       return c.nome.toLowerCase().contains(termo) ||
           (c.telefone.contains(termo)) ||
           (c.cpfCnpj?.contains(termo) ?? false) ||
+          (c.codigo?.toLowerCase().contains(termo) ?? false) ||
           (c.email?.toLowerCase().contains(termo) ?? false);
     }).toList();
 
@@ -74,7 +75,9 @@ class _SelecionaClienteModalState extends State<SelecionaClienteModal> {
                           style: TextStyle(color: Colors.white),
                         ),
                         subtitle: Text(
-                          cliente.telefone,
+                          cliente.codigo != null && cliente.codigo!.isNotEmpty
+                              ? 'Cód: ${cliente.codigo} • ${cliente.telefone}'
+                              : cliente.telefone,
                           style: TextStyle(color: Colors.white54),
                         ),
                         selected: selecionado,

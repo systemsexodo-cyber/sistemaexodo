@@ -107,6 +107,21 @@ com `--sql`). Sem ele o setup não ativa um computador novo, então copiar a
 pasta do sistema para outro PC não libera o uso. A função da nuvem confere o
 código, consome antes de emitir a licença e amarra o computador ao `machine_id`.
 
+### Prender o código a um computador
+
+Por padrão o código **não** tem computador de destino: ele vale para qualquer
+PC (o primeiro a ativar consome). Para o código só valer naquela máquina,
+informe o **ID DESTE COMPUTADOR** exibido na tela de ativação do cliente:
+
+```bash
+node tools/licencas/gerar_codigos_ativacao.js --quantidade 1 --empresa <uuid> --maquina <64 hex>
+```
+
+Com `--maquina`, qualquer outro computador recebe `403 codigo_outra_maquina`
+("Este código foi emitido para outro computador"). Exige a migração
+`scripts/migrations/023_codigos_ativacao_maquina.sql` aplicada na nuvem **antes**
+de publicar a função `licenca-instalacao`.
+
 ## Limitação desta etapa
 A licença emergencial, a de instalação e o código de ativação por venda estão
 implementados e assinados digitalmente. O que ainda falta é o controle da

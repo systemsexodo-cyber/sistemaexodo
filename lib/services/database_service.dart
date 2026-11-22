@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:postgres/postgres.dart';
 import '../utils/win1252.dart';
+import 'config_servidor_mobile.dart';
 import 'env_config.dart';
 // No Web a configuração vai para o Hive (mesmo armazenamento das listas);
 // nas outras plataformas cai no stub vazio e o PostgreSQL é quem grava.
@@ -116,6 +117,30 @@ class DatabaseService {
     return completer.future;
   }
 
+  /// Momento da última tentativa COMPLETA de conexão que falhou.
+  ///
+  /// Usado pelo disjuntor abaixo para não repetir o ciclo de timeouts em cada
+  /// leitura enquanto o banco continua fora.
+  DateTime? _falhaConexaoEm;
+
+  /// Janela do disjuntor: dentro dela, uma nova tentativa completa é pulada e a
+  /// operação falha na hora (caindo no cache de emergência / listas vazias).
+  /// Intervalo antes de tentar o ciclo COMPLETO de conexão de novo.
+  ///
+  /// No celular o banco do PC costuma estar fora de alcance e cada ciclo custa
+  /// os timeouts dos 3 destinos. Com 45 s o app usa o cache de emergência e a
+  /// nuvem sem ficar repetindo o ciclo a cada 10 s no meio de uma carga.
+  static Duration get _intervaloNovaTentativa => _semBancoLocalProprio
+      ? const Duration(seconds: 45)
+      : const Duration(seconds: 10);
+
+  /// true quando o aparelho NÃO tem PostgreSQL próprio (celular): o "banco
+  /// local" é o do PC da loja, alcançado pela rede. É onde o ciclo de 4 s + 4 s
+  /// + 15 s por tentativa mais pesa — cada leitura do boot/login pagava isso.
+  static bool get _semBancoLocalProprio =>
+      !kIsWeb &&
+      (Platform.isAndroid || Platform.isIOS);
+
   // Active PostgreSQL Connection
   Future<Connection> get connection async {
     if (_pgConnection != null) {
@@ -153,10 +178,27 @@ class DatabaseService {
       }
     }
 
+    // Celular: a última tentativa completa acabou de falhar (até 4 s + 4 s +
+    // 15 s de timeouts para os 3 destinos). Repetir esse ciclo em CADA
+    // leitura/gravação fazia a abertura ficar minutos em "Carregando módulos
+    // do sistema..." e o login nunca terminar. Com o disjuntor, a2ª operação
+    // em diante falha na hora e o sistema segue pelo cache de emergência; a
+    // próxima tentativa completa acontece quando a janela expira.
+    if (_semBancoLocalProprio &&
+        _falhaConexaoEm != null &&
+        DateTime.now().difference(_falhaConexaoEm!) <
+            _intervaloNovaTentativa) {
+      throw StateError(
+        'PostgreSQL indisponível (nova tentativa completa em '
+        '${(_intervaloNovaTentativa - DateTime.now().difference(_falhaConexaoEm!)).inSeconds} s).',
+      );
+    }
+
     _pgConnectionFuture = _connect();
     try {
       final conn = await _pgConnectionFuture!;
       _pgConnection = conn;
+      _falhaConexaoEm = null;
       return conn;
     } catch (e) {
       try {
@@ -165,12 +207,41 @@ class DatabaseService {
       } catch (_) {}
       _pgConnection = null;
       _pgConnectionFuture = null;
+      _falhaConexaoEm = DateTime.now();
       rethrow;
     }
   }
 
+  /// Último endereço que conectou. Fica na frente da fila nas próximas
+  /// tentativas: fora da loja o celular não perde mais 2 s + 2 s no PC antes
+  /// de ir para a nuvem, e dentro da loja não perde 12 s na nuvem antes do PC.
+  static _DestinoBanco? _ultimoDestinoBom;
+
+
+  /// Endereço salvo no aparelho que conectou por último (ver
+  /// `ConfigServidorMobile`). Evita repetir o ciclo de tentativas a cada
+  /// abertura do app.
+  static String? _hostPreferidoSalvo;
+  static int? _portaPreferidaSalva;
+  static bool _preferenciaLida = false;
+
+  /// Lê UMA vez o último destino salvo no aparelho.
+  Future<void> _carregarPreferenciaSalva() async {
+    if (_preferenciaLida) return;
+    _preferenciaLida = true;
+    if (!ConfigServidorMobile.aplicavel) return;
+    final salvo = await ConfigServidorMobile.carregarUltimoDestino();
+    if (salvo == null) return;
+    _hostPreferidoSalvo = salvo.$1;
+    _portaPreferidaSalva = salvo.$2;
+  }
+
   Future<Connection> _connect() async {
     debugPrint('>>> [PostgreSQL] 🔌 Conectando...');
+
+    // No celular, começa pelo endereço que conectou da última vez (PC ou
+    // nuvem), em vez de repetir o ciclo inteiro a cada abertura do app.
+    await _carregarPreferenciaSalva();
 
     // Ordem de tentativa (a primeira que responder vence):
     //   1. DB_HOST           -> nome do PC (ex.: DESKTOP-86UT1R1)
@@ -178,11 +249,22 @@ class DatabaseService {
     //   3. DB_CLOUD_HOST     -> nuvem (quando o celular está fora da loja)
     final destinos = _destinos();
 
+    if (destinos.isEmpty) {
+      throw StateError(
+        EnvConfig.modoConexao == EnvConfig.modoNuvem
+            ? 'Modo "Somente nuvem" ligado, mas a nuvem não está '
+                  'configurada. Abra "Configurar servidor" e informe o '
+                  'endereço da nuvem.'
+            : 'Nenhum endereço de PostgreSQL configurado. Abra '
+                  '"Configurar servidor" e informe o IP do computador da loja.',
+      );
+    }
+
     Future<Connection> abrir() async {
       Object? ultimoErro;
       for (final d in destinos) {
         try {
-          return await Connection.open(
+          final conn = await Connection.open(
             Endpoint(
               host: d.host,
               port: d.port,
@@ -193,8 +275,18 @@ class DatabaseService {
             settings: ConnectionSettings(
               sslMode: d.ssl,
               directTls: d.directTls,
+              // Uma consulta presa (4G instável) não pode deixar a tela em
+              // "Carregando..." para sempre: o driver aborta e a próxima
+              // tentativa reconecta.
+              queryTimeout: d.directTls
+                  ? const Duration(seconds: 60)
+                  : const Duration(seconds: 30),
             ),
           ).timeout(d.timeout);
+          _ultimoDestinoBom = d;
+          // Guarda o endereço no aparelho: a próxima abertura começa por ele.
+          ConfigServidorMobile.salvarUltimoDestino(d.host, d.port);
+          return conn;
         } catch (e) {
           ultimoErro = e;
           if (destinos.length > 1) {
@@ -245,37 +337,54 @@ class DatabaseService {
     return conn;
   }
 
-  /// Monta a lista de bancos a tentar, na ordem: PC (nome), PC (IP), nuvem.
+  /// Monta a lista de bancos a tentar, respeitando o modo escolhido no celular.
+  ///
+  /// - `lan`: só o PC da loja (nome e IP) — não perde segundos na nuvem;
+  /// - `nuvem`: só a nuvem (para quem está fora da loja, em dados móveis);
+  /// - `auto`: PC (nome), PC (IP) e, por último, a nuvem.
   List<_DestinoBanco> _destinos() {
-    final lista = <_DestinoBanco>[
-      _DestinoBanco(
-        host: _hostLocal(),
-        port: EnvConfig.dbPort,
-        database: EnvConfig.dbName,
-        username: EnvConfig.dbUser,
-        password: EnvConfig.dbPassword,
-        ssl: SslMode.disable,
-        timeout: const Duration(seconds: 4),
-      ),
-    ];
+    final modo = EnvConfig.modoConexao;
+    final querPc = modo != EnvConfig.modoNuvem;
+    final querNuvem = modo != EnvConfig.modoLan;
+    final lista = <_DestinoBanco>[];
 
-    final ip = _hostFallback();
-    if (ip.isNotEmpty && ip != lista.first.host) {
+    if (querPc) {
       lista.add(
         _DestinoBanco(
-          host: ip,
+          host: _hostLocal(),
           port: EnvConfig.dbPort,
           database: EnvConfig.dbName,
           username: EnvConfig.dbUser,
           password: EnvConfig.dbPassword,
           ssl: SslMode.disable,
-          timeout: const Duration(seconds: 4),
+          // Curto de propósito: no celular o PC costuma estar INALCANÇÁVEL
+          // (fora do Wi-Fi da loja) e cada segundo aqui atrasa a abertura.
+          timeout: _semBancoLocalProprio
+              ? const Duration(milliseconds: 1500)
+              : const Duration(seconds: 2),
         ),
       );
+
+      final ip = _hostFallback();
+      if (ip.isNotEmpty && ip != lista.first.host) {
+        lista.add(
+          _DestinoBanco(
+            host: ip,
+            port: EnvConfig.dbPort,
+            database: EnvConfig.dbName,
+            username: EnvConfig.dbUser,
+            password: EnvConfig.dbPassword,
+            ssl: SslMode.disable,
+            timeout: _semBancoLocalProprio
+                ? const Duration(milliseconds: 1500)
+                : const Duration(seconds: 2),
+          ),
+        );
+      }
     }
 
     final nuvem = EnvConfig.dbCloudHost;
-    if (nuvem.isNotEmpty) {
+    if (querNuvem && nuvem.isNotEmpty) {
       lista.add(
         _DestinoBanco(
           host: nuvem,
@@ -285,9 +394,22 @@ class DatabaseService {
           password: EnvConfig.dbCloudPassword,
           ssl: EnvConfig.dbCloudSsl ? SslMode.require : SslMode.disable,
           directTls: EnvConfig.dbCloudSsl,
-          timeout: const Duration(seconds: 15),
+          timeout: _semBancoLocalProprio
+              ? const Duration(seconds: 8)
+              : const Duration(seconds: 12),
         ),
       );
+    }
+
+    // Quem conectou por último (ou o endereço salvo no aparelho) vai
+    // primeiro — PC da loja ou nuvem.
+    final hostPreferido = _ultimoDestinoBom?.host ?? _hostPreferidoSalvo;
+    final portaPreferida = _ultimoDestinoBom?.port ?? _portaPreferidaSalva;
+    if (hostPreferido != null) {
+      final i = lista.indexWhere(
+        (d) => d.host == hostPreferido && d.port == portaPreferida,
+      );
+      if (i > 0) lista.insert(0, lista.removeAt(i));
     }
 
     return lista;
@@ -1403,6 +1525,9 @@ class DatabaseService {
           'ALTER TABLE clientes ADD COLUMN IF NOT EXISTS perfil_preco VARCHAR;',
         );
         await conn.execute(
+          'ALTER TABLE clientes ADD COLUMN IF NOT EXISTS codigo VARCHAR;',
+        );
+        await conn.execute(
           'ALTER TABLE produtos ADD COLUMN IF NOT EXISTS precos_por_perfil JSONB;',
         );
         await conn.execute(
@@ -1518,6 +1643,9 @@ class DatabaseService {
         );
         await conn.execute(
           'CREATE INDEX IF NOT EXISTS idx_clientes_empresa_id ON clientes(empresa_id);',
+        );
+        await conn.execute(
+          'CREATE INDEX IF NOT EXISTS idx_clientes_codigo ON clientes(codigo);',
         );
         await conn.execute(
           'CREATE INDEX IF NOT EXISTS idx_clientes_nome ON clientes(nome);',

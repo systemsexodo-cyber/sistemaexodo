@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:excel/excel.dart';
@@ -52,13 +53,14 @@ class PlanoImportacaoClientes {
 /// - Persiste no PostgreSQL local (via [DataService.addClientesLote]) e na nuvem.
 ///
 /// Formato esperado (flexível, qualquer ordem — detecta pelo nome da coluna):
-///   Nome (obrigatório), CPF/CNPJ, Telefone, Celular/WhatsApp, E-mail,
+///   Código, Nome (obrigatório), CPF/CNPJ, Telefone, Celular/WhatsApp, E-mail,
 ///   Endereço, Número, Bairro, Cidade, Estado/UF, CEP,
 ///   Limite de Crédito, Saldo Devedor / Fiado, Observações.
 class ClienteImportService {
   static const _uuid = Uuid();
 
-  /// Lê o Excel e monta o plano (sem gravar nada). Ideal para testes.
+  /// Lê a planilha (Excel ou CSV) e monta o plano (sem gravar nada).
+  /// Ideal para testes.
   static PlanoImportacaoClientes planejar(
     Uint8List bytes, {
     required Iterable<Cliente> existentes,
@@ -71,22 +73,9 @@ class ClienteImportService {
     var saldoTotal = 0.0;
 
     try {
-      final excel = Excel.decodeBytes(Uint8List.fromList(bytes));
-      if (excel.tables.isEmpty) {
-        mensagens.add('❌ Arquivo Excel vazio ou inválido');
-        return PlanoImportacaoClientes(
-          novos: novos,
-          atualizados: atualizados,
-          ignorados: ignorados,
-          erros: erros,
-          saldoTotal: saldoTotal,
-          mensagens: mensagens,
-        );
-      }
-
-      final sheet = excel.tables[excel.tables.keys.first]!;
-      if (sheet.rows.isEmpty) {
-        mensagens.add('❌ Planilha vazia');
+      final linhas = _lerLinhas(bytes);
+      if (linhas.isEmpty) {
+        mensagens.add('❌ Arquivo vazio ou inválido');
         return PlanoImportacaoClientes(
           novos: novos,
           atualizados: atualizados,
@@ -101,8 +90,8 @@ class ClienteImportService {
       Map<String, int?> colunas = {};
       int linhaInicio = 0;
       bool achouCabecalho = false;
-      for (int i = 0; i < sheet.rows.length && i < 10; i++) {
-        final row = sheet.rows[i];
+      for (int i = 0; i < linhas.length && i < 10; i++) {
+        final row = linhas[i];
         int palavras = 0;
         bool temNome = false;
         for (int j = 0; j < row.length; j++) {
@@ -144,8 +133,8 @@ class ClienteImportService {
 
       final chavesVistas = <String>{};
 
-      for (int i = linhaInicio; i < sheet.rows.length; i++) {
-        final row = sheet.rows[i];
+      for (int i = linhaInicio; i < linhas.length; i++) {
+        final row = linhas[i];
         if (_linhaVazia(row)) {
           ignorados++;
           continue;
@@ -208,7 +197,7 @@ class ClienteImportService {
       }
     } catch (e, st) {
       erros++;
-      mensagens.add('❌ Erro crítico ao ler o Excel: $e');
+      mensagens.add('❌ Erro crítico ao ler o arquivo: $e');
       debugPrint('>>> [Cliente Import] Erro crítico: $e\n$st');
     }
 
@@ -313,6 +302,13 @@ class ClienteImportService {
         }
       }
 
+      if (plano.novos.isEmpty && plano.atualizados.isEmpty) {
+        mensagens.add(
+          '⚠️ Nenhum cliente foi lido do arquivo. Confira se a 1ª linha é o '
+          'cabeçalho (ex.: "Nome;Telefone;Saldo Devedor") e se o arquivo é '
+          'Excel (.xlsx/.xls) ou CSV de verdade (.csv/.txt).',
+        );
+      }
       mensagens.add(
         '\n✅ RESUMO: ${plano.novos.length} novos '
         '(${_moeda(plano.saldoTotal)} em saldos), '
@@ -346,6 +342,7 @@ class ClienteImportService {
       id: _uuid.v4(),
       nome: nome,
       nomeFantasia: _ler(row, colunas['nomeFantasia']),
+      codigo: _ler(row, colunas['codigo']),
       tipoPessoa: doc.length == 14 ? TipoPessoa.juridica : TipoPessoa.fisica,
       cpfCnpj: doc.isNotEmpty ? doc : null,
       email: _ler(row, colunas['email']),
@@ -383,6 +380,7 @@ class ClienteImportService {
       nome: nome.isNotEmpty ? nome : existente.nome,
       nomeFantasia:
           ou(_ler(row, colunas['nomeFantasia']), existente.nomeFantasia),
+      codigo: ou(_ler(row, colunas['codigo']), existente.codigo),
       cpfCnpj: doc.isNotEmpty ? doc : existente.cpfCnpj,
       email: ou(_ler(row, colunas['email']), existente.email),
       telefone: ou(_ler(row, colunas['telefone']), existente.telefone),
@@ -475,6 +473,8 @@ class ClienteImportService {
       v.contains('devedor') ||
       v.contains('fiado') ||
       v.contains('limite') ||
+      v == 'codigo' ||
+      v == 'cod' ||
       v.contains('endereco') ||
       v.contains('cidade') ||
       v.contains('bairro');
@@ -493,6 +493,17 @@ class ClienteImportService {
       if (idx['nomeFantasia'] == null &&
           (v.contains('fantasia') || v.contains('razao'))) {
         idx['nomeFantasia'] = i;
+        continue;
+      }
+      // Código do cliente ("Código", "Cód", "Código do Cliente").
+      if (idx['codigo'] == null &&
+          (v == 'codigo' ||
+              v == 'cod' ||
+              v == 'codigo cliente' ||
+              v == 'cod cliente' ||
+              v == 'codigo do cliente' ||
+              v == 'cod do cliente')) {
+        idx['codigo'] = i;
         continue;
       }
       // Documento
@@ -597,6 +608,177 @@ class ClienteImportService {
       idx['nome'] = 0;
     }
     return idx;
+  }
+
+  // ── Leitura do arquivo (Excel ou CSV) ───────────────────────────────────
+
+  /// Lê as linhas do arquivo escolhido.
+  ///
+  /// Aceita planilhas Excel (.xlsx/.xls) e também arquivos CSV/TXT, que antes
+  /// eram simplesmente rejeitados — o seletor só oferecia Excel.
+  static List<List<dynamic>> _lerLinhas(Uint8List bytes) {
+    if (_ehCsv(bytes)) {
+      final linhas = _lerCsv(_textoDeBytes(bytes));
+      debugPrint(
+        '>>> [Cliente Import] CSV lido: ${linhas.length} linhas',
+      );
+      return linhas.cast<List<dynamic>>();
+    }
+
+    final excel = Excel.decodeBytes(Uint8List.fromList(bytes));
+    if (excel.tables.isEmpty) return <List<dynamic>>[];
+    final sheet = excel.tables[excel.tables.keys.first]!;
+    return sheet.rows;
+  }
+
+  /// Decide se os bytes são de texto (CSV) ou de uma planilha binária.
+  static bool _ehCsv(Uint8List bytes) {
+    if (bytes.isEmpty) return false;
+    if (bytes.length >= 2 && bytes[0] == 0x50 && bytes[1] == 0x4B) {
+      return false; // XLSX (ZIP: "PK")
+    }
+    // CSV/TXT salvo como "Texto Unicode" pelo Excel vem em UTF-16 (com BOM).
+    if (_utf16ComBom(bytes)) return true;
+    if (bytes.length >= 4 &&
+        bytes[0] == 0xD0 &&
+        bytes[1] == 0xCF &&
+        bytes[2] == 0x11 &&
+        bytes[3] == 0xE0) {
+      return false; // XLS antigo (OLE)
+    }
+    // Muitos bytes nulos sem BOM também indicam texto UTF-16 (Excel).
+    if (_pareceUtf16SemBom(bytes)) return true;
+    // Qualquer byte nulo indica arquivo binário, não texto.
+    final amostra = bytes.length > 2048 ? bytes.sublist(0, 2048) : bytes;
+    for (final b in amostra) {
+      if (b == 0) return false;
+    }
+    return true;
+  }
+
+  static bool _utf16ComBom(Uint8List bytes) {
+    if (bytes.length < 2) return false;
+    return (bytes[0] == 0xFF && bytes[1] == 0xFE) ||
+        (bytes[0] == 0xFE && bytes[1] == 0xFF);
+  }
+
+  static bool _pareceUtf16SemBom(Uint8List bytes) {
+    if (bytes.length < 8) return false;
+    final amostra = bytes.length > 512 ? bytes.sublist(0, 512) : bytes;
+    var nulos = 0;
+    for (final b in amostra) {
+      if (b == 0) nulos++;
+    }
+    return nulos > amostra.length ~/ 4;
+  }
+
+  /// Decodifica o texto tentando UTF-8, UTF-16 (Excel) e caindo para Latin-1
+  /// (comum em CSVs exportados pelo Excel em português).
+  static String _textoDeBytes(Uint8List bytes) {
+    if (bytes.length >= 2) {
+      if (bytes[0] == 0xFF && bytes[1] == 0xFE) {
+        return _decodificarUtf16(bytes.sublist(2), littleEndian: true);
+      }
+      if (bytes[0] == 0xFE && bytes[1] == 0xFF) {
+        return _decodificarUtf16(bytes.sublist(2), littleEndian: false);
+      }
+    }
+    if (_pareceUtf16SemBom(bytes)) {
+      // Sem BOM: deduz a ordem pelo byte nulo da primeira letra.
+      final littleEndian = bytes.length > 1 && bytes[1] == 0;
+      return _decodificarUtf16(bytes, littleEndian: littleEndian);
+    }
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      return latin1.decode(bytes);
+    }
+  }
+
+  static String _decodificarUtf16(
+    Uint8List bytes, {
+    required bool littleEndian,
+  }) {
+    final unidades = <int>[];
+    for (int i = 0; i + 1 < bytes.length; i += 2) {
+      unidades.add(
+        littleEndian
+            ? bytes[i] | (bytes[i + 1] << 8)
+            : (bytes[i] << 8) | bytes[i + 1],
+      );
+    }
+    return String.fromCharCodes(unidades);
+  }
+
+  /// Converte o conteúdo de um CSV em linhas/campos, respeitando aspas.
+  static List<List<String>> _lerCsv(String texto) {
+    var conteudo = texto;
+    if (conteudo.isNotEmpty && conteudo.codeUnitAt(0) == 0xFEFF) {
+      conteudo = conteudo.substring(1); // remove BOM
+    }
+
+    // O delimitador mais frequente na primeira linha preenchida manda.
+    final primeiraLinha = conteudo
+        .split(RegExp(r'\r?\n'))
+        .firstWhere((l) => l.trim().isNotEmpty, orElse: () => '');
+    final delimitador = _detectarDelimitador(primeiraLinha);
+
+    final linhas = <List<String>>[];
+    var linha = <String>[];
+    final campo = StringBuffer();
+    var dentroAspas = false;
+
+    for (int i = 0; i < conteudo.length; i++) {
+      final c = conteudo[i];
+      if (dentroAspas) {
+        if (c == '"') {
+          if (i + 1 < conteudo.length && conteudo[i + 1] == '"') {
+            campo.write('"');
+            i++;
+          } else {
+            dentroAspas = false;
+          }
+        } else {
+          campo.write(c);
+        }
+        continue;
+      }
+
+      if (c == '"') {
+        dentroAspas = true;
+      } else if (c == delimitador) {
+        linha.add(campo.toString());
+        campo.clear();
+      } else if (c == '\n') {
+        linha.add(campo.toString());
+        campo.clear();
+        linhas.add(linha);
+        linha = <String>[];
+      } else if (c == '\r') {
+        // Ignorado: o \n é quem fecha a linha.
+      } else {
+        campo.write(c);
+      }
+    }
+    if (campo.isNotEmpty || linha.isNotEmpty) {
+      linha.add(campo.toString());
+      linhas.add(linha);
+    }
+    return linhas;
+  }
+
+  static String _detectarDelimitador(String linha) {
+    const candidatos = [';', ',', '\t', '|'];
+    var melhor = ';';
+    var maior = 0;
+    for (final d in candidatos) {
+      final qtd = d.allMatches(linha).length;
+      if (qtd > maior) {
+        maior = qtd;
+        melhor = d;
+      }
+    }
+    return melhor;
   }
 
   // ── Leitura/parse de células ────────────────────────────────────────────

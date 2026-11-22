@@ -20,12 +20,14 @@ import '../services/auth_service.dart';
 import '../services/cash_back_service.dart';
 import '../models/cash_back_movimento.dart';
 import '../services/supabase_service.dart';
+import '../services/consulta_cnpj_service.dart';
 import '../theme.dart';
 import 'venda_direta_page.dart';
 import 'lancar_pedido_page.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'dart:typed_data';
 import '../widgets/sync_status_widget.dart';
 
@@ -209,6 +211,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
 
   // Controladores
   final _codigoController = TextEditingController();
+  final _motivoBloqueioController = TextEditingController();
   final _nomeController = TextEditingController();
   final _nomeFantasiaController = TextEditingController();
   final _cpfCnpjController = TextEditingController();
@@ -244,6 +247,214 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   List<EnderecoCliente> _enderecos = [];
   final ImagePicker _imagePicker = ImagePicker();
   bool _uploadingFoto = false; // Flag para controlar upload de foto
+  bool _buscandoCnpj = false;
+  bool _buscandoCep = false;
+
+  Future<void> _consultarCnpjAutomatico(String cnpjInput) async {
+    final cnpjLimpo = cnpjInput.replaceAll(RegExp(r'\D'), '');
+    if (cnpjLimpo.length != 14) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('CNPJ deve conter 14 dígitos numéricos.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (_buscandoCnpj) return;
+
+    setState(() {
+      _buscandoCnpj = true;
+    });
+
+    try {
+      final dados = await ConsultaCnpjService.consultar(cnpjLimpo);
+
+      if (!mounted) return;
+
+      setState(() {
+        // Preenche Razão Social e Nome Fantasia
+        _nomeController.text = dados.razaoSocial;
+        if (dados.nomeFantasia != null && dados.nomeFantasia!.isNotEmpty) {
+          _nomeFantasiaController.text = dados.nomeFantasia!;
+        }
+
+        // Preenche Endereço
+        if (dados.cep != null && dados.cep!.isNotEmpty) {
+          _cepController.text = dados.cep!;
+        }
+        if (dados.tipoLogradouro != null &&
+            (dados.tipoLogradouro == 'Rua' || dados.tipoLogradouro == 'Avenida')) {
+          _tipoLogradouro = dados.tipoLogradouro!;
+        }
+        if (dados.logradouro != null && dados.logradouro!.isNotEmpty) {
+          _enderecoController.text = dados.logradouro!;
+        }
+        if (dados.numero != null && dados.numero!.isNotEmpty) {
+          _numeroController.text = dados.numero!;
+        }
+        if (dados.complemento != null && dados.complemento!.isNotEmpty) {
+          _complementoController.text = dados.complemento!;
+        }
+        if (dados.bairro != null && dados.bairro!.isNotEmpty) {
+          _bairroController.text = dados.bairro!;
+        }
+        if (dados.municipio != null && dados.municipio!.isNotEmpty) {
+          _cidadeController.text = dados.municipio!;
+        }
+        if (dados.uf != null && dados.uf!.isNotEmpty) {
+          _estadoController.text = dados.uf!;
+        }
+
+        // Preenche Contatos se estiverem vazios
+        if (dados.telefone != null &&
+            dados.telefone!.isNotEmpty &&
+            _telefoneController.text.trim().isEmpty) {
+          _telefoneController.text = dados.telefone!;
+        }
+        if (dados.email != null &&
+            dados.email!.isNotEmpty &&
+            _emailController.text.trim().isEmpty) {
+          _emailController.text = dados.email!;
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Dados de "${dados.razaoSocial}" carregados via ${dados.fonte}!',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: Colors.green.shade700,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Ver Endereço',
+            textColor: Colors.yellowAccent,
+            onPressed: () {
+              _tabController.animateTo(1);
+            },
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString().replaceAll('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao consultar CNPJ: $msg'),
+          backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _buscandoCnpj = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _consultarCepAutomatico(String cepInput) async {
+    final cepLimpo = cepInput.replaceAll(RegExp(r'\D'), '');
+    if (cepLimpo.length != 8) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('CEP deve conter 8 dígitos numéricos.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (_buscandoCep) return;
+
+    setState(() {
+      _buscandoCep = true;
+    });
+
+    try {
+      final url = Uri.parse('https://viacep.com.br/ws/$cepLimpo/json/');
+      final response = await http.get(url).timeout(const Duration(seconds: 6));
+
+      if (response.statusCode == 200) {
+        final data =
+            jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+        if (data.containsKey('erro') && data['erro'] == true) {
+          throw Exception('CEP não encontrado.');
+        }
+
+        if (!mounted) return;
+
+        setState(() {
+          final logradouro = (data['logradouro'] ?? '').toString().trim();
+          final logUpper = logradouro.toUpperCase();
+          if (logUpper.startsWith('AVENIDA ')) {
+            _tipoLogradouro = 'Avenida';
+            _enderecoController.text = logradouro.substring(8).trim();
+          } else if (logUpper.startsWith('AV. ')) {
+            _tipoLogradouro = 'Avenida';
+            _enderecoController.text = logradouro.substring(4).trim();
+          } else if (logUpper.startsWith('RUA ')) {
+            _tipoLogradouro = 'Rua';
+            _enderecoController.text = logradouro.substring(4).trim();
+          } else if (logUpper.startsWith('R. ')) {
+            _tipoLogradouro = 'Rua';
+            _enderecoController.text = logradouro.substring(3).trim();
+          } else if (logradouro.isNotEmpty) {
+            _enderecoController.text = logradouro;
+          }
+
+          if ((data['bairro'] ?? '').toString().isNotEmpty) {
+            _bairroController.text = data['bairro'].toString();
+          }
+          if ((data['localidade'] ?? '').toString().isNotEmpty) {
+            _cidadeController.text = data['localidade'].toString();
+          }
+          if ((data['uf'] ?? '').toString().isNotEmpty) {
+            _estadoController.text = data['uf'].toString().toUpperCase();
+          }
+          if ((data['complemento'] ?? '').toString().isNotEmpty &&
+              _complementoController.text.trim().isEmpty) {
+            _complementoController.text = data['complemento'].toString();
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Endereço preenchido automaticamente pelo CEP!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      } else {
+        throw Exception('Erro ao buscar CEP (${response.statusCode})');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString().replaceAll('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao consultar CEP: $msg'),
+          backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _buscandoCep = false;
+        });
+      }
+    }
+  }
 
   bool get _isEditing =>
       widget.cliente != null && widget.cliente!.id.isNotEmpty;
@@ -300,6 +511,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     required TextEditingController controller,
     required String label,
     IconData? icon,
+    Widget? suffixIcon,
     bool required = false,
     TextInputType keyboardType = TextInputType.text,
     List<TextInputFormatter>? inputFormatters,
@@ -326,6 +538,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
           prefixText: prefixText,
           prefixStyle: const TextStyle(color: Colors.white),
           prefixIcon: icon != null ? Icon(icon, color: Colors.blue) : null,
+          suffixIcon: suffixIcon,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
@@ -580,7 +793,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   String _gerarProximoCodigoCliente(DataService dataService) {
     int maiorCodigo = 0;
     for (final c in dataService.clientes) {
-      final codStr = c.dadosExtras?['codigo']?.toString();
+      final codStr = c.codigo ?? c.dadosExtras?['codigo']?.toString();
       if (codStr != null) {
         final codInt = int.tryParse(codStr.replaceAll(RegExp(r'[^\d]'), ''));
         if (codInt != null && codInt > maiorCodigo) {
@@ -594,7 +807,8 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   void _carregarDados() {
     if (widget.cliente != null) {
       final c = widget.cliente!;
-      _codigoController.text = c.dadosExtras?['codigo']?.toString() ?? '';
+      _codigoController.text = c.codigo ?? c.dadosExtras?['codigo']?.toString() ?? '';
+      _motivoBloqueioController.text = c.motivoBloqueio ?? '';
       _nomeController.text = c.nome;
       _nomeFantasiaController.text = c.nomeFantasia ?? '';
       _tipoPessoa = c.tipoPessoa;
@@ -659,6 +873,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
   void dispose() {
     _tabController.dispose();
     _codigoController.dispose();
+    _motivoBloqueioController.dispose();
     _nomeController.dispose();
     _nomeFantasiaController.dispose();
     _cpfCnpjController.dispose();
@@ -823,12 +1038,44 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   label: _tipoPessoa == TipoPessoa.fisica ? 'CPF' : 'CNPJ',
                   icon: Icons.credit_card,
                   keyboardType: TextInputType.number,
+                  hintText: _tipoPessoa == TipoPessoa.juridica
+                      ? 'Digite 14 números'
+                      : 'Digite 11 números',
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(
                       _tipoPessoa == TipoPessoa.fisica ? 11 : 14,
                     ),
                   ],
+                  onChanged: (val) {
+                    if (_tipoPessoa == TipoPessoa.juridica) {
+                      final digitos = val.replaceAll(RegExp(r'\D'), '');
+                      if (digitos.length == 14) {
+                        _consultarCnpjAutomatico(digitos);
+                      }
+                    }
+                  },
+                  suffixIcon: _tipoPessoa == TipoPessoa.juridica
+                      ? (_buscandoCnpj
+                          ? const Padding(
+                              padding: EdgeInsets.all(12.0),
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                            )
+                          : IconButton(
+                              icon: const Icon(Icons.search, color: Colors.blue),
+                              tooltip: 'Buscar dados do CNPJ na Receita Federal',
+                              onPressed: () => _consultarCnpjAutomatico(
+                                _cpfCnpjController.text,
+                              ),
+                            ))
+                      : null,
                 ),
               ),
               const SizedBox(width: 12),
@@ -918,10 +1165,36 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   label: 'CEP',
                   icon: Icons.pin_drop,
                   keyboardType: TextInputType.number,
+                  hintText: 'Digite 8 dígitos',
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(8),
                   ],
+                  onChanged: (val) {
+                    final digitos = val.replaceAll(RegExp(r'\D'), '');
+                    if (digitos.length == 8) {
+                      _consultarCepAutomatico(digitos);
+                    }
+                  },
+                  suffixIcon: _buscandoCep
+                      ? const Padding(
+                          padding: EdgeInsets.all(12.0),
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.search, color: Colors.blue),
+                          tooltip: 'Buscar endereço pelo CEP',
+                          onPressed: () => _consultarCepAutomatico(
+                            _cepController.text,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1495,6 +1768,21 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                   activeThumbColor: Colors.redAccent,
                   onChanged: (value) => setState(() => _bloqueado = value),
                 ),
+                if (_bloqueado) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: _buildCampoTexto(
+                      controller: _motivoBloqueioController,
+                      label: 'Motivo do bloqueio',
+                      icon: Icons.info_outline,
+                      hintText: 'Ex.: dívida em aberto, cheque sem fundo...',
+                      maxLines: 2,
+                    ),
+                  ),
+                ],
                 const Divider(color: Colors.white12),
                 SwitchListTile(
                   title: const Text(
@@ -3761,10 +4049,16 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
     try {
       final dataService = Provider.of<DataService>(context, listen: false);
 
+      final codigoFinal = _codigoController.text.trim().isEmpty
+          ? (widget.cliente?.codigo ??
+                _gerarProximoCodigoCliente(dataService))
+          : _codigoController.text.trim();
+
       final cliente = Cliente(
         id: (_isEditing)
             ? widget.cliente!.id
             : DateTime.now().millisecondsSinceEpoch.toString(),
+        codigo: codigoFinal,
         nome: _nomeController.text.trim(),
         nomeFantasia: _nomeFantasiaController.text.trim().isEmpty
             ? null
@@ -3835,11 +4129,15 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
                 _creditoInicialController.text.replaceAll(',', '.'),
               ) ??
               0.0,
-          'codigo': _codigoController.text.trim().isEmpty
-              ? null
-              : _codigoController.text.trim(),
+          // Todo cliente tem código: se o operador não informar, o próximo
+          // número sequencial é atribuído automaticamente no salvamento.
+          'codigo': codigoFinal,
         },
         bloqueado: _bloqueado,
+        motivoBloqueio:
+            _bloqueado && _motivoBloqueioController.text.trim().isNotEmpty
+            ? _motivoBloqueioController.text.trim()
+            : null,
         habilitaTaxiDog: _habilitaTaxiDog,
         ativo: _ativo,
         createdAt: widget.cliente?.createdAt ?? DateTime.now(),
@@ -3847,7 +4145,7 @@ class _ClienteDetalhesPageState extends State<ClienteDetalhesPage>
       );
 
       if (_isEditing) {
-        dataService.updateCliente(cliente);
+        await dataService.updateCliente(cliente);
       } else {
         await dataService.addCliente(cliente);
       }

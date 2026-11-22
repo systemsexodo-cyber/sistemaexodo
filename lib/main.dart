@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:sistema_exodo_novo/theme.dart';
+import 'package:sistema_exodo_novo/utils/mobile_ux.dart';
 import 'package:sistema_exodo_novo/pages/home_page.dart';
 import 'package:sistema_exodo_novo/pages/bloqueio_mensalidade_page.dart';
 import 'package:sistema_exodo_novo/pages/ativacao_licenca_page.dart';
@@ -25,12 +27,14 @@ import 'package:sistema_exodo_novo/services/nfce_xml_local_service.dart';
 import 'package:sistema_exodo_novo/services/clock_check_service.dart';
 import 'package:sistema_exodo_novo/services/diagnostico_layout_service.dart';
 import 'package:sistema_exodo_novo/services/app_log_service.dart';
+import 'package:sistema_exodo_novo/services/fila_impressao_service.dart';
 
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:ui' show AppExitResponse;
 import 'package:provider/provider.dart';
+import 'package:sistema_exodo_novo/widgets/boot_screens.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_loading.dart';
 import 'package:sistema_exodo_novo/widgets/exodo_logo.dart';
 import 'package:flutter/foundation.dart';
@@ -224,7 +228,30 @@ void main() {
 }
 
 Future<void> _main() async {
+  // Qualquer falha na abertura precisa aparecer NA TELA. Antes, um erro aqui
+  // morria só no log (runZonedGuarded engolia) e o app ficava eternamente no
+  // splash branco do Android, sem dizer nada — o conhecido "não abre".
+  try {
+    await _iniciarAplicativo();
+  } catch (erro, pilha) {
+    try {
+      await _logBoot('FALHA NA ABERTURA: $erro');
+    } catch (_) {}
+    runApp(AberturaFalhouPage(erro: '$erro', pilha: '$pilha'));
+  }
+}
+
+Future<void> _iniciarAplicativo() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Primeira tela desenhada na hora: mostra o sistema carregando em vez de um
+  // splash parado. É substituída pelo app de verdade no fim da abertura.
+  runApp(
+    BootProgresso(
+      status: bootStatus,
+      versao: AppUpdateService.currentAppVersion,
+    ),
+  );
 
   await AppLogService.inicializar();
   AppLogService.instalarHookDebugPrint();
@@ -244,12 +271,26 @@ Future<void> _main() async {
   // empacotado — é o que permite o MESMO APK funcionar em qualquer loja.
   try {
     final configCelular = await ConfigServidorMobile.carregar();
-    if (configCelular.isNotEmpty) {
-      EnvConfig.aplicarOverrides(configCelular);
+    final configNuvem = await ConfigServidorMobile.carregarNuvem();
+    final configAparelho = <String, String>{
+      ...configCelular,
+      ...configNuvem,
+    };
+    if (configAparelho.isNotEmpty) {
+      EnvConfig.aplicarOverrides(configAparelho);
       await _logBoot(
-        'Servidor do celular: ${configCelular['DB_HOST']}:${configCelular['DB_PORT']}',
+        'Servidor do celular: '
+        '${configAparelho['DB_HOST'] ?? '-'}:${configAparelho['DB_PORT'] ?? '-'}'
+        ' | nuvem: '
+        '${configAparelho['DB_CLOUD_HOST'] ?? '-'}:'
+        '${configAparelho['DB_CLOUD_PORT'] ?? '-'}',
       );
     }
+    // Modo de conexão escolhido no aparelho (automático, somente LAN ou
+    // somente nuvem): precisa valer antes da primeira conexão com o banco.
+    final modoConexao = await ConfigServidorMobile.carregarModo();
+    EnvConfig.definirModoConexao(modoConexao);
+    await _logBoot('Modo de conexao: $modoConexao');
   } catch (e) {
     await _logBoot('Falha ao ler configuracao do celular: $e');
   }
@@ -286,6 +327,8 @@ Future<void> _main() async {
     );
     return true;
   };
+
+  bootStatus.value = 'Verificando preferências do aparelho...';
 
   // Corrigir arquivo corrompido de shared_preferences se houver
   await _corrigirSharedPreferencesCorrompido();
@@ -344,11 +387,27 @@ Future<void> _main() async {
 
   debugPrint('>>> [SISTEMA] Sistema inicializado com Supabase');
 
+  bootStatus.value = 'Carregando módulos do sistema...';
+
   // Inicializa os serviços
   final dataService = DataService();
   // Carrega o carimbo local antes de qualquer tela verificar a mensalidade.
   // Sem isso, uma instalação offline poderia iniciar com validação nula.
-  await dataService.carregarLiberacaoProvisoria();
+  //
+  // Com TIMEOUT: no celular, sem nenhum dos 3 destinos de banco respondendo,
+  // cada leitura custava até 4 s + 4 s + 15 s de timeout — o boot ficava
+  // minutos em "Carregando módulos do sistema..." e o login nunca chegava.
+  // Se não terminar em 12 s, o sistema segue (mesmo comportamento offline do
+  // cache de emergência) e a leitura continua em segundo plano.
+  try {
+    await dataService
+        .carregarLiberacaoProvisoria()
+        .timeout(const Duration(seconds: 12));
+    await _logBoot('Liberação provisória carregada');
+  } catch (e) {
+    debugPrint('>>> [SISTEMA] ⚠️ Liberação provisória (timeout/erro): $e');
+    await _logBoot('AVISO liberação provisória: $e');
+  }
   final authService = AuthService();
   final clienteAuthService = ClienteAuthService();
   final carrinhoService = CarrinhoService();
@@ -374,11 +433,16 @@ Future<void> _main() async {
   authService.onEmpresaSelecionada = (empresa) async {
     await dataService.definirEmpresaAtual(empresa.id);
     dataService.setEmpresaAtual(empresa);
+    if (FilaImpressaoService.ehTerminalCaixaWindows) {
+      FilaImpressaoService.instance.iniciarMonitoramento(empresa: empresa);
+    }
   };
 
   // Inicializa o serviço de contingência (nunca deve impedir o app de abrir)
   try {
-    await NfceContingenciaService.instance.inicializar();
+    await NfceContingenciaService.instance
+        .inicializar()
+        .timeout(const Duration(seconds: 5));
     await _logBoot('Contingência inicializada');
   } catch (e) {
     debugPrint('>>> [SISTEMA] ⚠️ Erro ao inicializar contingência: $e');
@@ -389,7 +453,9 @@ Future<void> _main() async {
   // autorização, o XML fica em disco e é reenviado a cada 5 min — sem isso a
   // nota nunca aparecia no Portal do Contador.
   try {
-    await NfceXmlLocalService.inicializar();
+    await NfceXmlLocalService
+        .inicializar()
+        .timeout(const Duration(seconds: 5));
     await _logBoot('Fila de upload de XML inicializada');
   } catch (e) {
     debugPrint('>>> [SISTEMA] ⚠️ Erro ao inicializar a fila de XML: $e');
@@ -504,6 +570,7 @@ Future<void> _main() async {
     ClockCheckService().verificar();
   });
 
+  bootStatus.value = 'Abrindo o sistema...';
   await _logBoot('Executando runApp');
   runApp(
     MultiProvider(
@@ -519,6 +586,26 @@ Future<void> _main() async {
       child: const MyApp(),
     ),
   );
+
+  // Barras do sistema (celular): transparentes / edge-to-edge. Aplicado DEPOIS
+  // do primeiro quadro — chamar SystemChrome ANTES do runApp é o que travava
+  // a abertura em alguns aparelhos (app parado no splash). No Android 15+ o
+  // edge-to-edge já é o padrão; aqui só acertamos as cores.
+  if (sistemaMovel) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        SystemChrome.setSystemUIOverlayStyle(
+          const SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            systemNavigationBarColor: Colors.transparent,
+            systemNavigationBarDividerColor: Colors.transparent,
+          ),
+        );
+      } catch (_) {
+        // Aparelho que não aceita o ajuste: segue sem ele.
+      }
+    });
+  }
 }
 
 class AppRouter {
@@ -821,6 +908,8 @@ class _MyAppState extends State<MyApp> {
         return MaterialApp(
           title: isAgendamentoRoute ? 'Agendamento Online' : 'Exodo',
           debugShowCheckedModeBanner: false,
+          // Rolagem com o dedo (física elástica) no celular; no PC nada muda.
+          scrollBehavior: const ExodoScrollBehavior(),
           theme: AppTheme.getTheme(
             corPrimaria: config['primaria'],
             corSecundaria: config['secundaria'],
@@ -848,12 +937,33 @@ class _MyAppState extends State<MyApp> {
             if (child == null)
               return const Center(child: CircularProgressIndicator());
 
-            return MediaQuery(
+            Widget conteudo = MediaQuery(
               data: MediaQuery.of(
                 context,
               ).copyWith(textScaler: TextScaler.noScaling),
               child: _LicencaGate(child: child),
             );
+
+            // Celular: a tipografia padrão do Material 3 é larga para
+            // 360–420 px — as frases quebram em muitas linhas e os
+            // cartões ficam "alongados". Uma escala levemente menor
+            // mantém a leitura sem mexer no layout de cada tela.
+            if (MediaQuery.sizeOf(context).width < kLarguraCelular) {
+              final base = Theme.of(context);
+              conteudo = Theme(
+                data: base.copyWith(
+                  textTheme: base.textTheme.apply(fontSizeFactor: 0.92),
+                ),
+                child: conteudo,
+              );
+            }
+
+            // No celular, tocar fora de um campo fecha o teclado — sem isso a
+            // tela fica espremida atrás do teclado até o usuário achar o
+            // "voltar" do Android.
+            return sistemaMovel
+                ? ToqueForaFechaTeclado(child: conteudo)
+                : conteudo;
           },
         );
       },
@@ -925,6 +1035,13 @@ class _LicencaGateState extends State<_LicencaGate> {
   @override
   void initState() {
     super.initState();
+    // Em não-Windows/Web, liberar imediatamente para o app abrir.
+    if (!kIsWeb && !Platform.isWindows) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _carregando = false);
+      });
+      return;
+    }
     _verificar();
   }
 
@@ -953,8 +1070,11 @@ class _LicencaGateState extends State<_LicencaGate> {
 
   @override
   Widget build(BuildContext context) {
-    // Web (loja/agendamento) e celular não usam a licença de instalação.
-    if (kIsWeb || !Platform.isWindows) return widget.child;
+    // Web e celular não usam a licença de instalação — liberar imediatamente.
+    if (kIsWeb || !Platform.isWindows) {
+      if (_carregando) setState(() => _carregando = false);
+      return widget.child;
+    }
 
     if (_carregando) {
       return _CamadaOverlay(
@@ -1028,7 +1148,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   void initState() {
     super.initState();
-    _checarAtualizacoes();
+    // _checarAtualizacoes() removido para evitar bloqueio no boot
+    // A checagem de atualização será feita em background
   }
 
   Future<void> _checarAtualizacoes() async {
@@ -1125,44 +1246,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    if (_verificandoAtualizacao) {
-      return AppTheme.appBackground(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const ExodoLogo(
-                fontSize: 60,
-                showSubtitle: true,
-                showPhoenix: true,
-              ),
-              const SizedBox(height: 48),
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: CircularProgressIndicator(
-                  strokeWidth: 3,
-                  valueColor: const AlwaysStoppedAnimation<Color>(
-                    Color(0xFFFF9800),
-                  ),
-                  backgroundColor: const Color(0xFFFF9800).withOpacity(0.15),
-                ),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Buscando novas atualizações...',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+    // NÃO bloquear com tela de atualização - ir direto ao app
+    // A checagem de atualização roda em background
 
     if (_baixandoAtualizacao) {
       return AppTheme.appBackground(

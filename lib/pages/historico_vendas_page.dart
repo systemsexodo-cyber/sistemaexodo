@@ -12,6 +12,7 @@ import '../models/troca_devolucao.dart';
 import '../models/caixa.dart';
 import '../models/mesa_comanda.dart';
 import '../models/nfce.dart';
+import '../models/permissao.dart';
 import '../models/conta_pagar.dart';
 import '../models/produto.dart';
 import '../models/estoque_historico.dart';
@@ -27,6 +28,7 @@ import '../services/caixa_pdf_service.dart';
 import '../services/venda_pdf_service.dart';
 import '../services/pedido_pdf_service.dart';
 import '../services/producao_pdf_service.dart';
+import '../services/fila_impressao_service.dart';
 
 class _ProdutoVendido {
   final String nome;
@@ -2349,6 +2351,260 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
     );
   }
 
+  /// Troca a(s) forma(s) de pagamento de uma venda já finalizada sem alterar
+  /// valores. Ação protegida pela permissão "Alterar Forma de Pagamento".
+  Future<void> _abrirDialogAlterarFormaPagamento(ItemHistorico item) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!PermissionHelper.temPermissao(
+      authService.usuarioAtual,
+      TipoPermissao.vendasAlterarPagamento,
+    )) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Você não tem permissão para alterar a forma de pagamento desta venda.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final venda = item.vendaBalcao;
+    final pedido = item.pedido;
+    final pagamentosAtuais = venda != null && venda.pagamentos.isNotEmpty
+        ? venda.pagamentos
+        : (pedido?.pagamentos ?? <PagamentoPedido>[]);
+
+    if (pagamentosAtuais.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Esta venda não tem pagamentos registrados para alterar.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Cash Back depende de saldo do cliente: não entra na troca de forma.
+    final formasDisponiveis = TipoPagamento.values
+        .where((t) => t != TipoPagamento.cashBack)
+        .toList();
+    final selecionadas = <int, TipoPagamento>{};
+    for (var i = 0; i < pagamentosAtuais.length; i++) {
+      final tipo = pagamentosAtuais[i].tipo;
+      selecionadas[i] = formasDisponiveis.contains(tipo)
+          ? tipo
+          : TipoPagamento.outro;
+    }
+
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.swap_horiz, color: Colors.cyanAccent),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Alterar forma de pagamento',
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Venda ${item.numero} — os valores não mudam, apenas a forma de pagamento.',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 16),
+                  ...pagamentosAtuais.asMap().entries.map((entry) {
+                    final i = entry.key;
+                    final p = entry.value;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 110,
+                            child: Text(
+                              _formatoMoeda.format(p.valor),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: DropdownButtonFormField<TipoPagamento>(
+                              initialValue: selecionadas[i],
+                              dropdownColor: const Color(0xFF2A2A3E),
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                filled: true,
+                                fillColor: const Color(0xFF2A2A3E),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                              items: formasDisponiveis
+                                  .map(
+                                    (t) => DropdownMenuItem(
+                                      value: t,
+                                      child: Text(
+                                        t.nome,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (novo) {
+                                if (novo == null) return;
+                                setDialogState(() => selecionadas[i] = novo);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text(
+                'CANCELAR',
+                style: TextStyle(color: Colors.white54),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.cyanAccent,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text(
+                'SALVAR',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmou != true) return;
+
+    // Mantém ids, valores e status; muda apenas a forma de pagamento.
+    final novosPagamentos = <PagamentoPedido>[];
+    for (var i = 0; i < pagamentosAtuais.length; i++) {
+      final p = pagamentosAtuais[i];
+      novosPagamentos.add(
+        PagamentoPedido(
+          id: p.id,
+          tipo: selecionadas[i] ?? p.tipo,
+          valor: p.valor,
+          parcelas: p.parcelas,
+          numeroParcela: p.numeroParcela,
+          parcelamentoId: p.parcelamentoId,
+          dataVencimento: p.dataVencimento,
+          recebido: p.recebido,
+          dataRecebimento: p.dataRecebimento,
+          nomePagador: p.nomePagador,
+          observacao: p.observacao,
+          valorRecebido: p.valorRecebido,
+          troco: p.troco,
+          desconto: p.desconto,
+          acrescimo: p.acrescimo,
+        ),
+      );
+    }
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final tipoPrincipal = novosPagamentos.first.tipo;
+
+    if (venda != null) {
+      await dataService.updateVendaBalcao(
+        venda.copyWith(
+          pagamentos: novosPagamentos,
+          tipoPagamento: tipoPrincipal,
+        ),
+      );
+    }
+    if (pedido != null) {
+      await dataService.addOrUpdatePedido(
+        pedido.copyWith(pagamentos: novosPagamentos),
+      );
+    }
+
+    // Se a troca envolveu fiado/crediário em aberto, acerta o saldo devedor.
+    final clienteId = venda?.clienteId ?? pedido?.clienteId;
+    if (clienteId != null) {
+      double somaAPrazo(List<PagamentoPedido> ps) => ps
+          .where(
+            (p) =>
+                !p.recebido &&
+                (p.tipo == TipoPagamento.fiado ||
+                    p.tipo == TipoPagamento.crediario),
+          )
+          .fold(0.0, (s, p) => s + p.valor);
+      final diferenca = somaAPrazo(novosPagamentos) - somaAPrazo(pagamentosAtuais);
+      if (diferenca.abs() > 0.001) {
+        final idx = dataService.clientes.indexWhere((c) => c.id == clienteId);
+        if (idx != -1) {
+          final cliente = dataService.clientes[idx];
+          await dataService.updateCliente(
+            cliente.copyWith(
+              saldoDevedor: (cliente.saldoDevedor + diferenca).clamp(
+                0.0,
+                double.infinity,
+              ),
+              updatedAt: DateTime.now(),
+            ),
+          );
+        }
+      }
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Forma de pagamento alterada para ${tipoPrincipal.nome}.',
+        ),
+        backgroundColor: Colors.green,
+      ),
+    );
+    setState(() {});
+  }
+
   void _mostrarDetalhesVenda(ItemHistorico item) {
     showModalBottomSheet(
       context: context,
@@ -3012,6 +3268,46 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
                         );
                       }),
                     ],
+                    // Alterar forma de pagamento (somente com permissão)
+                    if (!item.isCancelada &&
+                        (item.vendaBalcao != null || item.pedido != null) &&
+                        !item.isSangria &&
+                        !item.isSuprimento &&
+                        item.fechamentoCaixa == null &&
+                        PermissionHelper.temPermissao(
+                          Provider.of<AuthService>(
+                            context,
+                            listen: false,
+                          ).usuarioAtual,
+                          TipoPermissao.vendasAlterarPagamento,
+                        ))
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: OutlinedButton.icon(
+                          onPressed: () =>
+                              _abrirDialogAlterarFormaPagamento(item),
+                          icon: const Icon(
+                            Icons.swap_horiz,
+                            color: Colors.cyanAccent,
+                            size: 18,
+                          ),
+                          label: const Text(
+                            'ALTERAR FORMA DE PAGAMENTO',
+                            style: TextStyle(
+                              color: Colors.cyanAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.cyanAccent),
+                            minimumSize: const Size(double.infinity, 44),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
                     if (item.responsavel != null &&
                         (item.vendaBalcao != null || item.pedido != null))
                       ListTile(
@@ -3475,6 +3771,37 @@ class _HistoricoVendasPageState extends State<HistoricoVendasPage> {
         );
         return;
       }
+
+      // Celular: reimprime na impressora configurada no PC do caixa.
+      if (FilaImpressaoService.ehDispositivoMovel) {
+        bool ok = false;
+        if (item.vendaBalcao != null) {
+          ok = await FilaImpressaoService.enfileirarVendaParaImpressao(
+            venda: item.vendaBalcao!,
+            empresaId: emp.id,
+          );
+        } else if (item.pedido != null) {
+          ok = await FilaImpressaoService.enfileirarPedidoParaImpressao(
+            pedido: item.pedido!,
+            empresaId: emp.id,
+          );
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                ok
+                    ? 'Reimpressão enviada para a impressora do PC do caixa'
+                    : 'Não foi possível enviar a reimpressão para o PC do caixa',
+              ),
+              backgroundColor: ok ? Colors.green : Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
       if (item.vendaBalcao != null) {
         await VendaPDFService.imprimirPDFTermico(
           venda: item.vendaBalcao!,

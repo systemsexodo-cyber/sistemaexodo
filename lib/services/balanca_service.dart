@@ -60,6 +60,14 @@ class BalancaService {
     'validadeToledoDias': 0,
   };
 
+  /// Formata um peso lido da balança para exibição: sempre nas 3 casas
+  /// decimais da balança (0,200 kg) e com vírgula decimal.
+  ///
+  /// Sem isso 0,200 kg aparecia como "0,2" e o operador lia a pesagem como
+  /// errada, porque a balança mostra 0,200 no visor.
+  static String formatarPesoKg(double peso) =>
+      peso.toStringAsFixed(3).replaceAll('.', ',');
+
   /// Carrega as configurações da balança
   Future<Map<String, dynamic>> obterConfiguracao() async {
     try {
@@ -176,18 +184,26 @@ class BalancaService {
   /// (0x05) e o quadro STX…ETX é lido em BYTES (não como texto), porque essas
   /// balanças falam em gramas e não devolvem quebra de linha — ler como texto
   /// devolvia lixo ("sem quadro válido").
-  Future<Map<String, dynamic>> lerPeso() async {
+  Future<Map<String, dynamic>> lerPeso({
+    int? baudRateOverride,
+    String? protocoloOverride,
+    int? casasDecimaisOverride,
+  }) async {
     final config = await obterConfiguracao();
     // Só simula com pedido explícito (true salvo). Qualquer outro valor cai
     // na leitura real da porta serial.
     final bool usarMock = config['usarMock'] == true;
     final double pesoMock = (config['pesoMock'] ?? 1.500).toDouble();
     final String porta = (config['porta'] ?? 'COM1').toString();
-    final int baudRate = (config['baudRate'] as num?)?.toInt() ?? 9600;
+    final int baudRate =
+        baudRateOverride ?? (config['baudRate'] as num?)?.toInt() ?? 9600;
     final String protocolo = _protocoloNormalizado(
-      (config['protocolo'] ?? 'auto').toString(),
+      protocoloOverride ?? (config['protocolo'] ?? 'auto').toString(),
     );
-    final int casasDecimais = (config['casasDecimais'] as num?)?.toInt() ?? 3;
+    final int casasDecimais =
+        casasDecimaisOverride ??
+        (config['casasDecimais'] as num?)?.toInt() ??
+        3;
     final int tempoLeituraMs =
         (config['tempoLeituraMs'] as num?)?.toInt() ?? 1200;
     final String paridade = (config['paridade'] ?? 'None').toString();
@@ -344,14 +360,27 @@ try {
 
       final peso = leitura.peso;
       if (peso == null) {
+        // Bytes de controle fora da moldura STX/ETX, letras soltas ou símbolos:
+        // sinal clássico de velocidade (C15) diferente da que o app está usando
+        // ou de balança configurada num protocolo de impressora.
+        final bool temLixo = bytes.any(
+          (b) =>
+              (b < 0x20 && b != 0x02 && b != 0x03 && b != 0x0D && b != 0x0A) ||
+              b > 0x7E,
+        );
+        final dica = temLixo
+            ? 'O quadro veio com caracteres inválidos: quase sempre é a '
+                'velocidade da balança diferente de $baudRate ou ela estar num '
+                'protocolo de impressora. Na Toledo Prix 3 Fit: C14 = Prt3, '
+                'C15 = $baudRate, 8 bits, paridade nEn, C16 = d.'
+            : 'Troque o protocolo de pesagem se não for o da sua balança.';
         return {
           'peso': 0.0,
           'simulado': false,
           'ms': duracaoMs,
           'bruto': hex,
           'erro': 'Peso ilegível no protocolo $protocolo (quadro: '
-              '${hex.isEmpty ? txt : hex}). Troque o protocolo de pesagem se '
-              'não for o da sua balança.',
+              '${hex.isEmpty ? txt : hex}). $dica',
         };
       }
 
@@ -379,6 +408,51 @@ try {
         'erro': 'Erro de comunicação na porta $porta: $e',
       };
     }
+  }
+
+  /// Procura em qual velocidade a balança responde com um peso válido.
+  ///
+  /// As Toledo Prix 3 Fit saem de fábrica em 2400 baud (C15) e o PDV costuma
+  /// estar em 9600 — com velocidades diferentes o quadro chega como lixo e o
+  /// operador fica sem saber o que ajustar. Aqui o app testa as velocidades
+  /// mais comuns e devolve a que respondeu, para ser gravada na configuração.
+  Future<Map<String, dynamic>> detectarVelocidade() async {
+    final config = await obterConfiguracao();
+    if (config['usarMock'] == true) {
+      return {
+        'baudRate': null,
+        'erro': 'Desligue o "Modo simulado" para detectar a balança física.',
+      };
+    }
+    final tentativas = <int>[
+      (config['baudRate'] as num?)?.toInt() ?? 9600,
+      9600,
+      4800,
+      2400,
+      19200,
+    ];
+    final testadas = <int>{};
+    String? ultimoErro;
+    for (final baud in tentativas) {
+      if (!testadas.add(baud)) continue;
+      final res = await lerPeso(baudRateOverride: baud);
+      final peso = (res['peso'] as num?)?.toDouble() ?? 0.0;
+      if (res['erro'] == null && peso > 0) {
+        return {
+          'baudRate': baud,
+          'peso': peso,
+          'bruto': res['bruto'],
+          'erro': null,
+        };
+      }
+      ultimoErro = res['erro'] as String?;
+    }
+    return {
+      'baudRate': null,
+      'erro': ultimoErro ??
+          'A balança não respondeu em nenhuma velocidade. Confira o cabo e, '
+              'na Prix 3 Fit, C14 = Prt3 e C16 = d.',
+    };
   }
 
   /// Extrai o valor de uma linha da saída do script ("HEX=02 30 30 ...").
@@ -432,6 +506,13 @@ try {
         return 'toledo_a';
       case 'filizola':
         return 'filizola';
+      // Prt1 é o mesmo quadro do Prt3 (STX + 5 dígitos + ETX) e é o protocolo
+      // usado pela Toledo Prix 3 Fit para falar com PDV.
+      case 'prt1':
+      case 'prix3fit':
+      case 'prix3_fit':
+      case 'toledo_prix3fit':
+        return 'prt3';
       case 'generico':
       case 'genérico':
         return 'generico';

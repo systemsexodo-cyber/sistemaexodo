@@ -98,7 +98,9 @@ class CategoriaFiltro extends StatelessWidget {
                         label: cat,
                         isSelected: categoriaSelecionada == cat,
                         icon: Icons.category,
-                        onTap: () => onCategoriaSelected(cat == categoriaSelecionada ? null : cat),
+                        // Clique já troca a categoria: para voltar a ver
+                        // tudo, o cliente usa o chip "Todas".
+                        onTap: () => onCategoriaSelected(cat),
                         corPrimaria: corP,
                       ),
                     )),

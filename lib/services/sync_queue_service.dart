@@ -409,10 +409,13 @@ class SyncQueueService {
           continue;
         }
 
-        // Erro de conexão: devolve ao início da fila e pausa o processamento.
+        // Erro de conexão: devolve ao início da fila para retry com backoff.
+        // Não chamamos onConnectionLost() aqui para não bloquear a fila.
+        // O circuito de servidorIndisporivel e o backoff tratado abaixo cuidarão disso.
         if (_isConnectionError(e)) {
           _queue.insert(0, operation);
-          onConnectionLost();
+          // Removido onConnectionLost() que definia _hasConnection = false;
+          // A operação ficará na fila e será reaplicada quando o backoff vencer.
           break;
         }
 

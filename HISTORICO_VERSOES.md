@@ -53,3 +53,19 @@ Cada entrada é escrita quando você publica uma versão pelo sistema.
 ## 1.0.73 — 10/11/2026 11:37
 - destino: TODAS as empresas
 - (sem detalhes informados)
+
+## 1.0.87 — 17/11/2026 21:28
+- destino: TODAS as empresas
+- (sem detalhes informados)
+
+## 1.0.89 — 22/11/2026 08:53
+- destino: TODAS as empresas
+- (sem detalhes informados)
+
+## 1.0.90 — 22/11/2026 10:51
+- destino: TODAS as empresas
+- correção balançã
+
+## 1.0.91 — 22/11/2026 12:06
+- destino: TODAS as empresas
+- Correções e melhorias gerais de estabilidade.

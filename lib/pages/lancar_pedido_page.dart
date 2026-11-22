@@ -290,8 +290,23 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
             .toList();
 
         // 1. Match exato case-insensitive de código (maior prioridade)
-        if (codigoLower == queryLower || codigo == query) {
+        // Também suporta padrão 'cod-1' (código prefixado)        if (codigoLower == queryLower || codigo == query) {
           return true;
+        }
+        // Match para padrão 'cod-N' onde N é o número buscado        if (queryLower.startsWith('cod-')) {
+          final numBuscado = queryLower.substring(4);
+          // Remover zeros à esquerda do número buscado para comparação          final numSemZeros = numBuscado.replaceAll(RegExp(r'^[0]*'), '');
+          if (numSemZeros.isNotEmpty) {
+            // Verificar se o código termina com o número buscado            if (codigoNumerosSemZeros.endsWith(numSemZeros) ||
+                codigoNumeros.endsWith(numSemZeros)) {
+              return true;
+            }
+            // Verificar se o código começa com cod- seguido do número            if (codigoLower.startsWith('cod-') &&
+                (codigoNumerosSemZeros == numSemZeros ||
+                 codigoNumerosSemZeros.endsWith(numSemZeros))) {
+              return true;
+            }
+          }
         }
         
         // 2. Match exato case-insensitive de código de barras (principal + adicionais)
@@ -437,7 +452,7 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         final bNomeExato = bNome == queryLower;
         if (aNomeExato != bNomeExato) return aNomeExato ? -1 : 1;
         
-        // 5. Priorizar códigos que começam com o termo
+        // 5. Priorizar códigos que começam com o termo (incluindo padrão cod-N)
         final aCodigoComeca = aCodigo.startsWith(queryLower);
         final bCodigoComeca = bCodigo.startsWith(queryLower);
         if (aCodigoComeca != bCodigoComeca) return aCodigoComeca ? -1 : 1;
@@ -447,7 +462,11 @@ class _LancarPedidoPageState extends State<LancarPedidoPage> {
         final bNomeComeca = bNome.startsWith(queryLower);
         if (aNomeComeca != bNomeComeca) return aNomeComeca ? -1 : 1;
         
-        // 7. Por último, ordenar alfabeticamente por nome
+        // 7. Priorizar padrão cod-N (número após cod-)        final aEhPadraoCod = aCodigo.toLowerCase().startsWith('cod-');
+        final bEhPadraoCod = bCodigo.toLowerCase().startsWith('cod-');
+        if (aEhPadraoCod != bEhPadraoCod) return aEhPadraoCod ? -1 : 1;
+        
+        // 8. Por último, ordenar alfabeticamente por nome
         return aNome.compareTo(bNome);
       });
       

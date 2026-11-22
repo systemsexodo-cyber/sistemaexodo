@@ -28,6 +28,7 @@ class PermissionService extends ChangeNotifier {
       TipoPermissao.vendasAplicarDesconto.codigo,
       TipoPermissao.vendasVerCusto.codigo,
       TipoPermissao.vendasAlterarPrecoItem.codigo,
+      TipoPermissao.vendasAlterarPagamento.codigo,
       
       // Produtos
       TipoPermissao.produtosVisualizar.codigo,

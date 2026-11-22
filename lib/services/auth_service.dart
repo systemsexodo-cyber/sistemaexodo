@@ -75,6 +75,12 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Android/iOS: o "banco local" é o do PC da loja, pela rede. As validações
+  /// na nuvem aqui têm prazo curto — um celular fora da loja não pode ficar
+  /// 20 s no "Entrando...".
+  static bool get _plataformaCelular =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
   final LocalStorageService _storage;
   final SupabaseService _supabaseService = SupabaseService.instance;
 
@@ -919,7 +925,11 @@ class AuthService extends ChangeNotifier {
     try {
       final resultado = await _supabaseService
           .validarCredenciaisNaNuvem(supabaseEmail, senhaTrim)
-          .timeout(const Duration(seconds: 5));
+          .timeout(
+            _plataformaCelular
+                ? const Duration(seconds: 3)
+                : const Duration(seconds: 5),
+          );
 
       if (resultado == false) {
         // A nuvem CONHECE o e-mail, mas a senha de lá é outra. O banco LOCAL
@@ -1129,7 +1139,9 @@ class AuthService extends ChangeNotifier {
           : '$emailLower@sistemaexodo.com';
       final resultadoNuvem =
           await _autenticarSupabaseParaSessao(supabaseEmail, senhaTrim).timeout(
-            const Duration(seconds: 20),
+            _plataformaCelular
+                ? const Duration(seconds: 6)
+                : const Duration(seconds: 20),
             onTimeout: () => _ResultadoValidacaoNuvem.indisponivel,
           );
 
@@ -1594,7 +1606,12 @@ class AuthService extends ChangeNotifier {
     // SEGUNDO: Tentar recarregar do localStorage (mais confiável para local)
     try {
       debugPrint('>>> [AuthService] Tentando recarregar do localStorage...');
-      final empresasMap = await _storage.carregarLista('empresas');
+      final empresasMap = await _storage
+          .carregarLista('empresas')
+          .timeout(
+            const Duration(seconds: 4),
+            onTimeout: () => <Map<String, dynamic>>[],
+          );
       if (empresasMap.isNotEmpty) {
         final empresaLocalStorage =
             empresasMap

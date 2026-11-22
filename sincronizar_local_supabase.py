@@ -2,8 +2,9 @@
 """
 Sincronizador Bidirecional Otimizado: PostgreSQL Local <-> Nuvem (Neon)
 
-A nuvem ativa e o Neon (Data API + Neon Auth); o Supabase fica como reserva.
-Force o provedor com NUVEM_PROVEDOR=neon|supabase no .env.
+A nuvem ativa e ESCOLHIDA, nao detectada: vale NUVEM_PROVEDOR=neon|
+supabase do .env e, sem ele, o provedor fixado em .nuvem_ativa.
+O sincronizador NAO troca de nuvem sozinho quando uma cai.
 
 UPLOAD:   Registros com _sincronizado_nuvem=FALSE → envia a nuvem → marca TRUE
 DOWNLOAD: Registros na nuvem atualizados após última sync → upsert local → marca TRUE
@@ -1024,37 +1025,107 @@ def _chave_estatica_nuvem(base):
     return ''
 
 
+# Arquivo onde fica gravado o provedor de nuvem ESCOLHIDO para este PC.
+# A escolha e fixa: so muda quando o operador pedir (NUVEM_PROVEDOR no .env).
+_CAMINHO_PROVEDOR_ATIVO = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '.nuvem_ativa')
+
+
+def _ler_provedor_fixado():
+    """Provedor gravado por este PC (vazio quando ainda nao houve escolha)."""
+    try:
+        with open(_CAMINHO_PROVEDOR_ATIVO, 'r', encoding='utf-8') as arquivo:
+            valor = arquivo.read().strip().lower()
+        if valor in ('neon', 'supabase'):
+            return valor
+    except OSError:
+        pass
+    return ''
+
+
+def _gravar_provedor_fixado(provedor):
+    try:
+        with open(_CAMINHO_PROVEDOR_ATIVO, 'w', encoding='utf-8') as arquivo:
+            arquivo.write(provedor + '\n')
+    except OSError as e:
+        print_log(f'Nao consegui gravar .nuvem_ativa: {e}', Colors.YELLOW)
+
+
 def resolver_nuvem():
     """Resolve a nuvem ATIVA e devolve (provedor, base_url, api_key).
 
-    Neon tem prioridade; o Supabase e a reserva. A base NAO inclui /rest/v1
-    (o codigo abaixo acrescenta esse sufixo). Para forcar, use no .env:
-        NUVEM_PROVEDOR=neon      (padrao quando ha NEON_DATA_API_URL)
-        NUVEM_PROVEDOR=supabase  (volta para a nuvem antiga)
+    A TROCA DE PROVEDOR NAO E AUTOMATICA.
+
+    Ordem de decisao:
+      1. `NUVEM_PROVEDOR=neon|supabase` no `.env` (e assim que o operador
+         troca de nuvem);
+      2. o provedor gravado em `.nuvem_ativa`, fixado na primeira execucao;
+      3. primeira execucao sem escolha: fixa o que ja estava valendo (Neon
+         quando ha `NEON_DATA_API_URL`, senao Supabase) e grava o arquivo.
+
+    Se o provedor escolhido estiver FORA DO AR, o ciclo falha e avisa: o
+    sincronizador nao cai sozinho para a outra nuvem. Queda de rede e
+    temporaria; trocar de nuvem no meio manda dados do mesmo caixa para dois
+    bancos diferentes.
+
+    A unica troca aceita sem pedido e quando o provedor escolhido nao tem
+    CREDENCIAL nenhuma (instalacao nova, nao queda): usa o outro e avisa em
+    amarelo para o operador confirmar.
     """
     global NUVEM_PROVEDOR, _nuvem_base
-    forcado = (os.getenv('NUVEM_PROVEDOR') or '').strip().lower()
+
     neon_url = (os.getenv('NEON_DATA_API_URL') or '').strip()
     supabase_url = (os.getenv('SUPABASE_URL') or '').strip()
 
-    quer_supabase = forcado == 'supabase' or (forcado != 'neon' and not neon_url)
+    forcado = (os.getenv('NUVEM_PROVEDOR') or '').strip().lower()
+    if forcado not in ('neon', 'supabase'):
+        forcado = _ler_provedor_fixado()
 
-    if quer_supabase:
-        if not supabase_url:
+    if forcado not in ('neon', 'supabase'):
+        # Primeira execucao deste PC: fixa o comportamento que ja existia.
+        forcado = 'neon' if neon_url else 'supabase'
+        _gravar_provedor_fixado(forcado)
+        print_log(
+            f'[NUVEM] Provedor fixado em {forcado.upper()} (.nuvem_ativa). '
+            'Para trocar, defina NUVEM_PROVEDOR=neon|supabase no .env e '
+            'reinicie o sincronizador.',
+            Colors.BLUE,
+        )
+
+    # Escolhido, mas sem credenciais (instalacao nova / reserva): usa o outro
+    # avisando. Isso nao e "trocar sozinho por causa de queda".
+    sem_credenciais = (
+        (forcado == 'neon' and not neon_url)
+        or (forcado == 'supabase' and not supabase_url)
+    )
+    if sem_credenciais:
+        outro = 'supabase' if forcado == 'neon' else 'neon'
+        tem_outro = supabase_url if outro == 'supabase' else neon_url
+        if not tem_outro:
+            if forcado == 'neon':
+                raise RuntimeError(
+                    'Nuvem em NEON, mas NEON_DATA_API_URL esta vazio (veja o '
+                    '.env.neon). Alternativa: NUVEM_PROVEDOR=supabase.')
             raise RuntimeError(
-                'Nenhuma nuvem configurada: faltam NEON_DATA_API_URL (principal) '
-                'e SUPABASE_URL (reserva).')
+                'Nuvem em SUPABASE, mas SUPABASE_URL esta vazio. '
+                'Alternativa: NUVEM_PROVEDOR=neon.')
+        print_log(
+            f'[NUVEM] AVISO: provedor escolhido ({forcado}) sem credenciais; '
+            f'usando {outro} ate configurar. .nuvem_ativa NAO foi alterado; '
+            'confirme com NUVEM_PROVEDOR no .env.',
+            Colors.YELLOW,
+        )
+        forcado = outro
+
+    if forcado == 'supabase':
         chave = (os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-                 or os.getenv('SUPABASE_ANON_KEY') or '')
+                 or os.getenv('SUPABASE_ANON_KEY') or '').strip()
         if not chave:
-            raise RuntimeError(
-                'SUPABASE_ANON_KEY/SERVICE_ROLE_KEY ausente no .env.')
+            raise RuntimeError('SUPABASE_ANON_KEY/SERVICE_ROLE_KEY ausente no .env.')
         NUVEM_PROVEDOR = 'supabase'
         _nuvem_base = supabase_url.rstrip('/')
         return 'supabase', _nuvem_base, chave
 
-    if not neon_url:
-        raise RuntimeError('NEON_DATA_API_URL ausente (veja o .env.neon).')
     NUVEM_PROVEDOR = 'neon'
     _nuvem_base = _normalizar_base_neon(neon_url)
     # Com a chave estatica configurada, ela vai direto (sem Neon Auth).
@@ -1533,7 +1604,8 @@ def get_supabase_colunas(supabase_url, api_key, table_name):
 
 def fetch_json(url, api_key):
     """Executa requisições GET usando a sessão Keep-Alive configurada.
-    Retorna (dados, status_code) onde dados é None em caso de erro.
+    Retorna (dados, status_code, status_text) onde dados é None em caso de erro.
+    status_text é um trecho curto do body para depósito (até 80 chars).
     """
     headers = {
         'Accept':        'application/json',
@@ -1544,15 +1616,17 @@ def fetch_json(url, api_key):
     try:
         response = session.get(url, headers=headers, timeout=30)
         if response.status_code == 404:
-            return None, 404
+            return None, 404, '404 Not Found'
         response.raise_for_status()
-        return response.json(), response.status_code
+        return response.json(), response.status_code, None
     except requests.exceptions.HTTPError as e:
-        print_log(f"HTTP {e.response.status_code}: {e.response.text}", Colors.RED)
-        return None, e.response.status_code
+        status = e.response.status_code
+        body = (e.response.text or '')[:80]
+        print_log(f"HTTP {status}: {body}", Colors.RED)
+        return None, status, f'HTTP {status}: {body}'
     except Exception as e:
         print_log(f"Erro de conexao: {e}", Colors.RED)
-        return None, 0
+        return None, 0, f'Erro de conexao: {e}'
 
 
 def get_colunas_e_tipos_tabela(conn, table_name):
@@ -1642,7 +1716,7 @@ def _ids_por_numero_na_nuvem(supabase_url, api_key, table_name, numeros, empresa
         url = f"{base}/rest/v1/{tabela}?select=id,numero&numero=in.({lista})"
         if empresa_filtro:
             url += f"&empresa_id=eq.{empresa_filtro}"
-        dados, _status = fetch_json(url, api_key)
+        dados, _status, _status_text = fetch_json(url, api_key)
         for row in (dados or []):
             if isinstance(row, dict) and row.get('numero'):
                 donos[str(row['numero'])] = str(row.get('id') or '')
@@ -1656,7 +1730,7 @@ def _maior_numero_na_nuvem(supabase_url, api_key, table_name, prefixo, empresa_f
     url = f"{base}/rest/v1/{tabela}?select=numero&order=numero.desc&limit=2000"
     if empresa_filtro:
         url += f"&empresa_id=eq.{empresa_filtro}"
-    dados, _status = fetch_json(url, api_key)
+    dados, _status, _status_text = fetch_json(url, api_key)
     maior = 0
     for row in (dados or []):
         if isinstance(row, dict):
@@ -1884,12 +1958,9 @@ def upload_tabela(conn, table_name, supabase_url, api_key, empresa_filtro=None):
                         chunk_ids = candidatos_nuvem[j:j+100]
                         ids_str = _pg_in_list(chunk_ids)
                         url_check = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?id=in.({ids_str})"
-                        # `fetch_json` devolve (dados, status). Antes o retorno era
-                        # usado COMO SE fosse a lista: o `for` iterava a tupla, o
-                        # `rn.get` estourava e o `except` abaixo engolia o erro —
-                        # ou seja, a checagem de conflito NUNCA rodava e o último
-                        # PC a sincronizar sobrescrevia o outro sem registro.
-                        rows_nuvem, _status_check = fetch_json(url_check, api_key)
+                        # `fetch_json` devolve (dados, status, status_text).
+                        # Antes o retorno era usado COMO SE fosse a lista: o `for` iterava a tupla.
+                        rows_nuvem, _status_check, _status_check_text = fetch_json(url_check, api_key)
                         if rows_nuvem:
                             for rn in rows_nuvem:
                                 if isinstance(rn, dict):
@@ -2294,6 +2365,25 @@ def _desde_com_folga(desde_timestamp):
         return desde_timestamp
 
 
+def _colunas_nuvem_em_cache(table_name):
+    """Colunas da tabela NA NUVEM, só se já estiverem em cache no processo.
+
+    Devolve None quando o cache ainda não foi carregado — nesse caso o
+    chamador continua com `select=*`, porque pedir uma coluna que a nuvem
+    não tem faria o PostgREST responder 400 e derrubaria o download inteiro.
+    """
+    if NUVEM_PROVEDOR == 'neon':
+        dados = _colunas_nuvem_postgres_cache
+        return dados.get(table_name) if dados else None
+    dados = _supabase_schema_cache
+    if not dados:
+        return None
+    definicao = dados.get(table_name)
+    if not definicao:
+        return None
+    return set((definicao.get('properties') or {}).keys())
+
+
 def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key, empresa_filtro=None):
     """Consulta dados novos na nuvem para uma tabela (executada concorrentemente).
 
@@ -2338,27 +2428,44 @@ def fetch_updates_tabela(table_name, desde_timestamp, supabase_url, api_key, emp
     
     desde_efetivo = _desde_com_folga(desde_timestamp) if col_ts else desde_timestamp
 
+    # EGRESS: `select=*` devolve também colunas que existem só na nuvem e que o
+    # banco local descartaria de qualquer forma. Quando o conjunto de colunas da
+    # nuvem já está em cache, pedimos apenas a INTERSEÇÃO com as colunas locais.
+    # Sem cache continua `*` (nunca arriscamos um 400 por coluna inexistente).
+    selecao = '*'
+    nuvem_cols = _colunas_nuvem_em_cache(table_name)
+    if colunas and nuvem_cols:
+        comuns = sorted(colunas.keys() & nuvem_cols)
+        if comuns:
+            selecao = ','.join(comuns)
+
     while True:
         if col_ts:
             ts_encoded = urllib.parse.quote(desde_efetivo)
-            params = (f"select=*&{col_ts}=gte.{ts_encoded}{filtro_empresa}"
+            params = (f"select={selecao}&{col_ts}=gte.{ts_encoded}{filtro_empresa}"
                       f"&order={col_ts}.asc&limit={BATCH_SIZE}&offset={offset}")
         else:
-            params = f"select=*{filtro_empresa}&limit={BATCH_SIZE}&offset={offset}"
+            params = f"select={selecao}{filtro_empresa}&limit={BATCH_SIZE}&offset={offset}"
 
         url = f"{supabase_url.rstrip('/')}/rest/v1/{urllib.parse.quote(table_name, safe='')}?{params}"
-        rows, status_code = fetch_json(url, api_key)
+        result = fetch_json(url, api_key)
+        if len(result) == 3:
+            rows, status_code, status_text = result
+        else:
+            rows, status_code = result
+            status_text = ''
         
         if rows is None:
             if offset == 0:
                 # status_code 404 = tabela não existe no Supabase (cooldown)
                 # status_code 0 = erro de rede/transitório (não marca cooldown)
                 # 401/402/403 = nuvem bloqueada (cota/permissão): pausa tudo
+                # status_text is a short body snippet for better error messages
                 if status_code == 404:
                     return table_name, None, False, True   # is_404=True
                 if status_code in BLOQUEIO_STATUS:
                     _marcar_bloqueio_nuvem(status_code)
-                return table_name, None, False, False       # is_404=False
+                return table_name, None, False, False       # is_404=False, status_text included in error msg
             break
         
         all_rows.extend(rows)
@@ -3230,12 +3337,19 @@ def atualizar_status_no_supabase(conn, supabase_url, api_key):
     except Exception as e:
         print_log(f"[SYNC] Erro ao atualizar status no Supabase: {e}", Colors.RED)
 
+# Assinatura da última lista de conflitos publicada no portal. O espelho leva
+# as DUAS versões de cada conflito; reenviar a mesma lista a cada ciclo é
+# tráfego puro (egress). Só publica de novo quando algo muda.
+_ultima_assinatura_conflitos = None
+
+
 def publicar_conflitos_no_supabase(conn, supabase_url, api_key):
     """Publica o espelho dos conflitos locais para o Portal Êxodo.
 
     O portal nunca acessa o PostgreSQL de uma loja diretamente. Ele lê este
     espelho e envia a decisão de volta como um bridge_command para o PC correto.
     """
+    global _ultima_assinatura_conflitos
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -3248,6 +3362,13 @@ def publicar_conflitos_no_supabase(conn, supabase_url, api_key):
     except Exception:
         return
     if not conflitos:
+        return
+
+    assinatura = tuple(
+        (str(c.get('id')), str(c.get('visto_em')), bool(c.get('resolvido')))
+        for c in conflitos
+    )
+    if assinatura == _ultima_assinatura_conflitos:
         return
 
     pc_name = platform.node()
@@ -3279,6 +3400,8 @@ def publicar_conflitos_no_supabase(conn, supabase_url, api_key):
             return  # migração ainda não aplicada nesta nuvem
         if resposta.status_code not in (200, 201, 204):
             print_log(f"[CONFLITO] Portal: HTTP {resposta.status_code} ao publicar conflitos", Colors.YELLOW)
+        else:
+            _ultima_assinatura_conflitos = assinatura
     except Exception as e:
         print_log(f"[CONFLITO] Portal indisponível ao publicar conflitos: {e}", Colors.YELLOW)
 
@@ -4076,8 +4199,12 @@ def executar_ciclo_sincronizacao(conn, supabase_url, api_key, on_state_change=No
                             "downloads interrompidos no ciclo")
                         break
                     if tabela not in _tabelas_404_cooldown:
+                        # Inclui status HTTP e trecho do body para diagnóstico no portal
+                        msg = f"download {tabela}: falha na nuvem (HTTP {status_code})"
+                        if status_text:
+                            msg += f" - {status_text}"
                         print_log(f"[SYNC] Falha transiente ao baixar tabela {tabela} (será reintentado)", Colors.YELLOW)
-                        registrar_erro_do_ciclo(f"download {tabela}: falha na nuvem")
+                        registrar_erro_do_ciclo(msg)
         except Exception as e:
             print_log(f"[SYNC] Excecao ao baixar/salvar tabela {tabela}: {e}", Colors.RED)
             registrar_erro_do_ciclo(f"download {tabela}: {e}")

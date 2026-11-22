@@ -8,7 +8,11 @@ class ExodoLogo extends StatefulWidget {
   final bool showSubtitle;
   final bool isVertical;
   final bool showPhoenix;
-  
+
+  /// Acende um halo laranja em volta do texto, para a marca aparecer bem
+  /// brilhante e visível sobre fundos escuros (ex.: cabeçalho do PDV).
+  final bool glow;
+
   const ExodoLogo({
     super.key,
     this.fontSize,
@@ -16,6 +20,7 @@ class ExodoLogo extends StatefulWidget {
     this.showSubtitle = false,
     this.isVertical = true,
     this.showPhoenix = false,
+    this.glow = false,
   });
 
   @override
@@ -83,6 +88,19 @@ class _ExodoLogoState extends State<ExodoLogo> with SingleTickerProviderStateMix
         letterSpacing: 1.0,
         fontFamily: 'Roboto',
         shadows: [
+          if (widget.glow) ...[
+            // Halo brilhante: a marca "êxodo" chama a atenção de longe.
+            Shadow(
+              color: defaultColor.withOpacity(0.95),
+              blurRadius: 18,
+              offset: Offset.zero,
+            ),
+            Shadow(
+              color: defaultColor.withOpacity(0.6),
+              blurRadius: 34,
+              offset: Offset.zero,
+            ),
+          ],
           Shadow(
             color: Colors.black.withOpacity(0.5),
             blurRadius: 10,

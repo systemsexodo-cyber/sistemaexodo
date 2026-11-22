@@ -13,6 +13,11 @@ class ProdutoCard extends StatefulWidget {
   final Function(Produto) onShowDetails;
   final Color? corPrimaria;
 
+  /// A loja online controla o estoque? Quando false (padrão da config da
+  /// loja), itens sem estoque podem ser vendidos e o selo "Esgotado" não
+  /// aparece. Só lojas que realmente controlam o estoque ligam isso.
+  final bool controlarEstoque;
+
   const ProdutoCard({
     super.key,
     required this.produto,
@@ -24,6 +29,7 @@ class ProdutoCard extends StatefulWidget {
     required this.onAddToCart,
     required this.onShowDetails,
     this.corPrimaria,
+    this.controlarEstoque = true,
   });
 
   @override
@@ -37,11 +43,23 @@ class _ProdutoCardState extends State<ProdutoCard> {
   Widget build(BuildContext context) {
     final produto = widget.produto;
     final formatoMoeda = widget.formatoMoeda;
-    final temEstoque = produto.estoqueTotal > 0;
+    // Sem controle de estoque na loja, tudo é vendável (nada de "Esgotado").
+    // Produto que não baixa o próprio estoque (ex.: composto vendido só pelos
+    // ingredientes) também nunca aparece esgotado.
+    final temEstoque =
+        !widget.controlarEstoque ||
+        produto.vendeSemSaldoProprio ||
+        produto.estoqueTotal > 0;
     final ehVendaFracionada = produto.vendaFracionada ?? false;
     final fotoUrl = produto.fotoPrincipalUrl ?? 
                     (produto.fotosUrls.isNotEmpty ? produto.fotosUrls.first : null);
     final corPrimaria = widget.corPrimaria ?? Theme.of(context).colorScheme.primary;
+
+    // Estilo escolhido em Personalizar Loja > Layout.
+    final minimalista = widget.estiloCards == 'minimalista';
+    final moderno = widget.estiloCards == 'moderno';
+    final raio = minimalista ? 4.0 : (moderno ? 18.0 : 8.0);
+    final raioBotao = minimalista ? 3.0 : (moderno ? 24.0 : 5.0);
 
     return MouseRegion(
       onEnter: (_) => setState(() => isCardHovered = true),
@@ -65,23 +83,27 @@ class _ProdutoCardState extends State<ProdutoCard> {
                   )
                 : null,
             color: isCardHovered ? null : Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(raio),
             border: Border.all(
-              color: isCardHovered 
+              color: isCardHovered
                   ? corPrimaria.withOpacity(0.4)
-                  : Colors.grey[200]!,
+                  : (minimalista
+                      ? Colors.grey[300]!
+                      : (moderno ? Colors.transparent : Colors.grey[200]!)),
               width: isCardHovered ? 1.5 : 1,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: isCardHovered
-                    ? corPrimaria.withOpacity(0.2)
-                    : Colors.black.withOpacity(0.06),
-                blurRadius: isCardHovered ? 8 : 3,
-                offset: Offset(0, isCardHovered ? 2 : 0.5),
-                spreadRadius: 0,
-              ),
-            ],
+            boxShadow: minimalista
+                ? const []
+                : [
+                    BoxShadow(
+                      color: isCardHovered
+                          ? corPrimaria.withOpacity(0.2)
+                          : Colors.black.withOpacity(moderno ? 0.1 : 0.06),
+                      blurRadius: isCardHovered ? 12 : (moderno ? 10 : 3),
+                      offset: Offset(0, isCardHovered ? 3 : (moderno ? 4 : 0.5)),
+                      spreadRadius: 0,
+                    ),
+                  ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -91,17 +113,30 @@ class _ProdutoCardState extends State<ProdutoCard> {
                 cursor: SystemMouseCursors.click,
                 child: InkWell(
                   onTap: () => widget.onShowDetails(produto),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(raio)),
                   child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                    child: SizedBox(
-                      height: 150,
-                      width: double.infinity,
-                      child: _buildImagemComHover(
-                        fotoUrl: fotoUrl,
-                        produto: produto,
-                        corPrimaria: corPrimaria,
-                      ),
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(raio)),
+                    child: LayoutBuilder(
+                      builder: (context, limitesImagem) {
+                        final larguraImagem =
+                            limitesImagem.maxWidth.isFinite
+                                ? limitesImagem.maxWidth
+                                : 260.0;
+                        // A foto acompanha a largura do card: na grade de
+                        // 2 colunas ela cresce; no celular fica compacta.
+                        final alturaImagem = widget.isCompacto
+                            ? (larguraImagem / 1.5).clamp(110.0, 240.0)
+                            : (larguraImagem / 1.5).clamp(140.0, 300.0);
+                        return SizedBox(
+                          height: alturaImagem,
+                          width: double.infinity,
+                          child: _buildImagemComHover(
+                            fotoUrl: fotoUrl,
+                            produto: produto,
+                            corPrimaria: corPrimaria,
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -306,7 +341,7 @@ class _ProdutoCardState extends State<ProdutoCard> {
                                   ? corPrimaria.withOpacity(0.5)
                                   : null,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(5),
+                                borderRadius: BorderRadius.circular(raioBotao),
                               ),
                               padding: const EdgeInsets.symmetric(horizontal: 16),
                             ),

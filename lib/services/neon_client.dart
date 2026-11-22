@@ -43,7 +43,11 @@ class NeonClient {
       // O gateway do Supabase (Kong) recusa sem `apikey` válido (401); o Neon
       // não usa essa chave, então só enviamos quando ela existe.
       if (NeonConfig.dataApiKeyDisponivel) 'apikey': NeonConfig.dataApiKey,
-      'Authorization': 'Bearer ${NeonAuth.instance.tokenAtual}',
+      // Authorization Bearer so eh usado quando ha token do Neon Auth.
+      // Com Supabase (chave anon estatica) na enviamos Bearer vazio para
+      // nao causar 401 no gateway.
+      if (NeonAuth.instance.tokenAtual.isNotEmpty)
+        'Authorization': 'Bearer ${NeonAuth.instance.tokenAtual}',
     },
   );
 

@@ -327,6 +327,7 @@ CREATE TABLE IF NOT EXISTS public.cache_dados (
 CREATE TABLE IF NOT EXISTS public.clientes (
     id text NOT NULL,
     empresa_id text,
+    codigo text,
     nome text,
     tipo_pessoa text,
     cpf_cnpj text,

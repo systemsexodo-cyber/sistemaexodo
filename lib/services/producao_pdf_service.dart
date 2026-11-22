@@ -8,6 +8,7 @@ import '../models/empresa.dart';
 import '../models/produto.dart';
 import '../models/ticket_producao.dart';
 import 'data_service.dart';
+import 'fila_impressao_service.dart';
 import 'fila_producao_service.dart';
 import 'impressao_service.dart';
 
@@ -861,6 +862,46 @@ class ProducaoPdfService {
         '${grupos.keys.map((d) => d.descricao).toList()}');
 
     final tipoDocumento = isDelivery ? 'PEDIDO DELIVERY' : 'PEDIDO DE PRODUÇÃO';
+
+    // CELULAR: não existe impressora de cozinha/bar no aparelho. Cada via vai
+    // para a fila de impressão com o nome da impressora do setor; o PC do
+    // caixa imprime na impressora correta (sem abrir o diálogo do Android).
+    if (FilaImpressaoService.ehDispositivoMovel) {
+      var enfileirados = 0;
+      for (final entry in grupos.entries) {
+        final destino = entry.key;
+        final itensDoSetor = entry.value;
+        final ticket = TicketProducao(
+          id: _idDoTicket(numeroDocumento, destino.setor, destino.impressora),
+          empresaId: empresa.id,
+          documento: numeroDocumento,
+          tipoDocumento: tipoDocumento,
+          setor: destino.setor,
+          impressora: destino.impressora,
+          cliente: clienteNome,
+          referencia: detalhes?.mesaComanda,
+          resumoItens: [
+            for (final item in itensDoSetor)
+              '${_formatarQuantidade(item.quantidade)}x ${item.nome}',
+          ],
+          payloadItens: itensDoSetor.map(_itemParaMap).toList(),
+          payloadDetalhes: _detalhesParaMap(detalhes),
+        );
+        final ok = await FilaImpressaoService.enfileirarProducaoParaImpressao(
+          empresaId: empresa.id,
+          ticket: ticket,
+        );
+        if (ok) {
+          enfileirados++;
+          // O monitor do terminal mostra que a via foi enviada ao caixa.
+          await filaEfetiva.registrarEnvio(ticket);
+        }
+      }
+      debugPrint('[Producao] 📲 $enfileirados via(s) de produção enviadas para '
+          'a fila do Caixa (impressão nas impressoras dos setores).');
+      return enfileirados;
+    }
+
     var impressos = 0;
 
     for (final entry in grupos.entries) {

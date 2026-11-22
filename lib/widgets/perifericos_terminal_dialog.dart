@@ -34,6 +34,7 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
   bool _usarMock = true;
   double _pesoMock = 1.5;
   bool _testandoBalanca = false;
+  bool _detectandoVelocidade = false;
   String _protocolo = 'auto';
 
   static const List<int> _baudRates = [2400, 4800, 9600, 19200, 38400, 57600, 115200];
@@ -41,8 +42,8 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
   /// Protocolo de pesagem: define como o app pede e interpreta o peso.
   static const Map<String, String> _protocolos = {
     'auto': 'Automático (reconhece o quadro)',
-    'prt2': 'Toledo PRT2 (ENQ, 5 dígitos)',
-    'prt3': 'Toledo PRT3 (ENQ, 5 dígitos, I/N/S)',
+    'prt2': 'Toledo PRT2 (ENQ/contínuo, 6 dígitos)',
+    'prt3': 'Toledo PRT3 / Prix 3 Fit (ENQ, 5 dígitos)',
     'toledo_a': 'Toledo Protocolo A (impressão, peso+tara)',
     'filizola': 'Filizola (ENQ, 5 dígitos)',
     'generico': 'Genérico (envio contínuo em texto)',
@@ -53,7 +54,8 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
   static const Map<String, String> _dicasProtocolo = {
     'auto': 'PRT2/PRT3/Filizola: ENQ. Genérico: envio contínuo.',
     'prt2': 'Toledo PRT2: 9600, 8 bits, sem paridade, 1 stop. Não transmite em zero.',
-    'prt3': 'Toledo PRT3: 9600, 8 bits, sem paridade, 1 stop. Avisa instável/negativo.',
+    'prt3': 'Prix 3 Fit: na balança C14 = Prt3, C16 = d, 8 bits, paridade nEn; '
+        'C15 igual ao Baud Rate escolhido aqui (de fábrica ela vem em 2400).',
     'toledo_a': 'Protocolo A: 7 ou 8 bits, paridade par (na maioria), 1 stop.',
     'filizola': 'Filizola: 9600, 8 bits, sem paridade, 1 stop.',
     'generico': 'Balança enviando texto contínuo com vírgula (ex.: 1,540 kg).',
@@ -158,7 +160,7 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
     if (!mounted) return;
     setState(() => _testandoBalanca = false);
     final erro = res['erro'] as String?;
-    final peso = res['peso'];
+    final peso = (res['peso'] as num?)?.toDouble();
     final simulado = res['simulado'] == true;
     final bruto = res['bruto'] as String?;
     final ms = res['ms'];
@@ -175,7 +177,9 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
         content: Text(
           erro != null
               ? '$erro${detalhe.isEmpty ? '' : '\n\n$detalhe'}'
-              : 'Peso lido: $peso kg${simulado ? ' (modo simulado)' : ''}'
+              : 'Peso lido: '
+                  '${peso == null ? '-' : BalancaService.formatarPesoKg(peso)} kg'
+                  '${simulado ? ' (modo simulado)' : ''}'
                   '${detalhe.isEmpty ? '' : '\n\n$detalhe'}',
           style: const TextStyle(color: Colors.white70),
         ),
@@ -183,6 +187,58 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Fechar', style: TextStyle(color: Colors.blueAccent)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _detectarVelocidade() async {
+    setState(() => _detectandoVelocidade = true);
+    final res = await BalancaService().detectarVelocidade();
+    if (!mounted) return;
+    setState(() => _detectandoVelocidade = false);
+    final baud = (res['baudRate'] as num?)?.toInt();
+    if (baud == null) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Balança não respondeu', style: TextStyle(color: Colors.white)),
+          content: Text(
+            '${res['erro'] ?? 'Nenhuma velocidade respondeu.'}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Fechar', style: TextStyle(color: Colors.blueAccent)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    final peso = (res['peso'] as num?)?.toDouble() ?? 0;
+    setState(() => _baudRate = baud);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Balança encontrada', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Respondeu em $baud baud, peso '
+          '${BalancaService.formatarPesoKg(peso)} kg.\n\n'
+          'A velocidade já foi selecionada aqui — clique em SALVAR para gravar '
+          'nesta máquina.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK', style: TextStyle(color: Colors.tealAccent)),
           ),
         ],
       ),
@@ -494,6 +550,30 @@ class _PerifericosTerminalDialogState extends State<PerifericosTerminalDialog> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _detectandoVelocidade ? null : _detectarVelocidade,
+              icon: _detectandoVelocidade
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.amberAccent,
+                      ),
+                    )
+                  : const Icon(Icons.search, size: 16),
+              label: Text(
+                _detectandoVelocidade
+                    ? 'Procurando a balança...'
+                    : 'Detectar velocidade (se o peso vier ilegível)',
+                style: const TextStyle(fontSize: 11),
+              ),
+              style: TextButton.styleFrom(foregroundColor: Colors.amberAccent),
+            ),
           ),
         ],
       ],

@@ -326,14 +326,31 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     double acrescimoCalc = 0.0,
     String? nomeFormaCustom,
   }) {
+    final bool ehFiado = tipo == TipoPagamento.fiado;
+
+    // Acréscimo já existente no pagamento (ao editar) ou o acréscimo
+    // automático configurado para a forma de pagamento (ex: taxa de juros).
+    final double acrescimoInicial = pagamentoExistente != null
+        ? (pagamentoExistente.acrescimo ?? 0.0)
+        : (ehFiado ? acrescimoCalc : 0.0);
+
     // Se não há pagamento existente e o valor sugerido é maior que 0, usar o valor sugerido
-    // Caso contrário, usar o valor do pagamento existente ou 0
+    // Caso contrário, usar o valor do pagamento existente ou 0.
+    // No fiado o campo mostra a base (sem o acréscimo), pois o acréscimo é
+    // somado novamente ao confirmar e não pode ser contado duas vezes.
+    final double valorBaseSugerido = valorSugerido - acrescimoInicial;
     final valorInicial = pagamentoExistente != null
-        ? pagamentoExistente.valor
-        : (valorSugerido > 0 ? valorSugerido : 0.0);
+        ? (ehFiado
+              ? pagamentoExistente.valor -
+                    (pagamentoExistente.acrescimo ?? 0.0)
+              : pagamentoExistente.valor)
+        : (valorBaseSugerido > 0 ? valorBaseSugerido : 0.0);
 
     final valorController = TextEditingController(
       text: valorInicial.toStringAsFixed(2),
+    );
+    final acrescimoController = TextEditingController(
+      text: acrescimoInicial > 0 ? acrescimoInicial.toStringAsFixed(2) : '0,00',
     );
     final valorRecebidoController = TextEditingController();
     final observacaoController = TextEditingController(
@@ -348,11 +365,13 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
     DateTime primeiroVencimento = DateTime.now().add(const Duration(days: 30));
     int intervaloVencimento = 30; // dias entre parcelas
     bool isDinheiro = tipo == TipoPagamento.dinheiro;
-    bool isFiado = tipo == TipoPagamento.fiado;
+    bool isFiado = ehFiado;
     DateTime dataVencimentoFiado = DateTime.now().add(
       const Duration(days: 7),
     ); // Padrão: 7 dias
     double troco = 0.0;
+    // Acréscimo do fiado em DINHEIRO (R$) ou em PORCENTAGEM (%) sobre o valor.
+    bool acrescimoPorCento = false;
 
     // Tipos que suportam parcelamento (cartão de crédito é só à vista)
     final suportaParcelamento = [
@@ -364,6 +383,53 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+          // Converte o acréscimo digitado para R$ (dinheiro ou % da base).
+          double acrescimoEmReais(double base) {
+            final digitado =
+                double.tryParse(acrescimoController.text.replaceAll(',', '.')) ??
+                0.0;
+            final bruto = acrescimoPorCento ? base * digitado / 100 : digitado;
+            return bruto.clamp(0.0, double.infinity);
+          }
+
+          // Botãozinho do seletor R$ / % do acréscimo.
+          Widget botaoModoAcrescimo(String texto, bool ativo, bool porCento) {
+            return InkWell(
+              onTap: () {
+                if (acrescimoPorCento == porCento) return;
+                setDialogState(() {
+                  acrescimoPorCento = porCento;
+                  acrescimoController.text = porCento ? '0' : '0,00';
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: ativo
+                      ? Colors.red.withOpacity(0.25)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: ativo ? Colors.red : Colors.transparent,
+                  ),
+                ),
+                child: Text(
+                  texto,
+                  style: TextStyle(
+                    color: ativo ? Colors.red : Colors.white54,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            );
+          }
+
           // Função para calcular troco
           void calcularTroco() {
             final valorPagar =
@@ -389,6 +455,13 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
           double valorParcela = parcelas > 0
               ? valorTotal / parcelas
               : valorTotal;
+
+          // Acréscimo digitado para o fiado (juros/taxa cobrada na hora de
+          // lançar o fiado). Só é usado quando a forma é fiado.
+          final double acrescimoFiado = isFiado
+              ? acrescimoEmReais(valorTotal)
+              : 0.0;
+          final double totalFiado = valorTotal + acrescimoFiado;
 
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
@@ -593,6 +666,143 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                               fontSize: 11,
                             ),
                           ),
+                          const SizedBox(height: 16),
+                          const Divider(color: Colors.white24, height: 1),
+                          const SizedBox(height: 16),
+                          const Row(
+                            children: [
+                              Icon(
+                                Icons.trending_up,
+                                color: Colors.red,
+                                size: 20,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Acréscimo (juros/taxa)',
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: acrescimoController,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  onChanged: (_) => setDialogState(() {}),
+                                  decoration: InputDecoration(
+                                    prefixText: acrescimoPorCento
+                                        ? null
+                                        : 'R\$ ',
+                                    suffixText: acrescimoPorCento ? '%' : null,
+                                    prefixStyle: const TextStyle(
+                                      color: Colors.redAccent,
+                                      fontSize: 18,
+                                    ),
+                                    suffixStyle: const TextStyle(
+                                      color: Colors.redAccent,
+                                      fontSize: 18,
+                                    ),
+                                    hintText: acrescimoPorCento ? '0' : '0,00',
+                                    hintStyle: const TextStyle(
+                                      color: Colors.white30,
+                                    ),
+                                    filled: true,
+                                    fillColor: Colors.black26,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black26,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    botaoModoAcrescimo(
+                                      'R\$',
+                                      !acrescimoPorCento,
+                                      false,
+                                    ),
+                                    botaoModoAcrescimo(
+                                      '%',
+                                      acrescimoPorCento,
+                                      true,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (acrescimoPorCento && acrescimoFiado > 0.001) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              '${acrescimoController.text.replaceAll('.', ',')}% de ${_formatoMoeda.format(valorTotal)} = ${_formatoMoeda.format(acrescimoFiado)}',
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black26,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Total do fiado',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  _formatoMoeda.format(totalFiado),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (acrescimoFiado > 0.01) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Fiado: ${_formatoMoeda.format(valorTotal)} + acréscimo de ${_formatoMoeda.format(acrescimoFiado)}${acrescimoPorCento ? ' (${acrescimoController.text.replaceAll('.', ',')}%)' : ''}',
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -690,6 +900,12 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                       ) ??
                       0;
 
+                  // Acréscimo lançado junto com o fiado: entra no valor que
+                  // fica devendo, mas é guardado separado para os relatórios.
+                  final double acrescimoDoFiado = isFiado
+                      ? acrescimoEmReais(valor)
+                      : 0.0;
+
                   if (valor <= 0) {
                     ScaffoldMessenger.of(this.context).showSnackBar(
                       const SnackBar(
@@ -701,8 +917,14 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                   }
 
                   // Para formas de pagamento diferentes de Dinheiro,
-                  // não permitir valor maior que o restante (não há troco)
-                  if (!isDinheiro && valor > _valorRestante + 0.01) {
+                  // não permitir valor maior que o restante (não há troco).
+                  // Ao editar, o valor já lançado pelo próprio pagamento não
+                  // conta como restante, senão não seria possível aumentá-lo.
+                  final double restanteDisponivel =
+                      pagamentoExistente != null
+                      ? _valorRestante + pagamentoExistente.valor
+                      : _valorRestante;
+                  if (!isDinheiro && valor > restanteDisponivel + 0.01) {
                     ScaffoldMessenger.of(this.context).showSnackBar(
                       SnackBar(
                         content: Text(
@@ -808,8 +1030,11 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
                       tipo: tipo,
                       nomeForma:
                           nomeFormaCustom ?? pagamentoExistente?.nomeForma,
-                      valor: valor,
+                      valor: valor + acrescimoDoFiado,
                       observacao: obs,
+                      acrescimo: acrescimoDoFiado > 0.01
+                          ? acrescimoDoFiado
+                          : null,
                       valorRecebido: valorRecebidoFinal,
                       troco:
                           trocoFinal, // Novo pagamento entra como recebido; se for atualizar existente, mantém o status anterior.
@@ -875,6 +1100,7 @@ class _PagamentoWidgetState extends State<PagamentoWidget> {
       valorRecebidoController.dispose();
       observacaoController.dispose();
       nomePagadorController.dispose();
+      acrescimoController.dispose();
     });
   }
 

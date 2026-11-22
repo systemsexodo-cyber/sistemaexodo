@@ -192,12 +192,13 @@ def teste_conflito_parqueia_e_preserva_log():
         def delete(self, *a, **k):
             return types.SimpleNamespace(raise_for_status=lambda: None)
 
-    # Contrato REAL: fetch_json devolve (dados, status). A consulta dos ids
-    # pendentes na nuvem traz uma versão MAIS NOVA do que a local.
+    # Contrato REAL: fetch_json devolve (dados, status, status_text). A consulta
+    # dos ids pendentes na nuvem traz uma versão MAIS NOVA do que a local.
     S.fetch_json = lambda url, api_key: (
         [{'id': 'P1', 'nome': 'coca cola', 'estoque': 30, 'empresa_id': 'E1',
           'updated_at': '2099-01-01T00:00:00+00:00'}],
         200,
+        None,
     )
     S.get_supabase_colunas = lambda url, key, tabela: set(COLUNAS_PRODUTO.keys())
     S.get_ultima_sync_tabela = lambda conn, tabela, empresa=None: '2026-09-01T00:00:00+00:00'
@@ -258,10 +259,10 @@ def teste_numero_repetido_e_renumerado():
         chamadas.append(url)
         if 'numero=in.' in url:
             # A nuvem já tem 'VND-0003' — de OUTRO registro (o outro PC).
-            return ([{'id': 'OUTRO_PC', 'numero': 'VND-0003'}], 200)
+            return ([{'id': 'OUTRO_PC', 'numero': 'VND-0003'}], 200, None)
         if 'order=numero.desc' in url:
-            return ([{'numero': 'VND-0433'}, {'numero': 'VND-0012'}], 200)
-        return ([], 200)
+            return ([{'numero': 'VND-0433'}, {'numero': 'VND-0012'}], 200, None)
+        return ([], 200, None)
 
     S.fetch_json = fetch_falso
     try:
@@ -377,7 +378,7 @@ def teste_log_do_recusado_nao_e_apagado():
         def delete(self, *a, **k):
             return types.SimpleNamespace(raise_for_status=lambda: None)
 
-    S.fetch_json = lambda url, api_key: ([], 200)
+    S.fetch_json = lambda url, api_key: ([], 200, None)
     S.get_supabase_colunas = lambda url, key, tabela: set(colunas.keys())
     S.get_colunas_tabela = lambda conn, tabela: list(colunas.keys())
     S.coluna_timestamp_tabela = lambda conn, tabela: None

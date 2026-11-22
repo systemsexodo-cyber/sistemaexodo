@@ -36,6 +36,7 @@ import 'cozinha_mesas_funcionario_page.dart';
 import 'gerenciar_links_vendedores_page.dart';
 import 'vendedor_dashboard_page.dart';
 import 'package:sistema_exodo_novo/services/app_update_service.dart';
+import 'package:sistema_exodo_novo/services/fila_impressao_service.dart';
 import 'package:sistema_exodo_novo/widgets/novidades_versao_dialog.dart';
 import 'funcionarios_page.dart';
 import 'personalizar_loja_page.dart';
@@ -57,6 +58,7 @@ import 'whatsapp_gerenciamento_page.dart';
 import '../services/data_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/sync_status_widget.dart';
+import '../utils/mobile_ux.dart';
 import '../widgets/exodo_loading.dart';
 import '../widgets/caixa_identidade_dialog.dart';
 import '../utils/identidade_caixa.dart';
@@ -94,7 +96,7 @@ class _HomePageState extends State<HomePage> {
   /// Largura (lógica) abaixo da qual a tela é tratada como "celular".
   /// A partir daqui os botões ficam maiores, as ações do topo migram para o
   /// menu "⋮" e aparece a barra de navegação inferior.
-  static const double _larguraCelular = 700;
+  static const double _larguraCelular = kLarguraCelular;
 
   /// True quando a tela é estreita (celular em retrato).
   bool _ehCelular(BuildContext context) =>
@@ -1765,6 +1767,14 @@ class _HomePageState extends State<HomePage> {
         // antes do login e, sem empresa, o direcionamento por empresa passava
         // batido — por isso a versão só aparecia para baixar na mão).
         _verificarAtualizacaoAutomatica();
+
+        // No Windows (Terminal do Caixa), garante que o monitor de impressão
+        // remota está ativo. A empresa precisa ser lida AQUI: o callback do
+        // initState roda depois do login, quando ela já está disponível.
+        final empresaCaixa = dataService.empresaAtual ?? authService.empresaAtual;
+        if (FilaImpressaoService.ehTerminalCaixaWindows && empresaCaixa != null) {
+          FilaImpressaoService.instance.iniciarMonitoramento(empresa: empresaCaixa);
+        }
       } catch (e) {
         debugPrint('>>> [HomePage] Falha ao reportar versão: $e');
       }
@@ -2689,7 +2699,11 @@ class _HomePageState extends State<HomePage> {
   /// "Mais", que abre o menu completo em folha, com todos os botões da Home.
   Widget _buildBottomNav(BuildContext context) {
     const double altura = 70;
-    return Container(
+    // SafeArea embaixo: a barra de gestos do Android não pode cobrir os
+    // atalhos (no modo edge-to-edge ela flutua sobre o app).
+    return SafeArea(
+      top: false,
+      child: Container(
       decoration: BoxDecoration(
         color: const Color(0xFF12161C),
         border: Border(top: BorderSide(color: Colors.white.withOpacity(0.08))),
@@ -2727,6 +2741,7 @@ class _HomePageState extends State<HomePage> {
           elevation: 0,
           selectedIndex: _currentPage.clamp(0, 1),
           onDestinationSelected: (index) {
+            toqueHaptico();
             switch (index) {
               case 0:
                 _pageController.animateToPage(
@@ -2782,6 +2797,7 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -3200,7 +3216,9 @@ class _HomePageState extends State<HomePage> {
         LayoutBuilder(
           builder: (context, constraints) {
             final double width = constraints.maxWidth;
-            const double spacing = 16.0;
+            // No celular os botões ficam mais próximos: cabem os dois lado a
+            // lado com o título inteiro e sobram menos vãos.
+            final double spacing = _ehCelular(context) ? 12.0 : 16.0;
             final double itemWidth = (width - spacing) / 2;
 
             return Wrap(
@@ -3275,14 +3293,11 @@ class _HomePageState extends State<HomePage> {
           );
         }
 
-        // Fora do modo edição: mantém o arraste por pressão longa, útil no
-        // celular/tablet sem precisar entrar no modo edição.
-        return LongPressDraggable<int>(
-          data: index,
-          feedback: feedback,
-          childWhenDragging: Opacity(opacity: 0.25, child: visual),
-          child: visual,
-        );
+        // Fora do modo edição o botão NÃO é arrastável. O reconhecedor de
+        // pressão longa ficava com o gesto e o carrossel (PageView) não
+        // deslizava para o lado no celular. Para reordenar, continua o modo
+        // "Personalizar layout" (o Draggable acima vale só nele).
+        return visual;
       },
     );
   }
@@ -3350,8 +3365,8 @@ class _HomePageState extends State<HomePage> {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
-            // No celular garante área de toque alta o suficiente (mín. 100 px).
-            constraints: BoxConstraints(minHeight: celular ? 100 : 0),
+            // No celular garante área de toque alta o suficiente.
+            constraints: BoxConstraints(minHeight: celular ? 124 : 0),
             transform: Matrix4.identity()
               ..translate(
                 isHovered ? 4.0 : 0.0,
@@ -3377,6 +3392,9 @@ class _HomePageState extends State<HomePage> {
                 onTap: isEditMode
                     ? null
                     : () async {
+                        // Retorno curto no dedo: o toque "entrou".
+                        if (celular) await toqueHaptico();
+
                         // Sincronizar URL se estiver no Web
                         String? urlPath;
                         if (page is ClientesPage)
@@ -3468,74 +3486,139 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ],
                   ),
-                  child: Row(
-                    children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        padding: EdgeInsets.all(iconPadding),
-                        decoration: BoxDecoration(
-                          color: isHovered
-                              ? color.withOpacity(0.2)
-                              : color.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: isHovered
-                              ? [
-                                  BoxShadow(
-                                    color: color.withOpacity(0.3),
-                                    blurRadius: 8,
-                                    spreadRadius: 0,
-                                  ),
-                                ]
-                              : [],
-                        ),
-                        child: Icon(icon, size: iconSize, color: color),
-                      ),
-                      SizedBox(width: spacing),
-                      Expanded(
-                        child: Column(
+                  // Celular: ícone grande em cima e nome embaixo. O bloco
+                  // fica quadrado e o alvo de toque é a área toda — bem mais
+                  // fácil de acertar com o polegar do que a linha apertada do
+                  // desktop.
+                  child: celular
+                      ? Column(
                           mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 250),
+                              padding: EdgeInsets.all(iconPadding),
+                              decoration: BoxDecoration(
+                                color: color.withOpacity(
+                                  isPressed || isHovered ? 0.22 : 0.1,
+                                ),
+                                borderRadius: BorderRadius.circular(14),
+                                boxShadow: isHovered
+                                    ? [
+                                        BoxShadow(
+                                          color: color.withOpacity(0.3),
+                                          blurRadius: 8,
+                                        ),
+                                      ]
+                                    : [],
+                              ),
+                              child: Icon(icon, size: iconSize, color: color),
+                            ),
+                            const SizedBox(height: 10),
                             Text(
                               title,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: titleFontSize,
+                                height: 1.15,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.white,
                               ),
                             ),
                             if (subtitle != null) ...[
-                              const SizedBox(height: 2),
+                              const SizedBox(height: 3),
                               Text(
                                 subtitle,
-                                style: TextStyle(
-                                  fontSize: subtitleFontSize,
-                                  color: isHovered
-                                      ? Colors.white.withOpacity(0.8)
-                                      : Colors.white.withOpacity(0.5),
-                                ),
+                                textAlign: TextAlign.center,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: subtitleFontSize,
+                                  color: Colors.white.withOpacity(0.5),
+                                ),
+                              ),
+                            ],
+                            if (isEditMode) ...[
+                              const SizedBox(height: 4),
+                              const Icon(
+                                Icons.drag_indicator,
+                                size: 20,
+                                color: Colors.tealAccent,
                               ),
                             ],
                           ],
+                        )
+                      : Row(
+                          children: [
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 250),
+                              padding: EdgeInsets.all(iconPadding),
+                              decoration: BoxDecoration(
+                                color: isHovered
+                                    ? color.withOpacity(0.2)
+                                    : color.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: isHovered
+                                    ? [
+                                        BoxShadow(
+                                          color: color.withOpacity(0.3),
+                                          blurRadius: 8,
+                                          spreadRadius: 0,
+                                        ),
+                                      ]
+                                    : [],
+                              ),
+                              child: Icon(icon, size: iconSize, color: color),
+                            ),
+                            SizedBox(width: spacing),
+                            Expanded(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    title,
+                                    style: TextStyle(
+                                      fontSize: titleFontSize,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  if (subtitle != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      subtitle,
+                                      style: TextStyle(
+                                        fontSize: subtitleFontSize,
+                                        color: isHovered
+                                            ? Colors.white.withOpacity(0.8)
+                                            : Colors.white.withOpacity(0.5),
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            AnimatedOpacity(
+                              duration: const Duration(milliseconds: 250),
+                              opacity: isEditMode
+                                  ? 1.0
+                                  : (isHovered ? 1.0 : 0.2),
+                              child: Icon(
+                                isEditMode
+                                    ? Icons.drag_indicator
+                                    : Icons.chevron_right,
+                                size: isEditMode ? 24 : 18,
+                                color: isEditMode
+                                    ? Colors.tealAccent
+                                    : (isHovered ? color : Colors.white),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      AnimatedOpacity(
-                        duration: const Duration(milliseconds: 250),
-                        opacity: isEditMode ? 1.0 : (isHovered ? 1.0 : 0.2),
-                        child: Icon(
-                          isEditMode
-                              ? Icons.drag_indicator
-                              : Icons.chevron_right,
-                          size: isEditMode ? 24 : 18,
-                          color: isEditMode
-                              ? Colors.tealAccent
-                              : (isHovered ? color : Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ),

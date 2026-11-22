@@ -22,7 +22,12 @@ import 'package:sistema_exodo_novo/widgets/loja/produto_card.dart';
 import 'package:sistema_exodo_novo/widgets/loja/banner_carrossel.dart';
 import 'package:sistema_exodo_novo/widgets/loja/categoria_filtro.dart';
 import 'package:sistema_exodo_novo/widgets/loja/carrinho_drawer.dart';
+import 'package:sistema_exodo_novo/widgets/loja/sugestoes_produto.dart';
+import 'package:sistema_exodo_novo/widgets/exodo_logo.dart';
 import 'package:sistema_exodo_novo/pages/loja_checkout_page.dart';
+import 'package:sistema_exodo_novo/pages/pedido_cliente_page.dart';
+import 'package:sistema_exodo_novo/services/pedidos_cliente_local_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'html_helper_stub.dart' if (dart.library.html) 'html_helper_web.dart' as html_helper;
 
@@ -53,8 +58,13 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   String _termoBusca = '';
   String? _categoriaSelecionada;
   bool _mostrarApenasPromocoes = false;
+  // Pedidos que este cliente ja fez neste aparelho: alimentam o balao de
+  // acompanhamento para ele nao perder o pedido ao fechar o aviso.
+  List<PedidoClienteLocal> _pedidosCliente = const [];
   // Filtro de preço removido
   final ScrollController _scrollController = ScrollController();
+  // Carrossel de produtos em destaque no topo da vitrine
+  final ScrollController _destaquesScrollController = ScrollController();
   bool _isDark = true; // Tema Premium padrão é escuro
   String? _faviconAplicado; // logo que já foi para a aba do navegador
   
@@ -70,6 +80,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   void initState() {
     super.initState();
     _carregarLinkVendedor();
+    _carregarPedidosCliente();
     // Iniciar carrossel após o primeiro frame para garantir que o PageController está pronto
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _iniciarCarrosselBanners();
@@ -87,6 +98,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     _bannerPageController.dispose();
     _buscaController.dispose();
     _scrollController.dispose();
+    _destaquesScrollController.dispose();
     super.dispose();
   }
 
@@ -278,7 +290,12 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
   /// Navega para a página de checkout
   void _navegarParaCheckout() {
     final carrinhoService = Provider.of<CarrinhoService>(context, listen: false);
-    
+
+    // Fecha a sacola antes de abrir o checkout: assim, quando o cliente
+    // concluir a compra e o checkout fechar, ele cai de volta na loja e não
+    // na sacola aberta por baixo.
+    _scaffoldKey.currentState?.closeEndDrawer();
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -287,11 +304,23 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
           opcaoFreteInicial: _freteSelecionadoProduto,
         ),
       ),
-    ).then((_) {
-      // Opcional: Limpar carrinho após compra se desejar
-      // carrinhoService.limparCarrinho();
+    ).then((_) async {
+      // Ao voltar do checkout, recarrega os pedidos do cliente para o balao
+      // aparecer com o pedido que acabou de ser feito.
+      await _carregarPedidosCliente();
     });
   }
+
+  Future<void> _carregarPedidosCliente() async {
+    final pedidos = await PedidosClienteLocalService.carregar();
+    if (!mounted) return;
+    setState(() => _pedidosCliente = pedidos);
+  }
+
+  /// Pedidos do balao: os que o cliente ainda nao tirou da vitrine. Os
+  /// removidos continuam no aparelho, em "Pedidos guardados".
+  List<PedidoClienteLocal> get _pedidosNoBalao =>
+      _pedidosCliente.where((p) => !p.arquivado).toList();
 
 
   // Métodos de gerenciamento local do carrinho removidos (agora no CarrinhoService)
@@ -322,9 +351,12 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
       return;
     }
     // Reserva de estoque: com a configuração ligada, o disponível é o estoque
-    // menos o que outros pedidos em aberto já seguram.
-    final faltaEstoque = Provider.of<DataService>(context, listen: false)
-        .validarEstoqueDisponivel(produto);
+    // menos o que outros pedidos em aberto já seguram. Loja sem controle de
+    // estoque vende mesmo com saldo zerado, então a validação é pulada.
+    final faltaEstoque = _controlarEstoque
+        ? Provider.of<DataService>(context, listen: false)
+            .validarEstoqueDisponivel(produto)
+        : null;
     if (faltaEstoque != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -347,23 +379,11 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
       // Produto tem variações - mostrar diálogo de seleção
       _mostrarDialogSelecaoVariacoes(produto, formatoMoeda);
     } else {
-      // Produto sem variações - adicionar diretamente
+      // Produto sem variações - adicionar diretamente.
+      // Sem toast verde aqui: o aviso flutuante ficava em cima do rodapé da
+      // loja e atrapalhava o cliente ver/abrir a sacola. O contador do
+      // carrinho no topo já sinaliza que o item entrou.
       carrinhoService.adicionarProduto(produto);
-      
-      // Feedback visual
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${produto.nome} adicionado ao carrinho'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-          action: SnackBarAction(
-            label: 'VER CARRINHO',
-            textColor: Colors.white,
-            onPressed: () => _mostrarCarrinhoDrawer(formatoMoeda),
-          ),
-        ),
-      );
     }
   }
 
@@ -515,7 +535,12 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                         runSpacing: 8,
                         children: opcoes.map((variacao) {
                           final isSelected = selecoes[nomeAtributo]?.id == variacao.id;
-                          final temEstoque = variacao.estoque > 0;
+                          // Sem controle de estoque na loja, todas as opções
+                          // ficam vendáveis (nada de "Indisponível"). Item que
+                          // não baixa o próprio estoque também não trava.
+                          final temEstoque = !_controlarEstoque ||
+                              produto.vendeSemSaldoProprio ||
+                              variacao.estoque > 0;
                           
                           return InkWell(
                             onTap: temEstoque
@@ -663,16 +688,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                       ? variacoesSelecionadas
                       : null,
                 );
-                
-                // Feedback visual
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${produto.nome} adicionado ao carrinho'),
-                    backgroundColor: Colors.green,
-                    behavior: SnackBarBehavior.floating,
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
+                // O toast verde removido: cobria o rodapé/atalho da sacola.
               },
 
               style: ElevatedButton.styleFrom(
@@ -717,7 +733,10 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
       // Verificar se deve exibir. Além de estar marcado para a loja, o produto
       // precisa estar DENTRO da janela de disponibilidade temporária — fora
       // dela (ainda não começou ou já expirou) some do e-commerce.
-      final deveExibir = exibirNaLoja == true && p.disponivelAgora;
+      // Permanência na loja (período/dias configurados no item): fora dela o
+      // produto também não entra na vitrine.
+      final deveExibir =
+          exibirNaLoja == true && p.disponivelAgora && p.naLojaAgora;
       
       if (deveExibir) {
         if (estoqueTotal > 0) {
@@ -896,8 +915,42 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     required Color cardColor,
     required Color textColor,
     required Color textSecondaryColor,
+    String? endereco,
+    String? whatsapp,
+    String? instagram,
+    String? facebook,
   }) {
     final temLogo = logoUrl != null && logoUrl.isNotEmpty;
+
+    // Links das redes sociais configuradas em Personalizar Loja >
+    // Informações. Vazio = sem ícone.
+    final redes = <MapEntry<IconData, String>>[];
+    final whats = (whatsapp ?? '').trim();
+    if (whats.isNotEmpty) {
+      final digitos = whats.replaceAll(RegExp(r'[^0-9]'), '');
+      if (digitos.isNotEmpty) {
+        redes.add(MapEntry(
+          Icons.chat_bubble_outline,
+          'https://wa.me/${digitos.startsWith('55') ? digitos : '55$digitos'}',
+        ));
+      }
+    }
+    final insta = (instagram ?? '').trim();
+    if (insta.isNotEmpty) {
+      redes.add(MapEntry(
+        Icons.camera_alt_outlined,
+        insta.startsWith('http')
+            ? insta
+            : 'https://instagram.com/${insta.replaceAll('@', '')}',
+      ));
+    }
+    final face = (facebook ?? '').trim();
+    if (face.isNotEmpty) {
+      redes.add(MapEntry(
+        Icons.facebook,
+        face.startsWith('http') ? face : 'https://facebook.com/$face',
+      ));
+    }
     return Container(
       margin: const EdgeInsets.only(top: 8, bottom: 28),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
@@ -949,6 +1002,31 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 11, color: textSecondaryColor),
           ),
+          if (endereco != null && endereco.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              endereco.trim(),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: textSecondaryColor),
+            ),
+          ],
+          if (redes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (final rede in redes)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: IconButton(
+                      tooltip: 'Abrir rede social',
+                      icon: Icon(rede.key, color: primaryColor, size: 22),
+                      onPressed: () => html_helper.openUrl(rede.value),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -976,6 +1054,42 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     }
     
     return ecommerce;
+  }
+
+  /// A loja online controla o estoque? Quando desligado (padrão), itens sem
+  /// estoque podem ser vendidos e o selo "Esgotado" não aparece em lugar
+  /// nenhum da vitrine. Só lojas que realmente controlam o estoque ligam
+  /// isso em Personalizar Loja.
+  bool get _controlarEstoque =>
+      _lerBooleanoConfig(_obterConfigEcommerce()?['controlarEstoque']);
+
+  /// Lê um booleano da configuração aceitando o que o banco costuma devolver
+  /// (bool, 1/0 ou "true"/"false"). Um `as bool` cru estourava com o valor
+  /// gravado como texto — e uma leitura tolerante evita a loja voltar a marcar
+  /// "Esgotado" com o controle de estoque desligado.
+  bool _lerBooleanoConfig(Object? valor) {
+    if (valor is bool) return valor;
+    if (valor is num) return valor != 0;
+    if (valor is String) {
+      final v = valor.trim().toLowerCase();
+      return v == 'true' || v == '1' || v == 'sim';
+    }
+    return false;
+  }
+
+  /// O item pode ser comprado agora na vitrine? Regra ÚNICA da loja:
+  ///
+  /// - fora da janela de disponibilidade temporária, nunca;
+  /// - com o controle de estoque DESLIGADO (padrão), tudo o que aparece na
+  ///   vitrine vende — nada de selo "Esgotado" nem botão travado (é esta a
+  ///   configuração "não obriga estoque");
+  /// - ligado, vale o saldo do próprio produto; composto que baixa só os
+  ///   ingredientes continua vendável, porque não tem saldo próprio.
+  bool _vendavelNaLoja(Produto produto) {
+    if (!produto.disponivelAgora) return false;
+    if (!produto.naLojaAgora) return false;
+    if (!_controlarEstoque) return true;
+    return produto.temSaldoProprioParaVenda;
   }
 
   bool _bannerDeveSerExibido() {
@@ -1073,8 +1187,34 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     debugPrint('>>> [Loja] ========================================');
     
     final produtos = _filtrarProdutos(dataService.produtos);
-    // Serviços removidos do e-commerce
-    final categorias = _obterCategorias(dataService.produtos.where((p) => p.estoque > 0).toList());
+    // Produtos em destaque moram num carrossel no topo da vitrine; a grade
+    // fica com o resto — assim o destaque não ocupa a primeira linha nem
+    // duplica o item. Na busca, tudo volta para a grade para o resultado
+    // do cliente ficar completo.
+    final filtrandoBusca = _termoBusca.trim().isNotEmpty;
+    // Destaques são configurados em Personalizar Loja > Layout. Com a seção
+    // desligada, os itens marcados como destaque voltam para a grade (nada
+    // some da vitrine).
+    final configDestaques = _obterConfigEcommerce();
+    final destaquesLojaAtivo =
+        configDestaques?['destaquesLojaAtivo'] as bool? ?? true;
+    final tituloDestaquesLoja =
+        (configDestaques?['tituloDestaquesLoja'] as String?)?.trim() ?? '';
+    final destaquesCompactos =
+        (configDestaques?['tamanhoDestaquesLoja'] as String?) == 'compacto';
+    final destaques = (filtrandoBusca || !destaquesLojaAtivo)
+        ? <Produto>[]
+        : produtos.where((p) => p.emDestaque).toList();
+    final restantes = filtrandoBusca
+        ? produtos
+        : (destaquesLojaAtivo
+            ? produtos.where((p) => !p.emDestaque).toList()
+            : produtos);
+    // Serviços removidos do e-commerce. Sem controle de estoque, itens com
+    // saldo zerado também entram (a loja vende mesmo sem estoque).
+    final categorias = _obterCategorias(dataService.produtos
+        .where((p) => !_controlarEstoque || p.estoque > 0)
+        .toList());
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final empresa = authService.empresaAtual;
     final configEcommerce = _obterConfigEcommerce();
@@ -1111,12 +1251,28 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     final modoLoja = _modoLojaOverride ?? configModo;
     
     // Personalizações visuais
-    final corPrimariaLoja = _hexToColor(configEcommerce?['corPrimariaLoja'] as String?);
-    final corSecundariaLoja = _hexToColor(configEcommerce?['corSecundariaLoja'] as String?);
-    
-    // Cores Premium - Baseadas no Tema e nas Cores da Empresa
-    final primaryColor = _isDark ? _LojaPublicaStyle.primaryColor : (corPrimariaLoja ?? _LojaPublicaStyle.primaryColor);
-    final secondaryColor = _isDark ? _LojaPublicaStyle.secondaryColor : (corSecundariaLoja ?? _LojaPublicaStyle.secondaryColor);
+    final corPrimariaLoja = _corFromString(configEcommerce?['corPrimariaLoja'] as String?);
+    final corSecundariaLoja = _corFromString(configEcommerce?['corSecundariaLoja'] as String?);
+    final corFundoLoja = _corFromString(configEcommerce?['corFundoLoja'] as String?);
+    final tamanhoLogo = configEcommerce?['tamanhoLogo'] as String? ?? 'medio';
+    final posicaoLogo = configEcommerce?['posicaoLogo'] as String? ?? 'esquerda';
+    final estiloCards = configEcommerce?['estiloCards'] as String? ?? 'padrao';
+    // Colunas do catálogo (Personalizar Loja > Layout): 2 é o padrão.
+    final colunasCatalogo =
+        configEcommerce?['colunasCatalogoLoja'] as String? ?? '2';
+    final exibirRedesSociais =
+        configEcommerce?['exibirRedesSociais'] as bool? ?? true;
+    final exibirHorarioFuncionamento =
+        configEcommerce?['exibirHorarioFuncionamento'] as bool? ?? true;
+    final exibirEnderecoLoja =
+        configEcommerce?['exibirEnderecoLoja'] as bool? ?? true;
+    final exibirLojaAberto =
+        configEcommerce?['exibirLojaAberto'] as bool? ?? true;
+
+    // A cor escolhida em Personalizar Loja vale no tema escuro e no claro;
+    // sem cor salva, usa a paleta padrão da vitrine.
+    final primaryColor = corPrimariaLoja ?? _LojaPublicaStyle.primaryColor;
+    final secondaryColor = corSecundariaLoja ?? _LojaPublicaStyle.secondaryColor;
     final cardColor = _isDark ? _LojaPublicaStyle.cardColor : Colors.white;
     final textColor = _isDark ? _LojaPublicaStyle.textColor : const Color(0xFF1E293B);
     final textSecondaryColor = _isDark ? _LojaPublicaStyle.textSecondaryColor : Colors.black54;
@@ -1141,7 +1297,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
         body: Stack(
           children: [
             // Background Decor (Premium)
-            _buildAnimatedBackground(primaryColor, secondaryColor),
+            _buildAnimatedBackground(primaryColor, secondaryColor, corFundoLoja),
             
             Column(
               children: [
@@ -1154,6 +1310,10 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                   cardColor: cardColor,
                   textColor: textColor,
                   configEcommerce: configEcommerce,
+                  tamanhoLogo: tamanhoLogo,
+                  posicaoLogo: posicaoLogo,
+                  exibirLojaAberto: exibirLojaAberto,
+                  exibirHorarioFuncionamento: exibirHorarioFuncionamento,
                 ),
                 
                 // Conteúdo: container centralizado, largura máxima e paddings
@@ -1181,6 +1341,20 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                               if (!statusLoja.aberta)
                                 _buildAvisoLojaFechada(statusLoja, textColor),
 
+                              // Faixa de frete grátis (posição "topo")
+                              if (deveExibirBannerFreteGratis &&
+                                  posicaoBannerFreteGratis == 'topo')
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 16),
+                                  child: _buildBannerFreteGratis(
+                                    texto: textoBannerFreteGratis,
+                                    valorMinimo: valorMinimoFreteGratis,
+                                    falta: faltaParaFreteGratis,
+                                    primaryColor: primaryColor,
+                                    formatoMoeda: formatoMoeda,
+                                  ),
+                                ),
+
                               // Busca e Filtros Premium
                               _buildBuscaEFiltrosPremium(
                                 primaryColor: primaryColor,
@@ -1190,12 +1364,43 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                                 categorias: categorias,
                               ),
 
+                              // Faixa de frete grátis (posição "meio")
+                              if (deveExibirBannerFreteGratis &&
+                                  posicaoBannerFreteGratis == 'meio')
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 16),
+                                  child: _buildBannerFreteGratis(
+                                    texto: textoBannerFreteGratis,
+                                    valorMinimo: valorMinimoFreteGratis,
+                                    falta: faltaParaFreteGratis,
+                                    primaryColor: primaryColor,
+                                    formatoMoeda: formatoMoeda,
+                                  ),
+                                ),
+
                               const SizedBox(height: 20),
+
+                              // Produtos em destaque: carrossel no topo para
+                              // o cliente passar os olhos e comprar direto.
+                              _buildCarrosselDestaques(
+                                destaques: destaques,
+                                titulo: tituloDestaquesLoja.isEmpty
+                                    ? 'Destaques'
+                                    : tituloDestaquesLoja,
+                                compacto: destaquesCompactos,
+                                estiloCards: estiloCards,
+                                formatoMoeda: formatoMoeda,
+                                descontoPixAtivo: descontoPixAtivo,
+                                percentualDescontoPix: percentualDescontoPix,
+                                primaryColor: primaryColor,
+                                cardColor: cardColor,
+                                textColor: textColor,
+                              ),
 
                               // Grid ou Lista Dependendo do Modo
                               if (modoLoja == 'delivery')
                                 _buildListaProdutosDelivery(
-                                  produtos: produtos,
+                                  produtos: restantes,
                                   formatoMoeda: formatoMoeda,
                                   descontoPixAtivo: descontoPixAtivo,
                                   percentualDescontoPix: percentualDescontoPix,
@@ -1203,9 +1408,12 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                                   cardColor: cardColor,
                                   textColor: textColor,
                                 )
-                              else
+                              else if (restantes.isNotEmpty ||
+                                  destaques.isEmpty)
                                 _buildGridProdutosPremium(
-                                  produtos: produtos,
+                                  produtos: restantes,
+                                  estiloCards: estiloCards,
+                                  colunasCatalogo: colunasCatalogo,
                                   formatoMoeda: formatoMoeda,
                                   descontoPixAtivo: descontoPixAtivo,
                                   percentualDescontoPix: percentualDescontoPix,
@@ -1216,6 +1424,20 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
 
                               const SizedBox(height: 28),
 
+                              // Faixa de frete grátis (posição "rodapé")
+                              if (deveExibirBannerFreteGratis &&
+                                  posicaoBannerFreteGratis == 'rodape')
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 16),
+                                  child: _buildBannerFreteGratis(
+                                    texto: textoBannerFreteGratis,
+                                    valorMinimo: valorMinimoFreteGratis,
+                                    falta: faltaParaFreteGratis,
+                                    primaryColor: primaryColor,
+                                    formatoMoeda: formatoMoeda,
+                                  ),
+                                ),
+
                               // Rodapé com a logo da loja
                               _buildFooterLoja(
                                 logoUrl: logoUrl,
@@ -1224,6 +1446,19 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                                 cardColor: cardColor,
                                 textColor: textColor,
                                 textSecondaryColor: textSecondaryColor,
+                                endereco: exibirEnderecoLoja
+                                    ? (configEcommerce?['enderecoLoja']
+                                        as String?)
+                                    : null,
+                                whatsapp: exibirRedesSociais
+                                    ? (configEcommerce?['whatsapp'] as String?)
+                                    : null,
+                                instagram: exibirRedesSociais
+                                    ? (configEcommerce?['instagram'] as String?)
+                                    : null,
+                                facebook: exibirRedesSociais
+                                    ? (configEcommerce?['facebook'] as String?)
+                                    : null,
                               ),
                             ],
                           ),
@@ -1242,6 +1477,14 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
               child: SafeArea(
                 top: false,
                 child: _buildCarrinhoFlutuante(primaryColor),
+              ),
+            ),
+            // Balao do pedido: atalho permanente para o cliente reabrir o
+            // acompanhamento mesmo depois de fechar o aviso de confirmação.
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: _pedidosNoBalao.isEmpty,
+                child: _buildBalaoPedido(primaryColor),
               ),
             ),
           ],
@@ -1356,18 +1599,121 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     );
   }
 
-  Widget _buildAnimatedBackground(Color primaryColor, Color secondaryColor) {
+  /// Logo do cabeçalho: tamanho escolhido em Personalizar Loja > Layout.
+  ///
+  /// Mostra as DUAS marcas: a logo do cliente (ou o ícone de loja) seguida
+  /// da marca Éxodo, para quem visita a loja reconhecer quem fez o sistema.
+  Widget _buildLogoLoja(String? logoUrl, Color primaryColor, String tamanhoLogo) {
+    final lado = tamanhoLogo == 'pequeno'
+        ? 38.0
+        : (tamanhoLogo == 'grande' ? 68.0 : 50.0);
+    final logoLoja = logoUrl == null || logoUrl.isEmpty
+        ? Icon(Icons.store, color: primaryColor, size: lado * 0.64)
+        : Container(
+            width: lado,
+            height: lado,
+            padding: EdgeInsets.all(lado * 0.06),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              image: DecorationImage(image: NetworkImage(logoUrl), fit: BoxFit.contain),
+            ),
+          );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        logoLoja,
+        const SizedBox(width: 10),
+        Container(
+          width: 1,
+          height: lado * 0.6,
+          color: primaryColor.withOpacity(0.35),
+        ),
+        const SizedBox(width: 10),
+        // Marca Éxodo sempre visível ao lado da logo da loja,
+        // escrita por extenso e com brilho.
+        const ExodoLogo(fontSize: 17, isVertical: false, glow: true),
+      ],
+    );
+  }
+
+  /// Faixa de frete grátis (Personalizar Loja > Pagamento).
+  Widget _buildBannerFreteGratis({
+    required String texto,
+    required double valorMinimo,
+    required double falta,
+    required Color primaryColor,
+    required NumberFormat formatoMoeda,
+  }) {
+    final textoFinal = texto.replaceAll('{valor}', formatoMoeda.format(valorMinimo));
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [primaryColor, primaryColor.withOpacity(0.78)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.local_shipping_outlined, color: Colors.white, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  textoFinal,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                Text(
+                  'Faltam ${formatoMoeda.format(falta)} para o frete grátis',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAnimatedBackground(
+    Color primaryColor,
+    Color secondaryColor,
+    Color? corFundo,
+  ) {
+    // "Cor de fundo da loja" (Personalizar Loja > Visual). No tema claro a
+    // base é clareada para o texto escuro continuar legível.
+    final baseFundo = corFundo ?? const Color(0xFF0F172A);
+    final cores = _isDark
+        ? <Color>[
+            baseFundo,
+            Color.lerp(baseFundo, Colors.black, 0.28) ?? baseFundo,
+            primaryColor.withOpacity(0.2),
+            secondaryColor.withOpacity(0.1),
+          ]
+        : <Color>[
+            Color.lerp(baseFundo, Colors.white, 0.9) ?? Colors.white,
+            Colors.white,
+            primaryColor.withOpacity(0.08),
+            secondaryColor.withOpacity(0.05),
+          ];
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            const Color(0xFF0F172A), // Slate 900
-            const Color(0xFF1E293B), // Slate 800
-            primaryColor.withOpacity(0.2),
-            secondaryColor.withOpacity(0.1),
-          ],
+          colors: cores,
         ),
       ),
       child: Stack(
@@ -1419,6 +1765,10 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     required Color cardColor,
     required Color textColor,
     required Map<String, dynamic>? configEcommerce,
+    String tamanhoLogo = 'medio',
+    String posicaoLogo = 'esquerda',
+    bool exibirLojaAberto = true,
+    bool exibirHorarioFuncionamento = true,
   }) {
     // Header fixo: mesmo alinhamento (container centralizado) do conteúdo
     // da página, para logo, título e botões ficarem simétricos com a grade.
@@ -1427,6 +1777,10 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     final statusCor = !statusHeader.configurado
         ? primaryColor
         : (statusHeader.aberta ? const Color(0xFF15803D) : const Color(0xFFB91C1C));
+    // "Exibir loja aberto" e "Exibir horário" (Personalizar Loja >
+    // Informações) controlam o selo do cabeçalho.
+    final mostrarStatus = exibirLojaAberto &&
+        (statusHeader.configurado || exibirHorarioFuncionamento);
 
     return ClipRRect(
       child: BackdropFilter(
@@ -1444,27 +1798,33 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
               constraints: const BoxConstraints(maxWidth: 1200),
               child: Row(
                 children: [
-                  if (logoUrl != null && logoUrl.isNotEmpty)
-                    Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        image: DecorationImage(image: NetworkImage(logoUrl), fit: BoxFit.cover),
+                  if (posicaoLogo == 'direita') ...[
+                    Expanded(
+                      child: Text(
+                        empresaNome,
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    )
-                  else
-                    Icon(Icons.store, color: primaryColor, size: 32),
-                  const SizedBox(width: 15),
-                  Expanded(
-                    child: Text(
-                      empresaNome,
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
-                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Container(
+                    const SizedBox(width: 12),
+                    _buildLogoLoja(logoUrl, primaryColor, tamanhoLogo),
+                    const SizedBox(width: 10),
+                  ] else ...[
+                    _buildLogoLoja(logoUrl, primaryColor, tamanhoLogo),
+                    const SizedBox(width: 15),
+                    Expanded(
+                      child: Text(
+                        empresaNome,
+                        textAlign: posicaoLogo == 'centro'
+                            ? TextAlign.center
+                            : TextAlign.start,
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  if (mostrarStatus) Container(
                     constraints: const BoxConstraints(maxWidth: 210),
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
@@ -1517,6 +1877,25 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                     ),
                   ),
 
+                  // Acompanhar pedido: fica sempre a mao, mesmo que o
+                  // cliente tenha fechado o aviso de confirmacao.
+                  IconButton(
+                    tooltip: _pedidosNoBalao.isEmpty
+                        ? 'Meus pedidos'
+                        : (_pedidosNoBalao.first.podeRepetir
+                            ? 'Pedidos feitos'
+                            : 'Meus pedidos'),
+                    icon: Icon(
+                        _pedidosNoBalao.isNotEmpty &&
+                                _pedidosNoBalao.first.podeRepetir
+                            ? Icons.replay
+                            : Icons.receipt_long_outlined,
+                        color: primaryColor),
+                    onPressed: _pedidosCliente.isNotEmpty
+                        ? _abrirMeusPedidos
+                        : _abrirAcompanhamentoPedido,
+                  ),
+
                   // Botão de Troca de Tema
                   IconButton(
                     icon: Icon(_isDark ? Icons.light_mode : Icons.dark_mode, color: primaryColor),
@@ -1530,6 +1909,546 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Chave onde fica o codigo do ultimo pedido do cliente neste aparelho.
+  static const String _chaveUltimoPedido =
+      PedidosClienteLocalService.chaveUltimoPedido;
+
+  /// Abre o acompanhamento do pedido dentro da propria loja (sem aba nova).
+  ///
+  /// O codigo do ultimo pedido fica salvo no aparelho do cliente, entao
+  /// fechar a janela de confirmacao nao faz ele perder o rastreamento.
+  Future<void> _abrirAcompanhamentoPedido() async {
+    String codigo =
+        _pedidosNoBalao.isNotEmpty ? _pedidosNoBalao.first.codigo : '';
+    if (codigo.isEmpty) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        codigo = prefs.getString(_chaveUltimoPedido) ?? '';
+      } catch (e) {
+        debugPrint('>>> [Loja] Nao foi possivel ler o ultimo pedido: $e');
+      }
+    }
+    if (!mounted) return;
+
+    final controller = TextEditingController(text: codigo);
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text(
+          'Acompanhar pedido',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Informe o codigo do pedido (o mesmo que aparece na '
+              'confirmacao da compra).',
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: codigo.isEmpty,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                labelText: 'Codigo do pedido',
+                labelStyle: TextStyle(color: Colors.white70),
+              ),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Acompanhar'),
+          ),
+        ],
+      ),
+    );
+
+    final codigoFinal = controller.text.trim().toUpperCase();
+    controller.dispose();
+    if (confirmar != true || codigoFinal.isEmpty) return;
+    if (!mounted) return;
+    await _abrirPedido(codigoFinal);
+  }
+
+  /// Abre o rastreamento do pedido dentro da loja (mesma aba) e, ao voltar,
+  /// recarrega a lista para o balao continuar mostrando o pedido.
+  Future<void> _abrirPedido(String codigo) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PedidoClientePage(linkCliente: codigo),
+      ),
+    );
+    if (!mounted) return;
+    await _carregarPedidosCliente();
+  }
+
+  /// Balao flutuante com o ultimo pedido: fica sempre a mao na loja, entao o
+  /// cliente reabre o acompanhamento mesmo depois de fechar o aviso de
+  /// confirmacao da compra.
+  Widget _buildBalaoPedido(Color primaryColor) {
+    return Consumer<CarrinhoService>(
+      builder: (context, carrinho, _) {
+        final noBalao = _pedidosNoBalao;
+        if (noBalao.isEmpty) return const SizedBox.shrink();
+        final ultimo = noBalao.first;
+        final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+        final temTotal = ultimo.total > 0;
+        final extras = noBalao.length - 1;
+        // Pedido concluido (ou com mais de um dia): o balao vira atalho para
+        // repetir a compra, nao mais para acompanhar a entrega.
+        final repetivel = ultimo.podeRepetir;
+
+        return Align(
+          alignment: Alignment.bottomRight,
+          child: Padding(
+            padding: EdgeInsets.only(
+              right: 16,
+              // Fica acima da sacola flutuante para nao cobrir o botao dela.
+              bottom: carrinho.isEmpty ? 16 : 100,
+            ),
+            child: SafeArea(
+              top: false,
+              left: false,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(26),
+                  onTap: _abrirMeusPedidos,
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(10, 8, 16, 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF111827).withOpacity(0.97),
+                      borderRadius: BorderRadius.circular(26),
+                      border: Border.all(
+                        color: primaryColor.withOpacity(0.75),
+                        width: 1.4,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.35),
+                          blurRadius: 20,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: primaryColor.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(13),
+                          ),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Icon(
+                                repetivel
+                                    ? Icons.replay
+                                    : Icons.receipt_long_outlined,
+                                color: Colors.white,
+                                size: 21,
+                              ),
+                              if (extras > 0)
+                                Positioned(
+                                  right: 1,
+                                  top: 1,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(3),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.redAccent,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Text(
+                                      '${extras + 1}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              repetivel
+                                  ? 'Pedidos feitos'
+                                  : 'Pedido ${ultimo.numero}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              repetivel
+                                  ? (temTotal
+                                      ? '${moeda.format(ultimo.total)} • Repetir pedido'
+                                      : 'Toque para repetir')
+                                  : (temTotal
+                                      ? '${moeda.format(ultimo.total)} • Acompanhar'
+                                      : 'Toque para acompanhar'),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Lista os pedidos guardados no aparelho e reabre o acompanhamento.
+  Future<void> _abrirMeusPedidos() async {
+    if (_pedidosCliente.isEmpty) return;
+    final moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final dataFmt = DateFormat('dd/MM/yyyy HH:mm');
+
+    // "Remover do balao" nao apaga: o pedido vira um item de "Pedidos
+    // guardados", onde continua consultavel e repetivel depois.
+    final ativos = _pedidosCliente.where((p) => !p.arquivado).toList();
+    final guardados = _pedidosCliente.where((p) => p.arquivado).toList();
+    var verGuardados = false;
+
+    Future<void> recarregarListas() async {
+      final todos = await PedidosClienteLocalService.carregar();
+      ativos
+        ..clear()
+        ..addAll(todos.where((p) => !p.arquivado));
+      guardados
+        ..clear()
+        ..addAll(todos.where((p) => p.arquivado));
+    }
+
+    final acao = await showModalBottomSheet<_AcaoMeusPedidos>(
+      context: context,
+      backgroundColor: const Color(0xFF111827),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final lista = verGuardados ? guardados : ativos;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          verGuardados
+                              ? Icons.inventory_2_outlined
+                              : Icons.receipt_long_outlined,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            verGuardados ? 'Pedidos guardados' : 'Meus pedidos',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white70),
+                          onPressed: () => Navigator.pop(sheetContext),
+                        ),
+                      ],
+                    ),
+                    if (verGuardados)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          'Pedidos removidos do balao ficam guardados aqui, '
+                          'para consultar e repetir quando quiser.',
+                          style: TextStyle(color: Colors.white60, fontSize: 11),
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    if (lista.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        child: Text(
+                          verGuardados
+                              ? 'Nenhum pedido guardado ainda.'
+                              : 'Nenhum pedido no balao.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 12,
+                          ),
+                        ),
+                      )
+                    else
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: lista.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final pedido = lista[index];
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.06),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Pedido ${pedido.numero}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              [
+                                                dataFmt.format(pedido.data),
+                                                if (pedido.total > 0)
+                                                  moeda.format(pedido.total),
+                                              ].join(' • '),
+                                              style: const TextStyle(
+                                                color: Colors.white60,
+                                                fontSize: 11,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (!verGuardados)
+                                        IconButton(
+                                          tooltip: 'Remover do balao '
+                                              '(continua guardado)',
+                                          icon: const Icon(
+                                              Icons.delete_outline,
+                                              size: 18,
+                                              color: Colors.white38),
+                                          onPressed: () async {
+                                            await PedidosClienteLocalService
+                                                .arquivar(pedido.codigo);
+                                            await recarregarListas();
+                                            if (sheetContext.mounted) {
+                                              setSheetState(() {});
+                                            }
+                                          },
+                                        ),
+                                    ],
+                                  ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      if (verGuardados)
+                                        TextButton.icon(
+                                          onPressed: () async {
+                                            await PedidosClienteLocalService
+                                                .desarquivar(pedido.codigo);
+                                            await recarregarListas();
+                                            if (sheetContext.mounted) {
+                                              setSheetState(() {});
+                                            }
+                                          },
+                                          icon: const Icon(Icons.restore,
+                                              size: 16),
+                                          label: const Text('Voltar ao balao'),
+                                        ),
+                                      if (pedido.podeRepetir)
+                                        TextButton.icon(
+                                          onPressed: () => Navigator.pop(
+                                            sheetContext,
+                                            _AcaoMeusPedidos(
+                                                _AcaoPedido.repetir,
+                                                pedido.codigo),
+                                          ),
+                                          icon: const Icon(Icons.replay,
+                                              size: 16),
+                                          label: const Text('Repetir'),
+                                        ),
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(
+                                          sheetContext,
+                                          _AcaoMeusPedidos(
+                                              _AcaoPedido.acompanhar,
+                                              pedido.codigo),
+                                        ),
+                                        child: const Text('Acompanhar'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    if (!verGuardados)
+                      TextButton.icon(
+                        onPressed: () => Navigator.pop(
+                          sheetContext,
+                          const _AcaoMeusPedidos(_AcaoPedido.outroCodigo),
+                        ),
+                        icon: const Icon(Icons.keyboard_outlined, size: 18),
+                        label: const Text('Acompanhar com outro codigo'),
+                      ),
+                    if (guardados.isNotEmpty || verGuardados)
+                      TextButton.icon(
+                        onPressed: () => setSheetState(
+                            () => verGuardados = !verGuardados),
+                        icon: Icon(
+                          verGuardados
+                              ? Icons.receipt_long_outlined
+                              : Icons.inventory_2_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          verGuardados
+                              ? 'Voltar para meus pedidos'
+                              : 'Pedidos guardados (${guardados.length})',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted) return;
+    await _carregarPedidosCliente();
+    if (acao == null) return;
+    switch (acao.acao) {
+      case _AcaoPedido.outroCodigo:
+        await _abrirAcompanhamentoPedido();
+        return;
+      case _AcaoPedido.repetir:
+        await _repetirPedido(acao.codigo);
+        return;
+      case _AcaoPedido.acompanhar:
+        await _abrirPedido(acao.codigo);
+        return;
+    }
+  }
+
+  /// Joga de volta na sacola os itens de um pedido antigo, com os precos de
+  /// hoje. Produtos que sairam da loja ficam de fora e sao avisados.
+  Future<void> _repetirPedido(String codigo) async {
+    PedidoClienteLocal? pedido;
+    for (final p in _pedidosCliente) {
+      if (p.codigo == codigo) {
+        pedido = p;
+        break;
+      }
+    }
+    if (pedido == null) return;
+
+    // Pedidos antigos (gravados antes desta versao) nao tem os itens: nesse
+    // caso ainda vale abrir o acompanhamento.
+    if (pedido.itens.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Este pedido foi salvo sem os itens. Escolha novamente na vitrine.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (!_statusLoja.aberta) {
+      _mostrarLojaFechada(_statusLoja);
+      return;
+    }
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+    final carrinho =
+        Provider.of<CarrinhoService>(context, listen: false);
+
+    final foraDaLoja = <String>[];
+    var adicionados = 0;
+    for (final item in pedido.itens) {
+      Produto? produto;
+      for (final p in dataService.produtos) {
+        if (p.id == item.id) {
+          produto = p;
+          break;
+        }
+      }
+      // Sem controle de estoque na loja, item com saldo zerado volta à sacola.
+      if (produto == null || !_vendavelNaLoja(produto)) {
+        foraDaLoja.add(item.nome);
+        continue;
+      }
+      carrinho.adicionarProduto(produto, quantidade: item.quantidade);
+      adicionados++;
+    }
+
+    if (!mounted) return;
+    final mensagem = adicionados == 0
+        ? 'Os produtos deste pedido nao estao disponiveis agora.'
+        : (foraDaLoja.isEmpty
+            ? 'Pedido ${pedido.numero} de volta na sacola.'
+            : 'Pedido ${pedido.numero} na sacola, menos: '
+                '${foraDaLoja.join(', ')}.');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: adicionados == 0 ? Colors.orange : Colors.green[700],
       ),
     );
   }
@@ -1636,6 +2555,87 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     );
   }
 
+  /// Carrossel horizontal dos produtos marcados como "Em Destaque" no cadastro.
+  ///
+  /// Fica no topo da vitrine, acima da grade: o cliente passa os olhos nos
+  /// itens em destaque e compra direto dali (mesmos callbacks da grade).
+  Widget _buildCarrosselDestaques({
+    required List<Produto> destaques,
+    String titulo = 'Destaques',
+    bool compacto = false,
+    String estiloCards = 'padrao',
+    required NumberFormat formatoMoeda,
+    required bool descontoPixAtivo,
+    required double percentualDescontoPix,
+    required Color primaryColor,
+    required Color cardColor,
+    required Color textColor,
+  }) {
+    if (destaques.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            children: [
+              Icon(Icons.star_rounded, color: primaryColor, size: 26),
+              const SizedBox(width: 8),
+              Text(
+                titulo,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: compacto ? 260 : 340,
+          child: ListView.builder(
+            controller: _destaquesScrollController,
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.only(right: 8),
+            itemCount: destaques.length,
+            itemBuilder: (context, index) {
+              final produto = destaques[index];
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: SizedBox(
+                  width: compacto ? 172 : 230,
+                  child: ProdutoCard(
+                    produto: produto,
+                    isCompacto: compacto,
+                    formatoMoeda: formatoMoeda,
+                    descontoPixAtivo: descontoPixAtivo,
+                    percentualDescontoPix: percentualDescontoPix,
+                    estiloCards: estiloCards,
+                    corPrimaria: primaryColor,
+                    controlarEstoque: _controlarEstoque,
+                    onAddToCart: _adicionarProdutoAoCarrinho,
+                    onShowDetails: (p) => _mostrarDetalhesProduto(
+                      context,
+                      p,
+                      formatoMoeda,
+                      primaryColor,
+                      cardColor,
+                      textColor,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
   Widget _buildGridProdutosPremium({
     required List<Produto> produtos,
     required NumberFormat formatoMoeda,
@@ -1644,6 +2644,8 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     required Color primaryColor,
     required Color cardColor,
     required Color textColor,
+    String estiloCards = 'padrao',
+    String colunasCatalogo = '2',
   }) {
     if (produtos.isEmpty) {
       return Center(
@@ -1662,10 +2664,25 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Colunas responsivas: 2 no celular/tablet estreito, mais conforme a
-        // largura disponível, para a grade ficar simétrica em qualquer tela.
         final largura = constraints.maxWidth.isFinite ? constraints.maxWidth : 1200.0;
-        final colunas = (largura / 260).floor().clamp(2, 5);
+        // Quantidade de colunas escolhida em Personalizar Loja > Layout.
+        // "auto" mantém a grade responsiva antiga (2 a 5 colunas).
+        final int colunas;
+        if (colunasCatalogo == 'auto') {
+          colunas = (largura / 260).floor().clamp(2, 5);
+        } else {
+          colunas = (int.tryParse(colunasCatalogo) ?? 2).clamp(2, 5);
+        }
+        // A altura do card acompanha a largura da coluna (a foto cresce
+        // junto), então o aspecto é calculado em vez de fixo em 0.7 — com
+        // 2 colunas o card fica proporcional em vez de esticado.
+        const espaco = 20.0;
+        final larguraCard = (largura - (colunas - 1) * espaco) / colunas;
+        final alturaImagem = (larguraCard / 1.5).clamp(140.0, 300.0);
+        // Espaço para nome, preço, PIX, descrição e botão. Em cards estreitos
+        // a descrição não aparece, então sobra menos conteúdo para caber.
+        final conteudoCard = larguraCard < 200 ? 165.0 : 205.0;
+        final aspecto = larguraCard / (alturaImagem + conteudoCard);
 
         return GridView.builder(
           shrinkWrap: true,
@@ -1673,9 +2690,9 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
           padding: EdgeInsets.zero,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: colunas,
-            childAspectRatio: 0.7, // Ajustado para não cortar o botão
-            crossAxisSpacing: 20,
-            mainAxisSpacing: 20,
+            childAspectRatio: aspecto,
+            crossAxisSpacing: espaco,
+            mainAxisSpacing: espaco,
           ),
           itemCount: produtos.length,
           itemBuilder: (context, index) {
@@ -1685,7 +2702,9 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
               formatoMoeda: formatoMoeda,
               descontoPixAtivo: descontoPixAtivo,
               percentualDescontoPix: percentualDescontoPix,
+              estiloCards: estiloCards,
               corPrimaria: primaryColor,
+              controlarEstoque: _controlarEstoque,
               onAddToCart: _adicionarProdutoAoCarrinho,
               onShowDetails: (p) => _mostrarDetalhesProduto(context, p, formatoMoeda, primaryColor, cardColor, textColor),
             );
@@ -1817,7 +2836,97 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
     );
   }
 
+  static const String _tituloSugestoesPadrao = 'Combina com este produto';
+
+  /// Produtos que combinam com [produto] para o cross-sell da vitrine.
+  ///
+  /// Se o lojista escolheu os itens em Personalizar Loja > Layout
+  /// (`produtosSugestaoLoja`), valem esses itens, na ordem escolhida. Sem escolha manual, a sugestão sai do próprio
+  /// catálogo, priorizando o mesmo subgrupo (ex.: "Ração" -> "Petiscos") e
+  /// depois o mesmo grupo, sempre com item à venda na loja e com estoque.
+  /// O lojista liga/desliga e troca o título em Personalizar Loja > Layout.
+  List<Produto> _sugestoesQueCombinam(Produto produto) {
+    final config = _obterConfigEcommerce();
+    final habilitado =
+        config?['exibirSugestoesComplementares'] as bool? ?? true;
+    if (!habilitado) return const <Produto>[];
+
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    // Escolha manual do lojista: lista fixa, válida em qualquer produto aberto.
+    final escolhidos =
+        (config?['produtosSugestaoLoja'] as List<dynamic>? ?? [])
+            .map((e) => e.toString())
+            .toSet();
+    if (escolhidos.isNotEmpty) {
+      final manual = <Produto>[];
+      for (final p in dataService.produtos) {
+        if (p.id == produto.id) continue;
+        if (!escolhidos.contains(p.id)) continue;
+        if (!p.exibirNaLoja) continue;
+        // Só entra na sugestão o que o cliente consegue comprar agora.
+        if (!_vendavelNaLoja(p)) continue;
+        manual.add(p);
+      }
+      // Mantém a ordem em que o lojista marcou os itens.
+      final ordem = escolhidos.toList();
+      manual.sort(
+        (a, b) => ordem.indexOf(a.id).compareTo(ordem.indexOf(b.id)),
+      );
+      return manual;
+    }
+
+    final mesmoSubgrupo = <Produto>[];
+    final mesmoGrupo = <Produto>[];
+
+    for (final p in dataService.produtos) {
+      if (p.id == produto.id) continue;
+      if (!p.exibirNaLoja) continue;
+      // Só entra na sugestão o que o cliente consegue comprar agora.
+      if (!_vendavelNaLoja(p)) continue;
+
+      if (produto.subgrupo.isNotEmpty &&
+          p.subgrupo.toLowerCase() == produto.subgrupo.toLowerCase()) {
+        mesmoSubgrupo.add(p);
+      } else if (produto.grupo.isNotEmpty &&
+          p.grupo.toLowerCase() == produto.grupo.toLowerCase()) {
+        mesmoGrupo.add(p);
+      }
+    }
+
+    int porNome(Produto a, Produto b) =>
+        a.nome.toLowerCase().compareTo(b.nome.toLowerCase());
+    mesmoSubgrupo.sort(porNome);
+    mesmoGrupo.sort(porNome);
+
+    // Completa com o resto da vitrine: lojas cujos produtos não estão
+    // organizados em grupo/subgrupo ficavam sem nenhuma sugestão.
+    final outros = <Produto>[];
+    for (final p in dataService.produtos) {
+      if (p.id == produto.id) continue;
+      if (!p.exibirNaLoja) continue;
+      if (!_vendavelNaLoja(p)) continue;
+      if (mesmoSubgrupo.any((s) => s.id == p.id)) continue;
+      if (mesmoGrupo.any((s) => s.id == p.id)) continue;
+      outros.add(p);
+    }
+    outros.sort(porNome);
+
+    return <Produto>[...mesmoSubgrupo, ...mesmoGrupo, ...outros]
+        .take(8)
+        .toList();
+  }
+
+  String _tituloSugestoesComplementares() {
+    final config = _obterConfigEcommerce();
+    final titulo =
+        (config?['tituloSugestoesComplementares'] as String?)?.trim() ?? '';
+    return titulo.isEmpty ? _tituloSugestoesPadrao : titulo;
+  }
+
   void _mostrarDetalhesProduto(BuildContext context, Produto produto, NumberFormat moeda, Color primary, Color card, Color text) {
+    final sugestoes = _sugestoesQueCombinam(produto);
+    final tituloSugestoes = _tituloSugestoesComplementares();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1878,10 +2987,26 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                                   decoration: BoxDecoration(color: primary.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-                                  child: Text(produto.estoqueTotal > 0 ? 'Em Estoque' : 'Indisponível', style: TextStyle(color: primary, fontWeight: FontWeight.bold)),
+                                  child: Text(
+                                    _vendavelNaLoja(produto)
+                                        ? 'Em Estoque'
+                                        : 'Indisponível',
+                                    style: TextStyle(color: primary, fontWeight: FontWeight.bold),
+                                  ),
                                 ),
                               ],
                             ),
+                            if (sugestoes.isNotEmpty) ...[
+                              const SizedBox(height: 32),
+                              SugestoesProduto(
+                                titulo: tituloSugestoes,
+                                produtos: sugestoes,
+                                formatoMoeda: moeda,
+                                corPrimaria: primary,
+                                corTexto: text,
+                                onAdicionar: _adicionarProdutoAoCarrinho,
+                              ),
+                            ],
                             const SizedBox(height: 40),
                           ],
                         ),
@@ -1900,7 +3025,8 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                   children: [
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: produto.estoqueTotal > 0 ? () {
+                        onPressed: _vendavelNaLoja(produto)
+                            ? () {
                           _adicionarProdutoAoCarrinho(produto);
                           Navigator.pop(context);
                         } : null,
@@ -2131,8 +3257,8 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
                             ),
                           ),
                         ),
-                      // Badge de estoque baixo
-                      if (produto.estoque <= 5 && produto.estoque > 0)
+                      // Badge de estoque baixo (só p/ loja que controla estoque)
+                      if (_controlarEstoque && produto.estoque <= 5 && produto.estoque > 0)
                         Positioned(
                           bottom: 6,
                           left: 6,
@@ -2175,7 +3301,9 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
 
   Widget _buildCardProduto(Produto produto, NumberFormat formatoMoeda, bool descontoPixAtivo, double percentualDescontoPix, String estiloCards, {bool isCompacto = false}) {
     final estoqueTotal = produto.estoqueTotal;
-    final temEstoque = estoqueTotal > 0;
+    // Sem controle de estoque na loja, tudo é vendável (nada de "Esgotado").
+    // A regra única também libera o item que não baixa o próprio estoque.
+    final temEstoque = _vendavelNaLoja(produto);
     final estoqueBaixo = estoqueTotal <= 5 && estoqueTotal > 0;
     final fotoUrl = produto.fotoPrincipalUrl ?? 
                     (produto.fotosUrls.isNotEmpty ? produto.fotosUrls.first : null);
@@ -2554,6 +3682,13 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
 
             // Obter configurações de frete do e-commerce
             final configFrete = empresa?.configuracoes?['ecommerce']?['frete'] as Map<String, dynamic>?;
+
+            // Modo cardápio/delivery: só valem os fretes por bairro (zonas e
+            // taxas por bairro); Correios/transportadoras ("dia útil") saem.
+            // Honra o override de teste em tempo real da página.
+            final modoLoja = _modoLojaOverride ??
+                (empresa?.configuracoes?['ecommerce']?['modoExibicao'] as String? ?? 'ecommerce');
+            final apenasPorBairro = modoLoja == 'delivery';
             
             // Carregar Zonas de Entrega Inteligentes
             final zonasData = configFrete?['zonasEntrega'] as List<dynamic>? ?? [];
@@ -2590,6 +3725,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
               valorMinimoFreteGratis: valorMinimoFreteGratis.toDouble(),
               configFrete: configFrete,
               zonasEntrega: zonasEntrega.isNotEmpty ? zonasEntrega : null,
+              apenasPorBairro: apenasPorBairro,
             );
 
             setBuilderState(() {
@@ -3072,6 +4208,7 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
           percentualDescontoPix: percentualDescontoPix,
           estiloCards: estiloCards,
           corPrimaria: corPrimaria,
+          controlarEstoque: _controlarEstoque,
           onAddToCart: (p) => _adicionarProdutoAoCarrinho(p),
           onShowDetails: (p) => _mostrarDetalhesProduto(
             context,
@@ -3085,4 +4222,15 @@ class _LojaPublicaPageState extends State<LojaPublicaPage> {
       },
     );
   }
+}
+
+/// O que o cliente escolheu na lista de "Meus pedidos".
+/// [outroCodigo] abre o dialogo para informar um codigo na mao.
+enum _AcaoPedido { acompanhar, repetir, outroCodigo }
+
+class _AcaoMeusPedidos {
+  final _AcaoPedido acao;
+  final String codigo;
+
+  const _AcaoMeusPedidos(this.acao, [this.codigo = '']);
 }

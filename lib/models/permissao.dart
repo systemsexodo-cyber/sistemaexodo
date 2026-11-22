@@ -78,6 +78,7 @@ enum TipoPermissao {
   vendasAplicarDesconto,
   vendasVerCusto,
   vendasAlterarPrecoItem,
+  vendasAlterarPagamento,
   
   // Produtos
   produtosVisualizar,
@@ -173,6 +174,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'vendas.ver_custo';
       case TipoPermissao.vendasAlterarPrecoItem:
         return 'vendas.alterar_preco_item';
+      case TipoPermissao.vendasAlterarPagamento:
+        return 'vendas.alterar_pagamento';
       
       // Produtos
       case TipoPermissao.produtosVisualizar:
@@ -315,6 +318,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Ver Custo de Produtos';
       case TipoPermissao.vendasAlterarPrecoItem:
         return 'Alterar Preço do Produto no Carrinho (PDV)';
+      case TipoPermissao.vendasAlterarPagamento:
+        return 'Alterar Forma de Pagamento de Vendas';
       
       // Produtos
       case TipoPermissao.produtosVisualizar:
@@ -448,6 +453,7 @@ extension TipoPermissaoExtension on TipoPermissao {
       case TipoPermissao.vendasAplicarDesconto:
       case TipoPermissao.vendasVerCusto:
       case TipoPermissao.vendasAlterarPrecoItem:
+      case TipoPermissao.vendasAlterarPagamento:
         return 'Vendas';
       
       case TipoPermissao.produtosVisualizar:
@@ -540,6 +546,8 @@ extension TipoPermissaoExtension on TipoPermissao {
         return 'Permite visualizar o custo dos produtos nas vendas';
       case TipoPermissao.vendasAlterarPrecoItem:
         return 'Permite alterar o preço unitário de um produto no carrinho (PDV)';
+      case TipoPermissao.vendasAlterarPagamento:
+        return 'Permite alterar a forma de pagamento de vendas já finalizadas no histórico';
       
       case TipoPermissao.produtosVisualizar:
         return 'Permite visualizar produtos cadastrados';

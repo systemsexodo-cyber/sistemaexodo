@@ -107,6 +107,7 @@ ALTER TABLE public.produtos ENABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS public.clientes (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
     empresa_id TEXT NOT NULL DEFAULT '',
+    codigo TEXT DEFAULT '',
     nome TEXT DEFAULT '',
     cpf_cnpj TEXT DEFAULT '',
     rg_ie TEXT DEFAULT '',

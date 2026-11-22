@@ -255,7 +255,7 @@ class ExodoSuccessDialog extends StatelessWidget {
     
     if (!hasApi || !isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('API do WhatsApp não configurada ou desconectada. Use a opção COMPARTILHAR nativa.'), backgroundColor: Colors.orange)
+        const SnackBar(content: Text('Abrindo compartilhamento nativo do PDF para o WhatsApp...'), backgroundColor: Colors.orange)
       );
       DANFEService.compartilharPDF(nfce: nfce, empresa: empresa);
       return;

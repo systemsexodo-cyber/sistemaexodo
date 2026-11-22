@@ -38,7 +38,20 @@ if os.path.exists(caminho_neon):
                 v = v.strip().strip('"').strip("'")
                 env_neon[k] = v
 
-PROVEDOR = (os.getenv('NUVEM_PROVEDOR') or ('neon' if env_neon else 'supabase')).strip().lower()
+def _provedor_fixado():
+    """Provedor gravado em .nuvem_ativa (mesmo criterio do sincronizador)."""
+    try:
+        with open(os.path.join(BASE, '.nuvem_ativa'), 'r', encoding='utf-8') as f:
+            valor = f.read().strip().lower()
+        if valor in ('neon', 'supabase'):
+            return valor
+    except OSError:
+        pass
+    return ''
+
+
+PROVEDOR = (os.getenv('NUVEM_PROVEDOR') or _provedor_fixado()
+            or ('neon' if env_neon else 'supabase')).strip().lower()
 if '--supabase' in sys.argv:
     PROVEDOR = 'supabase'
 

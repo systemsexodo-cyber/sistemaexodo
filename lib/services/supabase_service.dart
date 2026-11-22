@@ -284,6 +284,11 @@ class SupabaseService {
   static const String tableComissoesVendedores = 'comissoes_vendedores';
   static const String tableCashBackMovimentos = 'cash_back_movimentos';
 
+  /// Quantas tabelas são baixadas ao mesmo tempo na carga completa.
+  /// Cada tabela ainda pagina de 1000 em 1000; o limite existe para não abrir
+  /// 31 conexões simultâneas em rede móvel (o que aumenta timeouts e erros).
+  static const int _concorrenciaDownloads = 5;
+
   /// Obtém dados filtrados por empresa_id
   pg.PostgrestQueryBuilder<void> _from(String table) {
     return _client.from(table);
@@ -397,93 +402,135 @@ class SupabaseService {
 
       // Recorte opcional (aviso do Realtime): só as tabelas pedidas.
       final recorte = (tabelas == null || tabelas.isEmpty) ? null : tabelas;
-      var totalConsultadas = 0;
 
-      for (var tableEntry in tabelasMap.entries) {
-        final tableName = tableEntry.key;
-        final dataKey = tableEntry.value;
-        if (recorte != null && !recorte.contains(tableName)) continue;
-        totalConsultadas++;
+      // Tabelas a consultar nesta rodada, na ordem do mapa.
+      final fila = <MapEntry<String, String>>[];
+      for (final entry in tabelasMap.entries) {
+        if (recorte != null && !recorte.contains(entry.key)) continue;
+        fila.add(entry);
+      }
+      final totalConsultadas = fila.length;
 
-        // Circuit breaker: se o servidor já se mostrou indisponível, não insiste
-        // nas demais tabelas — só pioraria a sobrecarga e o log.
-        if (servidorFora) {
-          dados[dataKey] = [];
-          falhas++;
-          tabelasFalhadas.add(tableName);
-          continue;
-        }
+      // Baixa uma tabela (com paginação). Devolve os itens baixados; em caso de
+      // falha, registra a tabela e devolve lista vazia.
+      Future<List<dynamic>> baixarTabela(String tableName) async {
+        final List<dynamic> allRows = [];
+        bool hasMore = true;
+        int offset = 0;
+        const int batchSize = 1000;
 
-        try {
-          // Busca paginada para garantir que trazemos TUDO (especialmente produtos e clientes)
-          final List<dynamic> allRows = [];
-          bool hasMore = true;
-          int offset = 0;
-          const int batchSize = 1000;
+        while (hasMore) {
+          var query = _from(tableName).select().eq('empresa_id', empresaId);
 
-          while (hasMore) {
-            var query = _from(tableName).select().eq('empresa_id', empresaId);
+          // EGRESS: quando o banco local já tem os catálogos (deltaCatalogo) e
+          // a tabela tem trigger de updated_at, busca só o que mudou.
+          final usaDelta =
+              lastSync != null &&
+              (!tabelasSempreCompletas.contains(tableName) ||
+                  (deltaCatalogo && tabelasComDeltaSeguro.contains(tableName)));
 
-            // EGRESS: quando o banco local já tem os catálogos (deltaCatalogo) e
-            // a tabela tem trigger de updated_at, busca só o que mudou.
-            final usaDelta =
-                lastSync != null &&
-                (!tabelasSempreCompletas.contains(tableName) ||
-                    (deltaCatalogo &&
-                        tabelasComDeltaSeguro.contains(tableName)));
-
-            if (usaDelta) {
-              query = query.gte(
-                'updated_at',
-                lastSync.toUtc().toIso8601String(),
-              );
-            } else if (tableName == tablePedidos ||
-                tableName == tableVendasBalcao ||
-                tableName == tableMesasComandas) {
-              query = query.gte('created_at', dataLimiteIso);
-            }
-
-            final List<dynamic> result = await query
-                .range(offset, offset + batchSize - 1)
-                .order('id', ascending: true);
-
-            allRows.addAll(result);
-
-            if (result.length < batchSize) {
-              hasMore = false;
-            } else {
-              offset += batchSize;
-            }
+          if (usaDelta) {
+            query = query.gte(
+              'updated_at',
+              lastSync.toUtc().toIso8601String(),
+            );
+          } else if (tableName == tablePedidos ||
+              tableName == tableVendasBalcao ||
+              tableName == tableMesasComandas) {
+            query = query.gte('created_at', dataLimiteIso);
           }
 
-          dados[dataKey] = allRows;
-          _servidorIndisponivelAte =
-              null; // servidor respondeu: cooldown liberado
-          if (allRows.isNotEmpty) {
-            debugPrint(
-              '>>> [Supabase] ⬇️ Baixado ${allRows.length} itens da tabela $tableName',
-            );
-          }
-        } catch (e) {
-          final errorStr = e.toString().toLowerCase();
-          falhas++;
-          tabelasFalhadas.add(tableName);
-          dados[dataKey] = [];
-          if (isErroInfraestrutura(e)) {
-            // Indisponibilidade do SERVIDOR: marca o cooldown e para de
-            // consultar as tabelas seguintes.
-            servidorFora = true;
-            _marcarServidorIndisponivel(e);
-          } else if (tableName == tableNFCes &&
-              (errorStr.contains('empresaid') ||
-                  errorStr.contains('empresa_id'))) {
-            debugPrint(
-              '>>> [Supabase] ⚠️ Aviso: A tabela nfces está com erro de coluna/RLS no Supabase. Ignorando temporariamente: $e',
-            );
+          final List<dynamic> result = await query
+              .range(offset, offset + batchSize - 1)
+              .order('id', ascending: true);
+
+          allRows.addAll(result);
+
+          if (result.length < batchSize) {
+            hasMore = false;
           } else {
-            debugPrint('>>> [Supabase] ❌ Erro ao carregar $tableName: $e');
+            offset += batchSize;
           }
         }
+
+        return allRows;
+      }
+
+      // VELOCIDADE: as tabelas são independentes e antes eram baixadas UMA POR
+      // VEZ (~31 idas ao servidor em série — no celular isso passava de um
+      // minuto). Agora rodam em paralelo, com concorrência limitada para não
+      // afogar a rede móvel nem o pool de conexões do PostgREST.
+      var proximaTabela = 0;
+      var ultimaTabelaQueRespondeu = '';
+
+      Future<void> trabalhador() async {
+        while (true) {
+          if (proximaTabela >= fila.length) return;
+          final entry = fila[proximaTabela++];
+          final tableName = entry.key;
+          final dataKey = entry.value;
+
+          // Circuit breaker: se o servidor já se mostrou indisponível, não
+          // insiste nas demais tabelas — só pioraria a sobrecarga e o log.
+          if (servidorFora) {
+            dados[dataKey] = [];
+            falhas++;
+            tabelasFalhadas.add(tableName);
+            continue;
+          }
+
+          try {
+            List<dynamic> allRows;
+            try {
+              allRows = await baixarTabela(tableName);
+            } catch (e) {
+              // Falha pontual de rede (não-infra): uma segunda tentativa evita
+              // perder a tabela inteira por um blip de conexão móvel.
+              if (isErroInfraestrutura(e)) rethrow;
+              debugPrint(
+                '>>> [Supabase] 🔁 Retentando $tableName após falha pontual: $e',
+              );
+              await Future<void>.delayed(const Duration(milliseconds: 300));
+              allRows = await baixarTabela(tableName);
+            }
+            dados[dataKey] = allRows;
+            ultimaTabelaQueRespondeu = tableName;
+            // servidor respondeu: cooldown liberado
+            _servidorIndisponivelAte = null;
+            if (allRows.isNotEmpty) {
+              debugPrint(
+                '>>> [Supabase] ⬇️ Baixado ${allRows.length} itens da tabela $tableName',
+              );
+            }
+          } catch (e) {
+            final errorStr = e.toString().toLowerCase();
+            falhas++;
+            tabelasFalhadas.add(tableName);
+            dados[dataKey] = [];
+            if (isErroInfraestrutura(e)) {
+              // Indisponibilidade do SERVIDOR: marca o cooldown e para de
+              // consultar as tabelas seguintes.
+              servidorFora = true;
+              _marcarServidorIndisponivel(e);
+            } else if (tableName == tableNFCes &&
+                (errorStr.contains('empresaid') ||
+                    errorStr.contains('empresa_id'))) {
+              debugPrint(
+                '>>> [Supabase] ⚠️ Aviso: A tabela nfces está com erro de coluna/RLS no Supabase. Ignorando temporariamente: $e',
+              );
+            } else {
+              debugPrint('>>> [Supabase] ❌ Erro ao carregar $tableName: $e');
+            }
+          }
+        }
+      }
+
+      final concorrencia = fila.length < _concorrenciaDownloads
+          ? fila.length
+          : _concorrenciaDownloads;
+      await Future.wait(List.generate(concorrencia, (_) => trabalhador()));
+      if (ultimaTabelaQueRespondeu.isEmpty && concorrencia > 0) {
+        debugPrint('>>> [Supabase] ⚠️ Nenhuma tabela respondeu nesta rodada.');
       }
 
       return {
@@ -909,22 +956,32 @@ class SupabaseService {
 
   /// Busca uma empresa pelo seu slug no Supabase
   Future<Empresa?> buscarEmpresaPorSlug(String slug) async {
-    try {
-      if (!isAvailable) return null;
-      final List<dynamic> result = await _client
-          .from(tableEmpresas)
-          .select()
-          .eq('slug', slug)
-          .limit(1);
+    if (!isAvailable) return null;
+    // A nuvem local (PostgREST atrás do Funnel) responde 502/503 de vez em
+    // quando. Sem retentativa, um blip desses chegava ao cliente como
+    // "loja não encontrada" — mesmo com a empresa perfeitamente cadastrada.
+    const tentativas = 3;
+    for (var tentativa = 1; tentativa <= tentativas; tentativa++) {
+      try {
+        final List<dynamic> result = await _client
+            .from(tableEmpresas)
+            .select()
+            .eq('slug', slug)
+            .limit(1)
+            .timeout(const Duration(seconds: 8));
 
-      if (result.isEmpty) return null;
-      return Empresa.fromMap(result.first);
-    } catch (e) {
-      debugPrint(
-        '>>> [Supabase] ❌ Erro ao buscar empresa por slug ($slug): $e',
-      );
-      return null;
+        if (result.isEmpty) return null;
+        return Empresa.fromMap(result.first);
+      } catch (e) {
+        debugPrint(
+          '>>> [Supabase] ⚠️ Busca de empresa por slug ($slug) falhou na '
+          'tentativa $tentativa/$tentativas: $e',
+        );
+        if (tentativa == tentativas) break;
+        await Future<void>.delayed(Duration(milliseconds: 500 * tentativa));
+      }
     }
+    return null;
   }
 
   // ============ MÉTODOS GENÉRICOS DE CRUD ============
@@ -2721,6 +2778,10 @@ class SupabaseService {
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
         ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS cest TEXT DEFAULT '';
+        -- Permanência na loja online: período e dias da semana do item na vitrine.
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS loja_inicio TIMESTAMPTZ;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS loja_fim TIMESTAMPTZ;
+        ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS dias_semana_loja JSONB DEFAULT '[]'::jsonb;
         CREATE INDEX IF NOT EXISTS idx_produtos_empresa ON public.produtos(empresa_id);
         CREATE INDEX IF NOT EXISTS idx_produtos_codigo ON public.produtos(codigo);
         ALTER TABLE public.produtos ENABLE ROW LEVEL SECURITY;
@@ -2730,7 +2791,7 @@ class SupabaseService {
 
       'clientes': """
         CREATE TABLE IF NOT EXISTS public.clientes (
-          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', nome TEXT DEFAULT '',
+          id TEXT PRIMARY KEY, empresa_id TEXT NOT NULL DEFAULT '', codigo TEXT DEFAULT '', nome TEXT DEFAULT '',
           cpf_cnpj TEXT DEFAULT '', tipo_pessoa TEXT DEFAULT 'F', email TEXT DEFAULT '',
           telefone TEXT DEFAULT '', celular TEXT DEFAULT '', endereco TEXT DEFAULT '',
           numero TEXT DEFAULT '', complemento TEXT DEFAULT '', bairro TEXT DEFAULT '',
@@ -2739,6 +2800,7 @@ class SupabaseService {
           created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS idx_clientes_empresa ON public.clientes(empresa_id);
+        CREATE INDEX IF NOT EXISTS idx_clientes_codigo ON public.clientes(codigo);
         ALTER TABLE public.clientes ENABLE ROW LEVEL SECURITY;
         DROP POLICY IF EXISTS service_role_clientes ON public.clientes;
         CREATE POLICY service_role_clientes ON public.clientes FOR ALL USING (auth.role() = 'service_role');

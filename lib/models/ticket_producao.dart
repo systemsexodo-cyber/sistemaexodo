@@ -29,6 +29,10 @@ class TicketProducao {
   final String? ultimoErro;
   final DateTime criadoEm;
   final DateTime ultimaTentativaEm;
+  /// Situação da via para o histórico do monitor:
+  /// 'pendente' | 'enviado' | 'impresso' | 'erro'.
+  final String statusImpressao;
+  final DateTime? impressoEm;
   /// Itens do ticket no formato aceito por `ItemProducaoInput`.
   final List<Map<String, dynamic>> payloadItens;
   /// Detalhes do ticket (mesa, cliente, entrega, pagamento...).
@@ -50,6 +54,8 @@ class TicketProducao {
     DateTime? ultimaTentativaEm,
     this.payloadItens = const [],
     this.payloadDetalhes = const {},
+    this.statusImpressao = 'pendente',
+    this.impressoEm,
   })  : criadoEm = criadoEm ?? DateTime.now(),
         ultimaTentativaEm = ultimaTentativaEm ?? criadoEm ?? DateTime.now();
 
@@ -57,6 +63,10 @@ class TicketProducao {
   int get quantidadeItens => resumoItens.isEmpty ? payloadItens.length : resumoItens.length;
 
   bool get usaPadraoDoTerminal => impressora.trim().isEmpty;
+
+  bool get impresso => statusImpressao == 'impresso';
+
+  bool get enviadoParaImpressao => statusImpressao == 'enviado';
 
   String get descricaoImpressora =>
       usaPadraoDoTerminal ? 'Padrão do terminal' : impressora;
@@ -83,6 +93,8 @@ class TicketProducao {
     DateTime? ultimaTentativaEm,
     List<Map<String, dynamic>>? payloadItens,
     Map<String, dynamic>? payloadDetalhes,
+    String? statusImpressao,
+    DateTime? impressoEm,
   }) {
     return TicketProducao(
       id: id ?? this.id,
@@ -100,6 +112,8 @@ class TicketProducao {
       ultimaTentativaEm: ultimaTentativaEm ?? this.ultimaTentativaEm,
       payloadItens: payloadItens ?? this.payloadItens,
       payloadDetalhes: payloadDetalhes ?? this.payloadDetalhes,
+      statusImpressao: statusImpressao ?? this.statusImpressao,
+      impressoEm: impressoEm ?? this.impressoEm,
     );
   }
 
@@ -121,6 +135,8 @@ class TicketProducao {
         ultimaTentativaEm: DateTime.now(),
         payloadItens: payloadItens,
         payloadDetalhes: payloadDetalhes,
+        statusImpressao: 'erro',
+        impressoEm: impressoEm,
       );
 
   Map<String, dynamic> toMap() {
@@ -140,6 +156,8 @@ class TicketProducao {
       'ultima_tentativa_em': ultimaTentativaEm.toIso8601String(),
       'payload_itens': payloadItens,
       'payload_detalhes': payloadDetalhes,
+      'status_impressao': statusImpressao,
+      'impresso_em': impressoEm?.toIso8601String(),
     };
   }
 
@@ -181,6 +199,10 @@ class TicketProducao {
       ultimaTentativaEm:
           data(map['ultima_tentativa_em'] ?? map['ultimaTentativaEm']) ?? criadoEm,
       payloadItens: mapas(map['payload_itens'] ?? map['payloadItens']),
+      statusImpressao:
+          (map['status_impressao'] ?? map['statusImpressao'] ?? 'pendente')
+              .toString(),
+      impressoEm: data(map['impresso_em'] ?? map['impressoEm']),
       payloadDetalhes: Map<String, dynamic>.from(
         (map['payload_detalhes'] ?? map['payloadDetalhes']) is Map
             ? (map['payload_detalhes'] ?? map['payloadDetalhes']) as Map

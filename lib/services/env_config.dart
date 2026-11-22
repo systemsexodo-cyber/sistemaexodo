@@ -142,6 +142,31 @@ class EnvConfig {
     _cachedEnv = null;
   }
 
+
+  // ── MODO DE CONEXÃO (escolhido no celular) ───────────────────────────────
+  //
+  // Ver `ConfigServidorMobile`: `lan` fala só com o PC da loja, `nuvem` só com
+  // a nuvem e `auto` tenta o PC primeiro e depois a nuvem. O
+  // `DatabaseService` monta a lista de destinos a partir daqui.
+  static const String modoAuto = 'auto';
+  static const String modoLan = 'lan';
+  static const String modoNuvem = 'nuvem';
+
+  static String _modoConexao = modoAuto;
+
+  static String get modoConexao => _modoConexao;
+
+  static void definirModoConexao(String modo) {
+    final m = modo.trim().toLowerCase();
+    if (m == modoLan) {
+      _modoConexao = modoLan;
+    } else if (m == modoNuvem) {
+      _modoConexao = modoNuvem;
+    } else {
+      _modoConexao = modoAuto;
+    }
+  }
+
   static Map<String, String> _loadEnv() {
     final values = _loadBase();
     if (_overrides.isNotEmpty) {

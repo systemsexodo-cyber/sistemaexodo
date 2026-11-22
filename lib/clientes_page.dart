@@ -64,7 +64,8 @@ class _ClientesPageState extends State<ClientesPage> {
             c.telefone.contains(termo) ||
             (c.cpfCnpj?.contains(termo) ?? false) ||
             (c.email?.toLowerCase().contains(termo) ?? false) ||
-            (c.cidade?.toLowerCase().contains(termo) ?? false);
+            (c.cidade?.toLowerCase().contains(termo) ?? false) ||
+            (c.codigo?.toLowerCase().contains(termo) ?? false);
       }).toList();
     }
 
@@ -388,6 +389,25 @@ class _ClientesPageState extends State<ClientesPage> {
                                 ),
                               ),
                             ),
+                            if (cliente.codigo != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'Cód. ${cliente.codigo}',
+                                  style: const TextStyle(
+                                    color: Colors.amberAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,

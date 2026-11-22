@@ -85,7 +85,7 @@ class _MonitorProducaoPageState extends State<MonitorProducaoPage>
   void _rebuildTabController(BuildContext context) {
     final setores = _setores(context);
     final tamanho = setores.length;
-    final novoLength = tamanho + 1; // setores + 'Todos'
+    final novoLength = tamanho + 2; // setores + 'Todos' + 'Histórico'
     if (_tabController == null ||
         _ultimoTamanho != tamanho ||
         _tabController!.length != novoLength) {
@@ -202,6 +202,12 @@ class _MonitorProducaoPageState extends State<MonitorProducaoPage>
               icon: const Icon(Icons.view_list),
               text: _abaComContagem('Todos', _fila.total),
             ),
+            Tab(
+              icon: const Icon(Icons.history),
+              text: _fila.historico.isEmpty
+                  ? 'Histórico'
+                  : 'Histórico (${_fila.historico.length})',
+            ),
           ],
         ),
       ),
@@ -214,6 +220,7 @@ class _MonitorProducaoPageState extends State<MonitorProducaoPage>
               children: [
                 ...setores.map((d) => _listaDoSetor(d.nome, departamento: d)),
                 _listaDoSetor('Todos'),
+                _listaHistorico(),
               ],
             ),
           ),
@@ -291,6 +298,166 @@ class _MonitorProducaoPageState extends State<MonitorProducaoPage>
           ),
         ),
       ],
+    );
+  }
+
+  /// Histórico das últimas vias de produção movimentadas neste terminal:
+  /// enviadas ao caixa (celular), impressas ou com erro. É aqui que o
+  /// operador confere que a impressão de produção realmente aconteceu, com o
+  /// setor e a impressora usados.
+  Widget _listaHistorico() {
+    if (!_fila.carregada) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final vias = _fila.historico;
+    if (vias.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.history, size: 80, color: Colors.white.withOpacity(0.25)),
+            const SizedBox(height: 16),
+            const Text(
+              'Nenhuma impressão de produção registrada',
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Ao lançar itens em mesas/comandas, as vias impressas (ou '
+              'enviadas ao caixa) aparecem aqui.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.4), fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Container(
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.blueAccent.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.history, color: Colors.blueAccent, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${vias.length} via(s) movimentada(s) neste terminal — mais '
+                  'recente primeiro. As que falharam continuam nas abas dos '
+                  'setores para reimprimir.',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            itemCount: vias.length,
+            itemBuilder: (context, index) => _cardHistorico(vias[index]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _cardHistorico(TicketProducao ticket) {
+    final (cor, rotulo) = switch (ticket.statusImpressao) {
+      'impresso' => (Colors.greenAccent, 'IMPRESSA'),
+      'enviado' => (Colors.blueAccent, 'ENVIADA AO CAIXA'),
+      'erro' => (Colors.redAccent, 'ERRO'),
+      _ => (Colors.orangeAccent, 'PENDENTE'),
+    };
+    final quando = ticket.impressoEm ?? ticket.ultimaTentativaEm;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E2E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cor.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: cor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  rotulo,
+                  style: TextStyle(
+                      color: cor, fontSize: 9.5, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Nº ${ticket.documento} • ${ticket.setor}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13),
+                ),
+              ),
+              Text(
+                _idade(DateTime.now().difference(quando)),
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.5), fontSize: 11),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Impressora: ${ticket.descricaoImpressora}',
+            style: TextStyle(
+                color: Colors.white.withOpacity(0.6), fontSize: 11),
+          ),
+          if ((ticket.referencia ?? '').trim().isNotEmpty)
+            Text(
+              ticket.referencia!.trim(),
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.75), fontSize: 11),
+            ),
+          if (ticket.resumoItens.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              ticket.resumoItens.take(4).join('  •  '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+            ),
+          ],
+          if (ticket.statusImpressao == 'erro' &&
+              (ticket.ultimoErro ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              ticket.ultimoErro!.trim(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

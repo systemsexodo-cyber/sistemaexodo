@@ -26,6 +26,8 @@ import 'cozinha_bar_page.dart';
 import '../services/pedido_pdf_service.dart';
 import '../services/producao_pdf_service.dart';
 import '../services/whatsapp_service.dart';
+import '../services/fila_impressao_service.dart';
+import 'historico_vendas_page.dart';
 import 'painel_motoboys_page.dart';
 import 'dart:convert';
 import 'package:printing/printing.dart';
@@ -298,6 +300,18 @@ class _PdvPageState extends State<PdvPage> {
         deliveryInfo: pedido.deliveryInfo,
       );
       dataService.addVendaBalcao(novaVenda);
+
+      // Celular: a venda acabou de ser fechada aqui e não existe impressora
+      // térmica no aparelho. Ela entra na fila de impressão e o PC do caixa
+      // imprime na impressora configurada nele.
+      if (FilaImpressaoService.ehDispositivoMovel) {
+        unawaited(
+          FilaImpressaoService.enfileirarVendaParaImpressao(
+            venda: novaVenda,
+            empresaId: dataService.currentEmpresaId ?? '',
+          ),
+        );
+      }
     }
   }
 
@@ -1226,6 +1240,18 @@ class _PdvPageState extends State<PdvPage> {
                     color: Colors.orangeAccent,
                   ),
                   tooltip: 'Novo Delivery',
+                ),
+                IconButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const HistoricoVendasPage(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.history, color: Colors.white70),
+                  tooltip: 'Histórico de Vendas',
                 ),
                 const SyncStatusWidget(),
               ],
@@ -9221,6 +9247,27 @@ class _PdvPageState extends State<PdvPage> {
 
   void _reimprimirPedido(Pedido pedido, DataService dataService) async {
     try {
+      // Celular: reimprime na impressora do PC do caixa (fila de impressão).
+      if (FilaImpressaoService.ehDispositivoMovel) {
+        final ok = await FilaImpressaoService.enfileirarPedidoParaImpressao(
+          pedido: pedido,
+          empresaId:
+              dataService.empresaAtual?.id ?? dataService.currentEmpresaId ?? '',
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                ok
+                    ? 'Reimpressão enviada para a impressora do PC do caixa'
+                    : 'Não foi possível enviar a reimpressão para o PC do caixa',
+              ),
+              backgroundColor: ok ? Colors.green : Colors.red,
+            ),
+          );
+        }
+        return;
+      }
       if (dataService.empresaAtual == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -9242,6 +9289,14 @@ class _PdvPageState extends State<PdvPage> {
   }
 
   Widget _buildCardPedido(Pedido pedido, {bool destacadoTeclado = false}) {
+    // Em telas estreitas (celular) o layout horizontal esmaga a coluna de
+    // informações: o nome do cliente fica com uma letra por linha.
+    if (MediaQuery.sizeOf(context).width < 500) {
+      return _buildCardPedidoCompacto(
+        pedido,
+        destacadoTeclado: destacadoTeclado,
+      );
+    }
     final dataService = Provider.of<DataService>(context, listen: false);
     // CRITICAL FIX: Só mostra badge PAGO se o status for explicitly 'Pago' ou se estiver totalmente recebido
     // E não for um status de pendência (Pendente/Aguardando/Em Rota etc)
@@ -9854,6 +9909,318 @@ class _PdvPageState extends State<PdvPage> {
     );
   }
 
+  /// Card de pedido em layout vertical, usado em telas estreitas (celular).
+  ///
+  /// Valores e ações ficam em uma linha própria; assim o número e o nome do
+  /// cliente ocupam toda a largura do card.
+  Widget _buildCardPedidoCompacto(
+    Pedido pedido, {
+    bool destacadoTeclado = false,
+  }) {
+    final dataService = Provider.of<DataService>(context, listen: false);
+
+    final statusLower = pedido.status.toLowerCase();
+    final isPendenteExplicit =
+        statusLower == 'pendente' ||
+        statusLower == 'aguardando' ||
+        statusLower.contains('rota') ||
+        statusLower.contains('preparo');
+    final isRecebido =
+        statusLower == 'pago' ||
+        (pedido.totalmenteRecebido && !isPendenteExplicit);
+    final isCancelado = statusLower == 'cancelado';
+    final isDelivery = pedido.deliveryInfo != null;
+
+    final temFiadoPendente = pedido.pagamentos.any(
+      (p) => p.tipo == TipoPagamento.fiado && !p.recebido,
+    );
+    final temCrediarioPendente = pedido.pagamentos.any(
+      (p) => p.tipo == TipoPagamento.crediario && !p.recebido,
+    );
+    final valorPendente = pedido.totalGeral - pedido.totalRecebido;
+
+    final colorBase = isCancelado
+        ? Colors.red
+        : isRecebido
+        ? Colors.green
+        : isDelivery
+        ? Colors.cyan
+        : temFiadoPendente
+        ? Colors.orange
+        : temCrediarioPendente
+        ? Colors.pink
+        : Colors.blue;
+
+    final iconeStatus = isCancelado
+        ? Icons.cancel
+        : isRecebido
+        ? Icons.check_circle
+        : isDelivery
+        ? Icons.delivery_dining
+        : temFiadoPendente
+        ? Icons.handshake
+        : temCrediarioPendente
+        ? Icons.calendar_month
+        : Icons.receipt;
+
+    final selecionado = _selecionadosIds.contains(pedido.id);
+
+    Widget acao({
+      required IconData icone,
+      required Color cor,
+      required String tooltip,
+      required VoidCallback onPressed,
+    }) {
+      return SizedBox(
+        width: 38,
+        height: 38,
+        child: IconButton(
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          tooltip: tooltip,
+          onPressed: onPressed,
+          icon: Icon(icone, color: cor, size: 20),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      key: _keyItemLista(pedido),
+      onTap: _modoSelecao
+          ? () => _alternarSelecao(pedido.id)
+          : () => _abrirDetalhePedido(pedido),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: isRecebido
+                ? [
+                    Colors.green.shade900.withOpacity(0.4),
+                    Colors.green.shade800.withOpacity(0.3),
+                  ]
+                : isCancelado
+                ? [
+                    Colors.red.shade900.withOpacity(0.4),
+                    Colors.red.shade800.withOpacity(0.3),
+                  ]
+                : isDelivery
+                ? [
+                    Colors.cyan.shade900.withOpacity(0.4),
+                    Colors.cyan.shade800.withOpacity(0.3),
+                  ]
+                : temFiadoPendente
+                ? [
+                    Colors.orange.shade900.withOpacity(0.4),
+                    Colors.orange.shade800.withOpacity(0.3),
+                  ]
+                : temCrediarioPendente
+                ? [
+                    Colors.pink.shade900.withOpacity(0.4),
+                    Colors.pink.shade800.withOpacity(0.3),
+                  ]
+                : [const Color(0xFF1E1E2E), const Color(0xFF2D2D44)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selecionado
+                ? Colors.blueAccent
+                : destacadoTeclado
+                ? Colors.cyanAccent
+                : colorBase.withOpacity(0.4),
+            width: destacadoTeclado && !selecionado ? 3 : 1,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 8, 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_modoSelecao) ...[
+                    Checkbox(
+                      value: selecionado,
+                      onChanged: (_) => _alternarSelecao(pedido.id),
+                      side: const BorderSide(color: Colors.white24),
+                      activeColor: Colors.blueAccent,
+                    ),
+                    const SizedBox(width: 2),
+                  ],
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: colorBase.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(iconeStatus, color: colorBase, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          pedido.numero.isNotEmpty
+                              ? pedido.numero
+                              : 'Sem número',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          pedido.clienteNome ?? 'Sem cliente',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.access_time,
+                              size: 11,
+                              color: Colors.white38,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              DateFormat(
+                                'dd/MM HH:mm',
+                              ).format(pedido.dataPedido),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.45),
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              '${pedido.quantidadeItens} itens',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.55),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (isRecebido ||
+                            isCancelado ||
+                            isDelivery ||
+                            temFiadoPendente ||
+                            temCrediarioPendente) ...[
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: [
+                              if (isRecebido)
+                                _buildSeloPedido(
+                                  'PAGO',
+                                  Icons.check_circle,
+                                  Colors.greenAccent,
+                                ),
+                              if (isCancelado)
+                                _buildSeloPedido(
+                                  'CANCELADO',
+                                  Icons.cancel,
+                                  Colors.redAccent,
+                                ),
+                              if (isDelivery)
+                                _buildSeloPedido(
+                                  'DELIVERY',
+                                  Icons.delivery_dining,
+                                  Colors.cyanAccent,
+                                ),
+                              if (temFiadoPendente)
+                                _buildSeloPedido(
+                                  'FIADO',
+                                  Icons.handshake,
+                                  Colors.orangeAccent,
+                                ),
+                              if (temCrediarioPendente)
+                                _buildSeloPedido(
+                                  'CREDIÁRIO',
+                                  Icons.calendar_month,
+                                  Colors.pinkAccent,
+                                ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'R\$ ${pedido.totalGeral.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        if (!isRecebido && valorPendente > 0.009)
+                          Text(
+                            'Pendente: R\$ ${valorPendente.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.orange,
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (!isRecebido && !_modoSelecao)
+                    acao(
+                      icone: Icons.shopping_cart_checkout,
+                      cor: Colors.blueAccent,
+                      tooltip: 'Continuar Venda no PDV',
+                      onPressed: () => _enviarPedidoParaPdv(pedido),
+                    ),
+                  if (!isRecebido && !isCancelado && !_modoSelecao) ...[
+                    acao(
+                      icone: Icons.print,
+                      cor: Colors.white54,
+                      tooltip: 'Reimprimir Pedido',
+                      onPressed: () => _reimprimirPedido(pedido, dataService),
+                    ),
+                    acao(
+                      icone: Icons.cancel_outlined,
+                      cor: Colors.redAccent,
+                      tooltip: 'Cancelar Pedido',
+                      onPressed: () =>
+                          _confirmarCancelamentoPedido(pedido, dataService),
+                    ),
+                  ],
+                  const Icon(
+                    Icons.chevron_right,
+                    color: Colors.white38,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Selo de destaque usado no cabeçalho do pedido (DELIVERY, status, etc).
   Widget _buildSeloPedido(String texto, IconData icone, Color cor) {
     return Container(
@@ -10416,6 +10783,28 @@ class _PdvPageState extends State<PdvPage> {
             const SnackBar(
               content: Text('Nenhuma empresa selecionada'),
               backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Celular: não há impressora instalada no aparelho. A via vai para a
+      // fila e sai na impressora configurada no PC do caixa.
+      if (FilaImpressaoService.ehDispositivoMovel) {
+        final ok = await FilaImpressaoService.enfileirarPedidoParaImpressao(
+          pedido: pedido,
+          empresaId: empresa.id,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                ok
+                    ? 'Pedido enviado para a impressora do PC do caixa'
+                    : 'Não foi possível enviar o pedido para o PC do caixa',
+              ),
+              backgroundColor: ok ? Colors.green : Colors.red,
             ),
           );
         }
@@ -14890,10 +15279,6 @@ class _PdvPageState extends State<PdvPage> {
     final sobrasDaParcela = pedido.pagamentos
         .where((p) => p.id.startsWith('${pagamento.id}_resto_'))
         .toList();
-    final valorRestaurado =
-        pagamento.valor +
-        sobrasDaParcela.fold<double>(0.0, (soma, p) => soma + p.valor);
-    final restituirDivisao = !recebido && sobrasDaParcela.isNotEmpty;
 
     final novosPagamentos = <PagamentoPedido>[];
     for (final p in pedido.pagamentos) {
@@ -14910,16 +15295,9 @@ class _PdvPageState extends State<PdvPage> {
             ),
           );
         } else {
-          // Estorno: volta ao valor original (quando havia divisão) e limpa
-          // data/valor recebido, troco e pagador da confirmação.
-          novosPagamentos.add(
-            p.copyWith(
-              tipo: restituirDivisao ? (p.tipoOriginal ?? p.tipo) : p.tipo,
-              valor: restituirDivisao ? valorRestaurado : p.valor,
-              recebido: false,
-              limparRecebimento: true,
-            ),
-          );
+          // Estorno: REMOVE o pagamento da lista (não adiciona ao novosPagamentos).
+          // O pagamento é completamente removido como se nunca tivesse sido lançado.
+          continue;
         }
       } else {
         novosPagamentos.add(p);
@@ -15041,7 +15419,7 @@ class _PdvPageState extends State<PdvPage> {
         SnackBar(
           content: Text(
             !recebido
-                ? 'Recebimento estornado'
+                ? 'Pagamento de R\$ ${pagamento.valor.toStringAsFixed(2)} estornado e removido'
                 : totalRecebidoNovo > 0.01
                 ? '✓ Recebido R\$ ${pagamento.valor.toStringAsFixed(2)} - Falta R\$ ${faltando.toStringAsFixed(2)}'
                 : '✓ Recebimento confirmado!',
@@ -15511,6 +15889,27 @@ class _PdvPageState extends State<PdvPage> {
             const SnackBar(
               content: Text('Nenhuma empresa selecionada'),
               backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Celular: manda para a fila de impressão do PC do caixa.
+      if (FilaImpressaoService.ehDispositivoMovel) {
+        final ok = await FilaImpressaoService.enfileirarPedidoParaImpressao(
+          pedido: pedido,
+          empresaId: empresa.id,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                ok
+                    ? 'Pedido enviado para a impressora do PC do caixa'
+                    : 'Não foi possível enviar o pedido para o PC do caixa',
+              ),
+              backgroundColor: ok ? Colors.green : Colors.red,
             ),
           );
         }

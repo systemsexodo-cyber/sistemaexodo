@@ -347,6 +347,11 @@ class FreteService {
     double? valorMinimoFreteGratis,
     Map<String, dynamic>? configFrete,
     List<ZonaEntrega>? zonasEntrega,
+    /// Modo cardápio/delivery da loja: considera APENAS os fretes por bairro
+    /// (zonas de entrega e taxas por bairro). Correios, transportadoras,
+    /// melhor envio, frete por distância e o fallback manual ("dia útil")
+    /// são ignorados nesse modo.
+    bool apenasPorBairro = false,
   }) async {
     // Valor padrão para frete grátis
     final valorMinimo = valorMinimoFreteGratis ?? 399.90;
@@ -361,7 +366,8 @@ class FreteService {
     debugPrint('>>> [FreteService] Cidade Origem: $cidadeOrigem | Cidade Destino: $cidadeDestino');
     
     // -1. OPÇÕES FIXAS (DEFINIDAS PELO USUÁRIO)
-    if (configFrete != null && configFrete['opcoesFreteFixas'] != null) {
+    // No modo cardápio só valem os fretes por bairro, então são ignoradas.
+    if (!apenasPorBairro && configFrete != null && configFrete['opcoesFreteFixas'] != null) {
       final fixasData = configFrete['opcoesFreteFixas'] as List<dynamic>;
       for (var f in fixasData) {
         try {
@@ -433,7 +439,7 @@ class FreteService {
 
     // 1.1. PRIORIDADE ALTA: Frete Inteligente Local (Mesma Cidade)
     // Substitui a antiga "Entrega no Mesmo Bairro" por um cálculo preciso em toda a cidade
-    if (configFrete != null && 
+    if (!apenasPorBairro && configFrete != null && 
         (configFrete['habilitarEntregaMesmoBairro'] as bool? ?? false) &&
         cidadeOrigem != null && 
         cidadeDestino != null) {
@@ -493,7 +499,7 @@ class FreteService {
 
     // 2. SEGUNDA PRIORIDADE: API dos Correios (PAC, SEDEX e outros serviços)
     final habilitarCorreios = configFrete?['habilitarCorreios'] as bool? ?? true;
-    if (habilitarCorreios && cepOrigem != null && cepDestino != null) {
+    if (!apenasPorBairro && habilitarCorreios && cepOrigem != null && cepDestino != null) {
       debugPrint('>>> [FreteService] Calculando opções dos Correios...');
       try {
         // Calcular PAC (sempre disponível)
@@ -586,7 +592,7 @@ class FreteService {
     }
     
     // 2.1. MELHOR ENVIO (plataforma unificada - calcula múltiplas transportadoras de uma vez)
-    if (cepOrigem != null && cepDestino != null && _melhorEnvioToken != null) {
+    if (!apenasPorBairro && cepOrigem != null && cepDestino != null && _melhorEnvioToken != null) {
       debugPrint('>>> [FreteService] Calculando opções via Melhor Envio...');
       try {
         final opcoesMelhorEnvio = await _calcularFreteMelhorEnvio(
@@ -606,7 +612,7 @@ class FreteService {
     }
     
     // 2.2. OUTRAS TRANSPORTADORAS (se habilitadas)
-    if (cepOrigem != null && cepDestino != null) {
+    if (!apenasPorBairro && cepOrigem != null && cepDestino != null) {
       debugPrint('>>> [FreteService] Calculando opções de transportadoras...');
       try {
         // Obter configurações de frete (priorizar config do e-commerce, senão usar padrão)
@@ -696,7 +702,9 @@ class FreteService {
     // 3. TERCEIRA PRIORIDADE: Cálculo por Distância (BrasilAPI)
     final habilitarEstimativa = configFrete?['habilitarEstimativaDistancia'] as bool? ?? true;
     
-    if (habilitarEstimativa && cepOrigem != null && cepDestino != null) {
+    if (apenasPorBairro) {
+      debugPrint('>>> [FreteService] 🧺 Modo cardápio: apenas fretes por bairro (zonas/taxas), demais modos ignorados');
+    } else if (habilitarEstimativa && cepOrigem != null && cepDestino != null) {
       debugPrint('>>> [FreteService] Calculando frete por distância...');
       try {
         final opcaoDistancia = await _calcularFretePorDistancia(
@@ -722,7 +730,10 @@ class FreteService {
 
     // 4. FALLBACK: Cálculo Manual (baseado em estados/regiões)
     // Adicionar opção manual apenas se não houver outras opções calculadas
-    if (opcoes.isEmpty) {
+    // (não usado no modo cardápio: o fallback manual viraria "dia útil").
+    if (apenasPorBairro) {
+      debugPrint('>>> [FreteService] 🧺 Modo cardápio: fallback manual ignorado (só fretes por bairro)');
+    } else if (opcoes.isEmpty) {
       debugPrint('>>> [FreteService] Nenhuma opção calculada, adicionando opção manual (fallback)...');
       final opcaoManual = _calcularFreteManualOpcao(
         estadoOrigem: estadoOrigem,

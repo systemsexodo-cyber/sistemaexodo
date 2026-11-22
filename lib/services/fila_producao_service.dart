@@ -27,15 +27,29 @@ class FilaProducaoService extends ChangeNotifier {
   factory FilaProducaoService.paraTeste() = FilaProducaoService._;
 
   static const String _chaveBase = 'fila_producao';
+  static const String _chaveHistoricoBase = 'historico_producao';
   static const int _maximoTickets = 200;
+  static const int _maximoHistorico = 100;
 
   String _empresaId = '';
   bool _carregada = false;
   bool _carregando = false;
   List<TicketProducao> _pendentes = [];
+  List<TicketProducao> _historico = [];
 
   /// Vias que ainda não saíram, da mais antiga para a mais nova.
   List<TicketProducao> get pendentes => List.unmodifiable(_pendentes);
+
+  /// Últimas vias de produção movimentadas NESTE terminal (enviadas para o
+  /// caixa, impressas ou com erro), da mais recente para a mais antiga.
+  ///
+  /// É o que permite conferir no Monitor de Produção o que foi impresso a
+  /// partir do celular/caixa, mesmo depois que a via saiu da fila.
+  List<TicketProducao> get historico => List.unmodifiable(_historico);
+
+  String get chaveHistoricoArmazenamento => _empresaId.isEmpty
+      ? _chaveHistoricoBase
+      : '${_chaveHistoricoBase}_$_empresaId';
 
   bool get carregada => _carregada;
 
@@ -76,6 +90,24 @@ class FilaProducaoService extends ChangeNotifier {
         }
       }
       _pendentes = _ordenar(lista);
+
+      final rawHistorico = prefs.getString(chaveHistoricoArmazenamento);
+      final historico = <TicketProducao>[];
+      if (rawHistorico != null && rawHistorico.trim().isNotEmpty) {
+        final decodificado = jsonDecode(rawHistorico);
+        if (decodificado is List) {
+          for (final item in decodificado) {
+            if (item is! Map) continue;
+            final ticket = TicketProducao.fromMap(Map<String, dynamic>.from(item));
+            if (ticket.documento.trim().isEmpty && ticket.setor.trim().isEmpty) {
+              continue;
+            }
+            historico.add(ticket);
+          }
+        }
+      }
+      historico.sort((a, b) => _dataDoHistorico(b).compareTo(_dataDoHistorico(a)));
+      _historico = historico.take(_maximoHistorico).toList();
     } catch (e) {
       debugPrint('>>> [FilaProducao] ⚠️ Erro ao carregar a fila: $e');
     } finally {
@@ -101,13 +133,21 @@ class FilaProducaoService extends ChangeNotifier {
   /// entradas: tentativa nova só aumenta o contador e troca o motivo.
   Future<void> registrarFalha(TicketProducao ticket) async {
     await _garantirCarregada();
-    final indice = _pendentes.indexWhere((t) => t.chave == ticket.chave);
+    final indice = _pendentes.indexWhere((t) =>
+        t.documento.trim().toUpperCase() == ticket.documento.trim().toUpperCase() &&
+        t.setor.trim().toLowerCase() == ticket.setor.trim().toLowerCase() &&
+        t.impressora.trim().toLowerCase() ==
+            ticket.impressora.trim().toLowerCase());
+    final TicketProducao entrada;
     if (indice >= 0) {
-      _pendentes[indice] = _pendentes[indice].comNovaFalha(ticket.ultimoErro);
+      entrada = _pendentes[indice].comNovaFalha(ticket.ultimoErro);
+      _pendentes[indice] = entrada;
     } else {
-      _pendentes.add(ticket.copyWith(empresaId: _empresaId));
+      entrada = ticket.copyWith(empresaId: _empresaId, statusImpressao: 'erro');
+      _pendentes.add(entrada);
     }
     _pendentes = _ordenar(_podar(_pendentes));
+    await _registrarNoHistorico(entrada);
     await _salvar();
     notifyListeners();
   }
@@ -121,17 +161,68 @@ class FilaProducaoService extends ChangeNotifier {
     await _garantirCarregada();
     final alvo = '${documento.trim().toUpperCase()}|${setor.trim().toLowerCase()}|'
         '${impressora?.trim().toLowerCase() ?? ''}';
-    final antes = _pendentes.length;
+    final indice = _pendentes.indexWhere((t) =>
+        '${t.documento.trim().toUpperCase()}|${t.setor.trim().toLowerCase()}|'
+            '${t.impressora.trim().toLowerCase()}' ==
+        alvo);
+    final base = indice >= 0
+        ? _pendentes[indice]
+        : TicketProducao(
+            id: alvo,
+            documento: documento,
+            setor: setor,
+            impressora: impressora ?? '',
+          );
     _pendentes = _pendentes
         .where((t) =>
             '${t.documento.trim().toUpperCase()}|${t.setor.trim().toLowerCase()}|'
                 '${t.impressora.trim().toLowerCase()}' !=
             alvo)
         .toList();
-    if (_pendentes.length == antes) return;
+
+    // A via que saiu também entra no histórico do monitor, para dar para
+    // conferir o que foi impresso neste terminal.
+    await _registrarNoHistorico(base.copyWith(
+      statusImpressao: 'impresso',
+      impressoEm: DateTime.now(),
+    ));
+
     await _salvar();
     notifyListeners();
   }
+
+  /// Registra uma via que foi ENVIADA para impressão (celular → caixa).
+  Future<void> registrarEnvio(TicketProducao ticket) async {
+    await _garantirCarregada();
+    await _registrarNoHistorico(ticket.copyWith(
+      empresaId: _empresaId,
+      statusImpressao: 'enviado',
+    ));
+    await _salvar();
+    notifyListeners();
+  }
+
+  /// Coloca/atualiza a via no histórico (mais recente primeiro).
+  Future<void> _registrarNoHistorico(TicketProducao ticket) async {
+    final entrada = ticket.copyWith(empresaId: _empresaId);
+    final indice = _historico.indexWhere((t) =>
+        t.documento.trim().toUpperCase() ==
+            entrada.documento.trim().toUpperCase() &&
+        t.setor.trim().toLowerCase() == entrada.setor.trim().toLowerCase() &&
+        t.impressora.trim().toLowerCase() ==
+            entrada.impressora.trim().toLowerCase());
+    if (indice >= 0) {
+      _historico[indice] = entrada;
+    } else {
+      _historico.insert(0, entrada);
+    }
+    if (_historico.length > _maximoHistorico) {
+      _historico = _historico.sublist(0, _maximoHistorico);
+    }
+  }
+
+  DateTime _dataDoHistorico(TicketProducao t) =>
+      t.impressoEm ?? t.ultimaTentativaEm;
 
   /// Remove uma via da fila sem imprimir (o operador conferiu que já saiu ou
   /// que não precisa mais).
@@ -188,6 +279,9 @@ class FilaProducaoService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final dados = jsonEncode(_pendentes.map((t) => t.toMap()).toList());
       await prefs.setString(chaveArmazenamento, dados);
+      final dadosHistorico =
+          jsonEncode(_historico.map((t) => t.toMap()).toList());
+      await prefs.setString(chaveHistoricoArmazenamento, dadosHistorico);
     } catch (e) {
       debugPrint('>>> [FilaProducao] ⚠️ Erro ao salvar a fila: $e');
     }
