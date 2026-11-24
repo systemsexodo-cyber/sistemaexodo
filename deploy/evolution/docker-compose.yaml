@@ -1,0 +1,205 @@
+# Evolution API 2.3.7 — produção na VM ubuntu-supabase
+#
+# Sobe isolado: postgres/redis/api na rede interna, e um nginx (serviço
+# `proxy`) que publica a API em http://0.0.0.0:8093. Só o proxy fica exposto
+# à VM; a API escuta apenas em 127.0.0.1:8080 dentro dela.
+#
+# Exposição pública: Tailscale Funnel em /evolution -> 127.0.0.1:8093
+# (ver README). Nada das portas 443/8443/10000 que já existem é alterado.
+#
+# Variáveis vêm do .env nesta pasta.
+
+services:
+  api:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: evo_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-evolution}
+      SERVER_TYPE: http
+      SERVER_PORT: "8080"
+      SERVER_URL: ${SERVER_URL}
+      LANGUAGE: ${LANGUAGE:-pt-BR}
+      AUTHENTICATION_API_KEY: ${AUTHENTICATION_API_KEY}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "false"
+      # --- banco ---
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=evolution_api
+      DATABASE_CONNECTION_CLIENT_NAME: ${DATABASE_CONNECTION_CLIENT_NAME:-evolution_exchange}
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      # --- cache ---
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_REDIS_PREFIX_KEY: ${CACHE_REDIS_PREFIX_KEY:-evolution}
+      # --- CORS: origem do app web no navegador ---
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      CORS_METHODS: GET,POST,PUT,DELETE
+      CORS_CREDENTIALS: "true"
+      # --- logs / sessão ---
+      LOG_LEVEL: ${LOG_LEVEL:-ERROR,WARN,INFO,WEBHOOKS}
+      LOG_BAILEYS: error
+      DEL_INSTANCE: "false"
+      CONFIG_SESSION_PHONE_CLIENT: ${CONFIG_SESSION_PHONE_CLIENT:-Evolution API}
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      QRCODE_LIMIT: "30"
+      TELEMETRY_ENABLED: "false"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      WEBHOOK_REQUEST_TIMEOUT_MS: "60000"
+    ports:
+      # só dentro da VM; quem publica é o nginx
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - evolution-net
+    healthcheck:
+      # a imagem não traz curl; usa o fetch nativo do Node 20
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # Atendente virtual: recebe o webhook MESSAGES_UPSERT da Evolution e responde
+  # usando o Ollama que roda na maquina Windows (10.0.2.2 = loopback do host no NAT).
+  # Nao e publicado no host: so a rede interna fala com ele.
+  bot:
+    build: ./bot
+    container_name: evo_bot
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      OLLAMA_URL: ${BOT_OLLAMA_URL:-http://10.0.2.2:11434}
+      BOT_MODEL: ${BOT_MODEL:-eobicho}
+      EVOLUTION_URL: http://api:8080
+      # Obrigatorio: cada empresa usa a sua instancia (o bot nao sobe sem isso).
+      BOT_INSTANCE: ${BOT_INSTANCE:-}
+      # Nome da empresa e prompt vem daqui: o mesmo codigo atende qualquer loja.
+      BOT_EMPRESA_NOME: ${BOT_EMPRESA_NOME:-}
+      BOT_PROMPT: ${BOT_PROMPT:-}
+      BOT_PROMPT_FILE: ${BOT_PROMPT_FILE:-}
+      # Dados basicos (horario, endereco, pagamento, servicos): fonte de verdade.
+      BOT_CONFIG_FILE: ${BOT_CONFIG_FILE:-/config/negocio.json}
+      AUTHENTICATION_API_KEY: ${AUTHENTICATION_API_KEY}
+      BOT_DEBOUNCE: ${BOT_DEBOUNCE:-3}
+      BOT_MAX_REPLIES_HOUR: ${BOT_MAX_REPLIES_HOUR:-20}
+      # Pausa o bot quando alguem da loja responde pelo celular (0 desliga).
+      BOT_HUMAN_MUTE_MIN: ${BOT_HUMAN_MUTE_MIN:-30}
+      # Pausa apos o cliente pedir atendente humano.
+      BOT_HANDOFF_MUTE_MIN: ${BOT_HANDOFF_MUTE_MIN:-120}
+      # Janela em que o bot PODE responder (ex.: 18:00-08:00). Vazio = 24h.
+      BOT_ACTIVE_HOURS: ${BOT_ACTIVE_HOURS:-}
+      # Opcional: so responde se a mensagem tiver uma destas palavras.
+      BOT_KEYWORDS: ${BOT_KEYWORDS:-}
+      BOT_INTRO: ${BOT_INTRO:-Oi! Sou o assistente virtual de {empresa}.}
+      # Dados oficiais (horario, endereco, formas de pagamento). Sem isso, o bot
+      # troca qualquer afirmacao factual pela mensagem de fallback.
+      BOT_EXTRA_INFO: ${BOT_EXTRA_INFO:-}
+      BOT_FALLBACK: ${BOT_FALLBACK:-Vou confirmar essa informação com a equipe e já te respondo por aqui.}
+      # Pausas por contato ficam aqui e sobrevivem a restart do container/VM.
+      BOT_STATE_FILE: ${BOT_STATE_FILE:-/data/state.json}
+      # Token das rotas de teste/pausa usadas pelo app (/chat, /admin/*).
+      BOT_ADMIN_TOKEN: ${BOT_ADMIN_TOKEN:-}
+      # Consulta de pedidos (somente leitura) no banco da loja. Vazio = o bot nao
+      # consulta e so responde "vou confirmar com a equipe".
+      BOT_PEDIDOS_DSN: ${BOT_PEDIDOS_DSN:-}
+      # Catalogo de produtos (mesmo banco, somente leitura). Sem isso o bot nao
+      # sabe nome/preco/estoque e responde "vou confirmar" para tudo.
+      BOT_CATALOGO_DSN: ${BOT_CATALOGO_DSN:-}
+      # Com varias empresas no banco, informe o id da loja atendida.
+      BOT_EMPRESA_ID: ${BOT_EMPRESA_ID:-}
+      BOT_CATALOGO_MAX: ${BOT_CATALOGO_MAX:-5}
+      BOT_CATALOGO_TTL: ${BOT_CATALOGO_TTL:-300}
+      # Modelo: CPU por padrao (a maquina tem 2 GB de VRAM). Temperatura baixa e
+      # seed fixa deixam a resposta estavel; num_predict curto deixa rapida.
+      BOT_NUM_CTX: ${BOT_NUM_CTX:-3072}
+      BOT_NUM_PREDICT: ${BOT_NUM_PREDICT:-90}
+      BOT_NUM_GPU: ${BOT_NUM_GPU:-0}
+      BOT_TEMPERATURE: ${BOT_TEMPERATURE:-0.1}
+      BOT_KEEP_ALIVE: ${BOT_KEEP_ALIVE:-24h}
+      # Mantem o modelo carregado (o cold start leva 20-30 s).
+      BOT_WARMUP: ${BOT_WARMUP:-1}
+      BOT_WARMUP_INTERVAL: ${BOT_WARMUP_INTERVAL:-240}
+    ports:
+      # Administracao/teste do app. A VM esta em NAT, entao esta porta so e
+      # alcancavel pelo host (regra de NAT) e nunca pela rede local.
+      - "8097:8096"
+    volumes:
+      - bot_state:/data
+      # Editavel direto na VM: vale na proxima mensagem, sem restart.
+      - ./bot/negocio.json:/config/negocio.json:ro
+    networks:
+      - evolution-net
+
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: evo_proxy
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "8093:8093"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - evolution-net
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: evo_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - evolution-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: evo_redis
+    restart: unless-stopped
+    command: redis-server --port 6379 --appendonly yes
+    volumes:
+      - evolution_redis:/data
+    networks:
+      - evolution-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  evolution_instances:
+  evolution_redis:
+  postgres_data:
+  # Estado do bot (contatos em pausa). Sem isso, restaurar o container faria o
+  # bot voltar a responder conversas que um humano ja tinha assumido.
+  bot_state:
+
+networks:
+  evolution-net:
+    name: evolution-net
+    driver: bridge

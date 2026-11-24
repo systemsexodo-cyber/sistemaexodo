@@ -1,0 +1,64 @@
+{
+  "_leia_me": "Preencha o que existir. O bot responde estes dados SEM passar pela IA, então não há risco de inventar. Campo vazio = o bot não afirma nada sobre aquilo. Editar salvo e já vale (o arquivo é relido a cada mensagem), sem reiniciar o container.",
+
+  "nome": "E o Bicho Pet Shop",
+  "endereco": "Rua São Jerônimo, 177 - Jardim São Judas Tadeu, São José dos Campos/SP",
+  "telefone": "(12) 99643-5372",
+
+  "horario": {
+    "texto": "Atendemos todos os dias, das 08:00 à meia-noite",
+    "segunda_a_sexta": "08:00 as 00:00",
+    "sabado": "08:00 as 00:00",
+    "domingo": "08:00 as 00:00",
+    "feriados": ""
+  },
+
+  "formas_pagamento": ["pix", "dinheiro", "cartão de débito", "cartão de crédito", "VR (vale refeição)"],
+  "servicos": ["banho e tosa", "vacinação", "taxi dog"],
+  "servicos_detalhes": [],
+  "entrega": "Fazemos entrega. Para confirmar a taxa e o prazo do seu endereço, a equipe te responde por aqui.",
+  "saude": "Sinto muito! Sobre a saúde do pet eu prefiro confirmar com a equipe antes de indicar qualquer coisa. Já avisei e alguém te responde por aqui.",
+  "conselho": "Sobre a quantidade e a rotina de alimentação, prefiro confirmar com a equipe: cada pet tem uma necessidade diferente. Já deixei sua dúvida registrada por aqui.",
+  "cuidado": "Essa é uma dúvida que eu prefiro confirmar com a equipe antes de orientar. Já deixei registrada e alguém te responde por aqui.",
+
+  "pedido": "Vou confirmar o seu pedido com a equipe e já te respondo por aqui.",
+  "pedido_novo": "Claro! Me diz o que você precisa que eu já vejo o preço e a disponibilidade pra você.",
+
+  "catalogo": {
+    "minimo_grupo": 80,
+    "resumo": "Trabalhamos com ração para cães e gatos, petiscos, medicamentos, areia, brinquedos, acessórios, estética e higiene, aquarismo, aves e roedores, além de pesca e camping. Quer que eu procure algum item específico?",
+    "categorias": {
+      "RACAO CAES E GATOS": "ração para cães e gatos",
+      "PETISCOS": "petiscos",
+      "MEDICAMENTOS": "medicamentos",
+      "AREIA PARA GATOS": "areia para gatos",
+      "BRINQUEDOS PET": "brinquedos",
+      "ACESSORIOS/ CAES /GATOS": "acessórios para cães e gatos",
+      "ESTÉTICA/HIGIENE/BELEZA": "estética, higiene e beleza",
+      "AQUARISMO/PEIXES/REPTEIS": "aquarismo e peixes",
+      "AVES/ACESS/RACOES": "aves",
+      "ROEDORES/ACESS/RACOES": "roedores",
+      "PESCA CAMPING CAÇA": "pesca e camping",
+      "CASA E JARDINAGEM": "casa e jardinagem"
+    }
+  },
+
+  "foco": {
+    "assuntos": ["banho e tosa", "vacinação", "ração e petiscos", "acessórios", "entrega", "horário", "formas de pagamento", "medicamentos", "areia", "brinquedos", "aquário", "aves", "roedores", "pesca", "camping", "taxi dog"],
+    "bloqueios": {
+      "venda de animais": "Não trabalhamos com venda de animais. Aqui é banho e tosa, vacinação, ração e acessórios.",
+      "venda de filhotes": "Não trabalhamos com venda de filhotes. Aqui é banho e tosa, vacinação, ração e acessórios.",
+      "criadouro": "Não trabalhamos com criadouro de animais.",
+      "atacado": "Não atendemos atacado, só o cliente da loja."
+    },
+    "fora_do_tema": "Por aqui eu ajudo com produtos e serviços para o seu pet. Sobre isso, quem pode te responder é a equipe.",
+    "nao_mencionar": ["venda de animais", "venda de filhotes", "criadouro", "catálogo", "tabela de preços"]
+  },
+
+  "saudacao": "Oi! Sou o assistente virtual da loja. Como posso ajudar?",
+  "agradecimento": "De nada! Qualquer coisa é só chamar por aqui.",
+
+  "respostas": {
+    "nota fiscal": "Emitimos nota fiscal em todas as vendas."
+  }
+}
