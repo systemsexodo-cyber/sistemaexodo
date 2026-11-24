@@ -1357,7 +1357,7 @@ SEED = int(os.getenv("BOT_SEED", "42"))
 KEEP_ALIVE = os.getenv("BOT_KEEP_ALIVE", "24h")
 # Mantem o modelo carregado na memoria (o cold start leva 20-30 s).
 WARMUP = os.getenv("BOT_WARMUP", "1").strip().lower() not in ("0", "nao", "não", "false")
-WARMUP_INTERVAL = int(os.getenv("BOT_WARMUP_INTERVAL", "240"))
+WARMUP_INTERVAL = int(os.getenv("BOT_WARMUP_INTERVAL", "60"))
 
 
 def _model_options():
@@ -1442,7 +1442,7 @@ def warmup_loop():
     """Mantem o modelo carregado e aquecido.
 
     Sem isso, a primeira mensagem depois de um tempo parado paga 20-30 s de
-    carga do modelo. Um pedido de 1 token a cada BOT_WARMUP_INTERVAL segundos
+    carga do modelo. Um ping a cada BOT_WARMUP_INTERVAL segundos (padrao 60s)
     mantem o processo quente sem gastar CPU de verdade.
     """
     payload = {
