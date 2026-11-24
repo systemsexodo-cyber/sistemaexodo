@@ -266,6 +266,10 @@ ITEM_NOME_RE = re.compile(
     r"arranhador|filtro|guia)\b"
 )
 
+def _tem_substantivo_produto(texto):
+    """True se a mensagem cita um substantivo de produto real (nao apenas 'tem'/'vale')."""
+    return bool(ITEM_NOME_RE.search(texto or ""))
+
 HANDOFF_WORDS = [
     w.strip().lower()
     for w in os.getenv(
@@ -1518,6 +1522,12 @@ def compose_reply(jid, text):
         resposta, gatilho = fact_reply(config, text)
         if resposta:
             return _fill(resposta), "config", gatilho
+    # Alimentacao / dose ("quanto de racao devo dar"): e conselho da equipe,
+    # nunca busca de preço nem palpite do modelo. Deve vir ANTES do catalogo,
+    # pq "ração" aciona ITEM_NOME_RE mas a intencao e orientacao, nao compra.
+    if NUTRICAO_RE.search(text):
+        texto_conselho = str(config.get("conselho") or "").strip() or CONSELHO_TEXT
+        return _fill(texto_conselho), "conselho", None
     if CATALOGO_DSN and (
         _catalogo_quer_item(text) or PROBLEMA_RE.search(text)
     ) and _catalogo_termos(text):
@@ -1529,6 +1539,8 @@ def compose_reply(jid, text):
         itens = _catalogo_categoria(text)
         if itens:
             return _fill(_formata_catalogo(itens)), "catalogo", "categoria"
+        if not _tem_substantivo_produto(text):
+            return _fill(FALLBACK), "fallback_fato", "nao e produto"
         return _fill(CATALOGO_VAZIO), "catalogo_vazio", None
     # Substantivo de produto puro sem verbo de compra ("coleira para gato",
     # "raca golden cachorro"): tenta o catalogo antes de chamar o modelo.
@@ -1544,6 +1556,8 @@ def compose_reply(jid, text):
         itens = _catalogo_categoria(text)
         if itens:
             return _fill(_formata_catalogo(itens)), "catalogo", "categoria"
+        if not _tem_substantivo_produto(text):
+            return _fill(FALLBACK), "fallback_fato", "nao e produto"
         return _fill(CATALOGO_VAZIO), "catalogo_vazio", None
     if config and MONEY_RE.search(text):
         return _fill(FALLBACK), "fallback_preco", None
