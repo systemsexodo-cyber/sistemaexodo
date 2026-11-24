@@ -258,6 +258,14 @@ TEMAS_ABERTOS_RE = re.compile(
     r"agendamento|agendar|hor[aá]rio de (?:banho|tosa))"
 )
 
+# Substantivo de produto puro (sem verbo de compra): "coleira para gato",
+# "areia sanicat", "shampoo cachorro". Dispara busca no catalogo antes do modelo.
+ITEM_NOME_RE = re.compile(
+    r"(?i)\b(coleira|ra[cç][aã]o|raca|areia|shampoo|sabonete|aqu[aá]rio|petisco|"
+    r"brinquedo|medicamento|vacina|antipulgas|talco|comedouro|bebedouro|caminha|"
+    r"arranhador|filtro|guia)\b"
+)
+
 HANDOFF_WORDS = [
     w.strip().lower()
     for w in os.getenv(
@@ -1516,6 +1524,21 @@ def compose_reply(jid, text):
         # "meu gato esta com pulga": busca pelo problema, nao pela especie.
         problema = bool(PROBLEMA_RE.search(text)) and not _catalogo_quer_item(text)
         itens = _catalogo_buscar(text, sem_animais=problema)
+        if itens:
+            return _fill(_formata_catalogo(itens)), "catalogo", f"{len(itens)} item(ns)"
+        itens = _catalogo_categoria(text)
+        if itens:
+            return _fill(_formata_catalogo(itens)), "catalogo", "categoria"
+        return _fill(CATALOGO_VAZIO), "catalogo_vazio", None
+    # Substantivo de produto puro sem verbo de compra ("coleira para gato",
+    # "raca golden cachorro"): tenta o catalogo antes de chamar o modelo.
+    if CATALOGO_DSN and ITEM_NOME_RE.search(text) and _catalogo_termos(text):
+        itens = _catalogo_buscar(text)
+        if not itens:
+            # Busca mais solta: so o primeiro substantivo (ex. "coleira"),
+            # sem exigir que todos os termos casem.
+            primeiro = _catalogo_termos(text)[0]
+            itens = _catalogo_buscar(primeiro)
         if itens:
             return _fill(_formata_catalogo(itens)), "catalogo", f"{len(itens)} item(ns)"
         itens = _catalogo_categoria(text)
