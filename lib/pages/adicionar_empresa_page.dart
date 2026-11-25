@@ -79,6 +79,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
   final _emailContabilidadeController = TextEditingController();
   bool _envioFiscalAutomatico = false;
   bool _nuvemAtiva = true;
+  // Vínculo matriz/filial: id da empresa matriz (null = independente/matriz).
+  String? _empresaMatrizId;
   bool _incluirTaxaEntregaNfce = true;
   bool _incluirServicoGarcomNfce = true;
 
@@ -333,6 +335,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     _emailContabilidadeController.text = empresa.emailContabilidade ?? '';
     _envioFiscalAutomatico = empresa.envioFiscalAutomatico;
     _nuvemAtiva = empresa.nuvemAtiva;
+    _empresaMatrizId = empresa.empresaMatrizId;
     _incluirTaxaEntregaNfce = empresa.incluirTaxaEntregaNfce;
     _incluirServicoGarcomNfce = empresa.incluirServicoGarcomNfce;
 
@@ -641,6 +644,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
           'exigir_senha_cancelar_pedido': _exigirSenhaCancelarPedido,
           'nuvem_ativa': _nuvemAtiva,
           'nuvemAtiva': _nuvemAtiva,
+          // Vínculo matriz/filial. Vazio/null = empresa independente.
+          'empresa_matriz_id': _empresaMatrizId,
 
           'reservar_estoque_pedidos': _reservarEstoquePedidos,
           'limite_dias_offline':
@@ -964,6 +969,9 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
                 icon: Icons.description_outlined,
               ),
               _buildCrtDropdown(),
+
+              const SizedBox(height: 8),
+              _buildVinculoMatrizSection(authService),
 
               const SizedBox(height: 24),
 
@@ -2683,6 +2691,81 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     );
   }
 
+  /// Vínculo matriz/filial: escolhe a qual matriz esta empresa pertence.
+  ///
+  /// Só empresas independentes (sem matriz) podem ser matriz — assim não dá
+  /// para criar corrente/ciclo de vínculos. A matriz atual continua na lista
+  /// mesmo se ficou inativa, para uma edição não desvincular sem querer.
+  Widget _buildVinculoMatrizSection(AuthService authService) {
+    final idAtual = widget.empresa?.id;
+    Empresa? matrizAtual;
+    for (final e in authService.empresas) {
+      if (e.id == _empresaMatrizId) {
+        matrizAtual = e;
+        break;
+      }
+    }
+
+    final candidatas =
+        authService.empresas
+            .where(
+              (e) => e.id != idAtual && !e.isFilial && e.id != matrizAtual?.id,
+            )
+            .toList()
+          ..sort(
+            (a, b) => a.nomeExibicao.toLowerCase().compareTo(
+              b.nomeExibicao.toLowerCase(),
+            ),
+          );
+
+    final opcoes = <Empresa>[
+      if (matrizAtual != null) matrizAtual,
+      ...candidatas,
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildSectionTitle('Vínculo Matriz / Filial'),
+        DropdownButtonFormField<String?>(
+          value: matrizAtual?.id,
+          isExpanded: true,
+          dropdownColor: const Color(0xFF2A2A3E),
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: 'Esta empresa é',
+            labelStyle: const TextStyle(color: Colors.white70),
+            prefixIcon: const Icon(Icons.account_tree_outlined),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('Empresa independente (matriz)'),
+            ),
+            ...opcoes.map(
+              (e) => DropdownMenuItem<String?>(
+                value: e.id,
+                child: Text(
+                  'Filial de: ${e.nomeExibicao}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ],
+          onChanged: (valor) => setState(() => _empresaMatrizId = valor),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'A matriz e as filiais formam um grupo, mas cada empresa continua '
+          'com seus dados separados. Usuários com a permissão '
+          '"Acesso multiempresa" poderão ver e alternar entre elas.',
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
   /// Atualiza uma chave da configuração de uma forma de pagamento do sistema,
   /// lendo sempre o valor mais recente para não perder edições em campos
   /// vizinhos (o `config` do build pode estar desatualizado).
@@ -3029,7 +3112,8 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
     final apiKey = _whatsappApiKeyController.text.trim();
     final instanceName = _whatsappInstanceNameController.text.trim();
 
-    if (url.isEmpty || apiKey.isEmpty || instanceName.isEmpty) {
+    final isTwilio = _whatsappTipo == 'twilio';
+    if (url.isEmpty || apiKey.isEmpty || (!isTwilio && instanceName.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Preencha todos os campos da configuração WhatsApp'),
@@ -3046,9 +3130,21 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         apiUrl: url,
         apiKey: apiKey,
         instanceName: instanceName,
+        isTwilioBridge: isTwilio,
       );
 
-      final state = await service.verificarConexao();
+      var state = await service.verificarConexao();
+
+      // Instância Evolution ainda não criada: cria e verifica de novo, para o
+      // teste funcionar também antes de abrir o QR Code.
+      if (!isTwilio && state == null) {
+        final criada = await service.criarInstancia();
+        if (criada) {
+          await Future.delayed(const Duration(seconds: 2));
+          // Instância criada mas ainda sem estado: está pronta para o QR.
+          state = await service.verificarConexao() ?? 'close';
+        }
+      }
 
       if (mounted) {
         setState(() {
@@ -3136,6 +3232,7 @@ class _AdicionarEmpresaPageState extends State<AdicionarEmpresaPage> {
         apiUrl: url,
         apiKey: apiKey,
         instanceName: instanceName,
+        isTwilioBridge: _whatsappTipo == 'twilio',
       );
 
       // Primeiro tenta criar a instância (se não existir)

@@ -135,6 +135,34 @@ class Empresa {
   /// Retorna o nome de exibição (nome fantasia ou razão social)
   String get nomeExibicao => nomeFantasia ?? razaoSocial;
 
+  /// Número (com DDD) que recebe o resumo do dia pelo WhatsApp.
+  ///
+  /// Fica em `configuracoes['whatsapp_numero_resumo']` porque essa coluna JSONB
+  /// já sincroniza entre banco local e nuvem — não precisa de migração de schema.
+  /// É o ÚNICO destino aceito pelo resumo: sem ele, nada é enviado.
+  String? get whatsappNumeroResumo {
+    final raw = configuracoes?['whatsapp_numero_resumo'];
+    final numero = raw?.toString().trim() ?? '';
+    return numero.isEmpty ? null : numero;
+  }
+
+  /// Empresa matriz à qual esta empresa está vinculada como filial.
+  ///
+  /// Fica em `configuracoes['empresa_matriz_id']` porque essa coluna JSONB já
+  /// sincroniza entre banco local e nuvem — não precisa de migração de schema.
+  /// `null` significa que a empresa é independente (matriz do seu próprio grupo).
+  String? get empresaMatrizId {
+    final raw =
+        configuracoes?['empresa_matriz_id'] ??
+        configuracoes?['empresaMatrizId'];
+    final idMatriz = raw?.toString().trim() ?? '';
+    if (idMatriz.isEmpty || idMatriz == id) return null;
+    return idMatriz;
+  }
+
+  /// Se esta empresa é filial de outra (tem uma matriz vinculada).
+  bool get isFilial => empresaMatrizId != null;
+
   /// Se a empresa está permitindo sincronização com a nuvem.
   /// Útil para testes locais, falhas temporárias ou manutenção por empresa.
   bool get nuvemAtiva {

@@ -430,10 +430,7 @@ class SupabaseService {
                   (deltaCatalogo && tabelasComDeltaSeguro.contains(tableName)));
 
           if (usaDelta) {
-            query = query.gte(
-              'updated_at',
-              lastSync.toUtc().toIso8601String(),
-            );
+            query = query.gte('updated_at', lastSync.toUtc().toIso8601String());
           } else if (tableName == tablePedidos ||
               tableName == tableVendasBalcao ||
               tableName == tableMesasComandas) {
@@ -770,7 +767,11 @@ class SupabaseService {
       final colunas = await _detectarColunasTabela(table);
       var lista = data
           .map(
-            (m) => _filtrarCamposLocais(table, _toSafeMap(m), colunasReais: colunas),
+            (m) => _filtrarCamposLocais(
+              table,
+              _toSafeMap(m),
+              colunasReais: colunas,
+            ),
           )
           .toList();
       if (table == 'vendas_balcao') {
@@ -1062,7 +1063,10 @@ class SupabaseService {
   /// exatamente o que vai sair e pode conferir cada id contra o banco local
   /// (ver `DataService.deletarTudoNoSupabaseDestaEmpresa`). Se a enumeração
   /// falhar, nada é apagado — melhor não apagar do que apagar às cegas.
-  Future<List<String>> listarIdsDaEmpresa(String table, String empresaId) async {
+  Future<List<String>> listarIdsDaEmpresa(
+    String table,
+    String empresaId,
+  ) async {
     final alvo = empresaId.trim();
     final ids = <String>[];
     if (!isAvailable || alvo.isEmpty) return ids;
@@ -1361,7 +1365,9 @@ class SupabaseService {
       if (linhas.isEmpty) return null;
       return linhas.first['empresa_id']?.toString();
     } catch (e) {
-      debugPrint('>>> [Supabase] ⚠️ Não consegui ver o dono de $tabela/$id: $e');
+      debugPrint(
+        '>>> [Supabase] ⚠️ Não consegui ver o dono de $tabela/$id: $e',
+      );
       return null;
     }
   }
@@ -1871,6 +1877,7 @@ class SupabaseService {
       for (final campo in const [
         'tipo',
         'is_master',
+        'acesso_multiempresa',
         'funcionario_id',
         'garcom',
         'permissoes_personalizadas',
@@ -1912,6 +1919,7 @@ class SupabaseService {
       for (final campo in const [
         'tipo',
         'is_master',
+        'acesso_multiempresa',
         'funcionario_id',
         'garcom',
         'permissoes_personalizadas',
@@ -2268,7 +2276,7 @@ class SupabaseService {
     String path,
     dynamic file, {
     String? contentType,
-  }  ) async {
+  }) async {
     try {
       ultimoErroUpload = null;
       if (!isAvailable) {

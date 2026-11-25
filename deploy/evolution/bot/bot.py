@@ -74,6 +74,40 @@ MAX_HISTORY = int(os.getenv("BOT_MAX_HISTORY", "6"))
 MAX_REPLIES_HOUR = int(os.getenv("BOT_MAX_REPLIES_HOUR", "20"))
 DEBOUNCE = float(os.getenv("BOT_DEBOUNCE", "3"))
 MAX_INPUT = int(os.getenv("BOT_MAX_INPUT", "1200"))
+# Idade maxima (min) para o bot responder uma mensagem. A Evolution reenvia o
+# historico quando a conexao volta (restart do container, pareamento, reconexao):
+# sem este corte o bot responde de novo conversa que ja tinha sido atendida.
+# 0 desliga o corte.
+MAX_IDADE_MIN = float(os.getenv("BOT_MAX_IDADE_MIN", "10"))
+
+
+# Numeros que o bot NUNCA responde (lista separada por virgula, com DDD).
+# Ex.: BOT_IGNORAR_NUMEROS=11999999999,11888888888. Aceita com ou sem o 55.
+def _so_digitos(valor):
+    return re.sub(r"\D", "", str(valor or ""))
+
+
+def _sem_pais(numero):
+    """5511999999999 -> 11999999999 (aceita o numero com ou sem 55)."""
+    return numero[2:] if len(numero) > 11 and numero.startswith("55") else numero
+
+
+def _numero_ignorado(jid):
+    """Numero marcado em BOT_IGNORAR_NUMEROS (compara DDD + numero)."""
+    numero = _sem_pais(_so_digitos(str(jid or "").split("@")[0]))
+    if not numero:
+        return False
+    return any(
+        numero == alvo or (len(alvo) >= 8 and numero.endswith(alvo))
+        for alvo in NUMEROS_IGNORADOS
+    )
+
+
+NUMEROS_IGNORADOS = [
+    _sem_pais(_so_digitos(item))
+    for item in os.getenv("BOT_IGNORAR_NUMEROS", "").split(",")
+    if _so_digitos(item)
+]
 
 # Pausa apos resposta humana: 0 desliga.
 HUMAN_MUTE_MIN = int(os.getenv("BOT_HUMAN_MUTE_MIN", "30"))
@@ -113,6 +147,13 @@ PEDIDO_TEXT = os.getenv(
     "BOT_PEDIDO_TEXT",
     "Vou confirmar o seu pedido com a equipe e já te respondo por aqui.",
 ).strip()
+# Quando o cliente pergunta sobre pedido/status/confirmacao SEM numero: o bot pede o
+# numero do pedido em vez de soltar a resposta generica — e e assim que o numero chega
+# pra conferencia/confirmacao.
+PEDIDO_ASK = os.getenv(
+    "BOT_PEDIDO_ASK",
+    "Me passa o número do seu pedido que eu confiro aqui pra você e já te confirmo.",
+).strip()
 # Consulta de pedidos: le (somente leitura) a tabela `pedidos` do banco da loja.
 # Vazio = o bot nao consulta e responde o PEDIDO_TEXT.
 PEDIDOS_DSN = os.getenv("BOT_PEDIDOS_DSN", "").strip()
@@ -143,7 +184,7 @@ CATALOGO_DSN = os.getenv("BOT_CATALOGO_DSN", "").strip() or PEDIDOS_DSN
 # banco de uma loja; com varias, informe o id da empresa).
 CATALOGO_EMPRESA = os.getenv("BOT_EMPRESA_ID", "").strip()
 CATALOGO_TTL = int(os.getenv("BOT_CATALOGO_TTL", "300"))
-CATALOGO_MAX = int(os.getenv("BOT_CATALOGO_MAX", "5"))
+CATALOGO_MAX = int(os.getenv("BOT_CATALOGO_MAX", "10"))
 CATALOGO_MIN_ESTOQUE = float(os.getenv("BOT_CATALOGO_MIN_ESTOQUE", "1"))
 # So mostra preco de item que existe no cadastro; o resto continua no fallback.
 CATALOGO_TEXTO = os.getenv(
@@ -159,7 +200,17 @@ CATALOGO_RESUMO = os.getenv(
     "Trabalhamos com {categorias}. Quer que eu procure algum item específico?",
 ).strip()
 
-MONEY_RE = re.compile(r"(?i)(R\$|\breais\b|\bpre[cç]o\b|\bvalor\b|\bcusta\b|\bcustam\b)")
+MONEY_RE = re.compile(
+    r"(?i)(R\$|\breais\b|\bpre[cç]o\b|\bvalor\b|\bcusta\b|\bcustam\b|"
+    r"\bquanto\s+(?:[eé]|sai|fica|sair|ficaria|custaria)\b)"
+)
+# Servico da loja (banho, tosa, vacina...): preco dele so existe se estiver cadastrado
+# em "servicos_detalhes"; senao o bot confirma com a equipe em vez de chutar.
+SERVICO_RE = re.compile(
+    r"(?i)(\bbanho\b|\btosa\b|vacin\w*|taxi\s*dog|servi[cç]os?\b|est[eé]tica|hidrata\w*|"
+    r"corte\s+de\s+unha|cortar\s+(?:as\s+)?unhas?|consulta\s+veterin\w*|veterin[aá]ri\w*|"
+    r"microchip\w*|hospedagem|creche|perfum\w*)"
+)
 # Horario, endereco, prazo, estoque: só podem sair como facto se tivermos dados oficiais.
 FACT_RE = re.compile(
     r"(?i)(\baberto\b|\bfechado\b|\bdas?\s*\d{1,2}h|\d{1,2}h\s*(?:as|às|a)\s*\d{1,2}h|"
@@ -179,6 +230,10 @@ PEDIDO_RE = re.compile(
 PEDIDO_FAZER_RE = re.compile(
     r"(?i)((?:quero|queria|gostaria|preciso|vou)\s+(?:fazer|montar|encomendar|pedir)|"
     r"fazer\s+um\s+pedido|quero\s+pedir|encomendar)"
+)
+# "quero confirmar/finalizar meu pedido": intencao de confirmacao, que depende do numero.
+PEDIDO_CONFIRMAR_RE = re.compile(
+    r"(?i)(confirm\w*|finaliz\w*|fechar\s+(?:o\s+)?pedido|encerrar\s+(?:o\s+)?pedido)"
 )
 # Frases que denunciam resposta robotica da IA: viram fallback, nunca vao ao cliente.
 META_RE = re.compile(
@@ -204,6 +259,41 @@ SAUDACAO_RE = re.compile(
     r"(?i)^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|e a[ií]|opa|tudo bem|tudo bom|hey)"
 )
 AGRADECIMENTO_RE = re.compile(r"(?i)(obrigad|agradec|brigad|valeu|de nada)")
+# Elogio/conversa curta ("legal hein", "beleza", "entendi"): merece uma resposta
+# propria — antes caia no texto de fora do tema, igual a uma pergunta desconhecida.
+CORTESIA_RE = re.compile(
+    r"(?i)^\s*(?:legal|que\s+bom|bacana|beleza|blz|show|top|massa|[oó]timo|perfeito|ok|okay|"
+    r"entendi|entendido|ah\s+ta|ah\s+t[aá]|certo|combinado|boa|haha+|rs+|k{2,})"
+    r"(?:\s+hein|\s+mesmo)?\s*[!.?]*\s*$"
+)
+# O cliente reclamando que o bot repetiu: reconhece e pede a informacao de outro jeito.
+REPETICAO_RE = re.compile(
+    r"(?i)(voc[eê]\s+j[aá]\s+(?:disse|falou|respondeu)|j[aá]\s+(?:disse|falou|respondeu)\s+isso|"
+    r"(?:est[aá]\s+)?repet\w+|mesma\s+(?:coisa|resposta)|respondeu\s+de\s+novo|"
+    r"n[aã]o\s+(?:entendeu|respondeu))"
+)
+# "o que voces fazem / o que voce pode fazer": e apresentacao da loja, nao assunto
+# fora do tema. Sem isso o cliente recebia "quem pode te responder e a equipe".
+AJUDA_RE = re.compile(
+    r"(?i)(o\s+que\s+(?:voc[eê]s?\s+)?(?:pode|podem|consegue|conseguem|faz|fazem|vende|"
+    r"vendem|oferece|oferecem)\b|como\s+(?:voc[eê]s?\s+)?funciona|"
+    r"no\s+que\s+(?:voc[eê]s?\s+)?(?:pode|podem)\s+ajudar|preciso\s+de\s+ajuda|"
+    r"quais\s+(?:s[aã]o\s+)?(?:os\s+)?(?:servi[cç]os|produtos|op[cç][oõ]es)|quem\s+[eé]\s+voc[eê])"
+)
+APRESENTACAO_TEXT = os.getenv(
+    "BOT_APRESENTACAO",
+    "Por aqui eu cuido do atendimento da loja: passo preço e disponibilidade dos produtos, "
+    "falo sobre {servicos}, horário, endereço, formas de pagamento e entrega. "
+    "O que você precisa?",
+).strip()
+CORTESIA_TEXT = os.getenv(
+    "BOT_CORTESIA", "Que bom! Qualquer coisa é só chamar por aqui."
+).strip()
+REPETICAO_TEXT = os.getenv(
+    "BOT_REPETICAO",
+    "Desculpa se eu repeti! Me diz com outras palavras o que você precisa que eu "
+    "resolvo por aqui.",
+).strip()
 # Mensagem que cita um pet e assunto da loja, mesmo sem bater numa palavra do
 # cadastro ("meu gato esta com pulga", "qual racao para filhote?").
 PET_RE = re.compile(
@@ -283,6 +373,10 @@ HANDOFF_WORDS = [
 history = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 seen = deque(maxlen=800)
 seen_set = set()
+# Ids ja tratados ficam em arquivo (volume): em memoria eles sumiam no restart e a
+# Evolution reenviava o historico como se fosse mensagem nova.
+SEEN_FILE = os.getenv("BOT_SEEN_FILE", "/data/seen.json")
+_seen_save_at = 0.0
 replies = defaultdict(list)
 last_intro = {}
 # Pausas por contato ficam em arquivo (volume) para sobreviver a restart do
@@ -344,13 +438,66 @@ def extract_text(data):
     return None
 
 
+def _ts_segundos(data):
+    """Horario da mensagem em segundos (Evolution manda s; algumas versoes, ms)."""
+    bruto = data.get("messageTimestamp")
+    if isinstance(bruto, dict):  # Long do Baileys serializado em JSON
+        bruto = bruto.get("low") or bruto.get("high")
+    try:
+        valor = float(bruto)
+    except (TypeError, ValueError):
+        return None
+    if valor <= 0:
+        return None
+    return valor / 1000.0 if valor > 1e11 else valor
+
+
+def _seen_salvar():
+    """Grava os ids ja tratados de forma atomica (tmp + replace)."""
+    try:
+        directory = os.path.dirname(SEEN_FILE)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        tmp = f"{SEEN_FILE}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(list(seen), f)
+        os.replace(tmp, SEEN_FILE)
+    except OSError as e:
+        log(f"falha ao salvar {SEEN_FILE}: {type(e).__name__}: {e}")
+
+
+def _seen_carregar():
+    """Recupera os ids tratados antes do restart (chamado no boot)."""
+    try:
+        with open(SEEN_FILE, encoding="utf-8") as f:
+            ids = json.load(f)
+    except FileNotFoundError:
+        return
+    except (OSError, json.JSONDecodeError) as e:
+        log(f"ids ja vistos ilegiveis em {SEEN_FILE}: {type(e).__name__}")
+        return
+    for mid in ids[-seen.maxlen:]:
+        if not isinstance(mid, str) or mid in seen_set:
+            continue
+        if len(seen) == seen.maxlen:
+            seen_set.discard(seen[0])
+        seen.append(mid)
+        seen_set.add(mid)
+    log(f"{len(seen_set)} id(s) de mensagem ja tratados carregados de {SEEN_FILE}")
+
+
 def mark_seen(mid):
+    global _seen_save_at
     if mid in seen_set:
         return False
     if len(seen) == seen.maxlen:
         seen_set.discard(seen[0])
     seen.append(mid)
     seen_set.add(mid)
+    agora = time.time()
+    if agora - _seen_save_at >= 2:  # throttle: rajada de webhook nao grava a cada msg
+        _seen_save_at = agora
+        _seen_salvar()
     return True
 
 
@@ -821,6 +968,70 @@ def _numeros(texto):
     return {n.replace(",", ".") for n in re.findall(r"\d+[.,]\d{2}", texto or "")}
 
 
+def _valores(texto):
+    """Todo numero que pode ser lido como preco, em reais (float).
+
+    Compara o que o modelo escreveu ("R$ 86,90", "86.90", "1.234,50") com o que
+    mandamos no contexto do catalogo, entao aceita os dois formatos. Numero solto
+    de um digito fica de fora ("2 frases"); inteiro com 2+ digitos conta como
+    preco porque o modelo nao tem outro motivo para escrever numero.
+    """
+    valores = set()
+    for bruto in re.findall(r"\d[\d.,]*", texto or ""):
+        bruto = bruto.rstrip(".,")
+        if not bruto:
+            continue
+        try:
+            if "," in bruto:  # formato brasileiro: 1.234,50 / 86,90
+                inteiro, _, centavos = bruto.rpartition(",")
+                valor = float((inteiro.replace(".", "") or "0") + "." + (centavos + "00")[:2])
+            elif "." in bruto and len(bruto.rsplit(".", 1)[1]) in (1, 2):
+                valor = float(bruto)
+            else:  # 1234 ou 1.234 (milhar)
+                inteiro = bruto.replace(".", "")
+                if len(inteiro) < 2:
+                    continue
+                valor = float(inteiro)
+        except ValueError:
+            continue
+        valores.add(round(valor, 2))
+    return valores
+
+
+def _data_promo(valor):
+    """promocao_inicio/fim (texto no banco) -> epoch. None = sem data/ilegivel."""
+    texto = str(valor or "").strip()
+    if not texto:
+        return None
+    texto = texto.replace("T", " ").split("+")[0].split(".")[0].strip()[:19]
+    for formato in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return time.mktime(time.strptime(texto, formato))
+        except ValueError:
+            continue
+    return None
+
+
+def _promo_vale(promo, preco, inicio, fim):
+    """Promocao so aparece se for desconto de verdade e estiver na janela de validade.
+
+    Data ilegivel = nao arrisca: o cliente ouve o preco da tabela, nunca um valor
+    de promocao velha.
+    """
+    if not promo or promo <= 0 or preco <= 0 or promo >= preco:
+        return False
+    agora = time.time()
+    if str(inicio or "").strip():
+        ini = _data_promo(inicio)
+        if ini is None or agora < ini:
+            return False
+    if str(fim or "").strip():
+        termino = _data_promo(fim)
+        if termino is None or agora > termino + 86399:  # vale o dia inteiro do fim
+            return False
+    return True
+
+
 def _data_curta(valor):
     """datetime -> '23/11'. Aceita string/None sem quebrar."""
     try:
@@ -978,7 +1189,8 @@ def _catalogo_carregar(forcar=False):
             return []
         partes = _dsn_partes(CATALOGO_DSN)
         sql = (
-            "SELECT nome, grupo, subgrupo, preco, preco_promocional, tem_promocao, estoque "
+            "SELECT nome, grupo, subgrupo, preco, preco_promocional, tem_promocao, estoque, "
+            "promocao_inicio, promocao_fim "
             "FROM produtos WHERE ativo IS NOT FALSE AND coalesce(nome, '') <> ''"
         )
         params = {}
@@ -1022,9 +1234,13 @@ def _catalogo_carregar(forcar=False):
             promo = None
             if dado.get("tem_promocao"):
                 try:
-                    promo = float(dado.get("preco_promocional") or 0) or None
+                    promo_bruto = float(dado.get("preco_promocional") or 0) or None
                 except (TypeError, ValueError):
-                    promo = None
+                    promo_bruto = None
+                # Promocao vencida/futura ou "desconto" que cobra mais caro que o
+                # preco normal fica de fora: o cliente ouve o preco da tabela.
+                if _promo_vale(promo_bruto, preco, dado.get("promocao_inicio"), dado.get("promocao_fim")):
+                    promo = promo_bruto
             try:
                 estoque = float(dado.get("estoque") or 0)
             except (TypeError, ValueError):
@@ -1033,6 +1249,12 @@ def _catalogo_carregar(forcar=False):
             grupos[chave_grupo] = grupos.get(chave_grupo, 0) + 1
             palavras = set(
                 p for p in re.split(r"[^0-9a-z]+", _norm(nome)) if len(p) >= 3
+            )
+            # A especie da CATEGORIA ("RACAO CAES E GATOS", "AREIA PARA GATOS")
+            # manda mais que a do sabor no nome.
+            grupo_norm = chave_grupo + " " + _norm(subgrupo)
+            palavras_grupo = set(
+                p for p in re.split(r"[^0-9a-z]+", grupo_norm) if len(p) >= 3
             )
             itens.append(
                 {
@@ -1044,7 +1266,9 @@ def _catalogo_carregar(forcar=False):
                     "estoque": estoque,
                     "palavras": palavras,
                     "animais": _animais(palavras),
-                    "grupo_norm": chave_grupo + " " + _norm(subgrupo),
+                    "especies_grupo": _animais(palavras_grupo),
+                    "especie_principal": _especie_principal(nome),
+                    "grupo_norm": grupo_norm,
                 }
             )
         _catalogo.update(
@@ -1116,6 +1340,28 @@ def _animais(palavras):
 TERMOS_ANIMAIS = {t for termos in ANIMAIS.values() for t in termos}
 
 
+def _especie_principal(nome):
+    """Especie que aparece PRIMEIRO no nome: e a do produto, nao a do sabor.
+
+    "Bongo Lata Gato Peixe" e racao de GATO com sabor peixe; "Racao Peixe
+    Flutuante" e de peixe. Sem isso, pedir racao de peixe devolvia lata de gato.
+    """
+    norm = " " + _norm(nome) + " "
+    melhor = None
+    posicao = None
+    for animal, termos in ANIMAIS.items():
+        for termo in termos:
+            achado = norm.find(" " + termo + " ")
+            if achado < 0:
+                achado = norm.find(" " + termo)
+                if achado < 0:
+                    continue
+            if posicao is None or achado < posicao:
+                posicao = achado
+                melhor = animal
+    return melhor
+
+
 def _catalogo_buscar(texto, limite=None, sem_animais=False):
     """Produtos cujo NOME casa com a mensagem, do mais relevante ao menos.
 
@@ -1142,6 +1388,17 @@ def _catalogo_buscar(texto, limite=None, sem_animais=False):
         # Espécie diferente da pedida fica fora (produto sem espécie entra normal).
         if quer_animal and it["animais"] and not (quer_animal & it["animais"]):
             continue
+        # Categoria do produto de outra especie: "racao de peixe" nao pode devolver
+        # racao de gato/cachorro (que estava entrando pela palavra "peixe" do sabor).
+        if quer_animal and it["especies_grupo"] and not (quer_animal & it["especies_grupo"]):
+            continue
+        # Nome cujo PRIMEIRO animal e outro (lata de gato sabor peixe) fica fora.
+        if (
+            quer_animal
+            and it["especie_principal"]
+            and it["especie_principal"] not in quer_animal
+        ):
+            continue
         acertos = 0
         pontos = 0
         for grupo in grupos:
@@ -1163,13 +1420,35 @@ def _catalogo_buscar(texto, limite=None, sem_animais=False):
                 acertos += 1
                 pontos += melhor
         if pontos:
-            achados.append((acertos, pontos, it))
+            # Posicao do termo PRINCIPAL no nome do produto: quem pede "areia" quer
+            # areia ("AREIA EL GATON"), nao o "Tapete Coletor Areia" que so cita a
+            # palavra. 99 = o termo nao esta no comeco.
+            cabeca = 99
+            no_nome = False
+            for idx, palavra in enumerate(
+                p for p in re.split(r"[^0-9a-z]+", _norm(it["nome"])) if p
+            ):
+                if any(
+                    palavra == termo or (len(termo) >= 4 and palavra.startswith(termo))
+                    for termo in grupos[0]
+                ):
+                    cabeca = idx
+                    no_nome = True
+                    break
+            # SÓ quando o nome nao cita o termo a categoria decide: racao de marca
+            # ("Golden Special...") nao repete "racao" no nome, mas o grupo diz.
+            if not no_nome and any(
+                len(termo) >= 4 and termo in it["grupo_norm"] for termo in grupos[0]
+            ):
+                cabeca = 0
+            achados.append((acertos, pontos, cabeca, it))
     if not achados:
         return []
     todos = sorted(
-        achados, key=lambda x: (-x[0], -x[1], -x[2]["estoque"], x[2]["nome"])
+        achados,
+        key=lambda x: (-x[0], x[2], -x[1], -x[3]["estoque"], x[3]["nome"]),
     )
-    melhor_acertos = max(a for a, _p, _i in achados)
+    melhor_acertos = max(a for a, _p, _c, _i in achados)
     # Quando a mensagem tem mais de uma palavra, fica so quem casa com todas
     # (ex.: "areia pipicat" nao devolve Mimocat/Kets).
     if melhor_acertos >= 2:
@@ -1178,7 +1457,7 @@ def _catalogo_buscar(texto, limite=None, sem_animais=False):
         achados = list(todos)
     vistos = set()
     resultado = []
-    for _a, _p, it in achados:
+    for _a, _p, _c, it in achados:
         chave = _norm(it["nome"])
         if chave in vistos:
             continue
@@ -1189,13 +1468,37 @@ def _catalogo_buscar(texto, limite=None, sem_animais=False):
     return resultado
 
 
+def _catalogo_tem_item_do_assunto(texto, itens):
+    """Confere se algum item achado casa com o substantivo pedido, nao so com a especie.
+
+    "quanto custa antipulgas para gato" casava apenas com "gato" e devolvia sache e
+    racao: preco real, produto errado — o cliente entende como preco do antipulgas.
+    """
+    termos = [
+        t for t in _catalogo_termos(texto) if t not in TERMOS_ANIMAIS and len(t) >= 4
+    ]
+    if not termos:
+        return True
+    for it in itens:
+        for termo in termos:
+            if termo in it["palavras"] or any(
+                p.startswith(termo) for p in it["palavras"]
+            ):
+                return True
+            if termo in it["grupo_norm"]:
+                return True
+    return False
+
+
 def _catalogo_categoria(texto, limite=None):
     """Itens de um grupo quando o cliente cita a categoria (ex.: 'pesca')."""
     limite = limite or CATALOGO_MAX
     itens = _catalogo_carregar()
     if not itens:
         return []
-    alvo = _catalogo_termos(texto)
+    # Especie sozinha nao e categoria: "antipulgas para gato" nao pode devolver a lista
+    # inteira de racoes porque "gato" aparece em "RACAO CAES E GATOS".
+    alvo = [t for t in _catalogo_termos(texto) if t not in TERMOS_ANIMAIS and len(t) >= 4]
     if not alvo:
         return []
     achados = []
@@ -1207,7 +1510,9 @@ def _catalogo_categoria(texto, limite=None):
 
 
 def _preco_texto(it):
-    valor = it["promo"] if it["promo"] else it["preco"]
+    # Só usa a promoção se ela for menor que o preço da tabela (o cadastro pode ter
+    # promoção antiga, com valor maior que o preço atual).
+    valor = it["promo"] if it["promo"] and 0 < it["promo"] < it["preco"] else it["preco"]
     texto = _brl(valor)
     if not texto or valor <= 0:
         return ""
@@ -1216,27 +1521,79 @@ def _preco_texto(it):
     return texto
 
 
-def _formata_catalogo(itens):
-    partes = []
+def _formata_catalogo(itens, texto_busca="", sem_animais=False):
+    """Uma linha por item.
+
+    Tudo numa frase so ("A por R$ 1; B por R$ 2; ...") vira um bloco ilegivel no
+    WhatsApp e no teste do app: o cliente nao acha o preco do item que quer.
+    """
+    linhas = []
     for it in itens:
         preco = _preco_texto(it)
-        nome = it["nome"]
+        linha = "• " + it["nome"]
         if preco:
-            partes.append(f"{nome} por {preco}")
-        else:
-            partes.append(nome)
-    if len(partes) == 1:
-        texto = "Temos " + partes[0] + "."
-    else:
-        texto = "Temos: " + "; ".join(partes) + "."
+            linha += " — " + preco
+        if it["estoque"] <= 0:
+            linha += " (em falta)"
+        linhas.append(linha)
+    texto = "Temos:\n" + "\n".join(linhas)
     sem_estoque = [it["nome"] for it in itens if it["estoque"] <= 0]
+    # Mostrar 10 e calar que existem outros faz o cliente achar que a loja so tem
+    # aquilo. Diz quantos ficaram de fora.
+    restantes = 0
+    if texto_busca:
+        total = len(_catalogo_buscar(texto_busca, limite=500, sem_animais=sem_animais))
+        restantes = max(0, total - len(itens))
     if len(sem_estoque) == len(itens):
-        texto += " No momento está em falta, mas posso confirmar com a equipe."
-    elif sem_estoque:
-        texto += " O item " + sem_estoque[0] + " está em falta no momento."
+        texto += "\n\nNo momento está em falta, mas posso confirmar com a equipe."
+    elif restantes:
+        texto += (
+            f"\n\nTem mais {restantes} opções parecidas: "
+            "me diz a marca ou o tamanho que eu filtro."
+        )
     else:
-        texto += " Quer algum desses?"
+        # Item em falta ja aparece marcado na propria linha: nao repete o nome.
+        texto += "\n\nQuer algum desses?"
     return texto
+
+
+NOMES_ANIMAIS = {
+    "cao": "cão",
+    "gato": "gato",
+    "peixe": "peixe",
+    "ave": "ave",
+    "roedor": "roedor",
+}
+
+
+def _pergunta_pet(texto, itens, cfg):
+    """Texto de "para qual pet?" quando o preco depende da especie.
+
+    "quanto custa a racao?" sem dizer o pet devolvia o preco da racao de peixe
+    primeiro — preco real, produto errado. Nesse caso o bot pergunta antes.
+    """
+    if not MONEY_RE.search(texto):
+        return ""
+    if _animais(set(_catalogo_termos(texto))):
+        return ""
+    # Espécies de TUDO que casa com a mensagem (não só dos itens que seriam
+    # listados): senão "ração" perguntava só "ave e peixe" e omitia cão e gato.
+    completos = _catalogo_buscar(texto, limite=50) or itens
+    especies = {
+        it["especie_principal"] for it in completos if it["especie_principal"]
+    }
+    if len(especies) < 2:
+        return ""
+    catalogo = cfg.get("catalogo") if isinstance(cfg, dict) else None
+    texto_pet = ""
+    if isinstance(catalogo, dict):
+        texto_pet = str(catalogo.get("perguntar_pet") or "").strip()
+    if not texto_pet:
+        texto_pet = "Temos opções para {pets}. É para qual pet?"
+    lista = [NOMES_ANIMAIS.get(e, e) for e in sorted(especies)]
+    if "{pets}" in texto_pet:
+        return texto_pet.replace("{pets}", _join(lista))
+    return texto_pet
 
 
 def _catalogo_resumo(cfg):
@@ -1308,6 +1665,18 @@ def nao_mencionar_config(cfg):
     if not isinstance(foco, dict):
         return []
     return [str(t).strip() for t in (foco.get("nao_mencionar") or []) if str(t).strip()]
+
+
+def _apresentacao(cfg):
+    """Texto de "o que a loja faz", montado com os servicos cadastrados."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    servicos = _join(cfg.get("servicos") or []) or "os serviços da loja"
+    texto = str(cfg.get("apresentacao") or "").strip() or APRESENTACAO_TEXT
+    if "{servicos}" in texto:
+        texto = texto.replace("{servicos}", servicos)
+    if "{catalogo}" in texto:
+        texto = texto.replace("{catalogo}", _catalogo_resumo(cfg))
+    return texto
 
 
 def _texto_fora(assuntos, fora):
@@ -1474,6 +1843,11 @@ def remember_sent(mid):
 
 
 def send(jid, text):
+    # Numero na lista de ignorados nao recebe nada: nem resposta, nem mensagem de
+    # teste. A checagem fica aqui tambem para valer em qualquer chamador do bot.
+    if _numero_ignorado(jid):
+        log(f"nao enviei para {jid}: numero em BOT_IGNORAR_NUMEROS")
+        return None
     resp = http_json(
         f"{EVOLUTION_URL}/message/sendText/{INSTANCE}",
         {"number": jid.split("@")[0], "text": text},
@@ -1508,16 +1882,31 @@ def compose_reply(jid, text):
         novo = str(config.get("pedido_novo") or "").strip() or CATALOGO_TEXTO
         return _fill(novo), "pedido", "novo pedido"
     # Pedido vem ANTES do filtro de preco: "quanto ficou meu pedido?" tem resposta real.
-    if PEDIDO_RE.search(text):
+    # Tanto pergunta de status quanto pedido de confirmacao passam por aqui: sem numero o
+    # bot pergunta o numero do pedido para conseguir conferir/confirmar.
+    if PEDIDO_RE.search(text) or PEDIDO_CONFIRMAR_RE.search(text):
         pedidos = consultar_pedidos(jid, text)
         if pedidos:
             return _fill(_formata_pedidos(pedidos)), "pedido", f"{len(pedidos)} pedido(s)"
-        texto_pedido = str(config.get("pedido") or "").strip() or PEDIDO_TEXT
-        return _fill(texto_pedido), "pedido", "sem consulta"
+        citado = re.search(r"(?i)\bped[-\s]?(\d{1,6})\b", text or "")
+        if citado:
+            # O cliente citou um numero e a busca nao achou: pede pra conferir o numero.
+            return _fill(str(config.get("pedido") or "").strip() or PEDIDO_TEXT), "pedido", "pedido nao encontrado"
+        # Pedido/status/confirmacao sem numero: pergunta o numero do pedido para confirmar.
+        return _fill(PEDIDO_ASK), "pedido", "pedidos: pedir numero"
     # --- catalogo: o que a loja tem de verdade (nome, preco e estoque do sistema) ---
     if CATALOGO_DSN and _catalogo_quer_ver(text):
         resumo = _catalogo_resumo(config)
         return _fill(resumo or CATALOGO_TEXTO), "catalogo", "resumo"
+    # Preco de servico (banho, tosa, vacina, taxi dog): sem valor em
+    # "servicos_detalhes" o bot NAO chuta nem cai no catalogo (responderia o preco
+    # de um shampoo para quem perguntou do banho).
+    if config and MONEY_RE.search(text) and SERVICO_RE.search(text):
+        detalhes = [
+            str(d).strip() for d in (config.get("servicos_detalhes") or []) if str(d).strip()
+        ]
+        if not detalhes:
+            return _fill(FALLBACK), "fallback_preco", "servico sem preco"
     if config:
         resposta, gatilho = fact_reply(config, text)
         if resposta:
@@ -1525,7 +1914,9 @@ def compose_reply(jid, text):
     # Alimentacao / dose ("quanto de racao devo dar"): e conselho da equipe,
     # nunca busca de preço nem palpite do modelo. Deve vir ANTES do catalogo,
     # pq "ração" aciona ITEM_NOME_RE mas a intencao e orientacao, nao compra.
-    if NUTRICAO_RE.search(text):
+    # Pergunta de preco nunca cai em conselho de alimentacao ("quanto custa a racao"
+    # e consulta de preco, nao dose).
+    if NUTRICAO_RE.search(text) and not MONEY_RE.search(text):
         texto_conselho = str(config.get("conselho") or "").strip() or CONSELHO_TEXT
         return _fill(texto_conselho), "conselho", None
     if CATALOGO_DSN and (
@@ -1534,8 +1925,15 @@ def compose_reply(jid, text):
         # "meu gato esta com pulga": busca pelo problema, nao pela especie.
         problema = bool(PROBLEMA_RE.search(text)) and not _catalogo_quer_item(text)
         itens = _catalogo_buscar(text, sem_animais=problema)
-        if itens:
-            return _fill(_formata_catalogo(itens)), "catalogo", f"{len(itens)} item(ns)"
+        if itens and _catalogo_tem_item_do_assunto(text, itens):
+            pergunta = _pergunta_pet(text, itens, config)
+            if pergunta:
+                return _fill(pergunta), "catalogo", "qual pet"
+            return (
+                _fill(_formata_catalogo(itens, text, sem_animais=problema)),
+                "catalogo",
+                f"{len(itens)} item(ns)",
+            )
         itens = _catalogo_categoria(text)
         if itens:
             return _fill(_formata_catalogo(itens)), "catalogo", "categoria"
@@ -1545,14 +1943,22 @@ def compose_reply(jid, text):
     # Substantivo de produto puro sem verbo de compra ("coleira para gato",
     # "raca golden cachorro"): tenta o catalogo antes de chamar o modelo.
     if CATALOGO_DSN and ITEM_NOME_RE.search(text) and _catalogo_termos(text):
-        itens = _catalogo_buscar(text)
-        if not itens:
+        busca = text
+        itens = _catalogo_buscar(busca)
+        if not itens or not _catalogo_tem_item_do_assunto(text, itens):
             # Busca mais solta: so o primeiro substantivo (ex. "coleira"),
             # sem exigir que todos os termos casem.
-            primeiro = _catalogo_termos(text)[0]
-            itens = _catalogo_buscar(primeiro)
-        if itens:
-            return _fill(_formata_catalogo(itens)), "catalogo", f"{len(itens)} item(ns)"
+            busca = _catalogo_termos(text)[0]
+            itens = _catalogo_buscar(busca)
+        if itens and _catalogo_tem_item_do_assunto(text, itens):
+            pergunta = _pergunta_pet(text, itens, config)
+            if pergunta:
+                return _fill(pergunta), "catalogo", "qual pet"
+            return (
+                _fill(_formata_catalogo(itens, busca)),
+                "catalogo",
+                f"{len(itens)} item(ns)",
+            )
         itens = _catalogo_categoria(text)
         if itens:
             return _fill(_formata_catalogo(itens)), "catalogo", "categoria"
@@ -1566,7 +1972,7 @@ def compose_reply(jid, text):
         texto_saude = str(config.get("saude") or "").strip() or SAUDE_TEXT
         return _fill(texto_saude), "saude", None
     # Alimentacao (dose, frequencia, "pode comer todo dia"): tambem e equipe.
-    if NUTRICAO_RE.search(text):
+    if NUTRICAO_RE.search(text) and not MONEY_RE.search(text):
         texto_conselho = str(config.get("conselho") or "").strip() or CONSELHO_TEXT
         return _fill(texto_conselho), "conselho", None
     # Cuidados gerais do pet: nao deixa o modelo improvisar.
@@ -1584,7 +1990,25 @@ def compose_reply(jid, text):
         return (
             _fill(str(config.get("agradecimento") or "").strip() or AGRADECIMENTO_TEXT),
             "saudacao",
-            None,
+            "agradecimento",
+        )
+    # "o que voce pode fazer?" e apresentacao: lista o que a loja faz, em vez de
+    # mandar o cliente para a equipe.
+    if AJUDA_RE.search(text):
+        return _fill(_apresentacao(config)), "config", "apresentacao"
+    # O cliente reclamou que a resposta se repetiu: responde diferente e pede detalhe.
+    if REPETICAO_RE.search(text):
+        return (
+            _fill(str(config.get("repeticao") or "").strip() or REPETICAO_TEXT),
+            "config",
+            "repeticao",
+        )
+    # Elogio/conversa curta: resposta propria (antes repetia o texto de fora do tema).
+    if len(text) <= 40 and CORTESIA_RE.search(text):
+        return (
+            _fill(str(config.get("cortesia") or "").strip() or CORTESIA_TEXT),
+            "saudacao",
+            "cortesia",
         )
     # Fora do escopo da loja: nao chama o modelo. E aqui que ele inventava produto e
     # servico que a loja nao tem. Mensagem que cita um pet continua valendo.
@@ -1602,10 +2026,11 @@ def compose_reply(jid, text):
         return "", "erro_ollama", type(e).__name__
     if not answer:
         return "", "vazio", None
-    if MONEY_RE.search(answer):
-        # Preco so passa se for EXATAMENTE um valor do catalogo enviado ao modelo.
-        permitidos = _numeros(_contexto_catalogo(text))
-        citados = _numeros(answer)
+    if MONEY_RE.search(answer) or _valores(answer):
+        # Preco so passa se for EXATAMENTE um valor do catalogo enviado ao modelo
+        # (e todo numero da resposta precisa estar nele: "R$ 60" tambem conta).
+        permitidos = _valores(_contexto_catalogo(text))
+        citados = _valores(answer)
         if not citados or not citados <= permitidos:
             return _fill(FALLBACK), "fallback_valor", None
     if META_RE.search(answer):
@@ -1753,7 +2178,7 @@ class Handler(BaseHTTPRequestHandler):
                 "prompt_chars": len(load_prompt()),
                 "keywords": KEYWORDS,
                 "paused": is_globally_paused(),
-                "paused_until": paused_until_global,
+                "paused_until": (None if paused_until_global == float("inf") else round(paused_until_global, 3)),
                 "paused_contacts": len(muted_until),
                 "state_file": STATE_FILE,
             }
@@ -1830,16 +2255,39 @@ class Handler(BaseHTTPRequestHandler):
         jid = key.get("remoteJid") or ""
         if not jid.endswith("@s.whatsapp.net"):
             return
-        # Loja respondeu pelo celular/app -> pausa o bot para esse contato.
+        # Numero marcado para ignorar: nao responde e nem entra na fila.
+        if _numero_ignorado(jid):
+            log(f"ignorado de {jid}: numero em BOT_IGNORAR_NUMEROS")
+            return
+        # Loja respondeu pelo celular/app -> pausa o bot para esse contato (takeover).
+        # So pausa quem o bot JA tinha atendido: operador/loja iniciando conversa pelo
+        # Whats sem a conversa existir (ex.: o proprio dono testando o bot) nao pode
+        # silenciar o atendente — e isso que vinha fazendo o bot "sumir" no Whats.
         if key.get("fromMe") or "send_message" in event:
             if key.get("id") in bot_sent_set:
                 return  # foi o proprio bot: nao pausa nada
-            mute_for(jid, HUMAN_MUTE_MIN, "loja respondeu manualmente")
-            return
+            if replies.get(jid):
+                mute_for(jid, HUMAN_MUTE_MIN, "loja respondeu manualmente")
+                return
+            # Sem resposta anterior do bot nesta conversa: era o dono/operador falando com
+            # o atendente — segue o fluxo normal abaixo.
         if "messages_upsert" not in event:
             return
         mid = key.get("id")
-        if not mid or not mark_seen(mid):
+        if not mid:
+            return
+        # Corte por idade: mensagem antiga reenviada pela Evolution (historico que ela
+        # reemite ao reconectar) nao e conversa nova — nao pode ser respondida de novo.
+        idade = _ts_segundos(data)
+        if idade is not None and MAX_IDADE_MIN > 0:
+            atraso_min = (time.time() - idade) / 60
+            if atraso_min > MAX_IDADE_MIN:
+                log(
+                    f"ignorado de {jid}: mensagem de {int(atraso_min)} min atras "
+                    "(historico reenviado / ja respondida)"
+                )
+                return
+        if not mark_seen(mid):
             return
         text = (extract_text(data) or "").strip()
         if not text:
@@ -1865,9 +2313,11 @@ if __name__ == "__main__":
         f"ollama={OLLAMA_URL} "
         f"janela={ACTIVE_HOURS or '24h'} pausa_humano={HUMAN_MUTE_MIN}min "
         f"palavras_chave={KEYWORDS or 'todas'} estado={STATE_FILE} "
+        f"ignorados={len(NUMEROS_IGNORADOS)} "
         f"catalogo={'sim' if CATALOGO_DSN else 'nao'} pedidos={'sim' if PEDIDOS_DSN else 'nao'}"
     )
     load_state()
+    _seen_carregar()
     if CATALOGO_DSN:
         threading.Thread(target=_catalogo_carregar, kwargs={"forcar": True}, daemon=True).start()
     if WARMUP:

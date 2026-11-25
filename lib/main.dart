@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:sistema_exodo_novo/theme.dart';
 import 'package:sistema_exodo_novo/utils/mobile_ux.dart';
 import 'package:sistema_exodo_novo/pages/home_page.dart';
@@ -243,6 +244,13 @@ Future<void> _main() async {
 
 Future<void> _iniciarAplicativo() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Datas em português (`DateFormat(..., 'pt_BR')`) precisam dos símbolos do
+  // locale carregados. As telas de agenda carregavam por conta própria, mas
+  // serviços (resumo do dia no WhatsApp, modelos de mensagem) formatam data
+  // sem ter aberto nenhuma delas e estouravam
+  // "LocalDataException: Local data has not been initialized".
+  await initializeDateFormatting('pt_BR', null);
 
   // Primeira tela desenhada na hora: mostra o sistema carregando em vez de um
   // splash parado. É substituída pelo app de verdade no fim da abertura.

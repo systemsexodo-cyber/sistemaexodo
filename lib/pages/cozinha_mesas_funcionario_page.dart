@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:sistema_exodo_novo/services/data_service.dart';
+import 'package:sistema_exodo_novo/services/recebimento_helper.dart';
 import 'package:sistema_exodo_novo/services/auth_service.dart';
 import 'package:sistema_exodo_novo/models/mesa_comanda.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
@@ -631,20 +632,6 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                   label: const Text('Receber'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              // Novo botão para receber por valor (não apenas por itens)
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _mostrarDialogoReceberPorValor(isComandaIndependente ? mesa : null, isComandaIndependente),
-                  icon: const Icon(Icons.attach_money),
-                  label: const Text('Receber por Valor'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
@@ -1570,6 +1557,20 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                       '${item.quantidade}x ${formatoMoeda.format(item.precoUnitarioComAdicionais)}',
                       style: TextStyle(color: Colors.grey, fontSize: 12),
                     ),
+                    if (item.quantidadePaga > 0.0001) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        item.estaPago
+                            ? 'Pago'
+                            : 'Pago ${item.quantidadePaga.toStringAsFixed(item.quantidadePaga == item.quantidadePaga.roundToDouble() ? 0 : 2)}'
+                                ' de ${item.quantidade.toStringAsFixed(item.quantidade == item.quantidade.roundToDouble() ? 0 : 2)}',
+                        style: TextStyle(
+                          color: item.estaPago ? Colors.green : Colors.orange,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                     const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2132,6 +2133,149 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     return await pdf.save();
   }
 
+  /// Texto do campo de valor livre (pt-BR: 10,50).
+  String _textoValor(double valor) =>
+      valor.toStringAsFixed(2).replaceAll('.', ',');
+
+  /// Formata uma quantidade de item sem casas decimais quando ela é inteira.
+  String _textoQuantidade(double valor) =>
+      valor.toStringAsFixed(valor == valor.roundToDouble() ? 0 : 2);
+
+  /// Quantidades quitadas por item, agrupadas pela origem (mesa/comanda).
+  Map<String, Map<String, double>> _quantidadesPorOrigemPlano(
+    List<OrigemRecebimento> origens,
+    Map<String, double> quantidadePorItem,
+  ) {
+    final porOrigem = <String, Map<String, double>>{};
+    for (final origem in origens) {
+      final quantidades = <String, double>{};
+      for (final item in origem.itens) {
+        final qtd = quantidadePorItem[item.id];
+        if (qtd != null && qtd > 0) quantidades[item.id] = qtd;
+      }
+      porOrigem[origem.id] = quantidades;
+    }
+    return porOrigem;
+  }
+
+  /// Converte o mapa de quantidades devolvido pelo diálogo de recebimento.
+  Map<String, double>? _quantidadesDoResultado(dynamic bruto) {
+    if (bruto is! Map) return null;
+    final quantidades = <String, double>{};
+    bruto.forEach((chave, valor) {
+      final numero = valor is num ? valor.toDouble() : null;
+      if (chave is String && numero != null && numero > 0) {
+        quantidades[chave] = numero;
+      }
+    });
+    return quantidades.isEmpty ? null : quantidades;
+  }
+
+  /// Linha de item do diálogo de recebimento com seleção da quantidade a pagar.
+  Widget _buildItemRecebimento({
+    required ItemMesaComanda item,
+    required Map<String, double> quantidadesSelecionadas,
+    required VoidCallback atualizar,
+    required NumberFormat formatoMoeda,
+  }) {
+    final pendente = item.quantidadePendente;
+    final quantidadeSelecionada =
+        (quantidadesSelecionadas[item.id] ?? 0.0).clamp(0.0, pendente).toDouble();
+    final isSelecionado = quantidadeSelecionada > 0.0001;
+    final passo = pendente == pendente.roundToDouble() ? 1.0 : 0.5;
+    final valorSelecionado = centavos(
+      item.precoUnitarioComAdicionais * quantidadeSelecionada,
+    );
+
+    void definirQuantidade(double valor) {
+      final limitada = valor.clamp(0.0, pendente).toDouble();
+      if (limitada <= 0.0001) {
+        quantidadesSelecionadas.remove(item.id);
+      } else {
+        quantidadesSelecionadas[item.id] = limitada;
+      }
+      atualizar();
+    }
+
+    return CheckboxListTile(
+      value: isSelecionado,
+      activeColor: Colors.orange,
+      controlAffinity: ListTileControlAffinity.leading,
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      title: Text(
+        '${_textoQuantidade(item.quantidade)}x ${item.nome}',
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+      ),
+      subtitle: Text(
+        isSelecionado
+            ? '${formatoMoeda.format(valorSelecionado)} • '
+                '${_textoQuantidade(quantidadeSelecionada)} de '
+                '${_textoQuantidade(pendente)} un.'
+            : formatoMoeda.format(item.subtotalPendente),
+        style: TextStyle(
+          color: isSelecionado ? Colors.orange : Colors.green,
+          fontSize: 12,
+        ),
+      ),
+      onChanged: (value) {
+        if (value == null) return;
+        definirQuantidade(value ? pendente : 0.0);
+      },
+      secondary: isSelecionado
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Diminuir quantidade',
+                  icon: const Icon(
+                    Icons.remove_circle_outline,
+                    color: Colors.redAccent,
+                    size: 20,
+                  ),
+                  onPressed: () =>
+                      definirQuantidade(quantidadeSelecionada - passo),
+                ),
+                Text(
+                  _textoQuantidade(quantidadeSelecionada),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Aumentar quantidade',
+                  icon: Icon(
+                    Icons.add_circle_outline,
+                    color: quantidadeSelecionada < pendente - 0.0001
+                        ? Colors.greenAccent
+                        : Colors.white24,
+                    size: 20,
+                  ),
+                  onPressed: quantidadeSelecionada < pendente - 0.0001
+                      ? () => definirQuantidade(quantidadeSelecionada + passo)
+                      : null,
+                ),
+              ],
+            )
+          : null,
+    );
+  }
+
+  /// Lê o valor digitado aceitando "10,50", "10.50" e "R\$ 10,50".
+  double _valorDoTexto(String texto) {
+    final limpo = texto.trim().replaceAll(r'R$', '').replaceAll(' ', '');
+    if (limpo.isEmpty) return 0.0;
+    final normalizado = limpo.contains(',')
+        ? limpo.replaceAll('.', '').replaceAll(',', '.')
+        : limpo;
+    final valor = double.tryParse(normalizado) ?? 0.0;
+    return valor < 0 ? 0.0 : valor;
+  }
+
   Future<void> _receberMesa(MesaComanda mesa, DataService dataService) async {
     final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     
@@ -2236,11 +2380,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
     if (!context.mounted) return;
 
-    // Itens selecionados para pagamento
-    final itensSelecionados = <String>{};
+    // Quantidade a pagar de cada item selecionado (permite pagamento parcial)
+    final quantidadesSelecionadas = <String, double>{};
     double quantidadePessoasCouvertSelecionada = 0.0; // Quantidade de pessoas do couvert selecionada para pagar
-    double valorItensSelecionados = 0.0; // Valor apenas dos itens (sem couvert)
-    double valorSelecionado = 0.0; // Valor total selecionado (itens + couvert)
     final pessoaPagouController = TextEditingController();
     final quantidadeCouvertController = TextEditingController();
     
@@ -2249,6 +2391,28 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     final temCouvertPendente = couvertPendente > 0.01;
     final quantidadePessoasPendente = (mesa.quantidadePessoasCouvert ?? 0) - ((mesa.couvertPago / (mesa.valorCouvertPorPessoa ?? 1.0)).round());
     final valorPorPessoa = mesa.valorCouvertPorPessoa ?? 0.0;
+    final origensRecebimento = <OrigemRecebimento>[
+      OrigemRecebimento(
+        id: mesa.id,
+        rotulo: 'Mesa ${mesa.numero}',
+        itens: mesa.itens,
+      ),
+      for (final comanda in comandasDaMesa)
+        OrigemRecebimento(
+          id: comanda.id,
+          rotulo: 'Comanda ${comanda.numero}',
+          itens: comanda.itens,
+        ),
+    ];
+    final maximoPorValor = centavos(
+      totalPendenteItens(origensRecebimento) *
+          (mesa.garcomRetirado ? 1.0 : 1.1),
+    );
+    var modoValor = false;
+    final valorLivreController = TextEditingController(
+      text: _textoValor(maximoPorValor),
+    );
+
 
     // Mostrar diálogo de seleção de itens e pagamento
     final resultado = await showDialog<Map<String, dynamic>>(
@@ -2265,6 +2429,57 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             itensPorOrigem[origem]!.add(itemData);
           }
           
+          Future<void> confirmarRecebimento() async {
+            final plano = modoValor
+                ? planejarRecebimento(
+                    origens: origensRecebimento,
+                    valor: _valorDoTexto(valorLivreController.text),
+                    garcomRetirado: mesa.garcomRetirado,
+                  )
+                : planejarRecebimento(
+                    origens: origensRecebimento,
+                    quantidadesPorItem: quantidadesSelecionadas,
+                    garcomRetirado: mesa.garcomRetirado,
+                  );
+            final valorCouvertSelecionado = modoValor
+                ? 0.0
+                : quantidadePessoasCouvertSelecionada * valorPorPessoa;
+            if (plano.vazio && valorCouvertSelecionado <= 0.004) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Selecione ao menos um item ou informe o valor recebido',
+                  ),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              return;
+            }
+            final pagamentos = await _mostrarTelaPagamentoPDV(
+              context,
+              plano.valorTotal + valorCouvertSelecionado,
+              pessoaPagouController.text.trim(),
+              mesaComanda: mesa,
+              valorBase: plano.valorItens,
+            );
+            if (pagamentos == null ||
+                pagamentos.isEmpty ||
+                !context.mounted) {
+              return;
+            }
+            Navigator.pop(context, {
+              'itens': plano.itensIds,
+              'quantidades': modoValor ? null : plano.quantidadePorItem,
+              'valorLivre':
+                  modoValor ? _valorDoTexto(valorLivreController.text) : null,
+              'pagamentos': pagamentos,
+              'pessoaPagou': pessoaPagouController.text.trim(),
+              'couvertSelecionado': valorCouvertSelecionado > 0.004,
+              'valorCouvert': valorCouvertSelecionado,
+              'quantidadePessoasCouvert': quantidadePessoasCouvertSelecionada,
+            });
+          }
+
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
             insetPadding: EdgeInsets.symmetric(
@@ -2306,6 +2521,118 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                       style: const TextStyle(color: Colors.orange, fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Por item(ns)'),
+                          selected: !modoValor,
+                          selectedColor: Colors.orange,
+                          onSelected: (_) =>
+                              setDialogState(() => modoValor = false),
+                        ),
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: const Text('Por valor'),
+                          selected: modoValor,
+                          selectedColor: Colors.purpleAccent,
+                          onSelected: (_) => setDialogState(() {
+                            modoValor = true;
+                            valorLivreController.text =
+                                _textoValor(maximoPorValor);
+                          }),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (modoValor) ...[
+                      TextField(
+                        controller: valorLivreController,
+                        autofocus: true,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Valor recebido agora (R\$)',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          helperText:
+                              'Pode ser parcial: o que faltar continua pendente',
+                          helperStyle: TextStyle(color: Colors.grey),
+                        ),
+                        onChanged: (_) => setDialogState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      Builder(
+                        builder: (_) {
+                          final preview = planejarRecebimento(
+                            origens: origensRecebimento,
+                            valor: _valorDoTexto(valorLivreController.text),
+                            garcomRetirado: mesa.garcomRetirado,
+                          );
+                          final restante = (maximoPorValor - preview.valorTotal)
+                              .clamp(0.0, maximoPorValor);
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Máximo em itens: ${formatoMoeda.format(maximoPorValor)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Vai receber: ${formatoMoeda.format(preview.valorTotal)}'
+                                ' • ${preview.itensIds.length} item(ns)',
+                                style: const TextStyle(
+                                  color: Colors.green,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Fica pendente: ${formatoMoeda.format(restante)}',
+                                style: const TextStyle(
+                                  color: Colors.orange,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              if (totalDisponivel - maximoPorValor > 0.01)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    'Couvert pendente de ${formatoMoeda.format(totalDisponivel - maximoPorValor)}: receba no modo por item.',
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: pessoaPagouController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Quem está pagando (opcional)',
+                          labelStyle: TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        onPressed: confirmarRecebimento,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          minimumSize: const Size(double.infinity, 48),
+                        ),
+                        child: const Text('Escolher Forma de Pagamento'),
+                      ),
+                    ] else ...[
+
                     const Text(
                       'Selecione os itens para receber:',
                       style: TextStyle(color: Colors.white70, fontSize: 14),
@@ -2314,7 +2641,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     // Selecionar Tudo (Global)
                     CheckboxListTile(
                       title: const Text('Selecionar Tudo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                      value: itensSelecionados.length == itensComOrigem.length,
+                      value: quantidadesSelecionadas.length == itensComOrigem.length,
                       activeColor: Colors.orange,
                       dense: true,
                       controlAffinity: ListTileControlAffinity.leading,
@@ -2325,17 +2652,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                             if (value) {
                                for (final itemData in itensComOrigem) {
                                   final item = itemData['item'] as ItemMesaComanda;
-                                  if (!itensSelecionados.contains(item.id)) {
-                                     itensSelecionados.add(item.id);
-                                     final itemTotal = item.preco * item.quantidade;
-                                     valorItensSelecionados += itemTotal;
-                                     valorSelecionado += itemTotal;
-                                  }
+                                  quantidadesSelecionadas[item.id] =
+                                      item.quantidadePendente;
                                }
                             } else {
-                               itensSelecionados.clear();
-                               valorItensSelecionados = 0.0;
-                               valorSelecionado = 0.0;
+                               quantidadesSelecionadas.clear();
                             }
                          });
                       },
@@ -2352,17 +2673,17 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                           final primeiroItem = itensOrigem.first;
                           final tipoOrigem = primeiroItem['tipo'] as String;
                           
-                          // Calcular total da origem
+                          // Calcular total pendente da origem
                           double totalOrigem = 0.0;
                           for (final itemData in itensOrigem) {
                             final item = itemData['item'] as ItemMesaComanda;
-                            totalOrigem += item.preco * item.quantidade;
+                            totalOrigem += item.subtotalPendente;
                           }
                           
                           // Verificar se todos os itens da origem estão selecionados
                           final todosSelecionados = itensOrigem.every((itemData) {
                             final item = itemData['item'] as ItemMesaComanda;
-                            return itensSelecionados.contains(item.id);
+                            return quantidadesSelecionadas.containsKey(item.id);
                           });
                           
                           return ExpansionTile(
@@ -2387,19 +2708,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                   setDialogState(() {
                                     for (final itemData in itensOrigem) {
                                       final item = itemData['item'] as ItemMesaComanda;
-                                      final itemTotal = item.preco * item.quantidade;
                                       if (value == true) {
-                                        if (!itensSelecionados.contains(item.id)) {
-                                          itensSelecionados.add(item.id);
-                                          valorItensSelecionados += itemTotal;
-                                          valorSelecionado += itemTotal;
-                                        }
+                                        quantidadesSelecionadas[item.id] =
+                                            item.quantidadePendente;
                                       } else {
-                                        if (itensSelecionados.contains(item.id)) {
-                                          itensSelecionados.remove(item.id);
-                                          valorItensSelecionados -= itemTotal;
-                                          valorSelecionado -= itemTotal;
-                                        }
+                                        quantidadesSelecionadas.remove(item.id);
                                       }
                                     }
                                   });
@@ -2407,34 +2720,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                             ),
                             children: itensOrigem.map((itemData) {
                               final item = itemData['item'] as ItemMesaComanda;
-                              final itemTotal = item.preco * item.quantidade;
-                              final isSelecionado = itensSelecionados.contains(item.id);
-                              
-                              return CheckboxListTile(
-                                title: Text(
-                                  '${item.quantidade}x ${item.nome}',
-                                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                                ),
-                                subtitle: Text(
-                                  formatoMoeda.format(itemTotal),
-                                  style: const TextStyle(color: Colors.green, fontSize: 12),
-                                ),
-                                value: isSelecionado,
-                                activeColor: Colors.orange,
-                                onChanged: (value) {
-                                  if (value == null) return;
-                                  setDialogState(() {
-                                    if (value == true) {
-                                      itensSelecionados.add(item.id);
-                                      valorItensSelecionados += itemTotal;
-                                      valorSelecionado += itemTotal;
-                                    } else {
-                                      itensSelecionados.remove(item.id);
-                                      valorItensSelecionados -= itemTotal;
-                                      valorSelecionado -= itemTotal;
-                                    }
-                                  });
-                                },
+                              return _buildItemRecebimento(
+                                item: item,
+                                quantidadesSelecionadas: quantidadesSelecionadas,
+                                formatoMoeda: formatoMoeda,
+                                atualizar: () => setDialogState(() {}),
                               );
                             }).toList(),
                           );
@@ -2516,14 +2806,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                         final quantidade = double.tryParse(value) ?? 0.0;
                                         if (quantidade < 0) {
                                           quantidadePessoasCouvertSelecionada = 0.0;
-                                          valorSelecionado = valorItensSelecionados;
                                         } else if (quantidade > quantidadePessoasPendente) {
                                           quantidadePessoasCouvertSelecionada = quantidadePessoasPendente.toDouble();
                                           quantidadeCouvertController.text = quantidadePessoasPendente.toString();
-                                          valorSelecionado = valorItensSelecionados + (quantidadePessoasPendente * valorPorPessoa);
                                         } else {
                                           quantidadePessoasCouvertSelecionada = quantidade;
-                                          valorSelecionado = valorItensSelecionados + (quantidade * valorPorPessoa);
                                         }
                                       });
                                     },
@@ -2537,7 +2824,6 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                       if (quantidadePessoasCouvertSelecionada < quantidadePessoasPendente) {
                                         quantidadePessoasCouvertSelecionada++;
                                         quantidadeCouvertController.text = quantidadePessoasCouvertSelecionada.toString();
-                                        valorSelecionado = valorItensSelecionados + (quantidadePessoasCouvertSelecionada * valorPorPessoa);
                                       }
                                     });
                                   },
@@ -2549,7 +2835,6 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                       if (quantidadePessoasCouvertSelecionada > 0) {
                                         quantidadePessoasCouvertSelecionada--;
                                         quantidadeCouvertController.text = quantidadePessoasCouvertSelecionada.toString();
-                                        valorSelecionado = valorItensSelecionados + (quantidadePessoasCouvertSelecionada * valorPorPessoa);
                                       }
                                     });
                                   },
@@ -2571,11 +2856,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                         ),
                       ),
                     ],
-                    if (itensSelecionados.isNotEmpty || quantidadePessoasCouvertSelecionada > 0) ...[
+                    if (quantidadesSelecionadas.isNotEmpty || quantidadePessoasCouvertSelecionada > 0) ...[
                       const Divider(),
                       Text(
-                        'Valor selecionado: ${formatoMoeda.format(valorSelecionado)}'
-                        ' • ${itensSelecionados.length} item(ns)',
+                        'Selecionado: ${formatoMoeda.format(planejarRecebimento(origens: origensRecebimento, quantidadesPorItem: quantidadesSelecionadas, garcomRetirado: mesa.garcomRetirado).valorTotal + quantidadePessoasCouvertSelecionada * valorPorPessoa)}'
+                        ' • ${_textoQuantidade(quantidadesSelecionadas.values.fold(0.0, (soma, qtd) => soma + qtd))} item(ns)',
                         style: const TextStyle(color: Colors.green, fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
@@ -2605,53 +2890,14 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                       ),
                       const SizedBox(height: 16),
                       ElevatedButton(
-                        onPressed: () async {
-                          // Nome da pessoa é opcional
-                          
-                          // Calcular garçom como 10% apenas do valor selecionado (itens)
-                          // O valor base é o valor dos itens selecionados (sem garçom e sem couvert)
-                          double valorBaseSelecionado = valorItensSelecionados; // Apenas itens, sem couvert
-                          final valorCouvertSelecionado = quantidadePessoasCouvertSelecionada * valorPorPessoa;
-                          double valorGarcomSelecionado = 0.0;
-                          double valorTotalComGarcom = valorSelecionado;
-                          
-                          if (!mesa.garcomRetirado) {
-                            // Garçom é 10% apenas do valor base (itens selecionados)
-                            valorGarcomSelecionado = valorBaseSelecionado * 0.10;
-                            // Valor total com garçom
-                            valorTotalComGarcom = valorSelecionado + valorGarcomSelecionado;
-                          }
-                          
-                          // Mostrar tela de pagamento do PDV (até 2 formas)
-                          // Passar o valor total com garçom e o valor base para cálculo correto
-                          final pagamentos = await _mostrarTelaPagamentoPDV(
-                            context,
-                            valorTotalComGarcom,
-                            pessoaPagouController.text.trim(),
-                            mesaComanda: mesa,
-                            valorBase: valorBaseSelecionado, // Passar o valor base (sem garçom e sem couvert) para cálculo correto
-                          );
-                          
-                          if (pagamentos != null && pagamentos.isNotEmpty && context.mounted) {
-                            Navigator.pop(context, {
-                              'itens': itensSelecionados.toList(),
-                              'valor': valorTotalComGarcom, // Retornar o valor total com garçom para validação correta
-                              'valorBase': valorSelecionado, // Valor sem garçom (para referência)
-                              'valorItens': valorItensSelecionados, // Só itens (base do garçom)
-                              'pagamentos': pagamentos,
-                              'pessoaPagou': pessoaPagouController.text.trim(),
-                              'couvertSelecionado': quantidadePessoasCouvertSelecionada > 0,
-                              'valorCouvert': valorCouvertSelecionado,
-                              'quantidadePessoasCouvert': quantidadePessoasCouvertSelecionada,
-                            });
-                          }
-                        },
+                        onPressed: confirmarRecebimento,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green,
                           minimumSize: const Size(double.infinity, 48),
                         ),
                         child: const Text('Escolher Forma de Pagamento'),
                       ),
+                    ],
                     ],
                   ],
                 ),
@@ -2670,114 +2916,88 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
     if (resultado == null) return;
 
-    final itensIds = resultado['itens'] as List<String>;
-    final valorPago = resultado['valor'] as double;
     final pagamentos = resultado['pagamentos'] as List<Map<String, dynamic>>?;
     final pessoaPagou = resultado['pessoaPagou'] as String?;
-    final couvertSelecionadoResult = resultado['couvertSelecionado'] as bool? ?? false;
-    final valorCouvert = resultado['valorCouvert'] as double? ?? 0.0;
+    final couvertSelecionadoResult =
+        resultado['couvertSelecionado'] as bool? ?? false;
+    final valorCouvertSelecionado = resultado['valorCouvert'] as double? ?? 0.0;
+    final itensSelecionadosResult =
+        (resultado['itens'] as List<String>?) ?? const <String>[];
+    final quantidadesResult = _quantidadesDoResultado(resultado['quantidades']);
+    final valorLivreResult = resultado['valorLivre'] as double?;
 
-    if (pagamentos == null || pagamentos.isEmpty) {
-      return;
-    }
+    if (pagamentos == null || pagamentos.isEmpty) return;
 
-    // Processar pagamento
     try {
-      // Recarregar dados atualizados do dataService
+      // Trabalha sempre com os dados mais recentes de mesa e comandas.
       final mesaAtual = dataService.mesasComandas.firstWhere(
         (m) => m.id == mesa.id,
         orElse: () => mesa,
       );
-      
-      // Buscar comandas vinculadas atualizadas - todas, independente do status
-      final comandasDaMesaAtualizadas = dataService.mesasComandas
+      final comandasAtuais = dataService.mesasComandas
           .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)
           .toList();
-      
-      // Separar itens da mesa e das comandas
-      final itensMesa = <String>[];
-      final itensComandas = <String, List<String>>{}; // comandaId -> lista de itemIds
-      
-      // Verificar origem de cada item usando os dados atualizados
-      for (final itemData in itensComOrigem) {
-        final item = itemData['item'] as ItemMesaComanda;
-        if (itensIds.contains(item.id)) {
-          final tipo = itemData['tipo'] as String;
-          final origemId = itemData['origemId'] as String;
-          
-          if (tipo == 'mesa') {
-            itensMesa.add(item.id);
-          } else if (tipo == 'comanda') {
-            if (!itensComandas.containsKey(origemId)) {
-              itensComandas[origemId] = [];
-            }
-            itensComandas[origemId]!.add(item.id);
-          }
+
+      final origens = <OrigemRecebimento>[
+        OrigemRecebimento(
+          id: mesaAtual.id,
+          rotulo: 'Mesa ${mesaAtual.numero}',
+          itens: mesaAtual.itens,
+        ),
+        for (final comanda in comandasAtuais)
+          OrigemRecebimento(
+            id: comanda.id,
+            rotulo: 'Comanda ${comanda.numero}',
+            itens: comanda.itens,
+          ),
+      ];
+
+      final garcomFoiRetirado =
+          pagamentos.first['garcomRetirado'] as bool? ?? false;
+      final valorRecebido = pagamentos.fold<double>(
+        0.0,
+        (soma, pagamento) =>
+            soma + ((pagamento['valor'] as num?)?.toDouble() ?? 0.0),
+      );
+      final valorCouvertPago =
+          couvertSelecionadoResult ? valorCouvertSelecionado : 0.0;
+      final valorParaItens = valorRecebido - valorCouvertPago;
+
+      // O plano é refeito com o dinheiro que realmente entrou no caixa: assim
+      // as quantidades quitadas, o histórico e o saldo pendente fecham sempre.
+      final plano = planejarRecebimento(
+        origens: origens,
+        quantidadesPorItem:
+            valorLivreResult == null ? quantidadesResult : null,
+        itensSelecionados: valorLivreResult == null && quantidadesResult == null
+            ? itensSelecionadosResult.toSet()
+            : null,
+        valor: valorLivreResult == null ? null : valorParaItens,
+        garcomRetirado: garcomFoiRetirado,
+      );
+
+      if (plano.vazio && valorCouvertPago <= 0.004) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nenhum item pendente para receber'),
+              backgroundColor: Colors.orange,
+            ),
+          );
         }
+        return;
       }
-      
-      // Criar registros de pagamento (até 2 formas)
-      final registrosPagamento = <RegistroPagamento>[];
-      double valorTotalPagamentos = 0.0;
-      
-      for (final pagamentoData in pagamentos) {
-        final tipoPagamento = pagamentoData['tipo'] as TipoPagamento;
-        final valorPagamento = pagamentoData['valor'] as double;
-        final observacaoPagamento = pagamentoData['observacao'] as String?;
-        
-        valorTotalPagamentos += valorPagamento;
-        
-        registrosPagamento.add(RegistroPagamento(
-          id: uuid.v4(),
-          valor: valorPagamento,
-          dataPagamento: DateTime.now(),
-          formaPagamento: tipoPagamento.nome,
-          observacao: observacaoPagamento ?? 'Pagamento - ${itensIds.length} item(ns)',
-          itensPagos: itensIds,
-          pessoaPagou: pessoaPagou,
-        ));
-      }
-      
-      // Verificar se o garçom foi retirado (vem do resultado do pagamento)
-      bool garcomFoiRetirado = false;
-      if (pagamentos.isNotEmpty) {
-        final primeiroPagamento = pagamentos.first;
-        garcomFoiRetirado = primeiroPagamento['garcomRetirado'] as bool? ?? false;
-      }
-      
-      // Calcular valor esperado considerando se o garçom foi retirado
-      // O valorPago é o valorTotalComGarcom retornado do diálogo de seleção
-      // Se o garçom foi retirado, o valor esperado é menor (sem o garçom)
-      double valorEsperado = valorPago;
-      if (garcomFoiRetirado) {
-        // Calcular o valor do garçom (10% dos itens selecionados)
-        // O valorBase foi passado no diálogo de pagamento, mas não temos aqui
-        // Precisamos calcular: se valorPago = itens + couvert + garçom
-        // E garçom = 10% dos itens, então:
-        // valorPago = itens + couvert + (itens * 0.10)
-        // Não podemos calcular precisamente sem saber o valor dos itens separado do couvert
-        // Mas podemos usar o valorBase do resultado se disponível
-        // Garçom = 10% apenas dos ITENS (sem couvert). Usar o valor
-        // selecionado inteiro recusava o recebimento parcial com couvert.
-        final valorItensDoResultado =
-            (resultado['valorItens'] as double?) ??
-            (resultado['valorBase'] as double?);
-        if (valorItensDoResultado != null) {
-          final valorGarcomCalculado = valorItensDoResultado * 0.10;
-          valorEsperado = valorPago - valorGarcomCalculado;
-        } else {
-          // Fallback: tentar estimar removendo aproximadamente 10% do total
-          // Isso não é ideal, mas melhor que nada
-          valorEsperado = valorPago / 1.10;
-        }
-      }
-      
-      // Verificar se o valor total dos pagamentos corresponde ao valor esperado (com garçom se aplicável)
-      if ((valorTotalPagamentos - valorEsperado).abs() > 0.01) {
+
+      if ((valorParaItens - plano.valorTotal).abs() > 0.011) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Erro: O valor total dos pagamentos (${formatoMoeda.format(valorTotalPagamentos)}) não corresponde ao valor esperado (${formatoMoeda.format(valorEsperado)})'),
+              content: Text(
+                'Os itens somam ${formatoMoeda.format(plano.valorTotal)}, '
+                'diferente do valor recebido '
+                '(${formatoMoeda.format(valorParaItens)}). '
+                'Recebimento cancelado.',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -2785,341 +3005,272 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         return;
       }
 
-      // Adicionar itens da mesa aos pagos
-      final novosItensPagosMesa = [...mesaAtual.itensPagos, ...itensMesa];
+      final registrosPorOrigem = distribuirPagamentosPorPartes(
+        pagamentos: pagamentos,
+        partes: plano.valorPorOrigem,
+        pessoaPagou: pessoaPagou,
+        foraDasPartes: valorCouvertPago,
+        observacao: (_) => valorLivreResult == null
+            ? '${_textoQuantidade(plano.quantidadePorItem.values.fold(0.0, (soma, qtd) => soma + qtd))} item(ns)'
+            : 'Valor informado ${formatoMoeda.format(plano.valorTotal)}',
+        quantidadesPorOrigem: _quantidadesPorOrigemPlano(origens, plano.quantidadePorItem),
+      );
 
-      // Atualizar histórico de pagamentos da mesa (adicionar todos os registros)
-      final novoHistoricoMesa = [...mesaAtual.historicoPagamentos, ...registrosPagamento];
-
-      // Atualizar couvert pago se foi selecionado
       double novoCouvertPago = mesaAtual.couvertPago;
-      if (couvertSelecionadoResult && valorCouvert > 0) {
-        novoCouvertPago = (mesaAtual.couvertPago + valorCouvert).clamp(0.0, mesaAtual.valorCouvertCalculado);
+      if (valorCouvertPago > 0) {
+        novoCouvertPago = (mesaAtual.couvertPago + valorCouvertPago)
+            .clamp(0.0, mesaAtual.valorCouvertCalculado);
       }
-      
-      // Atualizar mesa (garcomFoiRetirado já foi definido acima na validação)
+
+      final itensMesaAtualizados = aplicarQuantidadesPagas(
+        mesaAtual.itens,
+        plano.quantidadePorItem,
+      );
       final mesaAtualizada = mesaAtual.copyWith(
-        itensPagos: novosItensPagosMesa,
-        historicoPagamentos: novoHistoricoMesa,
+        itens: itensMesaAtualizados,
+        itensPagos: idsItensPagos(itensMesaAtualizados, mesaAtual.itensPagos),
+        historicoPagamentos: [
+          ...mesaAtual.historicoPagamentos,
+          ...(registrosPorOrigem[mesaAtual.id] ?? const <RegistroPagamento>[]),
+        ],
         couvertPago: novoCouvertPago,
         garcomRetirado: garcomFoiRetirado || mesaAtual.garcomRetirado,
       );
-      // Atualizar _mesaSelecionada ANTES de chamar updateMesaComanda para que
-      // o rebuild disparado por notifyListeners() já mostre a referência nova.
-      // Sem isso, o rebuild mostrava a mesa antiga no painel de detalhes.
       if (mounted) {
         setState(() {
           _mesaSelecionada = mesaAtualizada;
         });
       }
       await dataService.updateMesaComanda(mesaAtualizada);
-      
-      // Atualizar comandas vinculadas - apenas se houver itens selecionados delas
-      if (itensComandas.isNotEmpty) {
-        for (final entry in itensComandas.entries) {
-          final comandaId = entry.key;
-          final itemIdsComanda = entry.value;
-          
-          // Buscar comanda atualizada
-          final comandaAtual = comandasDaMesaAtualizadas.firstWhere(
-            (c) => c.id == comandaId,
-            orElse: () {
-              // Se não encontrar, buscar no dataService
-              return dataService.mesasComandas.firstWhere(
-                (c) => c.id == comandaId,
-                orElse: () => throw Exception('Comanda $comandaId não encontrada'),
-              );
-            },
-          );
-          
-          // Criar registros de pagamento específicos para a comanda (proporcional)
-          final valorComanda = itemIdsComanda.fold<double>(0.0, (sum, itemId) {
-            final item = comandaAtual.itens.firstWhere(
-              (i) => i.id == itemId,
-              orElse: () => throw Exception('Item $itemId não encontrado na comanda'),
-            );
-            return sum + (item.preco * item.quantidade);
-          });
-          
-          // Distribuir pagamentos proporcionalmente
-          final registrosPagamentoComanda = <RegistroPagamento>[];
-          for (final pagamentoData in pagamentos) {
-            final tipoPagamento = pagamentoData['tipo'] as TipoPagamento;
-            final valorPagamento = pagamentoData['valor'] as double;
-            final observacaoPagamento = pagamentoData['observacao'] as String?;
-            
-            // Calcular proporção deste pagamento no total
-            final proporcao = valorPagamento / valorTotalPagamentos;
-            final valorComandaProporcional = valorComanda * proporcao;
-            
-            registrosPagamentoComanda.add(RegistroPagamento(
-              id: uuid.v4(),
-              valor: valorComandaProporcional,
-              dataPagamento: DateTime.now(),
-              formaPagamento: tipoPagamento.nome,
-              observacao: observacaoPagamento ?? 'Pagamento via mesa ${mesa.numero} - ${itemIdsComanda.length} item(ns)',
-              itensPagos: itemIdsComanda,
-              pessoaPagou: pessoaPagou,
-            ));
-          }
-          
-          final novosItensPagosComanda = [...comandaAtual.itensPagos, ...itemIdsComanda];
-          final novoHistoricoComanda = [...comandaAtual.historicoPagamentos, ...registrosPagamentoComanda];
-          
-          final comandaAtualizada = comandaAtual.copyWith(
-            itensPagos: novosItensPagosComanda,
-            historicoPagamentos: novoHistoricoComanda,
-          );
-          await dataService.updateMesaComanda(comandaAtualizada);
+
+      // Cada comanda vinculada recebe apenas a sua parte (itens + garçom),
+      // nunca o valor inteiro recebido pela mesa.
+      for (final comanda in comandasAtuais) {
+        final registros =
+            registrosPorOrigem[comanda.id] ?? const <RegistroPagamento>[];
+        final itensAtualizados = aplicarQuantidadesPagas(
+          comanda.itens,
+          plano.quantidadePorItem,
+        );
+        if (identical(itensAtualizados, comanda.itens) && registros.isEmpty) {
+          continue;
         }
+        await dataService.updateMesaComanda(
+          comanda.copyWith(
+            itens: itensAtualizados,
+            itensPagos: idsItensPagos(itensAtualizados, comanda.itensPagos),
+            historicoPagamentos: [
+              ...comanda.historicoPagamentos,
+              ...registros,
+            ],
+          ),
+        );
       }
 
-      // Verificar se está totalmente pago (mesa + comandas)
-      // Recalcular total pago incluindo comandas vinculadas
-      double totalPagoMesa = mesaAtualizada.totalPago;
-      double totalPagoComandas = 0.0;
-      
-      // Buscar comandas vinculadas atualizadas após o pagamento
-      final comandasDaMesaAtualizadasParaVerificacao = dataService.mesasComandas
-          .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesaAtualizada.id)
+      final mesaFinal = dataService.mesasComandas.firstWhere(
+        (m) => m.id == mesa.id,
+        orElse: () => mesaAtualizada,
+      );
+      final comandasFinais = dataService.mesasComandas
+          .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)
           .toList();
-      
-      for (final comanda in comandasDaMesaAtualizadasParaVerificacao) {
-        totalPagoComandas += comanda.totalPago;
-      }
-      
-      final novoTotalPago = totalPagoMesa + totalPagoComandas;
-      
-      // Calcular total geral (mesa + comandas) - todos os itens, não apenas pendentes
-      double totalGeralMesa = mesaAtualizada.totalCalculado;
-      double totalGeralComandas = 0.0;
-      for (final comanda in comandasDaMesaAtualizadasParaVerificacao) {
-        totalGeralComandas += comanda.totalCalculado;
-      }
-      final novoTotalGeral = totalGeralMesa + totalGeralComandas;
-      
-      // Verificar se está totalmente pago (com tolerância de 0.01 para arredondamentos)
-      // IMPORTANTE: Só liberar mesa se estiver TOTALMENTE paga
-      final estaPago = novoTotalPago >= novoTotalGeral - 0.01;
-      
-      // IMPORTANTE: Só liberar mesa se estiver TOTALMENTE paga
-      // Se totalmente pago, criar venda e liberar mesa
-      if (estaPago) {
-        // Coletar todos os itens da mesa e comandas vinculadas para a venda
-        final todosItensVenda = <ItemVendaBalcao>[];
-        
-        // Itens da mesa
-        for (final item in mesaAtualizada.itens) {
-          if (item.status != StatusItem.cancelado) {
-            todosItensVenda.add(ItemVendaBalcao(
-          id: item.itemId,
-          nome: item.nome,
-          precoUnitario: item.preco,
-          quantidade: item.quantidade.toDouble(),
-          isServico: item.isServico,
-            ));
-          }
-        }
-        
-        // Itens das comandas vinculadas
-        final comandasDaMesaParaVenda = dataService.mesasComandas
-            .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesaAtualizada.id)
-            .toList();
-        
-        // Incluir apenas itens PAGOS das comandas na venda
-        // Itens pendentes das comandas não devem ser incluídos na venda da mesa
-        for (final comanda in comandasDaMesaParaVenda) {
-          for (final item in comanda.itens) {
-            // Incluir apenas itens pagos e não cancelados
-            if (item.status != StatusItem.cancelado && comanda.itensPagos.contains(item.id)) {
-              todosItensVenda.add(ItemVendaBalcao(
-                id: item.itemId,
-                nome: item.nome,
-                precoUnitario: item.preco,
-                quantidade: item.quantidade.toDouble(),
-                isServico: item.isServico,
-              ));
-            }
-          }
-        }
 
-      // Converter todos os pagamentos (mesa + comandas vinculadas) em PagamentoPedido
-      // para preservar TODAS as formas de pagamento no histórico (split/parcial)
-      List<PagamentoPedido> converterPagamentosVendaMesa() {
-        final lista = <PagamentoPedido>[];
-        TipoPagamento _parseForma(String? f) {
-          final lower = f?.toLowerCase() ?? '';
-          if (lower.contains('pix')) return TipoPagamento.pix;
-          if (lower.contains('dinheiro')) return TipoPagamento.dinheiro;
-          if (lower.contains('débito') || lower.contains('debito')) return TipoPagamento.cartaoDebito;
-          if (lower.contains('crédito') || lower.contains('credito') || lower.contains('cart')) return TipoPagamento.cartaoCredito;
-          if (lower.contains('boleto')) return TipoPagamento.boleto;
-          if (lower.contains('crediário') || lower.contains('crediario')) return TipoPagamento.crediario;
-          if (lower.contains('fiado')) return TipoPagamento.fiado;
-          return TipoPagamento.outro;
+      double totalGeral = mesaFinal.totalCalculado;
+      double totalPagoGeral = mesaFinal.totalPago;
+      for (final comanda in comandasFinais) {
+        totalGeral += comanda.totalCalculado;
+        totalPagoGeral += comanda.totalPago;
+      }
+      final estaPago = totalPagoGeral >= totalGeral - 0.01;
+
+      if (!estaPago) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Recebimento de ${formatoMoeda.format(valorRecebido)} '
+                'registrado. Ainda faltam '
+                '${formatoMoeda.format(totalGeral - totalPagoGeral)}.',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          setState(() {
+            _mesaSelecionada = mesaFinal;
+          });
         }
-        for (final rp in mesaAtualizada.historicoPagamentos) {
-          lista.add(PagamentoPedido(
-            id: rp.id,
-            tipo: _parseForma(rp.formaPagamento),
-            valor: rp.valor,
-            recebido: true,
-            dataRecebimento: rp.dataPagamento,
-            observacao: rp.observacao,
-          ));
+        return;
+      }
+
+      // Mesa totalmente paga: gera a venda e libera para o próximo cliente.
+      final todosItensVenda = <ItemVendaBalcao>[];
+      for (final item in mesaFinal.itens) {
+        if (item.status == StatusItem.cancelado) continue;
+        todosItensVenda.add(
+          ItemVendaBalcao(
+            id: item.itemId,
+            nome: item.nome,
+            precoUnitario: item.preco,
+            quantidade: item.quantidade.toDouble(),
+            isServico: item.isServico,
+          ),
+        );
+      }
+      for (final comanda in comandasFinais) {
+        for (final item in comanda.itens) {
+          if (item.status == StatusItem.cancelado) continue;
+          final itemPago = item.estaPago || comanda.itensPagos.contains(item.id);
+          if (!itemPago) continue;
+          todosItensVenda.add(
+            ItemVendaBalcao(
+              id: item.itemId,
+              nome: item.nome,
+              precoUnitario: item.preco,
+              quantidade: item.quantidade.toDouble(),
+              isServico: item.isServico,
+            ),
+          );
         }
-        // Comandas recebem cópias PROPORCIONAIS dos mesmos pagamentos já registrados
-        // na mesa (registrosPagamentoComanda). Para evitar contagem dupla, incluímos
-        // apenas pagamentos das comandas que NÃO correspondem a um pagamento da mesa
-        // com a mesma forma e data (mesmo instante de liquidação).
-        for (final comanda in comandasDaMesaParaVenda) {
-          for (final rp in comanda.historicoPagamentos) {
-            final ehCopiaDoPagamentoDaMesa = mesaAtualizada.historicoPagamentos
-                .any((m) {
-              final mesmaForma = (m.formaPagamento ?? '').toLowerCase() ==
-                  (rp.formaPagamento ?? '').toLowerCase();
-              final mesmaData = m.dataPagamento
-                      .difference(rp.dataPagamento)
-                      .inSeconds
-                      .abs() <
-                  120;
-              return mesmaForma && mesmaData;
-            });
-            if (ehCopiaDoPagamentoDaMesa) continue;
-            lista.add(PagamentoPedido(
-              id: rp.id,
-              tipo: _parseForma(rp.formaPagamento),
-              valor: rp.valor,
+      }
+
+      TipoPagamento parseFormaVendaMesa(String? forma) {
+        final lower = forma?.toLowerCase() ?? '';
+        if (lower.contains('pix')) return TipoPagamento.pix;
+        if (lower.contains('dinheiro')) return TipoPagamento.dinheiro;
+        if (lower.contains('débito') || lower.contains('debito')) {
+          return TipoPagamento.cartaoDebito;
+        }
+        if (lower.contains('crédito') ||
+            lower.contains('credito') ||
+            lower.contains('cart')) {
+          return TipoPagamento.cartaoCredito;
+        }
+        if (lower.contains('boleto')) return TipoPagamento.boleto;
+        if (lower.contains('crediário') || lower.contains('crediario')) {
+          return TipoPagamento.crediario;
+        }
+        if (lower.contains('fiado')) return TipoPagamento.fiado;
+        return TipoPagamento.outro;
+      }
+
+      // Histórico da mesa + comandas já está rateado por origem, então cada
+      // registro entra uma única vez na venda.
+      final pagamentosVenda = <PagamentoPedido>[];
+      void adicionarPagamentos(List<RegistroPagamento> registros) {
+        for (final registro in registros) {
+          pagamentosVenda.add(
+            PagamentoPedido(
+              id: registro.id,
+              tipo: parseFormaVendaMesa(registro.formaPagamento),
+              valor: registro.valor,
               recebido: true,
-              dataRecebimento: rp.dataPagamento,
-              observacao: rp.observacao,
-            ));
-          }
+              dataRecebimento: registro.dataPagamento,
+              observacao: registro.observacao,
+            ),
+          );
         }
-        if (lista.isEmpty && pagamentos.isNotEmpty) {
-          for (final p in pagamentos) {
-            lista.add(PagamentoPedido(
+      }
+
+      adicionarPagamentos(mesaFinal.historicoPagamentos);
+      for (final comanda in comandasFinais) {
+        adicionarPagamentos(comanda.historicoPagamentos);
+      }
+      if (pagamentosVenda.isEmpty) {
+        for (final pagamento in pagamentos) {
+          pagamentosVenda.add(
+            PagamentoPedido(
               id: uuid.v4(),
-              tipo: p['tipo'] as TipoPagamento,
-              valor: p['valor'] as double,
+              tipo: pagamento['tipo'] as TipoPagamento,
+              valor: pagamento['valor'] as double,
               recebido: true,
               dataRecebimento: DateTime.now(),
-            ));
-          }
+            ),
+          );
         }
-        return lista;
       }
-
-      final pagamentosVenda = converterPagamentosVendaMesa();
 
       final numeroVenda = await dataService.getProximoNumeroVendaSeguro();
       final vendaBalcao = VendaBalcao(
         id: uuid.v4(),
         numero: numeroVenda,
         dataVenda: DateTime.now(),
-          clienteId: mesaAtualizada.clienteId,
-          clienteNome: mesaAtualizada.clienteNome,
-          itens: todosItensVenda,
-          tipoPagamento: pagamentos.first['tipo'] as TipoPagamento, // Usar primeira forma como principal
-          pagamentos: pagamentosVenda,
-          valorTotal: novoTotalGeral,
-          valorRecebido: novoTotalPago,
+        clienteId: mesaFinal.clienteId,
+        clienteNome: mesaFinal.clienteNome,
+        itens: todosItensVenda,
+        tipoPagamento: pagamentos.first['tipo'] as TipoPagamento,
+        pagamentos: pagamentosVenda,
+        valorTotal: totalGeral,
+        valorRecebido: totalPagoGeral,
         troco: null,
-          observacoes: 'Mesa ${mesaAtualizada.numero}',
+        observacoes: 'Mesa ${mesaFinal.numero}',
         operador: dataService.responsavelAtivo,
       );
-
       await dataService.addVendaBalcao(vendaBalcao);
 
-        // Liberar mesa: limpar TUDO para nova utilização
-        // IMPORTANTE: Limpar histórico de pagamentos para evitar saldo negativo
-        // O histórico completo está preservado na venda criada acima
-        final mesaLiberada = mesaAtualizada.copyWith(
-          itens: [], // Limpar todos os itens
-          itensPagos: [], // Limpar itens pagos
-          historicoPagamentos: [], // Limpar histórico de pagamentos para evitar saldo negativo
-          status: 'Aberta', // Reabrir mesa
-          dataFechamento: null, // Remover data de fechamento
-          dataAbertura: DateTime.now(), // Nova data de abertura
-          clienteNome: null, // Limpar cliente
-          clienteId: null, // Limpar ID do cliente
-          observacao: null, // Limpar observações
-          total: 0.0, // Zerar total
-          valorCouvert: null, // Limpar couvert
+      // Comandas totalmente pagas voltam limpas; as que ainda têm saldo ficam
+      // como estão para receber o restante depois.
+      for (final comanda in comandasFinais) {
+        if (comanda.totalPago < comanda.totalCalculado - 0.01) continue;
+        await dataService.updateMesaComanda(
+          comanda.copyWith(
+            itens: [],
+            itensPagos: [],
+            historicoPagamentos: [],
+            status: 'Aberta',
+            dataFechamento: null,
+            dataAbertura: DateTime.now(),
+            clienteNome: null,
+            clienteId: null,
+            observacao: null,
+            valorCouvert: null,
+            quantidadePessoasCouvert: null,
+            valorCouvertPorPessoa: null,
+            valorGarcom: null,
+            garcomRetirado: false,
+            updatedAt: DateTime.now(),
+          ),
+        );
+      }
+
+      await dataService.updateMesaComanda(
+        mesaFinal.copyWith(
+          itens: [],
+          itensPagos: [],
+          historicoPagamentos: [],
+          status: 'Aberta',
+          dataFechamento: null,
+          dataAbertura: DateTime.now(),
+          clienteNome: null,
+          clienteId: null,
+          observacao: null,
+          total: 0.0,
+          valorCouvert: null,
           quantidadePessoasCouvert: null,
           valorCouvertPorPessoa: null,
-          valorGarcom: null, // Limpar garçom
-          garcomRetirado: false, // Resetar retirada do garçom
-          updatedAt: DateTime.now(), // Atualizar timestamp
-        );
-        
-        // Atualizar comandas vinculadas - APENAS as que estão totalmente pagas
-        // IMPORTANTE: Não fechar comandas que ainda têm itens pendentes
-        for (final comanda in comandasDaMesaParaVenda) {
-          // Verificar se a comanda está totalmente paga
-          final comandaEstaPaga = comanda.totalPago >= comanda.totalCalculado - 0.01;
-          
-          if (comandaEstaPaga) {
-            // Se totalmente paga, manter aberta e limpa (igual a mesa)
-            final comandaLiberada = comanda.copyWith(
-              itens: [],
-              itensPagos: [],
-              historicoPagamentos: [],
-              status: 'Aberta',
-              dataFechamento: null,
-              dataAbertura: DateTime.now(),
-              clienteNome: null,
-              clienteId: null,
-              observacao: null, // Limpar observações
-              valorCouvert: null,
-              quantidadePessoasCouvert: null,
-              valorCouvertPorPessoa: null,
-              valorGarcom: null,
-              garcomRetirado: false,
-              updatedAt: DateTime.now(),
-            );
-            await dataService.updateMesaComanda(comandaLiberada);
-          }
-          // Se não estiver totalmente paga, manter aberta com seus itens pendentes
-        }
-        
-        await dataService.updateMesaComanda(mesaLiberada);
-        
-        // Aguardar um pouco para garantir que a atualização foi salva
-        await Future.delayed(const Duration(milliseconds: 100));
-      
+          valorGarcom: null,
+          garcomRetirado: false,
+          updatedAt: DateTime.now(),
+        ),
+      );
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Mesa ${mesaAtualizada.numero} totalmente paga! Venda ${numeroVenda} criada. Mesa liberada para novo uso.'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 4),
+            content: Text(
+              'Mesa ${mesaFinal.numero} totalmente paga! Venda $numeroVenda '
+              'criada. ${_textoQuantidade(
+                      plano.quantidadePorItem.values.fold(
+                          0.0, (soma, qtd) => soma + qtd))}'
+              ' item(ns) quitados. Mesa liberada para novo uso.',
             ),
-          );
-          setState(() {
-            _mesaSelecionada = null; // Limpar seleção
-            // Forçar rebuild da lista para mostrar mesa disponível
-          });
-        }
-      } else {
-        // Pagamento parcial - apenas atualizar
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Pagamento de ${formatoMoeda.format(valorPago)} registrado.'),
             backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 4),
           ),
         );
         setState(() {
-            // Recarregar mesa atualizada do dataService
-            final mesaRecarregada = dataService.mesasComandas.firstWhere(
-              (m) => m.id == mesaAtualizada.id,
-              orElse: () => mesaAtualizada,
-            );
-            _mesaSelecionada = mesaRecarregada;
-          });
-        }
+          _mesaSelecionada = null;
+        });
       }
     } catch (e) {
       if (context.mounted) {
@@ -3173,23 +3324,88 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
     if (!context.mounted) return;
 
-    // Itens selecionados para pagamento
-    final itensSelecionados = <String>{};
+    // Quantidade a pagar de cada item selecionado (permite pagamento parcial)
+    final quantidadesSelecionadas = <String, double>{};
     double quantidadePessoasCouvertSelecionada = 0.0; // Quantidade de pessoas do couvert selecionada para pagar
-    double valorItensSelecionados = 0.0; // Valor apenas dos itens (sem couvert)
-    double valorSelecionado = 0.0;
     final pessoaPagouController = TextEditingController();
     final quantidadeCouvertController = TextEditingController();
     
     final temCouvertPendente = couvertPendente > 0.01;
     final quantidadePessoasPendente = (comandaAtual.quantidadePessoasCouvert ?? 0) - ((comandaAtual.couvertPago / (comandaAtual.valorCouvertPorPessoa ?? 1.0)).round());
     final valorPorPessoa = comandaAtual.valorCouvertPorPessoa ?? 0.0;
+    final origensRecebimento = <OrigemRecebimento>[
+      OrigemRecebimento(
+        id: comandaAtual.id,
+        rotulo: 'Comanda ${comandaAtual.numero}',
+        itens: comandaAtual.itens,
+      ),
+    ];
+    final maximoPorValor = centavos(
+      totalPendenteItens(origensRecebimento) *
+          (comandaAtual.garcomRetirado ? 1.0 : 1.1),
+    );
+    var modoValor = false;
+    final valorLivreController = TextEditingController(
+      text: _textoValor(maximoPorValor),
+    );
+
 
     // Mostrar diálogo de seleção de itens e pagamento
     final resultado = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
+
         builder: (context, setDialogState) {
+          Future<void> confirmarRecebimento() async {
+            final plano = modoValor
+                ? planejarRecebimento(
+                    origens: origensRecebimento,
+                    valor: _valorDoTexto(valorLivreController.text),
+                    garcomRetirado: comandaAtual.garcomRetirado,
+                  )
+                : planejarRecebimento(
+                    origens: origensRecebimento,
+                    quantidadesPorItem: quantidadesSelecionadas,
+                    garcomRetirado: comandaAtual.garcomRetirado,
+                  );
+            final valorCouvertSelecionado = modoValor
+                ? 0.0
+                : quantidadePessoasCouvertSelecionada * valorPorPessoa;
+            if (plano.vazio && valorCouvertSelecionado <= 0.004) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Selecione ao menos um item ou informe o valor recebido',
+                  ),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              return;
+            }
+            final pagamentos = await _mostrarTelaPagamentoPDV(
+              context,
+              plano.valorTotal + valorCouvertSelecionado,
+              pessoaPagouController.text.trim(),
+              mesaComanda: comandaAtual,
+              valorBase: plano.valorItens,
+            );
+            if (pagamentos == null ||
+                pagamentos.isEmpty ||
+                !context.mounted) {
+              return;
+            }
+            Navigator.pop(context, {
+              'itens': plano.itensIds,
+              'quantidades': modoValor ? null : plano.quantidadePorItem,
+              'valorLivre':
+                  modoValor ? _valorDoTexto(valorLivreController.text) : null,
+              'pagamentos': pagamentos,
+              'pessoaPagou': pessoaPagouController.text.trim(),
+              'couvertSelecionado': valorCouvertSelecionado > 0.004,
+              'valorCouvert': valorCouvertSelecionado,
+              'quantidadePessoasCouvert': quantidadePessoasCouvertSelecionada,
+            });
+          }
           return AlertDialog(
             backgroundColor: const Color(0xFF1E1E2E),
             insetPadding: EdgeInsets.symmetric(
@@ -3231,6 +3447,118 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                       style: const TextStyle(color: Colors.orange, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Por item(ns)'),
+                          selected: !modoValor,
+                          selectedColor: Colors.orange,
+                          onSelected: (_) =>
+                              setDialogState(() => modoValor = false),
+                        ),
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: const Text('Por valor'),
+                          selected: modoValor,
+                          selectedColor: Colors.purpleAccent,
+                          onSelected: (_) => setDialogState(() {
+                            modoValor = true;
+                            valorLivreController.text =
+                                _textoValor(maximoPorValor);
+                          }),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (modoValor) ...[
+                      TextField(
+                        controller: valorLivreController,
+                        autofocus: true,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Valor recebido agora (R\$)',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          helperText:
+                              'Pode ser parcial: o que faltar continua pendente',
+                          helperStyle: TextStyle(color: Colors.grey),
+                        ),
+                        onChanged: (_) => setDialogState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      Builder(
+                        builder: (_) {
+                          final preview = planejarRecebimento(
+                            origens: origensRecebimento,
+                            valor: _valorDoTexto(valorLivreController.text),
+                            garcomRetirado: comandaAtual.garcomRetirado,
+                          );
+                          final restante = (maximoPorValor - preview.valorTotal)
+                              .clamp(0.0, maximoPorValor);
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Máximo em itens: ${formatoMoeda.format(maximoPorValor)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Vai receber: ${formatoMoeda.format(preview.valorTotal)}'
+                                ' • ${preview.itensIds.length} item(ns)',
+                                style: const TextStyle(
+                                  color: Colors.green,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Fica pendente: ${formatoMoeda.format(restante)}',
+                                style: const TextStyle(
+                                  color: Colors.orange,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              if (totalDisponivel - maximoPorValor > 0.01)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    'Couvert pendente de ${formatoMoeda.format(totalDisponivel - maximoPorValor)}: receba no modo por item.',
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: pessoaPagouController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Quem está pagando (opcional)',
+                          labelStyle: TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        onPressed: confirmarRecebimento,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          minimumSize: const Size(double.infinity, 48),
+                        ),
+                        child: const Text('Escolher Forma de Pagamento'),
+                      ),
+                    ] else ...[
+
                     const Text(
                       'Selecione os itens para receber:',
                       style: TextStyle(color: Colors.white70, fontSize: 14),
@@ -3239,7 +3567,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                     // Selecionar Tudo (Global)
                     CheckboxListTile(
                       title: const Text('Selecionar Tudo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                      value: itensSelecionados.length == itensNaoPagos.length,
+                      value: quantidadesSelecionadas.length == itensNaoPagos.length,
                       activeColor: Colors.orange,
                       dense: true,
                       controlAffinity: ListTileControlAffinity.leading,
@@ -3249,17 +3577,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                          setDialogState(() {
                             if (value) {
                                for (final item in itensNaoPagos) {
-                                  if (!itensSelecionados.contains(item.id)) {
-                                     itensSelecionados.add(item.id);
-                                     final itemTotal = item.preco * item.quantidade;
-                                     valorItensSelecionados += itemTotal;
-                                     valorSelecionado += itemTotal;
-                                  }
+                                  quantidadesSelecionadas[item.id] =
+                                      item.quantidadePendente;
                                }
                             } else {
-                               itensSelecionados.clear();
-                               valorItensSelecionados = 0.0;
-                               valorSelecionado = 0.0;
+                               quantidadesSelecionadas.clear();
                             }
                          });
                       },
@@ -3272,34 +3594,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                         itemCount: itensNaoPagos.length,
                         itemBuilder: (context, index) {
                           final item = itensNaoPagos[index];
-                          final itemTotal = item.preco * item.quantidade;
-                          final isSelecionado = itensSelecionados.contains(item.id);
-                          
-                          return CheckboxListTile(
-                            title: Text(
-                              '${item.quantidade}x ${item.nome}',
-                              style: const TextStyle(color: Colors.white, fontSize: 13),
-                            ),
-                            subtitle: Text(
-                              formatoMoeda.format(itemTotal),
-                              style: const TextStyle(color: Colors.green, fontSize: 12),
-                            ),
-                            value: isSelecionado,
-                            activeColor: Colors.orange,
-                            onChanged: (value) {
-                              if (value == null) return;
-                              setDialogState(() {
-                                if (value == true) {
-                                  itensSelecionados.add(item.id);
-                                  valorItensSelecionados += itemTotal;
-                                  valorSelecionado = valorItensSelecionados + (quantidadePessoasCouvertSelecionada * valorPorPessoa);
-                                } else {
-                                  itensSelecionados.remove(item.id);
-                                  valorItensSelecionados -= itemTotal;
-                                  valorSelecionado = valorItensSelecionados + (quantidadePessoasCouvertSelecionada * valorPorPessoa);
-                                }
-                              });
-                            },
+                          return _buildItemRecebimento(
+                            item: item,
+                            quantidadesSelecionadas: quantidadesSelecionadas,
+                            formatoMoeda: formatoMoeda,
+                            atualizar: () => setDialogState(() {}),
                           );
                         },
                       ),
@@ -3379,14 +3678,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                         final quantidade = double.tryParse(value) ?? 0.0;
                                         if (quantidade < 0) {
                                           quantidadePessoasCouvertSelecionada = 0.0;
-                                          valorSelecionado = valorItensSelecionados;
                                         } else if (quantidade > quantidadePessoasPendente) {
                                           quantidadePessoasCouvertSelecionada = quantidadePessoasPendente.toDouble();
                                           quantidadeCouvertController.text = quantidadePessoasPendente.toString();
-                                          valorSelecionado = valorItensSelecionados + (quantidadePessoasPendente * valorPorPessoa);
                                         } else {
                                           quantidadePessoasCouvertSelecionada = quantidade;
-                                          valorSelecionado = valorItensSelecionados + (quantidade * valorPorPessoa);
                                         }
                                       });
                                     },
@@ -3400,7 +3696,6 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                       if (quantidadePessoasCouvertSelecionada < quantidadePessoasPendente) {
                                         quantidadePessoasCouvertSelecionada++;
                                         quantidadeCouvertController.text = quantidadePessoasCouvertSelecionada.toString();
-                                        valorSelecionado = valorItensSelecionados + (quantidadePessoasCouvertSelecionada * valorPorPessoa);
                                       }
                                     });
                                   },
@@ -3412,7 +3707,6 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                       if (quantidadePessoasCouvertSelecionada > 0) {
                                         quantidadePessoasCouvertSelecionada--;
                                         quantidadeCouvertController.text = quantidadePessoasCouvertSelecionada.toString();
-                                        valorSelecionado = valorItensSelecionados + (quantidadePessoasCouvertSelecionada * valorPorPessoa);
                                       }
                                     });
                                   },
@@ -3434,11 +3728,11 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                         ),
                       ),
                     ],
-                    if (itensSelecionados.isNotEmpty || quantidadePessoasCouvertSelecionada > 0) ...[
+                    if (quantidadesSelecionadas.isNotEmpty || quantidadePessoasCouvertSelecionada > 0) ...[
                       const Divider(),
                       Text(
-                        'Valor selecionado: ${formatoMoeda.format(valorSelecionado)}'
-                        ' • ${itensSelecionados.length} item(ns)',
+                        'Selecionado: ${formatoMoeda.format(planejarRecebimento(origens: origensRecebimento, quantidadesPorItem: quantidadesSelecionadas, garcomRetirado: comandaAtual.garcomRetirado).valorTotal + quantidadePessoasCouvertSelecionada * valorPorPessoa)}'
+                        ' • ${_textoQuantidade(quantidadesSelecionadas.values.fold(0.0, (soma, qtd) => soma + qtd))} item(ns)',
                         style: const TextStyle(color: Colors.green, fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
@@ -3467,6 +3761,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                         style: const TextStyle(color: Colors.white),
                       ),
                     ],
+                    ],
                   ],
                 ),
               ),
@@ -3476,48 +3771,9 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
               ),
-              if (itensSelecionados.isNotEmpty || quantidadePessoasCouvertSelecionada > 0)
+              if (quantidadesSelecionadas.isNotEmpty || quantidadePessoasCouvertSelecionada > 0)
                 ElevatedButton(
-                  onPressed: () async {
-                    // Nome da pessoa é opcional
-                    
-                    // Calcular garçom como 10% apenas do valor selecionado (itens)
-                    // O valor base é o valor dos itens selecionados (sem garçom e sem couvert)
-                    double valorBaseSelecionado = valorItensSelecionados; // Apenas itens, sem couvert
-                    final valorCouvertSelecionado = quantidadePessoasCouvertSelecionada * valorPorPessoa;
-                    double valorGarcomSelecionado = 0.0;
-                    double valorTotalComGarcom = valorSelecionado;
-                    
-                    if (!comandaAtual.garcomRetirado) {
-                      // Garçom é 10% apenas do valor base (itens selecionados)
-                      valorGarcomSelecionado = valorBaseSelecionado * 0.10;
-                      // Valor total com garçom
-                      valorTotalComGarcom = valorSelecionado + valorGarcomSelecionado;
-                    }
-                    
-                    // Mostrar tela de pagamento do PDV (até 2 formas)
-                    // Passar o valor total com garçom e o valor base para cálculo correto
-                    final pagamentos = await _mostrarTelaPagamentoPDV(
-                      context,
-                      valorTotalComGarcom,
-                      pessoaPagouController.text.trim(),
-                      mesaComanda: comandaAtual,
-                      valorBase: valorBaseSelecionado, // Passar o valor base (sem garçom e sem couvert) para cálculo correto
-                    );
-                    
-                    if (pagamentos != null && pagamentos.isNotEmpty && context.mounted) {
-                      Navigator.pop(context, {
-                        'itens': itensSelecionados.toList(),
-                        'valor': valorTotalComGarcom, // Retornar o valor total com garçom para validação correta
-                        'valorBase': valorSelecionado, // Valor sem garçom (para referência)
-                        'pagamentos': pagamentos,
-                        'pessoaPagou': pessoaPagouController.text.trim(),
-                        'couvertSelecionado': quantidadePessoasCouvertSelecionada > 0,
-                        'valorCouvert': valorCouvertSelecionado,
-                        'quantidadePessoasCouvert': quantidadePessoasCouvertSelecionada,
-                      });
-                    }
-                  },
+                  onPressed: confirmarRecebimento,
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                   child: const Text('Continuar'),
                 ),
@@ -3529,199 +3785,270 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
 
     if (resultado == null) return;
 
-    final itensIds = resultado['itens'] as List<String>;
     final pagamentos = resultado['pagamentos'] as List<Map<String, dynamic>>?;
     final pessoaPagou = resultado['pessoaPagou'] as String?;
-    final couvertSelecionadoResult = resultado['couvertSelecionado'] as bool? ?? false;
-    final valorCouvert = resultado['valorCouvert'] as double? ?? 0.0;
+    final couvertSelecionadoResult =
+        resultado['couvertSelecionado'] as bool? ?? false;
+    final valorCouvertSelecionado = resultado['valorCouvert'] as double? ?? 0.0;
+    final itensSelecionadosResult =
+        (resultado['itens'] as List<String>?) ?? const <String>[];
+    final quantidadesResult = _quantidadesDoResultado(resultado['quantidades']);
+    final valorLivreResult = resultado['valorLivre'] as double?;
 
-    if (pagamentos == null || pagamentos.isEmpty) {
-      return;
-    }
+    if (pagamentos == null || pagamentos.isEmpty) return;
 
-    // Processar pagamento
     try {
-      // Recarregar dados atualizados
       final comandaAtual = dataService.mesasComandas.firstWhere(
         (c) => c.id == comanda.id,
         orElse: () => comanda,
       );
-      
-      // Criar registros de pagamento
-      final registrosPagamento = pagamentos.map((pagamentoData) {
-        String observacaoPagamento = 'Pagamento parcial';
-        if (itensIds.isNotEmpty && couvertSelecionadoResult) {
-          observacaoPagamento = '${itensIds.length} item(ns) + Couvert';
-        } else if (itensIds.isNotEmpty) {
-          observacaoPagamento = '${itensIds.length} item(ns)';
-        } else if (couvertSelecionadoResult) {
-          observacaoPagamento = 'Couvert Artístico';
+
+      final origens = <OrigemRecebimento>[
+        OrigemRecebimento(
+          id: comandaAtual.id,
+          rotulo: 'Comanda ${comandaAtual.numero}',
+          itens: comandaAtual.itens,
+        ),
+      ];
+
+      final garcomFoiRetirado =
+          pagamentos.first['garcomRetirado'] as bool? ?? false;
+      final valorRecebido = pagamentos.fold<double>(
+        0.0,
+        (soma, pagamento) =>
+            soma + ((pagamento['valor'] as num?)?.toDouble() ?? 0.0),
+      );
+      final valorCouvertPago =
+          couvertSelecionadoResult ? valorCouvertSelecionado : 0.0;
+      final valorParaItens = valorRecebido - valorCouvertPago;
+
+      final plano = planejarRecebimento(
+        origens: origens,
+        quantidadesPorItem:
+            valorLivreResult == null ? quantidadesResult : null,
+        itensSelecionados: valorLivreResult == null && quantidadesResult == null
+            ? itensSelecionadosResult.toSet()
+            : null,
+        valor: valorLivreResult == null ? null : valorParaItens,
+        garcomRetirado: garcomFoiRetirado,
+      );
+
+      if (plano.vazio && valorCouvertPago <= 0.004) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nenhum item pendente para receber'),
+              backgroundColor: Colors.orange,
+            ),
+          );
         }
-        
-        return RegistroPagamento(
-          id: uuid.v4(),
-          valor: pagamentoData['valor'] as double,
-          dataPagamento: DateTime.now(),
-          formaPagamento: (pagamentoData['tipo'] as TipoPagamento).nome,
-          observacao: observacaoPagamento + (pagamentoData['observacao'] != null ? ' - ${pagamentoData['observacao']}' : ''),
-          itensPagos: itensIds,
-          pessoaPagou: pessoaPagou,
-        );
-      }).toList();
-
-      // Adicionar itens aos pagos
-      final novosItensPagos = [...comandaAtual.itensPagos, ...itensIds];
-
-      // Atualizar histórico de pagamentos
-      final novoHistorico = [...comandaAtual.historicoPagamentos, ...registrosPagamento];
-
-      // Verificar se o garçom foi retirado (vem do resultado do pagamento)
-      bool garcomFoiRetirado = false;
-      if (pagamentos.isNotEmpty) {
-        final primeiroPagamento = pagamentos.first;
-        garcomFoiRetirado = primeiroPagamento['garcomRetirado'] as bool? ?? false;
+        return;
       }
 
-      // Atualizar couvert pago se foi selecionado
+      if ((valorParaItens - plano.valorTotal).abs() > 0.011) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Os itens somam ${formatoMoeda.format(plano.valorTotal)}, '
+                'diferente do valor recebido '
+                '(${formatoMoeda.format(valorParaItens)}). '
+                'Recebimento cancelado.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final registros = distribuirPagamentosPorPartes(
+        pagamentos: pagamentos,
+        partes: plano.valorPorOrigem,
+        pessoaPagou: pessoaPagou,
+        foraDasPartes: valorCouvertPago,
+        observacao: (_) => valorLivreResult == null
+            ? '${_textoQuantidade(plano.quantidadePorItem.values.fold(0.0, (soma, qtd) => soma + qtd))} item(ns)'
+            : 'Valor informado ${formatoMoeda.format(plano.valorTotal)}',
+        quantidadesPorOrigem: _quantidadesPorOrigemPlano(origens, plano.quantidadePorItem),
+      )[comandaAtual.id] ??
+          <RegistroPagamento>[];
+
+      final itensAtualizados = aplicarQuantidadesPagas(
+        comandaAtual.itens,
+        plano.quantidadePorItem,
+      );
+
       double novoCouvertPago = comandaAtual.couvertPago;
-      if (couvertSelecionadoResult && valorCouvert > 0) {
-        novoCouvertPago = (comandaAtual.couvertPago + valorCouvert).clamp(0.0, comandaAtual.valorCouvertCalculado);
+      if (valorCouvertPago > 0) {
+        novoCouvertPago = (comandaAtual.couvertPago + valorCouvertPago)
+            .clamp(0.0, comandaAtual.valorCouvertCalculado);
       }
 
-      // Atualizar comanda
       final comandaAtualizada = comandaAtual.copyWith(
-        itensPagos: novosItensPagos,
-        historicoPagamentos: novoHistorico,
+        itens: itensAtualizados,
+        itensPagos: idsItensPagos(itensAtualizados, comandaAtual.itensPagos),
+        historicoPagamentos: [...comandaAtual.historicoPagamentos, ...registros],
         couvertPago: novoCouvertPago,
         garcomRetirado: garcomFoiRetirado || comandaAtual.garcomRetirado,
       );
       await dataService.updateMesaComanda(comandaAtualizada);
-      // Atualizar _mesaSelecionada DEPOIS de updateMesaComanda para que
-      // reflita os dados já atualizados no dataService.
-      if (mounted && _mesaSelecionada != null) {
-        setState(() {
-          _mesaSelecionada = dataService.mesasComandas.firstWhere(
-            (m) => m.id == _mesaSelecionada!.id,
-            orElse: () => _mesaSelecionada!,
-          );
-        });
-      }
 
-      // Verificar se está totalmente paga
       final novoTotalPago = comandaAtualizada.totalPago;
       final novoTotal = comandaAtualizada.totalCalculado;
       final estaPago = novoTotalPago >= novoTotal - 0.01;
-      
-      if (estaPago) {
-        // Criar venda balcão e pedido antes de limpar a comanda
-        final todosItensVenda = <ItemVendaBalcao>[];
-        for (final item in comandaAtualizada.itens) {
-          if (item.status != StatusItem.cancelado) {
-            todosItensVenda.add(ItemVendaBalcao(
-              id: item.itemId,
-              nome: item.nome,
-              precoUnitario: item.preco,
-              quantidade: item.quantidade.toDouble(),
-              isServico: item.isServico,
-            ));
-          }
+
+      if (!estaPago) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Recebimento de ${formatoMoeda.format(valorRecebido)} '
+                'registrado na comanda ${comandaAtualizada.numero}. Ainda '
+                'faltam ${formatoMoeda.format(novoTotal - novoTotalPago)}.',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          setState(() {
+            if (_mesaSelecionada != null &&
+                comandaAtualizada.mesaId == _mesaSelecionada!.id) {
+              _mesaSelecionada = dataService.mesasComandas.firstWhere(
+                (m) => m.id == _mesaSelecionada!.id,
+                orElse: () => _mesaSelecionada!,
+              );
+            }
+          });
         }
-        
-        // Converter todos os pagamentos da comanda em PagamentoPedido
-        // para preservar TODAS as formas de pagamento no histórico (split/parcial)
-        final pagamentosVenda = <PagamentoPedido>[];
-        TipoPagamento _parseForma(String? f) {
-          final lower = f?.toLowerCase() ?? '';
-          if (lower.contains('pix')) return TipoPagamento.pix;
-          if (lower.contains('dinheiro')) return TipoPagamento.dinheiro;
-          if (lower.contains('débito') || lower.contains('debito')) return TipoPagamento.cartaoDebito;
-          if (lower.contains('crédito') || lower.contains('credito') || lower.contains('cart')) return TipoPagamento.cartaoCredito;
-          if (lower.contains('boleto')) return TipoPagamento.boleto;
-          if (lower.contains('crediário') || lower.contains('crediario')) return TipoPagamento.crediario;
-          if (lower.contains('fiado')) return TipoPagamento.fiado;
-          return TipoPagamento.outro;
+        return;
+      }
+
+      // Comanda totalmente paga: gera a venda e fecha a comanda.
+      final todosItensVenda = <ItemVendaBalcao>[];
+      for (final item in comandaAtualizada.itens) {
+        if (item.status == StatusItem.cancelado) continue;
+        todosItensVenda.add(
+          ItemVendaBalcao(
+            id: item.itemId,
+            nome: item.nome,
+            precoUnitario: item.preco,
+            quantidade: item.quantidade.toDouble(),
+            isServico: item.isServico,
+          ),
+        );
+      }
+
+      TipoPagamento parseFormaVendaComanda(String? forma) {
+        final lower = forma?.toLowerCase() ?? '';
+        if (lower.contains('pix')) return TipoPagamento.pix;
+        if (lower.contains('dinheiro')) return TipoPagamento.dinheiro;
+        if (lower.contains('débito') || lower.contains('debito')) {
+          return TipoPagamento.cartaoDebito;
         }
-        for (final rp in comandaAtualizada.historicoPagamentos) {
-          pagamentosVenda.add(PagamentoPedido(
-            id: rp.id,
-            tipo: _parseForma(rp.formaPagamento),
-            valor: rp.valor,
+        if (lower.contains('crédito') ||
+            lower.contains('credito') ||
+            lower.contains('cart')) {
+          return TipoPagamento.cartaoCredito;
+        }
+        if (lower.contains('boleto')) return TipoPagamento.boleto;
+        if (lower.contains('crediário') || lower.contains('crediario')) {
+          return TipoPagamento.crediario;
+        }
+        if (lower.contains('fiado')) return TipoPagamento.fiado;
+        return TipoPagamento.outro;
+      }
+
+      final pagamentosVenda = <PagamentoPedido>[];
+      for (final registro in comandaAtualizada.historicoPagamentos) {
+        pagamentosVenda.add(
+          PagamentoPedido(
+            id: registro.id,
+            tipo: parseFormaVendaComanda(registro.formaPagamento),
+            valor: registro.valor,
             recebido: true,
-            dataRecebimento: rp.dataPagamento,
-            observacao: rp.observacao,
-          ));
-        }
-        if (pagamentosVenda.isEmpty && pagamentos.isNotEmpty) {
-          for (final p in pagamentos) {
-            pagamentosVenda.add(PagamentoPedido(
+            dataRecebimento: registro.dataPagamento,
+            observacao: registro.observacao,
+          ),
+        );
+      }
+      if (pagamentosVenda.isEmpty) {
+        for (final pagamento in pagamentos) {
+          pagamentosVenda.add(
+            PagamentoPedido(
               id: uuid.v4(),
-              tipo: p['tipo'] as TipoPagamento,
-              valor: p['valor'] as double,
+              tipo: pagamento['tipo'] as TipoPagamento,
+              valor: pagamento['valor'] as double,
               recebido: true,
               dataRecebimento: DateTime.now(),
-            ));
-          }
+            ),
+          );
         }
+      }
 
-        final numeroVenda = await dataService.getProximoNumeroVendaSeguro();
-        final vendaId = uuid.v4();
-        
-        final vendaBalcao = VendaBalcao(
-          id: vendaId,
-          numero: numeroVenda,
-          dataVenda: DateTime.now(),
-          clienteId: comandaAtualizada.clienteId,
-          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',
-          itens: todosItensVenda,
-          tipoPagamento: pagamentos.first['tipo'] as TipoPagamento,
-          pagamentos: pagamentosVenda,
-          valorTotal: novoTotal,
-          valorRecebido: novoTotalPago,
-          troco: null,
-          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',
-          origem: 'Mesa/Comanda',
-        );
+      final numeroVenda = await dataService.getProximoNumeroVendaSeguro();
+      final vendaId = uuid.v4();
 
-        final pedidoHistorico = Pedido(
-          id: vendaId,
-          numero: numeroVenda,
-          dataPedido: DateTime.now(),
-          clienteId: comandaAtualizada.clienteId,
-          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',
-          produtos: comandaAtualizada.itens.map((i) => ItemPedido(
-            id: uuid.v4(),
-            nome: i.nome,
-            quantidade: i.quantidade,
-            preco: i.preco,
-          )).toList(),
-          servicos: [],
-          total: novoTotal,
-          status: 'Pago',
-          pagamentos: [],
-          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',
-          origem: 'Mesa/Comanda',
-        );
+      final vendaBalcao = VendaBalcao(
+        id: vendaId,
+        numero: numeroVenda,
+        dataVenda: DateTime.now(),
+        clienteId: comandaAtualizada.clienteId,
+        clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',
+        itens: todosItensVenda,
+        tipoPagamento: pagamentos.first['tipo'] as TipoPagamento,
+        pagamentos: pagamentosVenda,
+        valorTotal: novoTotal,
+        valorRecebido: novoTotalPago,
+        troco: null,
+        observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',
+        origem: 'Mesa/Comanda',
+      );
 
-        await dataService.addPedido(pedidoHistorico);
-        await dataService.addVendaBalcao(vendaBalcao);
+      final pedidoHistorico = Pedido(
+        id: vendaId,
+        numero: numeroVenda,
+        dataPedido: DateTime.now(),
+        clienteId: comandaAtualizada.clienteId,
+        clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',
+        produtos: comandaAtualizada.itens
+            .map(
+              (item) => ItemPedido(
+                id: uuid.v4(),
+                nome: item.nome,
+                quantidade: item.quantidade,
+                preco: item.preco,
+              ),
+            )
+            .toList(),
+        servicos: [],
+        total: novoTotal,
+        status: 'Pago',
+        pagamentos: [],
+        observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',
+        origem: 'Mesa/Comanda',
+      );
 
-        final bool isComanda = comandaAtualizada.tipo == TipoControle.comanda;
+      await dataService.addPedido(pedidoHistorico);
+      await dataService.addVendaBalcao(vendaBalcao);
 
-        if (isComanda) {
-          // Se for comanda, definimos status como Fechada (mantendo os itens intactos para histórico)
-          final comandaFechada = comandaAtualizada.copyWith(
+      if (comandaAtualizada.tipo == TipoControle.comanda) {
+        // Comanda independente fica marcada como fechada, com o histórico.
+        await dataService.updateMesaComanda(
+          comandaAtualizada.copyWith(
             status: 'Fechada',
             dataFechamento: DateTime.now(),
             updatedAt: DateTime.now(),
-          );
-          await dataService.updateMesaComanda(comandaFechada);
-        } else {
-          // Se for mesa física, limpamos os itens e mantemos aberta/disponível
-          final mesaLiberada = comandaAtualizada.copyWith(
-            status: 'Aberta', 
+          ),
+        );
+      } else {
+        // Mesa física volta limpa e disponível.
+        await dataService.updateMesaComanda(
+          comandaAtualizada.copyWith(
+            status: 'Aberta',
             dataFechamento: null,
-            dataAbertura: DateTime.now(), // Nova data de abertura para novo uso
-            itens: [], // Limpar itens
+            dataAbertura: DateTime.now(),
+            itens: [],
             itensPagos: [],
             historicoPagamentos: [],
             valorCouvert: null,
@@ -3731,58 +4058,32 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             garcomRetirado: false,
             clienteNome: null,
             clienteId: null,
-            observacao: null, // Limpar observações
+            observacao: null,
             updatedAt: DateTime.now(),
-          );
-          await dataService.updateMesaComanda(mesaLiberada);
-        }
-        
-        // IMPORTANTE: Não verificar nem fechar a mesa aqui
-        // A mesa só deve ser fechada quando o usuário clicar no botão "Receber" da mesa
-        // Mesmo que a mesa toda esteja paga, não fechar automaticamente
-      
+          ),
+        );
+      }
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Comanda ${comanda.numero} totalmente paga e fechada!'),
+            content: Text(
+              'Comanda ${comandaAtualizada.numero} totalmente paga e fechada!',
+            ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
         );
         setState(() {
-            _comandasExpandidas.remove(comanda.id);
-            // Recarregar mesa atualizada se houver uma selecionada
-            if (_mesaSelecionada != null && comanda.mesaId == _mesaSelecionada!.id) {
-              final mesaRecarregada = dataService.mesasComandas.firstWhere(
-                (m) => m.id == _mesaSelecionada!.id,
-                orElse: () => _mesaSelecionada!,
-              );
-              _mesaSelecionada = mesaRecarregada;
-            }
-          });
-        }
-      } else {
-        // Pagamento parcial
-        if (context.mounted) {
-          final valorTotalPago = registrosPagamento.fold<double>(0.0, (sum, p) => sum + p.valor);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Pagamento de ${formatoMoeda.format(valorTotalPago)} registrado na comanda ${comanda.numero}.'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-          setState(() {
-            // Recarregar mesa atualizada se houver uma selecionada
-            if (_mesaSelecionada != null && comanda.mesaId == _mesaSelecionada!.id) {
-              final mesaRecarregada = dataService.mesasComandas.firstWhere(
-                (m) => m.id == _mesaSelecionada!.id,
-                orElse: () => _mesaSelecionada!,
-              );
-              _mesaSelecionada = mesaRecarregada;
-            }
-          });
-        }
+          _comandasExpandidas.remove(comandaAtualizada.id);
+          if (_mesaSelecionada != null &&
+              comandaAtualizada.mesaId == _mesaSelecionada!.id) {
+            _mesaSelecionada = dataService.mesasComandas.firstWhere(
+              (m) => m.id == _mesaSelecionada!.id,
+              orElse: () => _mesaSelecionada!,
+            );
+          }
+        });
       }
     } catch (e) {
       if (context.mounted) {
@@ -3791,11 +4092,15 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
             content: Text('Erro ao processar pagamento: $e'),
             backgroundColor: Colors.red,
           ),
-        );    }
+        );
+      }
+    }
   }
-}
 
-  /// Mostra um diálogo para receber por valor (valor total), não apenas marcar itens como recebidos\n  Future<void> _mostrarDialogoReceberPorValor(MesaComanda? mesa, bool isComanda) async {\n    if (mesa == null) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Nenhuma mesa/comanda selecionada'),\n            backgroundColor: Colors.orange,\n          ),\n        );\n      }\n      return;\n    }\n\n    final formatoMoeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');\n    final totalDisponivel = mesa.totalCalculado - mesa.totalPago;\n\n    if (totalDisponivel <= 0.01) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Nenhum valor pendente para receber'),\n            backgroundColor: Colors.orange,\n          ),\n        );\n      }\n      return;\n    }\n\n    // Para mesas, buscar comandas vinculadas\n    List<MesaComanda> comandasVinculadas = [];\n    if (!isComanda) {\n      comandasVinculadas = dataService.mesasComandas\n          .where((c) => c.tipo == TipoControle.comanda && c.mesaId == mesa.id)\n          .toList();\n    }\n\n    double totalMesaEComandas = mesa.totalCalculado;\n    for (final c in comandasVinculadas) {\n      totalMesaEComandas += c.totalCalculado;\n    }\n\n    // Coleta itens não pagos\n    final itensNaoPagos = <ItemPedido>[];\n    for (final item in mesa.itens) {\n      if (item.status != StatusItem.pago && item.status != StatusItem.cancelado) {\n        itensNaoPagos.add(item);\n      }\n    }\n    // Adicionar itens das comandas vinculadas\n    for (final comanda in comandasVinculadas) {\n      for (final item in comanda.itens) {\n        if (item.status != StatusItem.pago && item.status != StatusItem.cancelado) {\n          itensNaoPagos.add(item);\n        }\n      }\n    }\n\n    if (itensNaoPagos.isEmpty) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Nenhum item pendente para receber'),\n            backgroundColor: Colors.orange,\n          ),\n        );\n      }\n      return;\n    }\n\n    // Calcular valores\n    double valorItensSelecionados = 0.0;\n    int quantidadePessoasCouvertSelecionada = 0;\n    double valorPorPessoa = mesa.valorCouvertPorPessoa ?? 0.0;\n\n    // Mostrar diálogo de seleção\n    final resultado = await showDialog<Map<String, dynamic>>(\n      context: context,\n      builder: (context) => StatefulBuilder(\n        builder: (context, setDialogState) {\n          return AlertDialog(\n            backgroundColor: const Color(0xFF1E1E2E),\n            insetPadding: EdgeInsets.symmetric(\n              horizontal: 16,\n              vertical: MediaQuery.of(context).viewInsets.bottom + 24,\n            ),\n            title: const Text(\n              'Receber por Valor',\n              style: TextStyle(color: Colors.white),\n            ),\n            content: SingleChildScrollView(\n              child: Column(\n                mainAxisSize: MainAxisSize.min,\n                crossAxisAlignment: CrossAxisAlignment.start,\n                children: [\n                  // Informações da mesa/comanda\n                  Text(\n                    'Comanda: ${mesa.numero}',\n                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),\n                  ),\n                  const SizedBox(height: 8),\n                  Text(\n                    'Total Pendente: ${formatoMoeda.format(totalMesaEComandas - mesa.totalPago)}',\n                    style: const TextStyle(color: Colors.orange, fontSize: 14),\n                  ),\n                  const SizedBox(height: 16),\n\n                  // Seção de itens\n                  const Text(\n                    'Itens Pendentes:',\n                    style: TextStyle(color: Colors.white70, fontSize: 14),\n                  ),\n                  const SizedBox(height: 8),\n                  SingleChildScrollView(\n                    physics: const NeverScrollableScrollPhysics(),\n                    scrollDirection: Axis.horizontal,\n                    child: DataTable(\n                      columns: [\n                        DataColumn(label: const Text('Item', style: TextStyle(color: Colors.white))),\n                        DataColumn(label: const Text('Qtd', style: TextStyle(color: Colors.white))),\n                        DataColumn(label: const Text('Valor Unit.', style: TextStyle(color: Colors.white))),\n                        DataColumn(label: const Text('Total', style: TextStyle(color: Colors.white))),\n                      ],\n                      rows: itensNaoPagos.map((item) {\n                        final itemTotal = item.preco * item.quantidade;\n                        return DataRow(cells: [\n                          DataCell(Text(item.nome, style: const TextStyle(color: Colors.white))),\n                          DataCell(Text(item.quantidade.toString(), style: const TextStyle(color: Colors.white))),\n                          DataCell(Text(formatoMoeda.format(item.preco), style: const TextStyle(color: Colors.white))),\n                          DataCell(Text(formatoMoeda.format(itemTotal), style: const TextStyle(color: Colors.white))),\n                        ]);\n                      }).toList(),\n                    ),\n                  ),\n\n                  const SizedBox(height: 16),\n\n                  // Seção de couvert\n                  if (totalMesaEComandas > mesa.totalCalculado) {\n                    const Text(\n                      'Couvert Artístico:',\n                      style: TextStyle(color: Colors.white70, fontSize: 14),\n                    ),\n                    const SizedBox(height: 8),\n                    Row(\n                      children: [\n                        Expanded(\n                          child: TextField(\n                            decoration: InputDecoration(\n                              labelText: 'Pessoas',\n                              labelStyle: const TextStyle(color: Colors.grey),\n                              hintText: 'Quantidade de pessoas',\n                              hintStyle: const TextStyle(color: Colors.grey),\n                              filled: true,\n                              fillColor: Colors.white.withOpacity(0.1),\n                              border: OutlineInputBorder(\n                                borderRadius: BorderRadius.circular(8),\n                              ),\n                            ),\n                            style: const TextStyle(color: Colors.white),\n                            onChanged: (value) {\n                              final q = double.tryParse(value) ?? 0.0;\n                              if (q < 0) q = 0.0;\n                              if (q > quantidadePessoasPendente) q = quantidadePessoasPendente;\n                              setDialogState(() => quantidadePessoasCouvertSelecionada = q.toInt());\n                            },\n                          ),\n                        ),\n                        const SizedBox(width: 8),\n                        Text(\n                          '${formatoMoeda.format(valorPorPessoa)} por pessoa',\n                          style: const TextStyle(color: Colors.grey),\n                        ),\n                      ],\n                    ),\n                    const SizedBox(height: 8),\n                    Text(\n                      'Total Couvert: ${formatoMoeda.format(quantidadePessoasCouvertSelecionada * valorPorPessoa)}',\n                      style: const TextStyle(color: Colors.orange, fontSize: 12),\n                    ),\n                  } else {\n                    const Text(\n                      'Não há couvert pendente nesta comanda/mesa.',\n                      style: TextStyle(color: Colors.grey, fontSize: 12),\n                    ),\n                  },\n\n                  const SizedBox(height: 16),\n\n                  // Linha de valor selecionado\n                  const Text(\n                    'Valor Selecionado:',\n                    style: TextStyle(color: Colors.white70, fontSize: 14),\n                  ),\n                  const SizedBox(height: 8),\n                  Row(\n                    children: [\n                      Expanded(\n                        child: Text(\n                          '${formatoMoeda.format(valorItensSelecionados)}' + ' • ${itensSelecionados.length > 0 ? itensSelecionados.length + ' item(ns)' : ''}',\n                          style: const TextStyle(color: Colors.orange, fontSize: 16, fontWeight: FontWeight.bold),\n                        ),\n                      ),\n                    ],\n                  ),\n\n                  const SizedBox(height: 16),\n\n                  // Campo para nome quem paga\n                  TextField(\n                    controller: TextEditingController(),\n                    decoration: InputDecoration(\n                      labelText: 'Nome de quem está pagando (opcional)',\n                      labelStyle: const TextStyle(color: Colors.grey),\n                      hintText: 'Ex: João Silva',\n                      hintStyle: const TextStyle(color: Colors.grey),\n                      filled: true,\n                      fillColor: Colors.white.withOpacity(0.1),\n                      border: OutlineInputBorder(\n                        borderRadius: BorderRadius.circular(8),\n                      ),\n                    ),\n                    style: const TextStyle(color: Colors.white),\n                  ),\n\n                  const SizedBox(height: 24),\n\n                  // Ações\n                  Row(\n                    mainAxisAlignment: MainAxisAlignment.end,\n                    children: [\n                      TextButton(\n                        onPressed: () => Navigator.pop(context),\n                        child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),\n                      ),\n                      const SizedBox(width: 8),\n                      ElevatedButton(\n                        onPressed: () async {\n                          // Calcular valor total\n                          double valorBaseSelecionado = valorItensSelecionados;\n                          final valorCouvertSelecionado = quantidadePessoasCouvertSelecionada * valorPorPessoa;\n                          double valorGarcomSelecionado = 0.0;\n                          double valorTotalComGarcom = valorSelecionado;\n\n                          if (!mesa.garcomRetirado) {\n                            // Garçom é 10% apenas do valor base (itens selecionados)\n                            valorGarcomSelecionado = valorBaseSelecionado * 0.10;\n                            // Valor total com garçom\n                            valorTotalComGarcom = valorSelecionado + valorGarcomSelecionado;\n                          }\n\n                          // Mostrar tela de pagamento do PDV (até 2 formas)\n                          final pagamentos = await _mostrarTelaPagamentoPDV(\n                            context,\n                            valorTotalComGarcom,\n                            '',\n                            mesaComanda: mesa,\n                            valorBase: valorBaseSelecionado,\n                          );\n\n                          if (pagamentos != null && pagamentos.isNotEmpty && context.mounted) {\n                            // Retornar itens selecionados e valores\n                            final itensIds = itensNaoPagos.map((i) => i.id).toList();\n                            Navigator.pop(context, {\n                              'itens': itensIds,\n                              'valor': valorTotalComGarcom, \n                              'valorBase': valorSelecionado, \n                              'couvertSelecionado': quantidadePessoasCouvertSelecionada > 0, \n                              'valorCouvert': valorCouvertSelecionado, \n                              'quantidadePessoasCouvert': quantidadePessoasCouvertSelecionada, \n                            });\n                          }\n                        },\n                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),\n                        child: const Text('Continuar'),\n                      ),\n                    ],\n                  ),\n                ],\n              ),\n            ),\n          );\n        },\n      ),\n    );\n\n    if (resultado == null) return;\n\n    final itensIds = resultado['itens'] as List<String>;\n    final pagamentos = resultado['pagamentos'] as List<Map<String, dynamic>>?;\n    final pessoaPagou = resultado['pessoaPagou'] as String?;\n    final couvertSelecionadoResult = resultado['couvertSelecionado'] as bool? ?? false;\n    final valorCouvert = resultado['valorCouvert'] as double? ?? 0.0;\n\n    if (pagamentos == null || pagamentos.isEmpty) {\n      return;\n    }\n\n    // Processar pagamento\n    try {\n      // Recarregar dados atualizados\n      final comandaAtual = dataService.mesasComandas.firstWhere(\n        (c) => c.id == mesa.id,\n        orElse: () => mesa,\n      );\n\n      // Criar registros de pagamento\n      final registrosPagamento = pagamentos.map((pagamentoData) {\n        String observacaoPagamento = 'Pagamento parcial';\n        if (itensIds.isNotEmpty && couvertSelecionadoResult) {\n          observacaoPagamento = '${itensIds.length} item(ns) + Couvert';\n        } else if (itensIds.isNotEmpty) {\n          observacaoPagamento = '${itensIds.length} item(ns)';\n        } else if (couvertSelecionadoResult) {\n          observacaoPagamento = 'Couvert Artístico';\n        }\n\n        return RegistroPagamento(\n          id: uuid.v4(),\n          valor: pagamentoData['valor'] as double,\n          dataPagamento: DateTime.now(),\n          formaPagamento: (pagamentoData['tipo'] as TipoPagamento).nome,\n          observacao: observacaoPagamento + (pagamentoData['observacao'] != null ? ' - ${pagamentoData['observacao']}' : ''),\n          itensPagos: itensIds,\n          pessoaPagou: pessoaPagou,\n        );\n      }).toList();\n\n      // Adicionar itens aos pagos\n      final novosItensPagos = [...comandaAtual.itensPagos, ...itensIds];\n\n      // Atualizar histórico de pagamentos\n      final novoHistorico = [...comandaAtual.historicoPagamentos, ...registrosPagamento];\n\n      // Verificar se o garçom foi retirado (vem do resultado do pagamento)\n      bool garcomFoiRetirado = false;\n      if (pagamentos.isNotEmpty) {\n        final primeiroPagamento = pagamentos.first;\n        garcomFoiRetirado = primeiroPagamento['garcomRetirado'] as bool? ?? false;\n      }\n\n      // Atualizar couvert pago se foi selecionado\n      double novoCouvertPago = comandaAtual.couvertPago;\n      if (couvertSelecionadoResult && valorCouvert > 0) {\n        novoCouvertPago = (comandaAtual.couvertPago + valorCouvert).clamp(0.0, comandaAtual.valorCouvertCalculado);\n      }\n\n      // Atualizar comanda\n      final comandaAtualizada = comandaAtual.copyWith(\n        itensPagos: novosItensPagos,\n        historicoPagamentos: novoHistorico,\n        couvertPago: novoCouvertPago,\n        garcomRetirado: garcomFoiRetirado || comandaAtual.garcomRetirado,\n      );\n      await dataService.updateMesaComanda(comandaAtualizada);\n      // Atualizar _mesaSelecionada DEPOIS de updateMesaComanda para que\n      // reflita os dados já atualizados no dataService.\n      if (mounted && _mesaSelecionada != null) {\n        setState(() {\n          _mesaSelecionada = dataService.mesasComandas.firstWhere(\n            (m) => m.id == _mesaSelecionada!.id,\n            orElse: () => _mesaSelecionada!,\n          );\n        });\n      }\n\n      // Verificar se está totalmente paga\n      final novoTotalPago = comandaAtualizada.totalPago;\n      final novoTotal = comandaAtualizada.totalCalculado;\n      final estaPago = novoTotalPago >= novoTotal - 0.01;\n\n      if (estaPago) {\n        // Criar venda balcão e pedido antes de limpar a comanda\        final todosItensVenda = <ItemVendaBalcao>[];\n        for (final item in comandaAtualizada.itens) {\n          if (item.status != StatusItem.cancelado) {\n            todosItensVenda.add(ItemVendaBalcao(\n              id: item.itemId,\n              nome: item.nome,\n              precoUnitario: item.preco,\n              quantidade: item.quantidade.toDouble(),\n              isServico: item.isServico,\n            ));\n          }\n        }\n\n        // Converter todos os pagamentos da comanda em PagamentoPedido\n        // para preservar TODAS as formas de pagamento no histórico (split/parcial)\n        final pagamentosVenda = <PagamentoPedido>[];\n        TipoPagamento _parseForma(String? f) {\n          final lower = f?.toLowerCase() ?? '';\n          if (lower.contains('pix')) return TipoPagamento.pix;\n          if (lower.contains('dinheiro')) return TipoPagamento.dinheiro;\n          if (lower.contains('débito') || lower.contains('debito')) return TipoPagamento.cartaoDebito;\n          if (lower.contains('crédito') || lower.contains('credito') || lower.contains('cart')) return TipoPagamento.cartaoCredito;\n          if (lower.contains('boleto')) return TipoPagamento.boleto;\n          if (lower.contains('crediário') || lower.contains('crediario')) return TipoPagamento.crediario;\n          if (lower.contains('fiado')) return TipoPagamento.fiado;\n          return TipoPagamento.outro;\n        }\n        for (final rp in comandaAtualizada.historicoPagamentos) {\n          pagamentosVenda.add(PagamentoPedido(\n            id: rp.id,\n            tipo: _parseForma(rp.formaPagamento),\n            valor: rp.valor,\n            recebido: true,\n            dataRecebimento: rp.dataPagamento,\n            observacao: rp.observacao,\n          ));\n        }\n        if (pagamentosVenda.isEmpty && pagamentos.isNotEmpty) {\n          for (final p in pagamentos) {\n            pagamentosVenda.add(PagamentoPedido(\n              id: uuid.v4(),\n              tipo: p['tipo'] as TipoPagamento,\n              valor: p['valor'] as double,\n              recebido: true,\n              dataRecebimento: DateTime.now(),\n            ));\n          }\n        }\n\n        final numeroVenda = await dataService.getProximoNumeroVendaSeguro();\n        final vendaId = uuid.v4();\n\n        final vendaBalcao = VendaBalcao(\n          id: vendaId,\n          numero: numeroVenda,\n          dataVenda: DateTime.now(),\n          clienteId: comandaAtualizada.clienteId,\n          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',\n          itens: todosItensVenda,\n          tipoPagamento: pagamentos.first['tipo'] as TipoPagamento,\n          pagamentos: pagamentosVenda,\n          valorTotal: novoTotal,\n          valorRecebido: novoTotalPago,\n          troco: null,\n          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',\n          origem: 'Mesa/Comanda',\n        );\n\n        final pedidoHistorico = Pedido(\n          id: vendaId,\n          numero: numeroVenda,\n          dataPedido: DateTime.now(),\n          clienteId: comandaAtualizada.clienteId,\n          clienteNome: comandaAtualizada.clienteNome ?? '${comandaAtualizada.numero}',\n          produtos: comandaAtualizada.itens.map((i) => ItemPedido(\n            id: uuid.v4(),\n            nome: i.nome,\n            quantidade: i.quantidade,\n            preco: i.preco,\n          )).toList(),\n          servicos: [],\n          total: novoTotal,\n          status: 'Pago',\n          pagamentos: [],\n          observacoes: 'Originada da Comanda ${comandaAtualizada.numero}',\n          origem: 'Mesa/Comanda',\n        );\n\n        await dataService.addPedido(pedidoHistorico);\n        await dataService.addVendaBalcao(vendaBalcao);\n\n        final bool isComanda = comandaAtualizada.tipo == TipoControle.comanda;\n\n        if (isComanda) {\n          // Se for comanda, definimos status como Fechada (mantendo os itens intactos para histórico)\n          final comandaFechada = comandaAtualizada.copyWith(\n            status: 'Fechada',\n            dataFechamento: DateTime.now(),\n            updatedAt: DateTime.now(),\n          );\n          await dataService.updateMesaComanda(comandaFechada);\n        } else {\n          // Se for mesa física, limpamos os itens e mantemos aberta/disponível\n          final mesaLiberada = comandaAtualizada.copyWith(\n            status: 'Aberta', \n            dataFechamento: null,\n            dataAbertura: DateTime.now(), // Nova data de abertura para novo uso\n            itens: [], // Limpar itens\n            itensPagos: [],\n            historicoPagamentos: [],\n            valorCouvert: null,\n            quantidadePessoasCouvert: null,\n            valorCouvertPorPessoa: null,\n            valorGarcom: null,\n            garcomRetirado: false,\n            clienteNome: null,\n            clienteId: null,\n            observacao: null, // Limpar observações\n            updatedAt: DateTime.now(),\n          );\n          await dataService.updateMesaComanda(mesaLiberada);\n        }\n\n        // IMPORTANTE: Não verificar nem fechar a mesa aqui\n        // A mesa só deve ser fechada quando o usuário clicar no botão "Receber" da mesa\n        // Mesmo que a mesa toda esteja paga, não fechar automaticamente\n      }\n\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n              content: Text('Comanda ${comanda.numero} totalmente paga e fechada!'),\n            backgroundColor: Colors.green,\n            duration: const Duration(seconds: 3),\n          ),\n        );\n        setState(() {\n            _comandasExpandidas.remove(mesa.id);\n            // Recarregar mesa atualizada se houver uma selecionada\n            if (_mesaSelecionada != null && mesa.mesaId == _mesaSelecionada!.id) {\n              final mesaRecarregada = dataService.mesasComandas.firstWhere(\n                (m) => m.id == _mesaSelecionada!.id,\n                orElse: () => _mesaSelecionada!,\n              );\n              _mesaSelecionada = mesaRecarregada;\n            }\n          });\n        }\n      } else {\n        // Pagamento parcial\n        if (context.mounted) {\n          final valorTotalPago = registrosPagamento.fold<double>(0.0, (sum, p) => sum + p.valor);\n          ScaffoldMessenger.of(context).showSnackBar(\n            SnackBar(\n              content: Text('Pagamento de ${formatoMoeda.format(valorTotalPago)} registrado na comanda ${comanda.numero}.')\n,              backgroundColor: Colors.green,\n              duration: const Duration(seconds: 3),\n            ),\n          );\n          setState(() {\n            // Recarregar mesa atualizada se houver uma selecionada\n            if (_mesaSelecionada != null && mesa.mesaId == _mesaSelecionada!.id) {\n              final mesaRecarregada = dataService.mesasComandas.firstWhere(\n                (m) => m.id == _mesaSelecionada!.id,\n                orElse: () => _mesaSelecionada!,\n              );\n              _mesaSelecionada = mesaRecarregada;\n            }\n          });\n        }\n      }\n    } catch (e) {\n      if (context.mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(\n          SnackBar(\n            content: Text('Erro ao processar pagamento: $e'),\n            backgroundColor: Colors.red,\n          ),\n        );\n      }\n    }\n  }\n\n  Future<MesaComanda?> _abrirNovaMesa(BuildContext context, DataService dataService) async {
+  Future<MesaComanda?> _abrirNovaMesa(
+    BuildContext context,
+    DataService dataService,
+  ) async {
     final numeroController = TextEditingController();
     final clienteController = TextEditingController();
     final observacaoController = TextEditingController();
@@ -3831,9 +4136,15 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         builder: (context, setDialogState) {
           // Validar número em tempo real
           final numeroDigitado = numeroController.text.trim();
-          final numeroExiste = numeroDigitado.isNotEmpty && 
+          // Só outra MESA aberta com o mesmo número impede a criação
+          // ("1", "01" e "MESA-1" são a mesma mesa).
+          final numeroExiste =
+              numeroDigitado.isNotEmpty &&
               dataService.mesasComandas.any(
-                (m) => m.numero == numeroDigitado,
+                (m) =>
+                    m.tipo == TipoControle.mesa &&
+                    m.status == 'Aberta' &&
+                    numeroMesaComandaIgual(m.numero, numeroDigitado),
               );
           
           // Calcular valor total do couvert em tempo real
@@ -4007,9 +4318,12 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
     );
 
     if (resultado == true) {
-      // Verificar se número já existe (em mesas ou comandas)
+      // Verificar se o número já está em uso por outra mesa aberta
       final numeroExiste = dataService.mesasComandas.any(
-        (m) => m.numero == numeroController.text.trim(),
+        (m) =>
+            m.tipo == TipoControle.mesa &&
+            m.status == 'Aberta' &&
+            numeroMesaComandaIgual(m.numero, numeroController.text.trim()),
       );
 
       if (numeroExiste) {
@@ -6131,9 +6445,13 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
         builder: (context, setDialogState) {
           // Validar número em tempo real
           final numeroDigitado = numeroController.text.trim();
-          final numeroExiste = numeroDigitado.isNotEmpty && 
+          final numeroExiste =
+              numeroDigitado.isNotEmpty &&
               dataService.mesasComandas.any(
-                (m) => m.numero == numeroDigitado,
+                (m) =>
+                    m.tipo == TipoControle.comanda &&
+                    m.status == 'Aberta' &&
+                    numeroMesaComandaIgual(m.numero, numeroDigitado),
               );
 
           final mesaObrigatoria = _atrelarComandaAMesa && mesaVinculadaSelecionada == null;
@@ -7542,7 +7860,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                   ),
                                   const SizedBox(height: 4),
                                   ...itensPagos.map((item) {
-                                    final itemTotal = item.preco * item.quantidade;
+                                    final itemQtd = pagamento.itensQuantidades?[item.id] ?? item.quantidade;
+                                    final itemTotal = item.preco * itemQtd;
                                     return Padding(
                                       padding: const EdgeInsets.only(left: 8, top: 2),
                                       child: Row(
@@ -7550,7 +7869,7 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                                         children: [
                                           Expanded(
                                             child: Text(
-                                              '${item.quantidade}x ${item.nome}',
+                                              '${itemQtd}x ${item.nome}',
                                               style: const TextStyle(color: Colors.white, fontSize: 10),
                                             ),
                                           ),
@@ -9212,7 +9531,8 @@ class _CozinhaMesasFuncionarioPageState extends State<CozinhaMesasFuncionarioPag
                             (i) => i.id == itemId,
                             orElse: () => mesa.itens.first,
                           );
-                          itensPagosInfo.add('${item.quantidade}x ${item.nome}');
+                          final itemQtd = pagamento.itensQuantidades?[item.id] ?? item.quantidade;
+                          itensPagosInfo.add('${itemQtd}x ${item.nome}');
                         }
                       }
                       

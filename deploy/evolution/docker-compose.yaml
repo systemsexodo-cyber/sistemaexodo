@@ -103,6 +103,8 @@ services:
       BOT_ACTIVE_HOURS: ${BOT_ACTIVE_HOURS:-}
       # Opcional: so responde se a mensagem tiver uma destas palavras.
       BOT_KEYWORDS: ${BOT_KEYWORDS:-}
+      # Numeros que o bot nunca responde (separe por virgula, com DDD).
+      BOT_IGNORAR_NUMEROS: ${BOT_IGNORAR_NUMEROS:-}
       BOT_INTRO: ${BOT_INTRO:-Oi! Sou o assistente virtual de {empresa}.}
       # Dados oficiais (horario, endereco, formas de pagamento). Sem isso, o bot
       # troca qualquer afirmacao factual pela mensagem de fallback.
@@ -110,6 +112,11 @@ services:
       BOT_FALLBACK: ${BOT_FALLBACK:-Vou confirmar essa informação com a equipe e já te respondo por aqui.}
       # Pausas por contato ficam aqui e sobrevivem a restart do container/VM.
       BOT_STATE_FILE: ${BOT_STATE_FILE:-/data/state.json}
+      # Ids de mensagem ja tratados (o mesmo arquivo de estado, outro arquivo).
+      BOT_SEEN_FILE: ${BOT_SEEN_FILE:-/data/seen.json}
+      # Idade maxima (min) para responder. A Evolution reenvia historico ao
+      # reconectar; acima disso a mensagem e ignorada. 0 desliga o corte.
+      BOT_MAX_IDADE_MIN: ${BOT_MAX_IDADE_MIN:-10}
       # Token das rotas de teste/pausa usadas pelo app (/chat, /admin/*).
       BOT_ADMIN_TOKEN: ${BOT_ADMIN_TOKEN:-}
       # Consulta de pedidos (somente leitura) no banco da loja. Vazio = o bot nao
@@ -120,7 +127,7 @@ services:
       BOT_CATALOGO_DSN: ${BOT_CATALOGO_DSN:-}
       # Com varias empresas no banco, informe o id da loja atendida.
       BOT_EMPRESA_ID: ${BOT_EMPRESA_ID:-}
-      BOT_CATALOGO_MAX: ${BOT_CATALOGO_MAX:-5}
+      BOT_CATALOGO_MAX: ${BOT_CATALOGO_MAX:-10}
       BOT_CATALOGO_TTL: ${BOT_CATALOGO_TTL:-300}
       # Modelo: CPU por padrao (a maquina tem 2 GB de VRAM). Temperatura baixa e
       # seed fixa deixam a resposta estavel; num_predict curto deixa rapida.

@@ -133,9 +133,10 @@ class WhatsAppService {
         headers: _headers,
         body: jsonEncode({
           'instanceName': instanceName,
-          'token': apiKey,
           'qrcode': true,
-          'integration': 'BAILEYS',
+          // A Evolution API v2 só aceita este valor. Com 'BAILEYS' o servidor
+          // responde "Invalid integration" e a instância nunca é criada.
+          'integration': 'WHATSAPP-BAILEYS',
         }),
       ).timeout(const Duration(seconds: 30));
 
@@ -145,10 +146,18 @@ class WhatsAppService {
         print('>>> [WhatsApp] Instância criada ou existente');
         return true;
       } else {
-        final data = jsonDecode(response.body);
-        final message = data['message']?.toString() ?? data['response']?['message']?.toString() ?? '';
-        
-        if (message.contains('already exists') || 
+        String message = '';
+        try {
+          final data = jsonDecode(response.body);
+          message =
+              data['message']?.toString() ??
+              data['response']?['message']?.toString() ??
+              '';
+        } catch (_) {
+          // Corpo não-JSON (ex.: proxy/HTML de erro): segue com mensagem vazia.
+        }
+
+        if (message.contains('already exists') ||
             message.contains('already in use') ||
             message.contains('já existe')) {
           print('>>> [WhatsApp] Instância já existe no servidor');
@@ -197,27 +206,26 @@ class WhatsAppService {
     }
   }
 
-  /// Formata o número de telefone para o padrão internacional
-  String formatarNumero(String numero) {
-    String limpo = numero.replaceAll(RegExp(r'[^0-9]'), '');
-    if (!limpo.startsWith('55')) {
-      if (limpo.startsWith('0')) limpo = limpo.substring(1);
-      limpo = '55$limpo';
+  /// Formata o número de telefone para o padrão internacional.
+  ///
+  /// O DDD 55 existe (Rio Grande do Sul), então não dá para decidir só pelo
+  /// prefixo: número local tem até 11 dígitos e sempre recebe o 55 do país.
+  static String formatarNumero(String numero) {
+    var limpo = numero.replaceAll(RegExp(r'[^0-9]'), '');
+    while (limpo.startsWith('0')) {
+      limpo = limpo.substring(1);
     }
+    if (limpo.isEmpty) return limpo;
+    if (limpo.length <= 11) return '55$limpo';
     return limpo;
   }
 
   /// Abre o WhatsApp diretamente no aparelho ou navegador (não depende de API Evolution)
   static Future<bool> abrirWhatsAppDireto({required String numero, required String mensagem}) async {
     try {
-      String limpo = numero.replaceAll(RegExp(r'[^0-9]'), '');
+      final limpo = formatarNumero(numero);
       if (limpo.isEmpty) return false;
-      
-      if (!limpo.startsWith('55') && limpo.length <= 11) {
-        if (limpo.startsWith('0')) limpo = limpo.substring(1);
-        limpo = '55$limpo';
-      }
-      
+
       final url = 'https://wa.me/$limpo?text=${Uri.encodeComponent(mensagem)}';
       final uri = Uri.parse(url);
       
@@ -235,7 +243,7 @@ class WhatsAppService {
   Future<bool> enviarMensagem(String numero, String mensagem) async {
     print('>>> [WhatsApp] Enviando mensagem para: $numero');
     try {
-      final numFmt = formatarNumero(numero);
+      final numFmt = WhatsAppService.formatarNumero(numero);
       
       if (isTwilioBridge) {
         // Para Twilio via Render Bridge
@@ -281,7 +289,7 @@ class WhatsAppService {
     String? caption,
   }) async {
     try {
-      final numFmt = formatarNumero(numero);
+      final numFmt = WhatsAppService.formatarNumero(numero);
       
       if (isTwilioBridge) {
         // Para Twilio via Render Bridge (ainda não suporta arquivos no bridge atual, mas prepararemos o corpo)
@@ -306,10 +314,13 @@ class WhatsAppService {
           headers: _headers,
           body: jsonEncode({
             'number': numFmt,
+            // A v2 exige `mediatype` (minúsculo). Com `mediaType` a validação
+            // falha com 400 e o arquivo não é enviado.
+            'mediatype': 'document',
+            'mimetype': _mimeTypeDoArquivo(fileName),
             'media': base64Content,
             'fileName': fileName,
             'caption': caption ?? '',
-            'mediaType': 'document',
           }),
         ).timeout(const Duration(seconds: 45));
         return response.statusCode == 200 || response.statusCode == 201;
@@ -317,6 +328,29 @@ class WhatsAppService {
     } catch (e) {
       print('>>> [WhatsApp] Erro ao enviar arquivo: $e');
       return false;
+    }
+  }
+
+  /// MIME type usado no envio de documento (a API usa o nome do arquivo
+  /// quando o mimetype não é informado; mandar explícito evita palpite errado).
+  String _mimeTypeDoArquivo(String fileName) {
+    final extensao = fileName.toLowerCase().split('.').last;
+    switch (extensao) {
+      case 'pdf':
+        return 'application/pdf';
+      case 'png':
+        return 'image/png';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'xml':
+        return 'application/xml';
+      case 'zip':
+        return 'application/zip';
+      case 'txt':
+        return 'text/plain';
+      default:
+        return 'application/octet-stream';
     }
   }
 
@@ -351,5 +385,44 @@ class WhatsAppService {
     final tel = agendamento.cliente?.whatsapp ?? agendamento.cliente?.telefone;
     if (tel == null) return false;
     return enviarMensagem(tel, templateStatusAlterado(agendamento: agendamento, nomeEmpresa: nomeEmpresa));
+  }
+
+  Future<bool> notificarStatusPedidoOnline({
+    required String numero,
+    required String nomeCliente,
+    required String numeroPedido,
+    required String status,
+    required String nomeEmpresa,
+  }) async {
+    final s = status.toLowerCase();
+    String emoji = '📦';
+    String texto = 'Seu pedido está em andamento.';
+    if (s.contains('preparo')) {
+      emoji = '👨‍🍳';
+      texto = 'Seu pedido está sendo preparado.';
+    } else if (s.contains('saiu')) {
+      emoji = '🚚';
+      texto = 'Seu pedido saiu para entrega.';
+    } else if (s.contains('entregue')) {
+      emoji = '✅';
+      texto = 'Seu pedido foi entregue.';
+    } else if (s.contains('cancel')) {
+      emoji = '❌';
+      texto = 'Seu pedido foi cancelado.';
+    } else if (s.contains('pendente')) {
+      emoji = '⏳';
+      texto = 'Seu pedido foi recebido e está pendente de confirmação.';
+    } else if (s.contains('pago')) {
+      emoji = '💰';
+      texto = 'Pagamento do seu pedido confirmado.';
+    }
+
+    final msg =
+        '$emoji *Atualização do Pedido $numeroPedido*\n\n'
+        'Olá, $nomeCliente!\n\n'
+        '$texto\n'
+        'Status atual: *$status*\n\n'
+        '📍 $nomeEmpresa';
+    return enviarMensagem(numero, msg);
   }
 }

@@ -281,8 +281,10 @@ class MesaComandaPdfService {
         ...mesaComanda.itens.map((item) {
           final indexStr = (itemIndex++).toString().padLeft(2, '0');
           final isCancelado = item.status == StatusItem.cancelado;
-          final itemTotal = isCancelado ? 0.0 : item.subtotal;
-          final qtdFormatted = _formatarQtdItem(item.quantidade);
+          final qtdExibido =
+              item.quantidadePaga > 0.0001 ? item.quantidadePaga : item.quantidade;
+          final itemTotal = isCancelado ? 0.0 : item.precoUnitarioComAdicionais * qtdExibido;
+          final qtdFormatted = _formatarQtdItem(qtdExibido);
           final corItem = isCancelado ? PdfColors.grey500 : PdfColors.black;
 
           return pw.Container(
@@ -750,6 +752,7 @@ class MesaComandaPdfService {
           
           // Buscar itens pagos neste pagamento
           final itensPagosNestePagamento = <ItemMesaComanda>[];
+          final Map<String, double> quantidadesPagos = <String, double>{};
           if (pagamento.itensPagos != null && pagamento.itensPagos!.isNotEmpty) {
             for (final itemId in pagamento.itensPagos!) {
               try {
@@ -757,6 +760,8 @@ class MesaComandaPdfService {
                   (i) => i.id == itemId,
                 );
                 itensPagosNestePagamento.add(item);
+                final qtd = pagamento.itensQuantidades?[itemId];
+                if (qtd != null && qtd > 0) quantidadesPagos[itemId] = qtd;
               } catch (e) {
                 // Item não encontrado - ignorar
               }
@@ -822,7 +827,8 @@ class MesaComandaPdfService {
                       ),
                       pw.SizedBox(height: 2),
                       ...itensPagosNestePagamento.map((item) {
-                        final itemTotal = item.subtotal; // Usar subtotal
+                        final itemPagoQuantidade = quantidadesPagos[item.id] ?? item.quantidade;
+                        final itemTotal = item.precoUnitarioComAdicionais * itemPagoQuantidade;
                         return pw.Padding(
                           padding: const pw.EdgeInsets.only(left: 8, bottom: 2),
                           child: pw.Row(
@@ -830,7 +836,7 @@ class MesaComandaPdfService {
                             children: [
                               pw.Expanded(
                                 child: pw.Text(
-                                  '${item.quantidade}x ${item.nome}',
+                                  '${_formatarQtdItem(itemPagoQuantidade)}x ${item.nome}',
                                   style: pw.TextStyle(fontSize: fontSizeCorpo),
                                 ),
                               ),

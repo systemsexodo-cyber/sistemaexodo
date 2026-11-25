@@ -12,10 +12,7 @@ import 'gerenciar_permissoes_page.dart';
 class GerenciarUsuariosPage extends StatefulWidget {
   final Empresa empresa;
 
-  const GerenciarUsuariosPage({
-    super.key,
-    required this.empresa,
-  });
+  const GerenciarUsuariosPage({super.key, required this.empresa});
 
   @override
   State<GerenciarUsuariosPage> createState() => _GerenciarUsuariosPageState();
@@ -28,15 +25,13 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     final usuarioAtual = authService.usuarioAtual;
     final isUsuarioMaster = usuarioAtual?.email.toLowerCase() == 'user';
     final isAdministrador = usuarioAtual?.tipo == TipoUsuario.administrador;
-    
+
     // Verificar se o usuário pode gerenciar usuários (user ou administrador)
     if (!isUsuarioMaster && !isAdministrador) {
       return AppTheme.appBackground(
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            title: const Text('Gerenciar Usuários'),
-          ),
+          appBar: AppBar(title: const Text('Gerenciar Usuários')),
           body: const Center(
             child: Text(
               'Apenas o administrador pode gerenciar usuários',
@@ -48,7 +43,9 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     }
 
     // Obter usuários da empresa
-    final usuariosDaEmpresa = authService.getUsuariosDaEmpresa(widget.empresa.id);
+    final usuariosDaEmpresa = authService.getUsuariosDaEmpresa(
+      widget.empresa.id,
+    );
 
     return AppTheme.appBackground(
       child: Scaffold(
@@ -59,7 +56,8 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
             IconButton(
               icon: const Icon(Icons.add),
               tooltip: 'Adicionar Usuário',
-              onPressed: () => _mostrarDialogoCriarUsuario(context, authService),
+              onPressed: () =>
+                  _mostrarDialogoCriarUsuario(context, authService),
             ),
             const SyncStatusWidget(),
           ],
@@ -84,16 +82,16 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
           const SizedBox(height: 16),
           Text(
             'Nenhum usuário cadastrado',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Colors.white70,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(color: Colors.white70),
           ),
           const SizedBox(height: 8),
           Text(
             'Crie um usuário para esta empresa',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.white54,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: Colors.white54),
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
@@ -130,7 +128,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     AuthService authService,
   ) {
     bool _senhaVisivel = false;
-    
+
     return StatefulBuilder(
       builder: (context, setState) {
         return Card(
@@ -138,10 +136,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: Colors.blueAccent.withOpacity(0.2),
-              child: Icon(
-                Icons.person,
-                color: Colors.blueAccent,
-              ),
+              child: Icon(Icons.person, color: Colors.blueAccent),
             ),
             title: Text(
               usuario.nome,
@@ -180,7 +175,9 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                           _senhaVisivel = !_senhaVisivel;
                         });
                       },
-                      tooltip: _senhaVisivel ? 'Ocultar senha' : 'Mostrar senha',
+                      tooltip: _senhaVisivel
+                          ? 'Ocultar senha'
+                          : 'Mostrar senha',
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
@@ -190,7 +187,10 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: usuario.ativo
                             ? Colors.green.withOpacity(0.2)
@@ -208,7 +208,10 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.blueAccent.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(12),
@@ -223,19 +226,47 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       ),
                     ),
                     const SizedBox(width: 8),
+                    if (usuario.acessoMultiempresa) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.purpleAccent.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Text(
+                          'Multiempresa',
+                          style: TextStyle(
+                            color: Colors.purpleAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     // Badge de permissões
                     Builder(
                       builder: (context) {
                         final permissionService = PermissionService();
-                        final permissoesPadrao = permissionService.obterPermissoesPadrao(usuario.tipo);
+                        final permissoesPadrao = permissionService
+                            .obterPermissoesPadrao(usuario.tipo);
                         final totalPadrao = permissoesPadrao.length;
-                        final totalPersonalizadas = usuario.permissoesPersonalizadas?.length ?? 0;
-                        final totalNegadas = usuario.permissoesNegadas?.length ?? 0;
-                        final temPersonalizacoes = totalPersonalizadas > 0 || totalNegadas > 0;
-                        
+                        final totalPersonalizadas =
+                            usuario.permissoesPersonalizadas?.length ?? 0;
+                        final totalNegadas =
+                            usuario.permissoesNegadas?.length ?? 0;
+                        final temPersonalizacoes =
+                            totalPersonalizadas > 0 || totalNegadas > 0;
+
                         if (!temPersonalizacoes) {
                           return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.green.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(12),
@@ -243,7 +274,11 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.check_circle, size: 12, color: Colors.green),
+                                Icon(
+                                  Icons.check_circle,
+                                  size: 12,
+                                  color: Colors.green,
+                                ),
                                 const SizedBox(width: 4),
                                 Text(
                                   '$totalPadrao padrão',
@@ -257,9 +292,12 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                             ),
                           );
                         }
-                        
+
                         return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.amber.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(12),
@@ -267,7 +305,11 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.security, size: 12, color: Colors.amber),
+                              Icon(
+                                Icons.security,
+                                size: 12,
+                                color: Colors.amber,
+                              ),
                               const SizedBox(width: 4),
                               Text(
                                 '${totalPadrao + totalPersonalizadas - totalNegadas} ativas',
@@ -325,7 +367,10 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     children: [
                       Icon(Icons.security, size: 20, color: Colors.amber),
                       SizedBox(width: 8),
-                      Text('Gerenciar Permissões', style: TextStyle(color: Colors.amber)),
+                      Text(
+                        'Gerenciar Permissões',
+                        style: TextStyle(color: Colors.amber),
+                      ),
                     ],
                   ),
                 ),
@@ -363,7 +408,8 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => GerenciarPermissoesPage(usuario: usuario),
+                        builder: (context) =>
+                            GerenciarPermissoesPage(usuario: usuario),
                       ),
                     ).then((_) => setState(() {}));
                     break;
@@ -395,6 +441,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     final serieController = TextEditingController(text: '1');
     final numeroInicialController = TextEditingController(text: '1');
     TipoUsuario tipoSelecionado = TipoUsuario.operador;
+    bool acessoMultiempresa = false;
 
     showDialog(
       context: context,
@@ -453,8 +500,12 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         return 'Email é obrigatório';
                       }
                       // Verificar se já existe
-                      final usuarios = authService.getUsuariosDaEmpresa(widget.empresa.id);
-                      if (usuarios.any((u) => u.email.toLowerCase() == value.toLowerCase())) {
+                      final usuarios = authService.getUsuariosDaEmpresa(
+                        widget.empresa.id,
+                      );
+                      if (usuarios.any(
+                        (u) => u.email.toLowerCase() == value.toLowerCase(),
+                      )) {
                         return 'Email já cadastrado';
                       }
                       return null;
@@ -530,7 +581,27 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       }
                     },
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Acesso multiempresa',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Permite ver a matriz e as filiais do grupo. Cada empresa '
+                      'continua com seus dados separados.',
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                    value: acessoMultiempresa,
+                    activeColor: Colors.greenAccent,
+                    onChanged: (v) => setState(() => acessoMultiempresa = v),
+                  ),
+                  const SizedBox(height: 8),
                   TextFormField(
                     controller: serieController,
                     decoration: const InputDecoration(
@@ -567,7 +638,10 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         borderSide: BorderSide(color: Colors.blueAccent),
                       ),
                       helperText: 'Número da primeira nota desta série',
-                      helperStyle: TextStyle(color: Colors.white38, fontSize: 11),
+                      helperStyle: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
                     ),
                     style: const TextStyle(color: Colors.white),
                     keyboardType: TextInputType.number,
@@ -609,9 +683,11 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         : telefoneController.text.trim(),
                     tipo: tipoSelecionado,
                     empresaId: widget.empresa.id,
+                    acessoMultiempresa: acessoMultiempresa,
                     ativo: true,
                     serieNfce: int.tryParse(serieController.text) ?? 1,
-                    numeroInicialNfce: int.tryParse(numeroInicialController.text) ?? 1,
+                    numeroInicialNfce:
+                        int.tryParse(numeroInicialController.text) ?? 1,
                     createdAt: agora,
                     updatedAt: agora,
                   );
@@ -624,7 +700,8 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => GerenciarPermissoesPage(usuario: novoUsuario),
+                          builder: (context) =>
+                              GerenciarPermissoesPage(usuario: novoUsuario),
                         ),
                       ).then((_) {
                         setState(() {});
@@ -664,9 +741,11 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         : telefoneController.text.trim(),
                     tipo: tipoSelecionado,
                     empresaId: widget.empresa.id,
+                    acessoMultiempresa: acessoMultiempresa,
                     ativo: true,
                     serieNfce: int.tryParse(serieController.text) ?? 1,
-                    numeroInicialNfce: int.tryParse(numeroInicialController.text) ?? 1,
+                    numeroInicialNfce:
+                        int.tryParse(numeroInicialController.text) ?? 1,
                     createdAt: agora,
                     updatedAt: agora,
                   );
@@ -716,10 +795,17 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     final nomeController = TextEditingController(text: usuario.nome);
     final emailController = TextEditingController(text: usuario.email);
     final senhaController = TextEditingController();
-    final telefoneController = TextEditingController(text: usuario.telefone ?? '');
-    final serieController = TextEditingController(text: usuario.serieNfce.toString());
-    final numeroInicialController = TextEditingController(text: usuario.numeroInicialNfce.toString());
+    final telefoneController = TextEditingController(
+      text: usuario.telefone ?? '',
+    );
+    final serieController = TextEditingController(
+      text: usuario.serieNfce.toString(),
+    );
+    final numeroInicialController = TextEditingController(
+      text: usuario.numeroInicialNfce.toString(),
+    );
     TipoUsuario tipoSelecionado = usuario.tipo;
+    bool acessoMultiempresa = usuario.acessoMultiempresa;
 
     showDialog(
       context: context,
@@ -778,10 +864,14 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         return 'Email é obrigatório';
                       }
                       // Verificar se já existe (exceto o próprio usuário)
-                      final usuarios = authService.getUsuariosDaEmpresa(widget.empresa.id);
-                      if (usuarios.any((u) =>
-                          u.id != usuario.id &&
-                          u.email.toLowerCase() == value.toLowerCase())) {
+                      final usuarios = authService.getUsuariosDaEmpresa(
+                        widget.empresa.id,
+                      );
+                      if (usuarios.any(
+                        (u) =>
+                            u.id != usuario.id &&
+                            u.email.toLowerCase() == value.toLowerCase(),
+                      )) {
                         return 'Email já cadastrado';
                       }
                       return null;
@@ -803,7 +893,9 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     style: const TextStyle(color: Colors.white),
                     obscureText: true,
                     validator: (value) {
-                      if (value != null && value.isNotEmpty && value.length < 3) {
+                      if (value != null &&
+                          value.isNotEmpty &&
+                          value.length < 3) {
                         return 'Senha deve ter pelo menos 3 caracteres';
                       }
                       return null;
@@ -854,7 +946,27 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       }
                     },
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Acesso multiempresa',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Permite ver a matriz e as filiais do grupo. Cada empresa '
+                      'continua com seus dados separados.',
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                    value: acessoMultiempresa,
+                    activeColor: Colors.greenAccent,
+                    onChanged: (v) => setState(() => acessoMultiempresa = v),
+                  ),
+                  const SizedBox(height: 8),
                   TextFormField(
                     controller: serieController,
                     decoration: const InputDecoration(
@@ -891,7 +1003,10 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         borderSide: BorderSide(color: Colors.blueAccent),
                       ),
                       helperText: 'Número da primeira nota desta série',
-                      helperStyle: TextStyle(color: Colors.white38, fontSize: 11),
+                      helperStyle: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
                     ),
                     style: const TextStyle(color: Colors.white),
                     keyboardType: TextInputType.number,
@@ -914,7 +1029,8 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => GerenciarPermissoesPage(usuario: usuario),
+                          builder: (context) =>
+                              GerenciarPermissoesPage(usuario: usuario),
                         ),
                       ).then((_) {
                         Navigator.of(context).pop();
@@ -926,7 +1042,10 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.amber.shade700,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                   ),
                 ],
@@ -954,8 +1073,10 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                         ? null
                         : telefoneController.text.trim(),
                     tipo: tipoSelecionado,
+                    acessoMultiempresa: acessoMultiempresa,
                     serieNfce: int.tryParse(serieController.text) ?? 1,
-                    numeroInicialNfce: int.tryParse(numeroInicialController.text) ?? 1,
+                    numeroInicialNfce:
+                        int.tryParse(numeroInicialController.text) ?? 1,
                     updatedAt: DateTime.now(),
                   );
 
@@ -969,12 +1090,14 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
                           content: Text(
                             falhouSync
                                 ? 'Usuário atualizado no banco local, mas a '
-                                    'sincronização com a nuvem falhou: '
-                                    '${authService.motivoSyncUsuariosFalhou ?? ''}'.trim()
+                                          'sincronização com a nuvem falhou: '
+                                          '${authService.motivoSyncUsuariosFalhou ?? ''}'
+                                      .trim()
                                 : 'Usuário atualizado com sucesso!',
                           ),
-                          backgroundColor:
-                              falhouSync ? Colors.orange : Colors.green,
+                          backgroundColor: falhouSync
+                              ? Colors.orange
+                              : Colors.green,
                         ),
                       );
                       setState(() {});
@@ -1055,9 +1178,7 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text(
           'Confirmar Exclusão',
           style: TextStyle(color: Colors.white),
@@ -1111,4 +1232,3 @@ class _GerenciarUsuariosPageState extends State<GerenciarUsuariosPage> {
     );
   }
 }
-

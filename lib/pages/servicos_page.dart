@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/data_service.dart';
+import '../services/nfse_service.dart' show NfseEmitResult;
 import '../services/pedido_impressao_service.dart';
 import '../models/servico_realizado.dart';
 import '../models/forma_pagamento.dart';
@@ -15,6 +16,7 @@ import 'historico_vendas_page.dart';
 import 'tipos_servico_page.dart';
 import '../widgets/sync_status_widget.dart';
 import '../widgets/pedido_detalhes_dialog.dart';
+import 'emitir_nfse_page.dart';
 
 /// Tela de Serviços realizados.
 ///
@@ -365,6 +367,75 @@ class _ServicosPageState extends State<ServicosPage>
       context,
       servico.toPedido(),
       incluirRomaneio: _temEntrega(servico),
+    );
+  }
+
+  /// Abre a tela de emissão de NFS-e para o serviço recebido.
+  Future<void> _emitirNfse(ServicoRealizado servico) async {
+    final resultado = await Navigator.push<NfseEmitResult?>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EmitirNfsePage(servico: servico),
+      ),
+    );
+
+    if (mounted && resultado != null) {
+      setState(() {});
+      if (resultado.sucesso) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'NFS-e ${resultado.numeroNfse ?? ''} emitida para ${servico.numero}',
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao emitir NFS-e: ${resultado.mensagem}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Visualiza os dados da NFS-e já vinculada ao serviço.
+  void _verNfse(ServicoRealizado servico) {
+    final nfse = servico.nfse;
+    if (nfse == null) return;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: Text('NFS-e ${nfse.numeroNfse ?? 'Sem número'}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Serviço: ${nfse.numeroServico}'),
+              Text('Status: ${nfse.status.name.toUpperCase()}'),
+              Text('Valor serviços: ${_moeda.format(nfse.valorServicos)}'),
+              Text('ISS (${nfse.aliquotaIss.toStringAsFixed(2)}%): ${_moeda.format(nfse.valorIss)}'),
+              Text('Total: ${_moeda.format(nfse.valorTotal)}'),
+              if (nfse.chaveAcesso != null) Text('Chave: ${nfse.chaveAcesso}'),
+              if (nfse.protocolo != null) Text('Protocolo: ${nfse.protocolo}'),
+              if (nfse.observacao != null) Text('Observação: ${nfse.observacao}'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1096,6 +1167,29 @@ class _ServicosPageState extends State<ServicosPage>
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                         textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  if (!isCancelado && !isOrcamento && isRecebido && pedido.nfse == null)
+                    ElevatedButton.icon(
+                      onPressed: () => _emitirNfse(pedido),
+                      icon: const Icon(Icons.receipt_long, size: 16),
+                      label: const Text('NFS-e'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  if (pedido.nfse != null)
+                    OutlinedButton.icon(
+                      onPressed: () => _verNfse(pedido),
+                      icon: const Icon(Icons.description, size: 16),
+                      label: const Text('Ver NFS-e'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blueAccent,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        textStyle: const TextStyle(fontSize: 12),
                       ),
                     ),
                 ],

@@ -347,6 +347,49 @@ curl -s -X POST -H "Content-Type: application/json" -H "x-bot-token: $TOKEN" \
   http://127.0.0.1:8097/chat
 ```
 
+### Precos: de onde saem e como conferir
+
+O bot **nunca digita um preco**: ele copia da tabela `produtos` (mesmo banco que o
+PDV usa) e formata em reais. Nome, preco e estoque saem juntos, entao nao existe
+"preco certo no produto errado".
+
+Regras que garantem isso:
+
+- preco de item vem do cadastro (`preco` ou `preco_promocional` **so** se a promocao
+  estiver valida: `tem_promocao`, dentro de `promocao_inicio`/`promocao_fim` e menor
+  que o preco normal); promo vencida ou com data ilegivel e ignorada;
+- produto com `preco` zerado aparece sem valor (nunca "R$ 0,00" nem chute);
+- a busca precisa casar com o **substantivo** pedido: "antipulgas para gato" nao pode
+  devolver racao porque "gato" aparece no nome do grupo — nesse caso a resposta e
+  "nao encontrei esse item, vou confirmar com a equipe";
+- produto de outra **especie** fica fora: "racao de peixe" nao devolve racao de gato
+  com sabor peixe (a categoria do produto manda mais que o sabor no nome);
+- **servico** (banho, tosa, vacina, corte de unha, consulta, taxi dog) so tem preco se
+  voce preencher `servicos_detalhes` no `negocio.json`; sem isso o bot confirma com a
+  equipe — antes ele respondia o preco de um alicate para quem pedia corte de unha;
+- pergunta de preco sem dizer o pet ("quanto custa a racao?") faz o bot perguntar
+  "e para qual pet?" (`catalogo.perguntar_pet`) em vez de mostrar o primeiro item;
+- a lista sai **um item por linha** (`• Nome — R$ 8,98`), nunca tudo numa frase so:
+  em bloco corrido ninguem acha o preco do item que quer;
+- a lista mostra ate `BOT_CATALOGO_MAX` itens (padrao **10**) e, quando o cadastro tem
+  mais opcoes parecidas, diz quantas ficaram de fora e pede marca/tamanho;
+- se a IA escrever qualquer numero que nao esteja na lista de produtos que ela
+  recebeu, a resposta vira `BOT_FALLBACK` (vale para "R$ 60", "60 reais" e "60").
+
+Para conferir contra o banco de verdade (roda dentro do container, le `produtos` e
+compara item por item com o que `/chat` responde):
+
+```bash
+scp -i ~/.ssh/id_ed25519_vm -P 2222 deploy/evolution/bot/_valida_precos.py charles@127.0.0.1:~/evolution/bot/
+ssh -i ~/.ssh/id_ed25519_vm -p 2222 charles@127.0.0.1 \
+  'docker cp ~/evolution/bot/_valida_precos.py evo_bot:/app/_valida_precos.py && \
+   docker exec -e PYTHONIOENCODING=utf-8 evo_bot python /app/_valida_precos.py'
+```
+
+A saida mostra, por pergunta, a origem (`catalogo`, `catalogo_vazio`,
+`fallback_preco`...) e `falhas: 0` quando todo valor respondido bate com o cadastro.
+O script e temporario no container (some no proximo `--build`; copie de novo).
+
 ### Historico de perguntas (onde o bot nao soube)
 
 Cada mensagem de cliente que o bot atende vira uma linha em
@@ -384,7 +427,8 @@ O modelo `llama3.2:3b` **inventa preco e horario mesmo com o prompt proibindo**
 (testado: respondeu "R$ 25,00" e "aberto das 9h as 18h" sem esses dados existirem).
 Por isso o `bot.py` filtra a resposta antes de enviar:
 
-- qualquer valor ou preco (`R$`, "reais", "custa") vira `BOT_FALLBACK`;
+- qualquer valor ou preco escrito pela IA (`R$`, "reais", "custa", numero solto) que
+  nao exista no catalogo enviado a ela vira `BOT_FALLBACK`;
 - horario, endereco, prazo e estoque ficam bloqueados enquanto `BOT_EXTRA_INFO`
   estiver vazio.
 

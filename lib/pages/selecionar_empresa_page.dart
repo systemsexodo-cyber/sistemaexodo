@@ -951,6 +951,57 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
     );
   }
 
+  /// Nome da matriz à qual [empresa] está vinculada (null se for independente).
+  String? _nomeDaMatriz(Empresa empresa, AuthService authService) {
+    final idMatriz = empresa.empresaMatrizId;
+    if (idMatriz == null) return null;
+    for (final e in authService.empresas) {
+      if (e.id == idMatriz) return e.nomeExibicao;
+    }
+    return null;
+  }
+
+  /// Selo indicando o papel da empresa no grupo (matriz ou filial).
+  Widget _buildVinculoBadge({required bool matriz, String? nomeMatriz}) {
+    final cor = matriz ? Colors.greenAccent : Colors.orangeAccent;
+    return Tooltip(
+      message: matriz
+          ? 'Empresa matriz do grupo'
+          : 'Filial de ${nomeMatriz ?? 'outra empresa'}.'
+                ' Cada empresa mantém seus dados separados.',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        decoration: BoxDecoration(
+          color: cor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: cor.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              matriz
+                  ? Icons.account_tree_rounded
+                  : Icons.subdirectory_arrow_right_rounded,
+              size: 11,
+              color: cor,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              matriz ? 'MATRIZ' : 'FILIAL',
+              style: TextStyle(
+                color: cor,
+                fontSize: 9,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmpresaCard(
     BuildContext context,
     Empresa empresa,
@@ -1104,6 +1155,15 @@ class _SelecionarEmpresaPageState extends State<SelecionarEmpresaPage> {
                               ),
                             ],
                           ),
+                          if (empresa.isFilial)
+                            _buildVinculoBadge(
+                              matriz: false,
+                              nomeMatriz: _nomeDaMatriz(empresa, authService),
+                            )
+                          else if (authService.empresas.any(
+                            (e) => e.empresaMatrizId == empresa.id,
+                          ))
+                            _buildVinculoBadge(matriz: true),
                           // Online indicator
                           Consumer<DataService>(
                             builder: (context, dataService, _) {

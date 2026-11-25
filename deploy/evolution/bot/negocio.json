@@ -26,6 +26,7 @@
 
   "catalogo": {
     "minimo_grupo": 80,
+    "perguntar_pet": "Temos opções para {pets}. É para qual pet? Assim eu já te passo o preço certo.",
     "resumo": "Trabalhamos com ração para cães e gatos, petiscos, medicamentos, areia, brinquedos, acessórios, estética e higiene, aquarismo, aves e roedores, além de pesca e camping. Quer que eu procure algum item específico?",
     "categorias": {
       "RACAO CAES E GATOS": "ração para cães e gatos",
@@ -57,6 +58,9 @@
 
   "saudacao": "Oi! Sou o assistente virtual da loja. Como posso ajudar?",
   "agradecimento": "De nada! Qualquer coisa é só chamar por aqui.",
+  "apresentacao": "Por aqui eu cuido do atendimento da loja: passo preço e disponibilidade dos produtos, falo sobre {servicos}, horário, endereço, formas de pagamento e entrega. O que você precisa?",
+  "cortesia": "Que bom! Qualquer coisa é só chamar por aqui.",
+  "repeticao": "Desculpa se eu repeti! Me diz com outras palavras o que você precisa que eu resolvo por aqui.",
 
   "respostas": {
     "nota fiscal": "Emitimos nota fiscal em todas as vendas."

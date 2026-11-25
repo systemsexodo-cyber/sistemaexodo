@@ -20349,11 +20349,14 @@ recusando a emissão de NFC-e (erro 403).
     for (final m in dataService.mesasComandas) {
       if (m.tipo != tipo) continue;
       final digitosM = m.numero.replaceAll(RegExp(r'[^0-9]'), '');
-      if (encontrada == null &&
-          alvoDigitos.isNotEmpty &&
-          int.tryParse(digitosM) == int.tryParse(alvoDigitos)) {
+      if (!numeroMesaComandaIgual(m.numero, alvoDigitos)) continue;
+      // Prefere a mesa/comanda ABERTA: reabrir um registro antigo fechado
+      // criava uma segunda mesa com o mesmo número no quadro.
+      if (encontrada == null ||
+          (encontrada.status != 'Aberta' && m.status == 'Aberta')) {
         encontrada = m;
       }
+      if (encontrada.status == 'Aberta') break;
     }
 
     MesaComanda mesa;

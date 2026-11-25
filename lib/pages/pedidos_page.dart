@@ -936,11 +936,11 @@ class _PedidosPageState extends State<PedidosPage> {
     );
   }
 
-  void _alterarStatus(
+  Future<void> _alterarStatus(
     Pedido pedido,
     String novoStatus,
     DataService dataService,
-  ) {
+  ) async {
     if (pedido.status == novoStatus) return;
 
     Pedido pedidoAtualizado = pedido.copyWith(status: novoStatus);
@@ -960,7 +960,7 @@ class _PedidosPageState extends State<PedidosPage> {
       }
     }
 
-    dataService.updatePedido(pedidoAtualizado);
+    await dataService.updatePedido(pedidoAtualizado);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1929,8 +1929,9 @@ class _PedidosPageState extends State<PedidosPage> {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.purple,
+                              color: Colors.redAccent,
                               borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.white, width: 1.5),
                             ),
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
@@ -1938,15 +1939,15 @@ class _PedidosPageState extends State<PedidosPage> {
                                 Icon(
                                   Icons.shopping_cart,
                                   color: Colors.white,
-                                  size: 12,
+                                  size: 14,
                                 ),
                                 SizedBox(width: 4),
                                 Text(
-                                  'E-commerce',
+                                  'PEDIDO ONLINE',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 10,
+                                    fontSize: 11,
                                   ),
                                 ),
                               ],
@@ -2092,8 +2093,9 @@ class _PedidosPageState extends State<PedidosPage> {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.purple,
+                          color: Colors.redAccent,
                           borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white, width: 1.5),
                         ),
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
@@ -2101,15 +2103,15 @@ class _PedidosPageState extends State<PedidosPage> {
                             Icon(
                               Icons.shopping_cart,
                               color: Colors.white,
-                              size: 12,
+                              size: 14,
                             ),
                             SizedBox(width: 4),
                             Text(
-                              'E-commerce',
+                              'PEDIDO ONLINE',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 10,
+                                fontSize: 11,
                               ),
                             ),
                           ],
@@ -2342,32 +2344,6 @@ class _PedidosPageState extends State<PedidosPage> {
                   ],
                 ],
               ),
-              if (pedido.clienteEndereco != null &&
-                  pedido.clienteEndereco!.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      Icons.location_on,
-                      color: Colors.orangeAccent.withOpacity(0.8),
-                      size: 14,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        pedido.clienteEndereco!,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.7),
-                          fontSize: 12,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
               // Linha 3: Vendedor E-commerce (se existir)
               if (isPedidoEcommerce &&
                   pedido.vendedorNome != null &&
@@ -2422,7 +2398,7 @@ class _PedidosPageState extends State<PedidosPage> {
                   children: [
                     Icon(
                       Icons.location_on,
-                      color: Colors.orange.withOpacity(0.7),
+                      color: Colors.orange,
                       size: 14,
                     ),
                     const SizedBox(width: 6),
@@ -2430,8 +2406,9 @@ class _PedidosPageState extends State<PedidosPage> {
                       child: Text(
                         endereco,
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.7),
+                          color: Colors.white,
                           fontSize: 12,
+                          fontWeight: FontWeight.w500,
                         ),
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1,

@@ -1487,17 +1487,28 @@ class _ControleMesasComandasPageState extends State<ControleMesasComandasPage> {
                     // Se o número estiver vazio, gerar um automaticamente
                     String numeroFinal = numeroController.text.trim();
                     if (numeroFinal.isEmpty) {
-                      final totalDesseTipo = dataService.mesasComandas
-                          .where((m) => m.tipo == _tipoSelecionado)
-                          .length;
                       final prefixo = _tipoSelecionado == TipoControle.mesa ? 'MESA' : 'CMD';
-                      numeroFinal = '$prefixo-${(totalDesseTipo + 1).toString().padLeft(2, '0')}';
-                      
-                      // Garantir que o gerado não existe (evitar colisão se deletou algum)
-                      int tentativa = 1;
-                      while (dataService.mesasComandas.any((m) => m.numero == numeroFinal)) {
-                        numeroFinal = '$prefixo-${(totalDesseTipo + 1 + tentativa).toString().padLeft(2, '0')}';
-                        tentativa++;
+                      // Próximo número livre a partir do maior já usado, para
+                      // não repetir o número de uma mesa/comanda existente.
+                      int proximo = 1;
+                      for (final m in dataService.mesasComandas) {
+                        if (m.tipo != _tipoSelecionado) continue;
+                        final match = RegExp(r'\d+').firstMatch(m.numero);
+                        final numeroM = match == null
+                            ? null
+                            : int.tryParse(match.group(0) ?? '');
+                        if (numeroM != null && numeroM >= proximo) {
+                          proximo = numeroM + 1;
+                        }
+                      }
+                      numeroFinal = '$prefixo-${proximo.toString().padLeft(2, '0')}';
+                      while (dataService.mesasComandas.any(
+                        (m) =>
+                            m.tipo == _tipoSelecionado &&
+                            numeroMesaComandaIgual(m.numero, numeroFinal),
+                      )) {
+                        proximo++;
+                        numeroFinal = '$prefixo-${proximo.toString().padLeft(2, '0')}';
                       }
                     }
 

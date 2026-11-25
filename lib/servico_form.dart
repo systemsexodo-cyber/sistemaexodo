@@ -18,6 +18,7 @@ class _ServicoFormState extends State<ServicoForm> {
   late double _preco;
   late double _valorAdicional;
   late String _descricaoAdicional;
+  late String _nota;
 
   @override
   void initState() {
@@ -27,6 +28,7 @@ class _ServicoFormState extends State<ServicoForm> {
     _preco = widget.servico?.preco ?? 0.0;
     _valorAdicional = widget.servico?.valorAdicional ?? 0.0;
     _descricaoAdicional = widget.servico?.descricaoAdicional ?? '';
+    _nota = widget.servico?.nota ?? '';
   }
 
   void _submit() {
@@ -39,6 +41,7 @@ class _ServicoFormState extends State<ServicoForm> {
         preco: _preco,
         valorAdicional: _valorAdicional,
         descricaoAdicional: _descricaoAdicional.isEmpty ? null : _descricaoAdicional,
+        nota: _nota.isEmpty ? null : _nota,
         createdAt: widget.servico?.createdAt ?? DateTime.now(),
         updatedAt: DateTime.now(),
       );
@@ -120,6 +123,12 @@ class _ServicoFormState extends State<ServicoForm> {
                 labelText: 'Descrição do Valor Adicional',
               ),
               onSaved: (value) => _descricaoAdicional = value ?? '',
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              initialValue: _nota,
+              decoration: const InputDecoration(labelText: 'Nota (Observação)'),
+              onSaved: (value) => _nota = value ?? '',
             ),
             const SizedBox(height: 20),
             ElevatedButton(

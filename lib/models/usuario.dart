@@ -16,6 +16,8 @@ class Usuario {
   garcom; // Garçom: acesso restrito às telas de mesas/comandas + suas vendas/comissões/ranking
   final bool ativo;
   final bool isMaster; // Usuário master da empresa (pode gerenciar permissões)
+  final bool
+  acessoMultiempresa; // Pode ver/alternar entre a matriz e as filiais vinculadas
   final Set<String>?
   permissoesPersonalizadas; // Permissões adicionais concedidas
   final Set<String>? permissoesNegadas; // Permissões removidas do padrão
@@ -40,6 +42,7 @@ class Usuario {
     this.garcom = false,
     this.ativo = true,
     this.isMaster = false,
+    this.acessoMultiempresa = false,
     this.permissoesPersonalizadas,
     this.permissoesNegadas,
     this.telasOcultas,
@@ -64,6 +67,7 @@ class Usuario {
     bool? garcom,
     bool? ativo,
     bool? isMaster,
+    bool? acessoMultiempresa,
     Set<String>? permissoesPersonalizadas,
     Set<String>? permissoesNegadas,
     List<String>? telasOcultas,
@@ -86,6 +90,7 @@ class Usuario {
       garcom: garcom ?? this.garcom,
       ativo: ativo ?? this.ativo,
       isMaster: isMaster ?? this.isMaster,
+      acessoMultiempresa: acessoMultiempresa ?? this.acessoMultiempresa,
       permissoesPersonalizadas:
           permissoesPersonalizadas ?? this.permissoesPersonalizadas,
       permissoesNegadas: permissoesNegadas ?? this.permissoesNegadas,
@@ -157,6 +162,8 @@ class Usuario {
       garcom: getBool('garcom', 'garcom') ?? false,
       ativo: getBool('ativo', 'ativo') ?? true,
       isMaster: getBool('isMaster', 'is_master') ?? false,
+      acessoMultiempresa:
+          getBool('acessoMultiempresa', 'acesso_multiempresa') ?? false,
       permissoesPersonalizadas:
           get('permissoesPersonalizadas', 'permissoes_personalizadas') != null
           ? Set<String>.from(
@@ -200,6 +207,8 @@ class Usuario {
       'garcom': garcom,
       'ativo': ativo,
       'is_master': isMaster,
+      'acesso_multiempresa': acessoMultiempresa,
+      'acessoMultiempresa': acessoMultiempresa,
       'permissoes_personalizadas': permissoesPersonalizadas?.toList(),
       'permissoes_negadas': permissoesNegadas?.toList(),
       'telas_ocultas': telasOcultas,
@@ -218,6 +227,7 @@ class Usuario {
       'dados_app': {
         'tipo': tipo.name,
         'is_master': isMaster,
+        'acesso_multiempresa': acessoMultiempresa,
         'funcionario_id': funcionarioId,
         'garcom': garcom,
         'permissoes_personalizadas': permissoesPersonalizadas?.toList(),

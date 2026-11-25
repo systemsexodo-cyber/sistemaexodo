@@ -1862,17 +1862,64 @@ class AuthService extends ChangeNotifier {
 
   /// Obtém empresas disponíveis para o usuário atual
   List<Empresa> getEmpresasDoUsuario() {
-    if (_usuarioAtual == null) return [];
+    final usuario = _usuarioAtual;
+    if (usuario == null) return [];
+    return empresasVisiveisPara(usuario: usuario, empresas: _empresas);
+  }
 
-    // Usuário "user" vê todas as empresas
-    if (_usuarioAtual!.email.toLowerCase() == 'user') {
-      return _empresas.where((e) => e.ativo).toList();
+  /// Regra única de visibilidade de empresas (login, Portal e trocas).
+  ///
+  /// - Conta de suporte global (`user`) enxerga todas as empresas ativas.
+  /// - Os demais enxergam SEMPRE a própria empresa.
+  /// - Com a permissão [Usuario.acessoMultiempresa], enxergam também a matriz
+  ///   e as demais filiais do mesmo grupo (a raiz é resolvida subindo os
+  ///   vínculos `empresa_matriz_id`; cada empresa continua com seus dados
+  ///   separados — a permissão muda apenas QUAIS empresas aparecem na lista).
+  ///
+  /// Estático e sem estado para o teste exercitar a regra sem login/rede.
+  @visibleForTesting
+  static List<Empresa> empresasVisiveisPara({
+    required Usuario usuario,
+    required List<Empresa> empresas,
+  }) {
+    final ativas = empresas.where((e) => e.ativo).toList();
+
+    if (usuario.email.toLowerCase() == 'user') {
+      return ativas;
     }
 
-    // Outros usuários veem apenas sua empresa vinculada
-    return _empresas
-        .where((e) => e.ativo && e.id == _usuarioAtual!.empresaId)
-        .toList();
+    final empresaId = usuario.empresaId?.trim() ?? '';
+    final propria = ativas.where((e) => e.id == empresaId).toList();
+    if (propria.isEmpty) return [];
+    if (!usuario.acessoMultiempresa) return propria;
+
+    // Sobe os vínculos até a matriz do grupo. O `visitados` corta ciclos
+    // (uma empresa apontando de volta para outra) sem entrar em loop.
+    String raizDe(Empresa empresa) {
+      var atual = empresa;
+      final visitados = <String>{};
+      while (visitados.add(atual.id)) {
+        final matrizId = atual.empresaMatrizId;
+        if (matrizId == null) return atual.id;
+        final matriz = ativas.firstWhereOrNull((e) => e.id == matrizId);
+        if (matriz == null) return atual.id;
+        atual = matriz;
+      }
+      return atual.id;
+    }
+
+    final raiz = raizDe(propria.first);
+    final visiveis = ativas.where((e) => raizDe(e) == raiz).toList();
+
+    // Matriz primeiro; as filiais em ordem alfabética.
+    visiveis.sort((a, b) {
+      if (a.id == raiz) return -1;
+      if (b.id == raiz) return 1;
+      return a.nomeExibicao.toLowerCase().compareTo(
+        b.nomeExibicao.toLowerCase(),
+      );
+    });
+    return visiveis;
   }
 
   /// Busca uma empresa pelo slug (friendly URL) ou ID
@@ -2065,9 +2112,7 @@ class AuthService extends ChangeNotifier {
         ? Map<String, dynamic>.from(novaConfig['ecommerce'] as Map)
         : <String, dynamic>{};
     final atualEcom = (atual.configuracoes?['ecommerce'] is Map)
-        ? Map<String, dynamic>.from(
-            atual.configuracoes!['ecommerce'] as Map,
-          )
+        ? Map<String, dynamic>.from(atual.configuracoes!['ecommerce'] as Map)
         : <String, dynamic>{};
 
     var mudou = false;
@@ -2112,10 +2157,7 @@ class AuthService extends ChangeNotifier {
   /// com a versão mais nova entre a cópia atual e a que veio da tela. As
   /// demais chaves continuam vindo da tela, mas nenhuma chave que a tela
   /// desconhece é perdida.
-  Empresa _aplicarConfigsMaisRecentesNaEntrada(
-    Empresa entrada,
-    Empresa atual,
-  ) {
+  Empresa _aplicarConfigsMaisRecentesNaEntrada(Empresa entrada, Empresa atual) {
     final configEntrada = Map<String, dynamic>.from(
       entrada.configuracoes ?? <String, dynamic>{},
     );

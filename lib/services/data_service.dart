@@ -58,6 +58,7 @@ import 'package:sistema_exodo_novo/services/neon_realtime_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:sistema_exodo_novo/services/sync_queue_service.dart';
 import 'package:sistema_exodo_novo/services/whatsapp_service.dart';
+import 'package:intl/intl.dart';
 import 'package:sistema_exodo_novo/models/empresa.dart';
 import 'package:sistema_exodo_novo/services/google_drive_service.dart';
 import 'package:sistema_exodo_novo/services/database_service.dart';
@@ -2685,10 +2686,13 @@ class DataService extends ChangeNotifier {
     );
     _programarProximoSync(); // Iniciar backup diário automático
     _iniciarBackupDiario();
+    _iniciarResumoDiario();
   }
 
   Timer? _backupDiarioTimer;
   DateTime? _ultimoBackupDiario;
+  Timer? _resumoDiarioTimer;
+  DateTime? _ultimoResumoDiario;
   bool _emProcessoBackupDiario = false;
 
   /// Inicia o timer de backup diário automático.
@@ -2734,6 +2738,141 @@ class DataService extends ChangeNotifier {
         'depois a cada 30 min, respeitando 24h.',
       );
     });
+  }
+
+  void _iniciarResumoDiario() {
+    _resumoDiarioTimer?.cancel();
+    _carregarUltimoResumoDiario().then((_) {
+      // Verificar na abertura (com delay) e depois a cada 30 min.
+      Timer(const Duration(seconds: 60), () {
+        _verificarResumoDiario();
+      });
+      _resumoDiarioTimer = Timer.periodic(const Duration(minutes: 30), (_) {
+        _verificarResumoDiario();
+      });
+      debugPrint('>>> [ResumoDiario] ⏱️ Timer de resumo diário iniciado');
+    });
+  }
+
+  Future<void> _carregarUltimoResumoDiario() async {
+    if (_currentEmpresaId == null) return;
+    try {
+      final key = _getEmpresaKey('exodo_ultimo_resumo_diario');
+      final valor = await _storage.carregar(key);
+      if (valor != null) {
+        _ultimoResumoDiario = DateTime.tryParse(valor.toString());
+      }
+    } catch (e) {
+      debugPrint('>>> [ResumoDiario] ⚠️ Erro ao carregar último resumo: $e');
+    }
+  }
+
+  Future<void> _salvarUltimoResumoDiario(DateTime data) async {
+    if (_currentEmpresaId == null) return;
+    try {
+      final key = _getEmpresaKey('exodo_ultimo_resumo_diario');
+      await _storage.salvar(key, data.toIso8601String());
+      _ultimoResumoDiario = data;
+    } catch (e) {
+      debugPrint('>>> [ResumoDiario] ⚠️ Erro ao salvar último resumo: $e');
+    }
+  }
+
+  Future<void> _verificarResumoDiario({bool forcar = false}) async {
+    final empresa = _empresaAtual;
+    if (empresa == null || !empresa.whatsappAtivo) return;
+    if (empresa.whatsappApiUrl == null ||
+        empresa.whatsappApiKey == null ||
+        empresa.whatsappInstanceName == null) {
+      return;
+    }
+
+    final agora = DateTime.now();
+    // Envia uma vez por dia, após as 18:00 (resumo do dia).
+    if (!forcar && agora.hour < 18) return;
+    if (!forcar &&
+        _ultimoResumoDiario != null &&
+        _ultimoResumoDiario!.year == agora.year &&
+        _ultimoResumoDiario!.month == agora.month &&
+        _ultimoResumoDiario!.day == agora.day) {
+      return;
+    }
+
+    await enviarResumoDiarioWhatsApp();
+  }
+
+  /// Envia o resumo do dia por WhatsApp SOMENTE para o número definido pela
+  /// empresa (`configuracoes['whatsapp_numero_resumo']`), nunca para
+  /// qualquer contato. Devolve `false` quando não há número definido ou o
+  /// envio falhou.
+  Future<bool> enviarResumoDiarioWhatsApp() async {
+    final empresa = _empresaAtual;
+    if (empresa == null || !empresa.whatsappAtivo) return false;
+    if (empresa.whatsappApiUrl == null ||
+        empresa.whatsappApiKey == null ||
+        empresa.whatsappInstanceName == null) {
+      return false;
+    }
+
+    final destinatario = empresa.whatsappNumeroResumo;
+    if (destinatario == null) {
+      debugPrint(
+        '>>> [ResumoDiario] Sem número definido para o resumo '
+        '(configuracoes.whatsapp_numero_resumo) — nada enviado.',
+      );
+      return false;
+    }
+
+    final agora = DateTime.now();
+    final inicioDia = DateTime(agora.year, agora.month, agora.day);
+
+    final pedidosHoje = _pedidos
+        .where((p) => !p.dataPedido.isBefore(inicioDia))
+        .toList();
+    final vendasHoje = _vendasBalcao
+        .where((v) => !v.cancelado && !v.dataVenda.isBefore(inicioDia))
+        .toList();
+
+    final totalPedidos = pedidosHoje.fold<double>(
+      0,
+      (s, p) => s + p.totalGeral,
+    );
+    final totalVendas = vendasHoje.fold<double>(
+      0,
+      (s, v) => s + v.valorTotal,
+    );
+    final qtdPedidos = pedidosHoje.length;
+    final qtdVendas = vendasHoje.length;
+    final pendentes = pedidosHoje
+        .where((p) => p.status.toLowerCase() == 'pendente')
+        .length;
+    final estoqueBaixo = _produtos
+        .where((p) => p.estoque <= p.estoqueMinimo && p.estoqueMinimo > 0)
+        .length;
+
+    final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final msg =
+        '📊 *Resumo do Dia - ${DateFormat('dd/MM/yyyy', 'pt_BR').format(agora)}*\n\n'
+        '🛒 Pedidos online: $qtdPedidos (${fmt.format(totalPedidos)})\n'
+        '   • Pendentes: $pendentes\n'
+        '💰 Vendas no balcão: $qtdVendas (${fmt.format(totalVendas)})\n'
+        '📦 Produtos com estoque baixo: $estoqueBaixo\n\n'
+        '📍 ${empresa.nomeExibicao}';
+
+    try {
+      final service = WhatsAppService.fromEmpresa(empresa);
+      final ok = await service.enviarMensagem(destinatario, msg);
+      debugPrint(
+        '>>> [ResumoDiario] Resumo enviado: ${ok ? "SUCESSO" : "FALHOU"}',
+      );
+      if (ok) {
+        await _salvarUltimoResumoDiario(agora);
+      }
+      return ok;
+    } catch (e) {
+      debugPrint('>>> [ResumoDiario] Erro ao enviar resumo: $e');
+      return false;
+    }
   }
 
   Future<void> _carregarUltimoBackupDiario() async {
@@ -9936,6 +10075,42 @@ class DataService extends ChangeNotifier {
   // ============ CRUD Agendamento Serviço ============
 
   /// Envia notificação WhatsApp para agendamento (se configurado)
+  Future<void> _enviarNotificacaoWhatsAppPedidoOnline(
+    Pedido pedidoAntigo,
+    Pedido pedidoNovo,
+  ) async {
+    if (!pedidoNovo.origemEcommerce) return;
+    if (pedidoAntigo.status == pedidoNovo.status) return;
+
+    final empresa = _empresaAtual;
+    if (empresa == null || !empresa.whatsappAtivo) return;
+    if (empresa.whatsappApiUrl == null ||
+        empresa.whatsappApiKey == null ||
+        empresa.whatsappInstanceName == null) {
+      return;
+    }
+
+    final telefone = pedidoNovo.clienteTelefone?.trim();
+    if (telefone == null || telefone.isEmpty) return;
+
+    try {
+      final service = WhatsAppService.fromEmpresa(empresa);
+      final ok = await service.notificarStatusPedidoOnline(
+        numero: telefone,
+        nomeCliente: (pedidoNovo.clienteNome ?? 'Cliente').trim(),
+        numeroPedido: pedidoNovo.numero,
+        status: pedidoNovo.status,
+        nomeEmpresa: empresa.nomeExibicao,
+      );
+      debugPrint(
+        '>>> [WhatsApp] Notificação status pedido ${pedidoNovo.numero}: '
+        '${ok ? "SUCESSO" : "FALHOU"}',
+      );
+    } catch (e) {
+      debugPrint('>>> [WhatsApp] Erro ao notificar status do pedido: $e');
+    }
+  }
+
   Future<void> _enviarNotificacaoWhatsAppAgendamento(
     AgendamentoServico agendamento, {
     bool isNovo = true,
@@ -11014,6 +11189,7 @@ class DataService extends ChangeNotifier {
     debugPrint('>>> Novo total: ${pedido.total}');
     debugPrint('>>> Novo totalRecebido: ${pedido.totalRecebido}');
     if (index != -1) {
+      final pedidoAntigo = _pedidos[index];
       _pedidos[index] = pedido;
       notifyListeners();
       _persistirLinhaLocal(LocalStorageService.keyPedidos, pedido.toMap());
@@ -11029,6 +11205,10 @@ class DataService extends ChangeNotifier {
         tabela: SupabaseService.tablePedidos,
         dados: pedido.toMap(),
       );
+
+      // Aviso por WhatsApp ao cliente quando um pedido da loja online
+      // muda de status (manual ou processamento automático).
+      unawaited(_enviarNotificacaoWhatsAppPedidoOnline(pedidoAntigo, pedido));
 
       // SINCRONIZAÇÃO BIDIRECIONAL: Pedido -> Entrega
       if (pedido.deliveryInfo != null &&
@@ -18560,6 +18740,27 @@ class DataService extends ChangeNotifier {
 
   /// Adiciona uma nova mesa ou comanda
   Future<void> addMesaComanda(MesaComanda mesaComanda) async {
+    // Duas mesas/comandas ABERTAS não podem ter o mesmo número: era assim que
+    // apareciam duas "mesas 1" no quadro (duas telas/dispositivos criando a
+    // mesma mesa ao mesmo tempo). Aqui é o ponto único de criação.
+    if (mesaComanda.status == 'Aberta') {
+      MesaComanda? conflito;
+      for (final m in _mesasComandas) {
+        if (m.id == mesaComanda.id) continue;
+        if (m.tipo != mesaComanda.tipo) continue;
+        if (m.status != 'Aberta') continue;
+        if (!numeroMesaComandaIgual(m.numero, mesaComanda.numero)) continue;
+        conflito = m;
+        break;
+      }
+      if (conflito != null) {
+        throw Exception(
+          'Já existe ${conflito.tipo == TipoControle.mesa ? 'uma mesa' : 'uma comanda'} '
+          'aberta com o número ${conflito.numero}.',
+        );
+      }
+    }
+
     _mesasComandas.add(mesaComanda);
     notifyListeners();
     _marcarSujo(LocalStorageService.keyMesasComandas);

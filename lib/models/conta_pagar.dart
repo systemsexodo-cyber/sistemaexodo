@@ -6,6 +6,7 @@ class RegistroPagamento {
   final String? formaPagamento;
   final String? observacao;
   final List<String>? itensPagos; // IDs dos itens pagos neste pagamento
+  final Map<String, double>? itensQuantidades; // itemId -> quantidade quitada neste pagamento
   final String? pessoaPagou; // Nome da pessoa que realizou o pagamento
 
   RegistroPagamento({
@@ -15,6 +16,7 @@ class RegistroPagamento {
     this.formaPagamento,
     this.observacao,
     this.itensPagos,
+    this.itensQuantidades,
     this.pessoaPagou,
   });
 
@@ -30,6 +32,10 @@ class RegistroPagamento {
       itensPagos: map['itensPagos'] != null
           ? List<String>.from(map['itensPagos'])
           : null,
+      itensQuantidades: map['itensQuantidades'] != null
+          ? (map['itensQuantidades'] as Map)
+              .map((k, v) => MapEntry(k.toString(), (v as num).toDouble()))
+          : null,
       pessoaPagou: map['pessoaPagou'],
     );
   }
@@ -42,6 +48,7 @@ class RegistroPagamento {
       'formaPagamento': formaPagamento,
       'observacao': observacao,
       'itensPagos': itensPagos,
+      'itensQuantidades': itensQuantidades,
       'pessoaPagou': pessoaPagou,
     };
   }

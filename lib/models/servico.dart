@@ -18,6 +18,7 @@ class Servico {
   final double preco;
   final double valorAdicional;
   final String? descricaoAdicional;
+  final String? nota; // Nota/observação livre sobre o serviço
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<ItemMaterial> materiais; // Lista de materiais padrão do serviço
@@ -35,6 +36,7 @@ class Servico {
     required this.preco,
     this.valorAdicional = 0.0,
     this.descricaoAdicional,
+    this.nota,
     required this.createdAt,
     required this.updatedAt,
     List<ItemMaterial>? materiais,
@@ -66,6 +68,7 @@ class Servico {
       'preco': preco,
       'valor_adicional': valorAdicional,
       'descricao_adicional': descricaoAdicional,
+      'nota': nota,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       'materiais': materiais.map((m) => m.toMap()).toList(),
@@ -100,6 +103,7 @@ class Servico {
       empresaId: (map['empresa_id'] ?? map['empresaId'])?.toString(),
       nome: map['nome']?.toString() ?? '',
       descricao: map['descricao']?.toString(),
+      nota: map['nota']?.toString(),
       preco: (getNum('preco', 'preco') ?? 0.0).toDouble(),
       valorAdicional: (getNum('valorAdicional', 'valor_adicional') ?? 0).toDouble(),
       descricaoAdicional: getStr('descricaoAdicional', 'descricao_adicional'),
@@ -122,6 +126,7 @@ class Servico {
     String? empresaId,
     String? nome,
     String? descricao,
+    String? nota,
     double? preco,
     double? valorAdicional,
     String? descricaoAdicional,
@@ -139,6 +144,7 @@ class Servico {
       empresaId: empresaId ?? this.empresaId,
       nome: nome ?? this.nome,
       descricao: descricao ?? this.descricao,
+      nota: nota ?? this.nota,
       preco: preco ?? this.preco,
       valorAdicional: valorAdicional ?? this.valorAdicional,
       descricaoAdicional: descricaoAdicional ?? this.descricaoAdicional,

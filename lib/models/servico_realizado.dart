@@ -1,6 +1,7 @@
 import 'package:sistema_exodo_novo/models/forma_pagamento.dart';
 import 'package:sistema_exodo_novo/models/item_material.dart';
 import 'package:sistema_exodo_novo/models/item_servico.dart';
+import 'package:sistema_exodo_novo/models/nfse.dart';
 import 'package:sistema_exodo_novo/models/pedido.dart';
 import 'package:sistema_exodo_novo/utils/date_parser.dart';
 
@@ -58,6 +59,9 @@ class ServicoRealizado {
   /// Validade do orçamento (proposta sem validade continua valendo).
   final DateTime? validadeOrcamento;
 
+  /// NFS-e vinculada a este serviço (quando já emitida).
+  final Nfse? nfse;
+
   final String status;
   final double total;
   final double descontoTotal;
@@ -83,6 +87,7 @@ class ServicoRealizado {
     this.dataConclusao,
     this.dataOrcamento,
     this.validadeOrcamento,
+    this.nfse,
     this.status = statusEmAberto,
     this.total = 0.0,
     this.descontoTotal = 0.0,
@@ -224,6 +229,7 @@ class ServicoRealizado {
     DateTime? dataConclusao,
     DateTime? dataOrcamento,
     DateTime? validadeOrcamento,
+    Nfse? nfse,
     String? status,
     double? total,
     double? descontoTotal,
@@ -249,6 +255,7 @@ class ServicoRealizado {
       dataConclusao: dataConclusao ?? this.dataConclusao,
       dataOrcamento: dataOrcamento ?? this.dataOrcamento,
       validadeOrcamento: validadeOrcamento ?? this.validadeOrcamento,
+      nfse: nfse ?? this.nfse,
       status: status ?? this.status,
       total: total ?? this.total,
       descontoTotal: descontoTotal ?? this.descontoTotal,
@@ -279,6 +286,7 @@ class ServicoRealizado {
       'data_conclusao': dataConclusao?.toUtc().toIso8601String(),
       'data_orcamento': dataOrcamento?.toUtc().toIso8601String(),
       'validade_orcamento': validadeOrcamento?.toUtc().toIso8601String(),
+      'nfse': nfse?.toMap(),
       'status': status,
       'total': total,
       'descontoTotal': descontoTotal,
@@ -335,6 +343,9 @@ class ServicoRealizado {
       dataOrcamento: parseDate(map['dataOrcamento'] ?? map['data_orcamento']),
       validadeOrcamento:
           parseDate(map['validadeOrcamento'] ?? map['validade_orcamento']),
+      nfse: map['nfse'] != null
+          ? Nfse.fromMap(map['nfse'] as Map<String, dynamic>)
+          : null,
       status: map['status']?.toString() ?? statusEmAberto,
       total: parseDouble(map['total']),
       descontoTotal: parseDouble(map['descontoTotal'] ?? map['desconto_total']),
